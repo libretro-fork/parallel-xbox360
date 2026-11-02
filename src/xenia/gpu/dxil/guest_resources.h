@@ -17,6 +17,8 @@ enum XeDxilResourceClass {
 XeDxilValue xe_dxil_resource_handle(XeDxilAlu *alu, unsigned resource_class, unsigned id, unsigned binding);
 /* Raw scalar i32 load from a declared raw buffer, address in bytes. */
 XeDxilValue xe_dxil_raw_buffer_load(XeDxilAlu *alu, XeDxilValue handle, XeDxilValue byte_address);
+int xe_dxil_raw_buffer_store(XeDxilAlu *alu, XeDxilValue handle,
+  XeDxilValue byte_address, XeDxilValue value);
 /* Dynamic dword indexing into a declared constant buffer. Returns raw i32.
  * Callers must keep word_index inside the declared constant-buffer size. */
 XeDxilValue xe_dxil_cbuffer_word(XeDxilAlu *alu, XeDxilValue handle, XeDxilValue word_index);

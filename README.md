@@ -39,8 +39,9 @@ D3D12 primitive-expansion geometry shaders are generated directly as DXIL.
 Render-target dumps, direct resolves and EDRAM ownership transfers also emit
 DXIL directly. Host-depth pixel shaders, including float24 conversion and
 occlusion counting, use native DXIL containers without a temporary bytecode
-copy. The remaining guest, ROV depth/stencil and tessellation stages still use
-Mesa and its
+copy. Depth-only ROV shaders also use native DXIL, with ordered EDRAM access
+and native depth/stencil tests. The remaining guest and tessellation stages
+still use Mesa and its
 Meson/Python build while their native replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in

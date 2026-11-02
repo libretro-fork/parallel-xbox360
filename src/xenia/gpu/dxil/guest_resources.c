@@ -43,6 +43,23 @@ XeDxilValue xe_dxil_raw_buffer_load(XeDxilAlu *s, XeDxilValue handle, XeDxilValu
   return value ? value : failed(s);
 }
 
+int xe_dxil_raw_buffer_store(XeDxilAlu *s, XeDxilValue handle, XeDxilValue address, XeDxilValue value) {
+  const struct dxil_func *function;
+  XeDxilValue args[9];
+  if (!active(s) || !handle || !integer_type(s, address, 32) || !integer_type(s, value, 32)) {
+    failed(s); return 0;
+  }
+  args[0] = integer(s, 69); args[1] = handle; args[2] = address;
+  args[3] = dxil_module_get_undef(s->module, dxil_module_get_int_type(s->module, 32));
+  args[4] = value; args[5] = args[3]; args[6] = args[3]; args[7] = args[3];
+  args[8] = dxil_module_get_int8_const(s->module, 1);
+  function = dxil_get_function(s->module, "dx.op.bufferStore", DXIL_I32);
+  if (!function || !args[0] || !args[3] || !args[8] || !dxil_emit_call_void(s->module, function, args, 9)) {
+    failed(s); return 0;
+  }
+  return 1;
+}
+
 XeDxilValue xe_dxil_cbuffer_word(XeDxilAlu *s, XeDxilValue handle, XeDxilValue word_index) {
   const struct dxil_func *function;
   XeDxilValue args[3], vector, component, values[4], value, condition;

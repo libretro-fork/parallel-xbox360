@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- ROV depth-only and VIZ survey shaders now generate native DXIL, replacing their Mesa conversions. Ordered EDRAM access, tiled/scaled sample addresses, per-face polygon offset, depth/stencil tests and query counters are handled in owned C89 code. Uncovered samples skip EDRAM access, unchanged words skip stores, and only the active depth format is converted. Native containers stay owned directly through pipeline creation. Guest shader and tessellation translation still require Mesa.
+
 - Host-depth pixel shaders now generate native DXIL for empty rasterization, float24 truncation/rounding and hybrid occlusion coverage counting. Truncation preserves conservative depth output for early depth testing. Pipeline initialization keeps the native buffers directly and releases them after shader workers join; obsolete prebuilt float24 shaders were removed. WARP checks cover 1x/2x/4x MSAA, disabled/nonzero counter slots and float24 underflow, tie and clamping boundaries. Guest, ROV depth/stencil and tessellation shaders still need migration before Mesa can be removed.
 
 - D3D12 EDRAM ownership-transfer shaders now generate native DXIL for all ten modes, including color/depth reinterpretation, stencil-bit passes and host-depth preservation. Compatible transfers avoid pack/unpack conversions and pipeline creation uses the native container directly. Container checks cover MSAA, native/scaled layouts and all color-format pairings; four WARP executions verify exact color preservation and scale remapping. Guest and tessellation stages still require migration before Mesa can be removed.

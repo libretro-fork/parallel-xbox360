@@ -31,6 +31,7 @@
 #include "xenia/gpu/d3d12/d3d12_render_target_cache.h"
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/dxil/depth_only.h"
+#include "xenia/gpu/dxil/rov_depth.h"
 #include "xenia/gpu/guest_spirv_shader_cache.h"
 #include "xenia/gpu/pipeline_creation_queue.h"
 #include "xenia/gpu/primitive_processor.h"
@@ -515,18 +516,11 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
                      std::unordered_map<uint64_t, MesaTessellationDxil>>
       mesa_tess_dxil_cache_;
   // Guards mesa_dxil_cache_, native_geometry_dxil_cache_ and
-  // mesa_tess_dxil_cache_: SPIR-V to DXIL conversion runs on both the main
-  // thread (vertex/geometry/ tessellation) and the creation threads (pixel).
+  // mesa_tess_dxil_cache_: guest translation and native geometry generation
+  // can run on both the processor and pipeline creation threads.
   std::mutex mesa_dxil_cache_mutex_;
-  // Mesa DXIL for the FSI depth-only pixel shader, generated once at init for
-  // pixel-shader-less ROV draws - one per guest sample count, which the FSI
-  // shaders are specialized for. Empty if not ROV or generation failed (falls
-  // back to the no-op placeholder_ps).
-  std::vector<uint8_t>
-      mesa_depth_only_rov_pixel_shaders_[size_t(xenos::MsaaSamples::k4X) + 1];
-  // VIZ survey variants of the above, counting only ZPass as a flag.
-  std::vector<uint8_t>
-      mesa_viz_survey_rov_pixel_shaders_[size_t(xenos::MsaaSamples::k4X) + 1];
+  // Native ROV depth-only shaders, indexed by guest MSAA and VIZ survey mode.
+  XeDxilShaderBinary native_rov_depth_pixel_shaders_[3][2] = {};
 
   // Ucode hash -> shader.
   std::unordered_map<uint64_t, SpirvShader*, xe::hash::IdentityHasher<uint64_t>>

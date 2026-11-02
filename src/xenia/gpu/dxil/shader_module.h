@@ -43,6 +43,8 @@ int xe_dxil_shader_resource(XeDxilShaderModule *shader, unsigned resource_class,
 int xe_dxil_shader_resource_typed(XeDxilShaderModule *shader, unsigned resource_class,
                                     unsigned kind, unsigned space, unsigned binding,
                                     unsigned count, unsigned byte_size, unsigned component_type);
+/* Pixel-stage raw UAV with rasterizer-ordered access, for guest EDRAM. */
+int xe_dxil_shader_ordered_buffer(XeDxilShaderModule *shader, unsigned space, unsigned binding);
 int xe_dxil_shader_geometry(XeDxilShaderModule *shader, unsigned input_primitive,
                               unsigned max_vertices, unsigned output_topology);
 int xe_dxil_shader_threads(XeDxilShaderModule *shader, unsigned x, unsigned y, unsigned z);

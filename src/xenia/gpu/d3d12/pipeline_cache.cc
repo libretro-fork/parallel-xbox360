@@ -139,40 +139,33 @@ bool PipelineCache::Initialize() {
     }
   }
 
-  // Under ROV, pixel-shader-less depth-only draws need a real shader that runs
-  // the in-shader EDRAM depth/stencil + ZPD path (the precompiled
-  // placeholder_ps is a no-op). Generate the Mesa (spirv_to_dxil) DXIL for it
-  // once here.
   if (render_target_cache_.GetPath() ==
       RenderTargetCache::Path::kPixelShaderInterlock) {
-    for (size_t i = 0; i < xe::countof(mesa_depth_only_rov_pixel_shaders_);
-         ++i) {
-      std::vector<uint8_t> depth_only_spirv =
-          guest_shader_cache_.translator().CreateDepthOnlyFragmentShader(
-              xenos::MsaaSamples(i));
-      if (!depth_only_spirv.empty()) {
-        mesa_depth_only_rov_pixel_shaders_[i] = SpirvToDxilCompiler::Translate(
-            reinterpret_cast<const uint32_t*>(depth_only_spirv.data()),
-            depth_only_spirv.size() / sizeof(uint32_t),
-            SpirvToDxilCompiler::Stage::kPixel, /*lower_to_bindless=*/true);
-      }
-      if (mesa_depth_only_rov_pixel_shaders_[i].empty()) {
-        XELOGE(
-            "spirv_to_dxil: failed to generate the {}-sample Mesa ROV "
-            "depth-only pixel shader; the guest shader path cannot render "
-            "depth-only ROV draws",
-            UINT32_C(1) << i);
-        return false;
-      }
-      std::vector<uint8_t> viz_survey_spirv =
-          guest_shader_cache_.translator().CreateDepthOnlyFragmentShader(
-              xenos::MsaaSamples(i), true);
-      if (!viz_survey_spirv.empty()) {
-        mesa_viz_survey_rov_pixel_shaders_[i] = SpirvToDxilCompiler::Translate(
-            reinterpret_cast<const uint32_t*>(viz_survey_spirv.data()),
-            viz_survey_spirv.size() / sizeof(uint32_t),
-            SpirvToDxilCompiler::Stage::kPixel, /*lower_to_bindless=*/true);
-      }
+    XeDxilRovDepthOptions options = {};
+    options.scale_x = render_target_cache_.draw_resolution_scale_x();
+    options.scale_y = render_target_cache_.draw_resolution_scale_y();
+    options.full_counters = cvars::occlusion_query_full_counters;
+    options.system_constants_bytes = sizeof(SpirvShaderTranslator::SystemConstants);
+    options.flags_word = offsetof(SpirvShaderTranslator::SystemConstants, flags) / 4;
+    options.pitch_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_32bpp_tile_pitch_dwords_scaled) / 4;
+    options.depth_base_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_depth_base_dwords_scaled) / 4;
+    options.counter_word = offsetof(SpirvShaderTranslator::SystemConstants, zpd_fsi_counter_index) / 4;
+    options.front_scale_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_poly_offset_front_scale) / 4;
+    options.back_scale_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_poly_offset_back_scale) / 4;
+    options.front_offset_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_poly_offset_front_offset) / 4;
+    options.back_offset_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_poly_offset_back_offset) / 4;
+    options.front_masks_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_stencil_front_reference_masks) / 4;
+    options.back_masks_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_stencil_back_reference_masks) / 4;
+    options.front_ops_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_stencil_front_func_ops) / 4;
+    options.back_ops_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_stencil_back_func_ops) / 4;
+    options.depth_stencil_mask = SpirvShaderTranslator::kSysFlag_FSIDepthStencil;
+    options.float24_mask = SpirvShaderTranslator::kSysFlag_DepthFloat24;
+    options.depth_write_mask = SpirvShaderTranslator::kSysFlag_FSIDepthWrite;
+    options.stencil_mask = SpirvShaderTranslator::kSysFlag_FSIStencilTest;
+    options.depth_function_shift = SpirvShaderTranslator::kSysFlag_FSIDepthPassIfLess_Shift;
+    if (!xe_dxil_build_rov_depth_set(&options, native_rov_depth_pixel_shaders_)) {
+      XELOGE("Failed to generate native ROV depth-only pixel shaders");
+      return false;
     }
   }
 
@@ -218,6 +211,7 @@ void PipelineCache::Shutdown() {
   }
 
   xe_dxil_depth_only_set_free(native_depth_only_pixel_shaders_);
+  xe_dxil_rov_depth_set_free(native_rov_depth_pixel_shaders_);
 
   // Shut down the persistent shader / pipeline storage.
   ShutdownShaderStorage();
@@ -2095,26 +2089,17 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
   }
 
   // Pixel shader.
-  // Writes EDRAM depth/stencil and no color. The no-op is only a fallback for
-  // a ROV depth-only shader that could not be generated.
   auto use_rov_depth_only_pixel_shader = [&]() {
-    // VIZ surveys only use the ZPass counter.
-    const std::vector<uint8_t>& mesa_viz_survey_rov_pixel_shader =
-        mesa_viz_survey_rov_pixel_shaders_[size_t(
-            description.guest_msaa_samples)];
-    const std::vector<uint8_t>& mesa_depth_only_rov_pixel_shader =
-        description.counting_depth_only &&
-                !mesa_viz_survey_rov_pixel_shader.empty()
-            ? mesa_viz_survey_rov_pixel_shader
-            : mesa_depth_only_rov_pixel_shaders_[size_t(
-                  description.guest_msaa_samples)];
-    if (!mesa_depth_only_rov_pixel_shader.empty()) {
-      state_desc.PS.pShaderBytecode = mesa_depth_only_rov_pixel_shader.data();
-      state_desc.PS.BytecodeLength = mesa_depth_only_rov_pixel_shader.size();
-    } else {
-      state_desc.PS.pShaderBytecode = shaders::placeholder_ps;
-      state_desc.PS.BytecodeLength = sizeof(shaders::placeholder_ps);
+    const XeDxilShaderBinary& bytecode =
+        native_rov_depth_pixel_shaders_[size_t(description.guest_msaa_samples)]
+                                      [description.counting_depth_only ? 1 : 0];
+    if (!bytecode.data) {
+      XELOGE("Native ROV depth-only shader is unavailable");
+      return false;
     }
+    state_desc.PS.pShaderBytecode = bytecode.data;
+    state_desc.PS.BytecodeLength = bytecode.size;
+    return true;
   };
   if (as_placeholder) {
     // Hot-swap placeholder: the real pixel shader is not translated yet, so
@@ -2123,7 +2108,7 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
     if (edram_rov_used) {
       // Color and depth both go through the pixel shader here, so the no-op
       // would draw nothing at all. Write depth like a depth-only draw.
-      use_rov_depth_only_pixel_shader();
+      if (!use_rov_depth_only_pixel_shader()) return nullptr;
     } else if (as_interpreter &&
                cvars::async_shader_vs_interpreter_debug_color) {
       state_desc.PS.pShaderBytecode = shaders::placeholder_color_ps;
@@ -2160,7 +2145,7 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
     state_desc.PS.BytecodeLength = bytecode.size;
   } else if (edram_rov_used) {
     // Guest depth-only draw on the ROV path.
-    use_rov_depth_only_pixel_shader();
+    if (!use_rov_depth_only_pixel_shader()) return nullptr;
   } else {
     if (render_target_cache_.depth_float24_convert_in_pixel_shader() &&
         (description.depth_func != xenos::CompareFunction::kAlways ||

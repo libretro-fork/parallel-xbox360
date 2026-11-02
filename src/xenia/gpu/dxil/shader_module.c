@@ -152,9 +152,9 @@ int xe_dxil_shader_resource(XeDxilShaderModule *s, unsigned resource_class, unsi
   return xe_dxil_shader_resource_typed(s, resource_class, kind, space, binding, count, size, DXIL_COMP_TYPE_F32);
 }
 
-int xe_dxil_shader_resource_typed(XeDxilShaderModule *s, unsigned resource_class, unsigned kind,
+static int resource_impl(XeDxilShaderModule *s, unsigned resource_class, unsigned kind,
                                     unsigned space, unsigned binding, unsigned count, unsigned size,
-                                    unsigned component_type) {
+                                    unsigned component_type, unsigned ordered) {
   const struct dxil_mdnode *fields[11], *pair[2], *node;
   const struct dxil_type *element, *type;
   struct dxil_resource_v1 *resource;
@@ -162,6 +162,7 @@ int xe_dxil_shader_resource_typed(XeDxilShaderModule *s, unsigned resource_class
   unsigned id, field_count, i;
   char type_name[64];
   if (!s || s->failed || s->finished) return -1;
+  if (ordered && (s->module.shader_kind != DXIL_PIXEL_SHADER || resource_class != 1)) goto fail;
   if (resource_class > 3 || !count || (count != UINT32_MAX && count - 1 > UINT32_MAX - binding) ||
       !kind || kind > 14 || s->resource_counts[resource_class] >= 32 ||
       (component_type != DXIL_COMP_TYPE_F32 && component_type != DXIL_COMP_TYPE_U32 && component_type != DXIL_COMP_TYPE_I32)) goto fail;
@@ -189,7 +190,7 @@ int xe_dxil_shader_resource_typed(XeDxilShaderModule *s, unsigned resource_class
   else {
     fields[6] = metadata_int(s, kind);
     fields[7] = resource_class ? dxil_get_metadata_int1(m, 0) : metadata_int(s, 0);
-    if (resource_class) { fields[8] = fields[7]; fields[9] = fields[7]; field_count = 11; }
+    if (resource_class) { fields[8] = fields[7]; fields[9] = dxil_get_metadata_int1(m, ordered != 0); field_count = 11; }
     else field_count = 9;
     if (kind != DXIL_RESOURCE_KIND_RAW_BUFFER) {
       pair[0] = metadata_int(s, 0); pair[1] = metadata_int(s, component_type);
@@ -216,6 +217,7 @@ int xe_dxil_shader_resource_typed(XeDxilShaderModule *s, unsigned resource_class
   resource->v0.upper_bound = count == UINT32_MAX ? UINT32_MAX : binding + count - 1;
   resource->resource_kind = kind;
   if (kind == DXIL_RESOURCE_KIND_RAW_BUFFER) s->raw_buffers = 1;
+  if (ordered) { m->feats.rovs = 1; s->shader_flags |= 262144; }
   resource->v0.resource_type = resource_class == 2 ? DXIL_RES_CBV : resource_class == 3 ? DXIL_RES_SAMPLER :
     resource_class ? kind == DXIL_RESOURCE_KIND_RAW_BUFFER ? DXIL_RES_UAV_RAW : DXIL_RES_UAV_TYPED :
     kind == DXIL_RESOURCE_KIND_RAW_BUFFER ? DXIL_RES_SRV_RAW : DXIL_RES_SRV_TYPED;
@@ -223,6 +225,14 @@ int xe_dxil_shader_resource_typed(XeDxilShaderModule *s, unsigned resource_class
 fail:
   s->failed = 1;
   return -1;
+}
+
+int xe_dxil_shader_resource_typed(XeDxilShaderModule *s, unsigned resource_class, unsigned kind,
+    unsigned space, unsigned binding, unsigned count, unsigned size, unsigned component_type) {
+  return resource_impl(s, resource_class, kind, space, binding, count, size, component_type, 0);
+}
+int xe_dxil_shader_ordered_buffer(XeDxilShaderModule *s, unsigned space, unsigned binding) {
+  return resource_impl(s, 1, DXIL_RESOURCE_KIND_RAW_BUFFER, space, binding, 1, 0, DXIL_COMP_TYPE_U32, 1);
 }
 
 int xe_dxil_shader_geometry(XeDxilShaderModule *s, unsigned primitive, unsigned vertices, unsigned topology) {

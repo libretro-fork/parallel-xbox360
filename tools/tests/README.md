@@ -293,5 +293,33 @@ independent depth-bit expectations for underflow, halfway ties and clamping;
 use `open` before the case number for the default counter slot. Single-sample
 runs compare the rendered D32 depth bits; all runs compare the full counter
 buffer, including untouched lanes. MSAA depth values are not read back.
-The native host-depth shaders are connected to pipeline initialization. ROV
-variants still require replacement of the EDRAM depth/stencil shader path.
+The native host-depth and ROV depth-only shaders are connected to pipeline initialization.
+
+`make check-dxil-rov DXIL_VALIDATOR=/path/to/dxv` checks the native ordered-buffer
+pixel shader and the depth/stencil compute fixture. The latter emits 49,152
+runtime input records covering compare functions, all stencil operations,
+read/write masks, clamp/wrap boundaries and disabled tests. Execute it with
+`dxil_runtime_test.exe <shader> <shader>.expected <shader>.memory <shader>.constants`.
+All 393,216 output words match the independent CPU reference. Packed EDRAM words
+are compared exactly, including patterns that resemble floating-point NaNs.
+
+`make check-dxil-rov-depth DXIL_VALIDATOR=/path/to/dxv` checks 24 native ROV
+containers across guest MSAA, scaling, survey mode and failure-counter policy.
+The generator arguments are `<output> <msaa 0..2> <scale-config 0..1> <survey 0..1>
+[full-counters 0..1]`. It builds and releases the same owned shader set used by
+the renderer. Unorm and float24 conversion use separate control-flow paths.
+
+The C89 Windows harnesses compile with either MSVC and the Windows SDK, or GCC
+with `-isystem third_party/DirectX-Headers/include`; link D3D12 and DXGI (plus
+dxguid with GCC). `dxil_rov_runtime_test.exe <shader> <native-geometry-fixture.vs>
+[layers]` checks ordered updates at 64 pixels, including 1,024 overlapping layers.
+`dxil_rov_depth_runtime_test.exe <shader> <native-geometry-fixture.vs> <msaa>
+<scale-config> <scenario> <survey> [flags]` compares every EDRAM word and counter
+lane. Scenarios 0..9 cover pass/fail, stencil masks, disabled tests/counters,
+float24, per-face state, constant and slope polygon offset. Optional flags may
+contain `reverse`, `partial`, `slot3` and `nofail`; partial coverage uses
+scenarios 0..6. `nofail` requires a shader generated with full-counters=0.
+The final 324-run matrix covers both full-screen and partially covered triangles,
+1x/2x/4x guest samples, native and 2x3 scaling, both faces, counter suppression,
+survey flags and nonzero query slots. Guest shaders, including their ROV color
+and export paths, and linked tessellation stages still need native integration.
