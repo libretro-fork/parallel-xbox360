@@ -4,9 +4,12 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Native Windows Make builds now use MinGW-w64 GCC and GNU binutils by default, without LLVM or Clang. The compiler runtimes are linked statically; the optional MSVC-ABI cross build remains available.
+- MinGW builds use ABI-safe D3D12 calls and the owned GNU context-switch assembly. Title exit requests frontend shutdown instead of ending RetroArch. Timer workers start lazily and are joined during deinitialization so the DLL can unload safely.
+
 - Native C89 DXIL texture primitives decode guest packets and emit level, gradient, implicit and biased samples. A two-mip 2D texture passes 88-word WARP execution checks; pixel-stage implicit/bias samples pass validation. Guest texture policies and live renderer integration remain unfinished.
 
-- GNU Make now detects native Windows shells correctly, selects the DLL target, and names the host generator with .exe. Missing LLVM target compilers stop the build early with an actionable message; host-only tools and checks remain available.
+- GNU Make now detects native Windows shells correctly, selects the DLL target, and names the host generator with .exe. Missing target compilers stop the build early with an actionable message; host-only tools and checks remain available.
 
 - The native C89 DXIL frontend can read raw GPU buffers and dynamically indexed constant-buffer words. A raw guest vertex-fetch program passes execution checks with actual D3D12 SRV/CBV bindings; invalid reads branch around memory access. Live renderer integration remains unfinished.
 

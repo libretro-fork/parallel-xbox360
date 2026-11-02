@@ -200,7 +200,7 @@ bool D3D12RenderTargetCache::Initialize() {
     return false;
   }
   edram_buffer_descriptor_heap_start_ =
-      edram_buffer_descriptor_heap_->GetCPUDescriptorHandleForHeapStart();
+      xe_d3d12_heap_cpu(edram_buffer_descriptor_heap_);
   ui::d3d12::util::CreateBufferRawSRV(
       device,
       provider.OffsetViewDescriptor(
@@ -1575,7 +1575,7 @@ void D3D12RenderTargetCache::RestoreEdramSnapshot(const void* snapshot) {
       copy_source_location.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
       UINT64 copy_total_bytes;
       D3D12_RESOURCE_DESC full_edram_render_target_desc =
-          full_edram_render_target->resource()->GetDesc();
+          xe_d3d12_resource_desc(full_edram_render_target->resource());
       provider.GetDevice()->GetCopyableFootprints(
           &full_edram_render_target_desc, 0, 1, 0,
           &copy_source_location.PlacedFootprint, nullptr, nullptr,

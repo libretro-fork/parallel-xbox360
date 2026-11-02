@@ -557,7 +557,11 @@ void FatalError(const std::string_view str) {
   // skip static destructors so they can't race with worker threads still
   // running and corrupt the heap, at_quick_exit handlers will take care
   // of necessary cleanup (e.g. /dev/shm/xenia* files on linux )
+#if defined(__MINGW32__) && !defined(_UCRT)
+  _exit(EXIT_FAILURE);
+#else
   std::quick_exit(EXIT_FAILURE);
+#endif
 #endif  // XE_PLATFORM_ANDROID
 }
 

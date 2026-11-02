@@ -14,7 +14,7 @@
 #include "xenia/base/platform_win.h"
 #include "xenia/base/threading.h"
 #include "xenia/base/threading_timer_queue.h"
-#if defined(__clang__)
+#if defined(__clang__) || defined(__GNUC__)
 // chrispy: i do not understand why this is an error for clang here
 // something about the quoted __FUNCTION__ freaks it out (clang 14.0.1)
 #define LOG_LASTERROR()                                                       \
@@ -88,6 +88,7 @@ struct THREADNAME_INFO {
 };
 #pragma pack(pop)
 
+#if defined(_MSC_VER)
 void raise_thread_name_exception(HANDLE thread, const std::string& name) {
   if (!IsDebuggerPresent()) {
     return;
@@ -104,6 +105,8 @@ void raise_thread_name_exception(HANDLE thread, const std::string& name) {
   }
 }
 
+#endif
+
 static void set_name(HANDLE thread, const std::string_view name) {
   auto kernel = GetModuleHandleW(L"kernel32.dll");
   if (kernel) {
@@ -114,7 +117,9 @@ static void set_name(HANDLE thread, const std::string_view name) {
       func(thread, reinterpret_cast<PCWSTR>(u16name.c_str()));
     }
   }
+#if defined(_MSC_VER)
   raise_thread_name_exception(thread, std::string(name));
+#endif
 }
 
 void set_name(const std::string_view name) {

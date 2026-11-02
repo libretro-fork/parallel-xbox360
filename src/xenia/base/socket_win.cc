@@ -15,8 +15,8 @@
 #include "xenia/base/platform_win.h"
 
 // winsock includes must come after platform_win.h:
-#include <mstcpip.h>   // NOLINT(build/include_order)
 #include <winsock2.h>  // NOLINT(build/include_order)
+#include <mstcpip.h>   // NOLINT(build/include_order)
 #include <ws2tcpip.h>  // NOLINT(build/include_order)
 
 namespace xe {

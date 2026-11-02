@@ -124,7 +124,7 @@ export CC_FOR_BUILD=clang-21 CXX_FOR_BUILD=clang++-21
 export LIB="$MSVC/crt/lib/x86_64;$MSVC/sdk/lib/um/x86_64;$MSVC/sdk/lib/ucrt/x86_64"
 # The Make build has no configure step; CPU and shader sources are selected in
 # Makefile.common. Built-in shader modules and game data are checked in.
-make -j "$NUMPROC" platform=windows-x86_64 BUILD_DIR="$BUILD_DIR" \
+make -j "$NUMPROC" platform=windows-x86_64 WINDOWS_ABI=msvc BUILD_DIR="$BUILD_DIR" \
   CC="$LLVM/clang" CXX="$LLVM/clang++" HOST_CC="$LLVM/clang" HOST_DIR="$HOST_TOOLS" \
   MSVC_ROOT="$MSVC" MESA_CROSS_FILE="$MESA_CROSS_FILE" \
   AR="$LLVM/llvm-ar" LLVM_RC="$TOOLS/bin/llvm-rc"

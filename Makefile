@@ -1,5 +1,5 @@
 # GNU Make build for the libretro core. No CMake configure/generate step.
-# A POSIX shell, a C89 host compiler and clang 21 (GCC 14 libstdc++ on Linux) are required.
+# A POSIX shell, a C89 host compiler and a C++20 target compiler are required.
 SHELL := /bin/sh
 .DEFAULT_GOAL := all
 .DELETE_ON_ERROR:
@@ -55,21 +55,23 @@ API_LEVEL ?= 28
 NDK_ROOT ?= $(ANDROID_NDK_HOME)
 NDK_HOST_TAG ?= linux-x86_64
 MSVC_ROOT ?=
-MESA_BUILD_DIR ?= $(BUILD_DIR)/mesa
+MESA_BUILD_DIR ?= $(BUILD_DIR)/mesa-$(WINDOWS_ABI)
 MESA_CROSS_FILE ?=
 XENIA_LIBRETRO_DXIL ?=
 LLVM_RC ?= llvm-rc
+WINDRES ?= $(CROSS_COMPILE)windres
+WINDOWS_ABI ?= gnu
 DEBUG ?= 0
 LTO ?= 0
 
 ifeq ($(origin CC),default)
-CC := clang
+CC := $(CROSS_COMPILE)gcc
 endif
 ifeq ($(origin CXX),default)
-CXX := clang++
+CXX := $(CROSS_COMPILE)g++
 endif
 ifeq ($(origin AR),default)
-AR := llvm-ar
+AR := $(CROSS_COMPILE)ar
 endif
 ifeq ($(OS),android)
 NDK_BIN := $(NDK_ROOT)/toolchains/llvm/prebuilt/$(NDK_HOST_TAG)/bin
@@ -125,11 +127,20 @@ else
 BASE_FLAGS += -O3 -g -finline-functions -funroll-loops -fomit-frame-pointer
 DEFINES += -DNDEBUG -D_NO_DEBUG_HEAP=1
 endif
+TARGET_IS_CLANG := $(findstring clang,$(shell $(CC) --version 2>/dev/null))
+ifeq ($(TARGET_IS_CLANG),)
+WARNINGS := -Wno-switch -Wno-attributes
+endif
 ifeq ($(LTO),1)
+ifeq ($(TARGET_IS_CLANG),)
+BASE_FLAGS += -flto
+LDFLAGS += -flto
+else
 BASE_FLAGS += -flto=thin
 LDFLAGS += -flto=thin -fuse-ld=lld
 ifeq ($(OS),macos)
 LDFLAGS := $(filter-out -fuse-ld=lld,$(LDFLAGS))
+endif
 endif
 endif
 CPPFLAGS += $(addprefix -I,$(INCLUDE_DIRS)) $(DEFINES)
@@ -151,10 +162,12 @@ LDFLAGS += -static-libstdc++ -Wl,-Bsymbolic -Wl,-z,max-page-size=16384
 LDLIBS += -landroid -llog -ldl -lm
 endif
 ifeq ($(OS),windows)
-BASE_FLAGS := $(filter-out -fPIC,$(BASE_FLAGS)) --target=x86_64-pc-windows-msvc
-BASE_FLAGS += -D_MT -D_DLL -Xclang --dependent-lib=msvcrt
+BASE_FLAGS := $(filter-out -fPIC,$(BASE_FLAGS))
 DEFINES += -DWIN32 -D_WIN64=1 -D_AMD64=1 -DUNICODE -D_UNICODE \
  -D_CRT_NONSTDC_NO_DEPRECATE -D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0A00
+ifeq ($(WINDOWS_ABI),msvc)
+BASE_FLAGS += --target=x86_64-pc-windows-msvc
+BASE_FLAGS += -D_MT -D_DLL -Xclang --dependent-lib=msvcrt
 ifneq ($(MSVC_ROOT),)
 BASE_FLAGS += $(addprefix -isystem ,$(addprefix $(MSVC_ROOT)/,crt/include sdk/include/ucrt sdk/include/um sdk/include/shared sdk/include/winrt))
 LDFLAGS += $(addprefix -L,$(addprefix $(MSVC_ROOT)/,crt/lib/x86_64 sdk/lib/um/x86_64 sdk/lib/ucrt/x86_64))
@@ -166,15 +179,28 @@ CXXFLAGS += -fexceptions -fcxx-exceptions
 LDFLAGS += --target=x86_64-pc-windows-msvc -fuse-ld=lld -Wl,/manifest:no,/DEBUG,/OPT:REF,/OPT:ICF,/INCREMENTAL:NO
 LDLIBS += ntdll.lib wsock32.lib ws2_32.lib xinput.lib comctl32.lib shcore.lib \
  shlwapi.lib dxguid.lib bcrypt.lib d3d12.lib dxgi.lib synchronization.lib version.lib
+else
+CXXFLAGS += -fexceptions
+LDFLAGS += -static -static-libgcc -static-libstdc++ -Wl,--no-undefined,--exclude-all-symbols
+ifneq ($(DEBUG),1)
+LDFLAGS += -Wl,--strip-debug
+endif
+LDLIBS += -lntdll -lwsock32 -lws2_32 -lxinput -lcomctl32 -lshcore -lshlwapi -ldxguid -lbcrypt -ld3d12 -ldxgi -lsynchronization -lversion -lole32 -luuid -lshell32 -luser32 -lgdi32 -limm32 -lwinmm -ladvapi32 -lsetupapi -lcfgmgr32 -lhid -ldwmapi -lcomdlg32 -loleaut32
+endif
 INCLUDE_DIRS += third_party/mesa/src/microsoft/spirv_to_dxil third_party/mesa/src/microsoft/compiler
 INCLUDE_DIRS += third_party/libusb/libusb
 MESA_LIBS := src/microsoft/spirv_to_dxil/libspirv_to_dxil.a \
  src/microsoft/compiler/libdxil_compiler.a src/compiler/spirv/libvtn.a \
  src/compiler/nir/libnir.a src/compiler/libcompiler.a src/util/libmesa_util.a \
  src/util/libmesa_util_simd.a src/c11/impl/libmesa_util_c11.a \
- src/util/blake3/libblake3.a subprojects/zlib-1.3.1/libz.a
+ src/util/blake3/libblake3.a
+ifeq ($(WINDOWS_ABI),msvc)
+MESA_LIBS += subprojects/zlib-1.3.1/libz.a
+else
+LDLIBS += -lz
+endif
 MESA_ARCHIVES := $(addprefix $(MESA_BUILD_DIR)/,$(MESA_LIBS))
-LDLIBS += $(MESA_ARCHIVES)
+LDLIBS := $(MESA_ARCHIVES) $(LDLIBS)
 endif
 
 OBJECTS := $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(SOURCES_C) $(SOURCES_CXX) $(SOURCES_ASM) $(SOURCES_OBJCXX)))
@@ -217,6 +243,9 @@ $(BUILD_DIR)/obj/%.cpp.o: %.cpp
 $(BUILD_DIR)/obj/%.mm.o: %.mm
 	@mkdir -p "$(@D)"
 	$(CXX) $(BASE_FLAGS) $(CPPFLAGS) $(CXXFLAGS) -c "$<" -o "$@"
+$(BUILD_DIR)/obj/%.asm.o: %.asm
+	@mkdir -p "$(@D)"
+	$(CC) $(BASE_FLAGS) $(CPPFLAGS) -DBOOST_CONTEXT_EXPORT= -x assembler-with-cpp -c "$<" -o "$@"
 $(BUILD_DIR)/obj/%.S.o: %.S
 	@mkdir -p "$(@D)"
 	$(CC) $(BASE_FLAGS) $(CPPFLAGS) -DBOOST_CONTEXT_EXPORT= -c "$<" -o "$@"
@@ -226,7 +255,7 @@ $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/capstone/%,$(S
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter src/xenia/cpu/backend/%,$(SOURCES_CXX)))): CPPFLAGS += $(CAPSTONE_DEFS) -DCAPSTONE_USE_SYS_DYN_MEM
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/mspack/% third_party/snappy/%,$(SOURCES_C) $(SOURCES_CXX)))): CPPFLAGS += -DHAVE_CONFIG_H
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/snappy/%,$(SOURCES_CXX)))): CPPFLAGS := -I$(GEN)/snappy $(CPPFLAGS) -w -DHAVE_CONFIG_H
-$(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/libusb/%,$(SOURCES_C)))): CPPFLAGS := -Ithird_party/libusb/msvc $(CPPFLAGS) -w
+$(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/libusb/%,$(SOURCES_C)))): CPPFLAGS := -Ithird_party/libusb/$(if $(filter msvc,$(WINDOWS_ABI)),msvc,mingw) $(CPPFLAGS) -w
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(ZSTD_SOURCES))): CPPFLAGS += -DXXH_NAMESPACE=ZSTD_ -DZSTD_LEGACY_SUPPORT=0 -DZSTD_DISABLE_ASM
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(ZLIB_SOURCES) $(GEN)/third_party/zlib-ng/gzread.c)): CPPFLAGS += -DHAVE_BUILTIN_CTZ -DHAVE_BUILTIN_CTZLL -DHAVE_ATTRIBUTE_ALIGNED -DWITH_GZFILEOP
 ifneq ($(OS),windows)
@@ -247,7 +276,7 @@ $(BUILD_DIR)/dxil.rc: $(XENIA_LIBRETRO_DXIL) Makefile
 	@mkdir -p "$(@D)"
 	@printf 'XENIA_DXIL RCDATA "%s"\n' '$(abspath $(XENIA_LIBRETRO_DXIL))' > "$@"
 $(BUILD_DIR)/dxil.res: $(BUILD_DIR)/dxil.rc $(XENIA_LIBRETRO_DXIL)
-	$(LLVM_RC) /fo "$@" "$<"
+	$(if $(filter msvc,$(WINDOWS_ABI)),$(LLVM_RC) /fo "$@" "$<",$(WINDRES) -i "$<" -o "$@" -O coff)
 endif
 endif
 
@@ -323,8 +352,8 @@ shaders: $(SHADER_HEADERS)
 ifeq ($(OS),windows)
 $(MESA_BUILD_DIR)/build.ninja: | check-target-tools
 	meson setup "$(MESA_BUILD_DIR)" third_party/mesa $(if $(MESA_CROSS_FILE),--cross-file "$(MESA_CROSS_FILE)") \
-	 --default-library=static --buildtype=release -Db_vscrt=md -Dc_args=/wd4189 -Dcpp_args=/wd4189 \
-	 -Dspirv-to-dxil=true -Dgallium-drivers= -Dvulkan-drivers= -Dplatforms= \
+	 --default-library=static --buildtype=release -Db_vscrt=md $(if $(filter msvc,$(WINDOWS_ABI)),-Dc_args=/wd4189 -Dcpp_args=/wd4189) \
+	 -Dspirv-to-dxil=true -Dspirv-tools=disabled -Dgallium-drivers= -Dvulkan-drivers= -Dplatforms= \
 	 -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=false \
 	 -Dgles1=disabled -Dgles2=disabled -Dllvm=disabled -Dvideo-codecs=
 mesa: $(MESA_BUILD_DIR)/build.ninja
@@ -336,12 +365,14 @@ endif
 # Check target tools only for core builds. Data generation and host-only checks
 # remain usable without a target toolchain. Order-only edges gate parallel work.
 .PHONY: check-target-tools
-ifneq ($(filter-out clean help print-config host-tools generated shaders check-dxil-%,$(if $(MAKECMDGOALS),$(MAKECMDGOALS),all)),)
+ifneq ($(filter-out clean help print-config host-tools generated shaders check-dxil-% check-core-events,$(if $(MAKECMDGOALS),$(MAKECMDGOALS),all)),)
 check-target-tools:
-	@$(CXX) --version >/dev/null 2>&1 || { echo "Missing target C++ compiler: $(CXX). Install LLVM and put clang++ on PATH, or set CXX explicitly." >&2; exit 1; }
-	@$(CC) --version >/dev/null 2>&1 || { echo "Missing target C compiler: $(CC). Install LLVM and put clang on PATH, or set CC explicitly." >&2; exit 1; }
-ifeq ($(OS),windows)
-	@case "$$($(CXX) --version 2>/dev/null)" in *clang*) ;; *) echo "Windows builds require LLVM clang targeting the MSVC ABI, plus the MSVC CRT and Windows SDK; MinGW GCC is not supported." >&2; exit 1 ;; esac
+	@$(CXX) --version >/dev/null 2>&1 || { echo "Missing target C++ compiler: $(CXX). Install a C++20 compiler, or set CXX/CROSS_COMPILE explicitly." >&2; exit 1; }
+	@$(CC) --version >/dev/null 2>&1 || { echo "Missing target C compiler: $(CC). Install a C compiler, or set CC/CROSS_COMPILE explicitly." >&2; exit 1; }
+ifeq ($(WINDOWS_ABI),msvc)
+	@case "$$($(CXX) --version 2>/dev/null)" in *clang*) ;; *) echo "WINDOWS_ABI=msvc selects the optional Clang/MSVC cross build. Use the default WINDOWS_ABI=gnu for MinGW GCC." >&2; exit 1 ;; esac
+else ifeq ($(OS),windows)
+	@case "$$($(CC) -dumpmachine 2>/dev/null)" in *mingw*|*windows*) ;; *) echo "Use a MinGW Windows compiler on PATH, or set CROSS_COMPILE=x86_64-w64-mingw32-." >&2; exit 1 ;; esac
 endif
 else
 check-target-tools:
@@ -354,7 +385,7 @@ print-config:
 help:
 	@echo "make platform=<$(SUPPORTED_PLATFORMS)> [-jN] [DEBUG=1] [LTO=1]"
 	@echo "Android: NDK_ROOT=/path/to/ndk [API_LEVEL=28]"
-	@echo "Windows: LLVM + MSVC CRT/SDK required; cross setup: .ci/build-windows-cross.sh"
+	@echo "Windows: MinGW GCC/binutils; optional MSVC-ABI cross setup: .ci/build-windows-cross.sh"
 clean:
 	@root=$$(pwd -P); \
 	if test -d "$(BUILD_DIR)"; then \
@@ -402,3 +433,8 @@ check-dxil-texture: $(HOST_DIR)/dxil-alu-test check-dxil-alu-c89
 	$< "$(HOST_DIR)/dxil-texture-ps-test.dxil" texture-ps
 	$(DXIL_VALIDATOR) "$(HOST_DIR)/dxil-texture-ps-test.dxil" -o="$(HOST_DIR)/dxil-texture-ps-test-validated.dxil"
 	cmp "$(HOST_DIR)/dxil-texture-ps-test.dxil" "$(HOST_DIR)/dxil-texture-ps-test-validated.dxil"
+.PHONY: check-core-events
+check-core-events:
+	@mkdir -p "$(HOST_DIR)"
+	$(HOST_CC) $(HOST_CFLAGS) -std=c89 -pedantic-errors -Wall -Wextra -Werror -Ilibretro libretro/core_events.c tools/tests/core_events_test.c -o "$(HOST_DIR)/core-events-test$(HOST_EXEEXT)"
+	"$(HOST_DIR)/core-events-test$(HOST_EXEEXT)"

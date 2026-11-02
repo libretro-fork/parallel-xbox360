@@ -113,7 +113,7 @@ bool D3D12SharedMemory::Initialize() {
     return false;
   }
   buffer_descriptor_heap_start_ =
-      buffer_descriptor_heap_->GetCPUDescriptorHandleForHeapStart();
+      xe_d3d12_heap_cpu(buffer_descriptor_heap_);
   ui::d3d12::util::CreateBufferRawSRV(
       device,
       provider.OffsetViewDescriptor(buffer_descriptor_heap_start_,
@@ -194,7 +194,7 @@ bool D3D12SharedMemory::ImportGuestRamHeap(void*& out_view,
   // Log the imported heap's coherency properties. CPUPageProperty WRITE_BACK
   // (3) is cache-coherent, WRITE_COMBINE (2) is not for GPU-write readback.
   // This is driver-chosen for the diagnostic heap, not app-selectable.
-  const D3D12_HEAP_DESC heap_desc = heap->GetDesc();
+  const D3D12_HEAP_DESC heap_desc = xe_d3d12_heap_desc(heap);
   XELOGI(
       "Shared memory host import: heap CPUPageProperty={} MemoryPool={} "
       "flags=0x{:X}",

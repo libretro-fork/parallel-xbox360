@@ -523,7 +523,7 @@ bool D3D12TextureCache::Initialize() {
     return false;
   }
   null_srv_descriptor_heap_start_ =
-      null_srv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart();
+      xe_d3d12_heap_cpu(null_srv_descriptor_heap_.Get());
   D3D12_SHADER_RESOURCE_VIEW_DESC null_srv_desc;
   null_srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
   null_srv_desc.Shader4ComponentMapping =
@@ -1419,9 +1419,9 @@ D3D12TextureCache::D3D12Texture::D3D12Texture(
       resource_state_(resource_state) {
   ID3D12Device* device =
       texture_cache.command_processor_.GetD3D12Provider().GetDevice();
-  D3D12_RESOURCE_DESC resource_desc = resource_->GetDesc();
+  D3D12_RESOURCE_DESC resource_desc = xe_d3d12_resource_desc(resource_.Get());
   SetHostMemoryUsage(
-      device->GetResourceAllocationInfo(0, 1, &resource_desc).SizeInBytes);
+      xe_d3d12_allocation_info(device, 0, 1, &resource_desc).SizeInBytes);
 }
 
 D3D12TextureCache::D3D12Texture::~D3D12Texture() {

@@ -98,7 +98,7 @@ class D3D12CpuDescriptorPool
 
   D3D12_CPU_DESCRIPTOR_HANDLE GetHandle(size_t index) const {
     D3D12_CPU_DESCRIPTOR_HANDLE heap_start =
-        heaps_[index >> heap_size_log2_]->GetCPUDescriptorHandleForHeapStart();
+        xe_d3d12_heap_cpu(heaps_[index >> heap_size_log2_]);
     uint32_t heap_local_index =
         uint32_t(index & ((uint32_t(1) << heap_size_log2_) - 1));
     return provider_.OffsetDescriptor(type_, heap_start, heap_local_index);

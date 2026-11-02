@@ -1056,7 +1056,7 @@ bool X64Emitter::TryInlinePPCGprLrSaveRestore(const hir::Instr* instr,
       const int32_t disp = -first_slot_offset +
                            static_cast<int32_t>((guest_reg - first_gpr) * 8);
       mov(rdx,
-          qword[GetContextReg() + offsetof(ppc::PPCContext, r[guest_reg])]);
+          qword[GetContextReg() + (offsetof(ppc::PPCContext, r) + guest_reg * sizeof(uint64_t))]);
       if (has_movbe) {
         movbe(qword[GetMembaseReg() + rax + disp], rdx);
       } else {
@@ -1084,7 +1084,7 @@ bool X64Emitter::TryInlinePPCGprLrSaveRestore(const hir::Instr* instr,
       mov(rdx, qword[GetMembaseReg() + rax + disp]);
       bswap(rdx);
     }
-    mov(qword[GetContextReg() + offsetof(ppc::PPCContext, r[guest_reg])], rdx);
+    mov(qword[GetContextReg() + (offsetof(ppc::PPCContext, r) + guest_reg * sizeof(uint64_t))], rdx);
   }
 
   // The reloaded LR lands in both r12 and lr; 32-bit ops zero the rest of rcx.

@@ -557,7 +557,7 @@ void SharedMemory::TryFindUploadRange(const uint32_t& block_first,
 }
 
 static bool UploadRange_DoBestScanForward(uint64_t v, uint32_t* out) {
-#if XE_ARCH_AMD64 == 1 && XE_PLATFORM_WIN32
+#if XE_ARCH_AMD64 == 1 && XE_PLATFORM_WIN32 && !defined(__GNUC__)
   if (!v) {
     return false;
   }

@@ -165,7 +165,7 @@ bool D3D12Presenter::CaptureGuestOutputGPUBlit(const void*& data_out,
     return false;
   }
 
-  D3D12_RESOURCE_DESC texture_desc = guest_output_resource->GetDesc();
+  D3D12_RESOURCE_DESC texture_desc = xe_d3d12_resource_desc(guest_output_resource.Get());
   uint32_t w = uint32_t(texture_desc.Width);
   uint32_t h = uint32_t(texture_desc.Height);
   if (w == 0 || h == 0) return false;
@@ -293,7 +293,7 @@ bool D3D12Presenter::CaptureGuestOutput(RawImage& image_out) {
 
   ID3D12Device* device = provider_.GetDevice();
 
-  D3D12_RESOURCE_DESC texture_desc = guest_output_resource->GetDesc();
+  D3D12_RESOURCE_DESC texture_desc = xe_d3d12_resource_desc(guest_output_resource.Get());
   D3D12_TEXTURE_COPY_LOCATION copy_dest;
   UINT64 copy_dest_size;
   device->GetCopyableFootprints(&texture_desc, 0, 1, 0,
@@ -567,7 +567,7 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(
 
   // Create the RTV descriptors.
   D3D12_CPU_DESCRIPTOR_HANDLE rtv_heap_start =
-      paint_context_.rtv_heap->GetCPUDescriptorHandleForHeapStart();
+      xe_d3d12_heap_cpu(paint_context_.rtv_heap.Get());
   D3D12_RENDER_TARGET_VIEW_DESC rtv_desc;
   rtv_desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
   rtv_desc.Texture2D.MipSlice = 0;
@@ -601,7 +601,7 @@ bool D3D12Presenter::RefreshGuestOutputImpl(
       guest_output_resource_ref = guest_output_resources_[mailbox_index];
   if (guest_output_resource_ref.second) {
     D3D12_RESOURCE_DESC guest_output_resource_current_desc =
-        guest_output_resource_ref.second->GetDesc();
+        xe_d3d12_resource_desc(guest_output_resource_ref.second.Get());
     if (guest_output_resource_current_desc.Width != frontbuffer_width ||
         guest_output_resource_current_desc.Height != frontbuffer_height) {
       // Main target painting has its own reference to the textures for reading
@@ -690,7 +690,7 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(
 
   // Obtain the RTV heap and the back buffer.
   D3D12_CPU_DESCRIPTOR_HANDLE rtv_heap_start =
-      paint_context_.rtv_heap->GetCPUDescriptorHandleForHeapStart();
+      xe_d3d12_heap_cpu(paint_context_.rtv_heap.Get());
   UINT back_buffer_index =
       paint_context_.swap_chain->GetCurrentBackBufferIndex();
   D3D12_CPU_DESCRIPTOR_HANDLE back_buffer_rtv = provider_.OffsetRTVDescriptor(
@@ -748,7 +748,7 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(
     if (guest_output_flow.effect_count) {
       ID3D12DescriptorHeap* view_heap = paint_context_.view_heap.Get();
       D3D12_CPU_DESCRIPTOR_HANDLE view_heap_cpu_start =
-          view_heap->GetCPUDescriptorHandleForHeapStart();
+          xe_d3d12_heap_cpu(view_heap);
 
       // Store the main target reference to the guest output texture so it's not
       // destroyed while it's still potentially in use by main target painting
@@ -835,7 +835,7 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(
         std::pair<uint32_t, uint32_t> intermediate_current_size(0, 0);
         if (intermediate_texture_ptr_ref) {
           D3D12_RESOURCE_DESC intermediate_current_desc =
-              intermediate_texture_ptr_ref->GetDesc();
+              xe_d3d12_resource_desc(intermediate_texture_ptr_ref.Get());
           intermediate_current_size.first =
               uint32_t(intermediate_current_desc.Width);
           intermediate_current_size.second = intermediate_current_desc.Height;
@@ -938,7 +938,7 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(
       // This effect loop must not be aborted so the states of the resources
       // involved are consistent.
       D3D12_GPU_DESCRIPTOR_HANDLE view_heap_gpu_start =
-          view_heap->GetGPUDescriptorHandleForHeapStart();
+          xe_d3d12_heap_gpu(view_heap);
       for (size_t i = 0; i < guest_output_flow.effect_count; ++i) {
         bool is_final_effect = i + 1 >= guest_output_flow.effect_count;
 
@@ -1007,7 +1007,7 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(
           back_buffer_bound = true;
         }
         D3D12_RESOURCE_DESC effect_dest_resource_desc =
-            effect_dest_resource->GetDesc();
+            xe_d3d12_resource_desc(effect_dest_resource);
         D3D12_VIEWPORT viewport;
         viewport.TopLeftX = 0.0f;
         viewport.TopLeftY = 0.0f;

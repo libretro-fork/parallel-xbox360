@@ -186,8 +186,8 @@ bool D3D12ImmediateDrawer::Initialize() {
         "D3D12ImmediateDrawer: Failed to create the sampler descriptor heap");
     return false;
   }
-  sampler_heap_cpu_start_ = sampler_heap_->GetCPUDescriptorHandleForHeapStart();
-  sampler_heap_gpu_start_ = sampler_heap_->GetGPUDescriptorHandleForHeapStart();
+  sampler_heap_cpu_start_ = xe_d3d12_heap_cpu(sampler_heap_.Get());
+  sampler_heap_gpu_start_ = xe_d3d12_heap_gpu(sampler_heap_.Get());
   uint32_t sampler_size = provider_.GetSamplerDescriptorSize();
   // Nearest neighbor, clamp.
   D3D12_SAMPLER_DESC sampler_desc = {};
@@ -667,7 +667,7 @@ void D3D12ImmediateDrawer::UploadTextures() {
   for (const PendingTextureUpload& pending_upload : texture_uploads_pending_) {
     ID3D12Resource* texture = pending_upload.texture.Get();
 
-    D3D12_RESOURCE_DESC texture_desc = texture->GetDesc();
+    D3D12_RESOURCE_DESC texture_desc = xe_d3d12_resource_desc(texture);
     D3D12_TEXTURE_COPY_LOCATION location_source, location_dest;
     location_source.pResource = pending_upload.buffer.Get();
     location_source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;

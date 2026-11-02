@@ -12,6 +12,9 @@
 #include <ranges>
 
 #include "xenia/kernel/kernel_state.h"
+#if defined(XENIA_LIBRETRO)
+#include "libretro/core_events.h"
+#endif
 
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/logging.h"
@@ -981,23 +984,23 @@ void KernelState::InitXmpVolumePatch() {
 void KernelState::TerminateTitle() {
   XELOGI("KernelState::TerminateTitle");
   xe::FlushLog();
+#if defined(XENIA_LIBRETRO)
+  xe_libretro_request_title_stop();
+  // Reuse the dashboard park: the frontend stops and joins guest workers.
+  auto* current_thread = XThread::GetCurrentThread();
+  if (current_thread) {
+    current_thread->Suspend(nullptr);
+    while (true) {
+      xe::threading::NanoSleep(int64_t(1'000'000'000));
+    }
+  }
+#else
   std::quick_exit(EXIT_SUCCESS);
+#endif
 }
 
 void KernelState::ExitToDashboard() {
   XELOGI("KernelState::ExitToDashboard");
-  if (auto on_exit_to_dashboard = emulator_->on_exit_to_dashboard()) {
-    if (on_exit_to_dashboard()) {
-      // Park off guest code until the in-process reset terminates us; Suspend
-      // can return on POSIX, so loop rather than fall through to
-      // TerminateTitle.
-      auto* current_thread = XThread::GetCurrentThread();
-      current_thread->Suspend(nullptr);
-      while (true) {
-        xe::threading::NanoSleep(int64_t(1'000'000'000));
-      }
-    }
-  }
   TerminateTitle();
 }
 

@@ -8,6 +8,7 @@
  */
 
 #include <forward_list>
+#include <mutex>
 
 #include "third_party/disruptorplus/include/disruptorplus/blocking_wait_strategy.hpp"
 #include "third_party/disruptorplus/include/disruptorplus/multi_threaded_claim_strategy.hpp"
@@ -258,7 +259,25 @@ class TimerQueue {
 #endif
 };
 
-xe::threading::TimerQueue timer_queue_;
+// No worker may start under the Windows DLL loader lock.
+static std::mutex timer_queue_mutex_;
+static std::unique_ptr<TimerQueue> timer_queue_;
+
+static TimerQueue& GetTimerQueue() {
+  std::lock_guard<std::mutex> lock(timer_queue_mutex_);
+  if (!timer_queue_) timer_queue_ = std::make_unique<TimerQueue>();
+  return *timer_queue_;
+}
+
+void ShutdownTimerQueue() {
+  std::unique_ptr<TimerQueue> stopped;
+  {
+    std::lock_guard<std::mutex> lock(timer_queue_mutex_);
+    stopped = std::move(timer_queue_);
+  }
+  // Destruction uses the queue's existing wake-and-join sequence outside the
+  // manager lock, so an in-flight callback can finish.
+}
 
 void TimerQueueWaitItem::Disarm() {
   State state;
@@ -297,16 +316,18 @@ void TimerQueueWaitItem::Disarm() {
 std::weak_ptr<WaitItem> QueueTimerOnce(std::function<void(void*)> callback,
                                        void* userdata,
                                        WaitItem::clock::time_point due) {
-  return timer_queue_.QueueTimer(
-      std::make_shared<WaitItem>(std::move(callback), userdata, &timer_queue_,
+  TimerQueue& queue = GetTimerQueue();
+  return queue.QueueTimer(
+      std::make_shared<WaitItem>(std::move(callback), userdata, &queue,
                                  due, WaitItem::clock::duration::zero()));
 }
 // only used by HighResolutionTimer
 std::weak_ptr<WaitItem> QueueTimerRecurring(
     std::function<void(void*)> callback, void* userdata,
     WaitItem::clock::time_point due, WaitItem::clock::duration interval) {
-  return timer_queue_.QueueTimer(std::make_shared<WaitItem>(
-      std::move(callback), userdata, &timer_queue_, due, interval));
+  TimerQueue& queue = GetTimerQueue();
+  return queue.QueueTimer(std::make_shared<WaitItem>(
+      std::move(callback), userdata, &queue, due, interval));
 }
 
 }  // namespace threading

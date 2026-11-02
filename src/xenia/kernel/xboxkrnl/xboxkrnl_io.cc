@@ -1,4 +1,4 @@
-﻿/**
+/**
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
@@ -72,14 +72,14 @@ static bool CompletesAsync(XFile* file, uint64_t byte_offset, XThread* thread,
 
 struct CreateOptions {
   // https://processhacker.sourceforge.io/doc/ntioapi_8h.html
-  static constexpr uint32_t FILE_DIRECTORY_FILE = 0x00000001;
+  static constexpr uint32_t kDirectoryFile = 0x00000001;
   // Optimization - files access will be sequential, not random.
-  static constexpr uint32_t FILE_SEQUENTIAL_ONLY = 0x00000004;
-  static constexpr uint32_t FILE_SYNCHRONOUS_IO_ALERT = 0x00000010;
-  static constexpr uint32_t FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020;
-  static constexpr uint32_t FILE_NON_DIRECTORY_FILE = 0x00000040;
+  static constexpr uint32_t kSequentialOnly = 0x00000004;
+  static constexpr uint32_t kSynchronousIoAlert = 0x00000010;
+  static constexpr uint32_t kSynchronousIoNonalert = 0x00000020;
+  static constexpr uint32_t kNonDirectoryFile = 0x00000040;
   // Optimization - file access will be random, not sequential.
-  static constexpr uint32_t FILE_RANDOM_ACCESS = 0x00000800;
+  static constexpr uint32_t kRandomAccess = 0x00000800;
 };
 
 // XeFu, the original Xbox emulator, opens the running Xbox title's data
@@ -213,8 +213,8 @@ dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
             root_entry, target_path,
             vfs::FileDisposition((uint32_t)creation_disposition),
             desired_access,
-            (create_options & CreateOptions::FILE_DIRECTORY_FILE) != 0,
-            (create_options & CreateOptions::FILE_NON_DIRECTORY_FILE) != 0,
+            (create_options & CreateOptions::kDirectoryFile) != 0,
+            (create_options & CreateOptions::kNonDirectoryFile) != 0,
             &vfs_file, &file_action);
       },
       GuestScheduler::BlockingCallClass::kConcurrent);
@@ -224,10 +224,10 @@ dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
   if (XSUCCEEDED(result)) {
     // If true, desired_access SYNCHRONIZE flag must be set.
     bool alertable =
-        (create_options & CreateOptions::FILE_SYNCHRONOUS_IO_ALERT) != 0;
+        (create_options & CreateOptions::kSynchronousIoAlert) != 0;
     bool synchronous =
         alertable ||
-        (create_options & CreateOptions::FILE_SYNCHRONOUS_IO_NONALERT);
+        (create_options & CreateOptions::kSynchronousIoNonalert);
     file = object_ref<XFile>(
         new XFile(kernel_state(), vfs_file, synchronous, alertable));
 

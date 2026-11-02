@@ -24,15 +24,18 @@
 #include <thread>
 
 #include "libretro.h"
+#include "core_events.h"
 #include "libretro_vulkan.h"
 #ifdef _WIN32
 #include "libretro_d3d12.h"
+#include "xenia/ui/d3d12/d3d12_struct_return.h"
 #endif
 #include "libretro_core_options.h"
 
 // Xenia headers
 #include "xenia/xbox.h"
 #include "xenia/emulator.h"
+#include "xenia/base/threading_timer_queue.h"
 #include "xenia/memory.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/filesystem.h"
@@ -1339,7 +1342,7 @@ static void update_video_d3d12(void) {
     }
 
     // Copy pixels to upload buffer (row-pitch aligned)
-    D3D12_RESOURCE_DESC tex_desc = f.texture->GetDesc();
+    D3D12_RESOURCE_DESC tex_desc = xe_d3d12_resource_desc(f.texture);
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout = {};
     device->GetCopyableFootprints(&tex_desc, 0, 1, 0, &layout, nullptr, nullptr, nullptr);
 
@@ -1412,7 +1415,7 @@ static void update_video_d3d12(void) {
 /*  Xenia lifecycle (C++ internal)                                     */
 /* ================================================================== */
 
-#ifdef _WIN32
+#if defined(_WIN32) && defined(_MSC_VER)
 // SEH wrapper (no C++ objects on stack).
 #pragma warning(push)
 #pragma warning(disable: 4611)  // setjmp interaction
@@ -1769,7 +1772,7 @@ static void xenia_stop_emulator(void) {
     if (xenia_emulator) {
         // Not paused while it stops: the title's threads have to run out
         guest_set_paused(false);
-        // Not TerminateTitle: it ends the process, RetroArch with it
+        // Join workers here, on the frontend thread.
         if (xenia_emulator->is_title_open())
             xenia_emulator->StopTitleThreads();
         xenia_emulator->Shutdown();
@@ -1779,6 +1782,7 @@ static void xenia_stop_emulator(void) {
     lr_input_driver = nullptr;
     lr_graphics = nullptr;
     game_loaded = false;
+    xe_libretro_clear_title_stop();
 }
 
 static void xenia_shutdown(void) {
@@ -1895,6 +1899,7 @@ RETRO_API void retro_init(void) {
 
 RETRO_API void retro_deinit(void) {
     xenia_shutdown();
+    xe::threading::ShutdownTimerQueue();
 
     free(core_state.audio_buffer);
     core_state.audio_buffer = nullptr;
@@ -2184,6 +2189,8 @@ static void run_stats_end(std::chrono::steady_clock::time_point run_start, doubl
 }
 
 RETRO_API void retro_run(void) {
+    if (xe_libretro_take_title_stop())
+        xenia_stop_emulator();
     {
         std::string notice;
         {

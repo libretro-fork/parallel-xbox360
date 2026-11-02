@@ -691,9 +691,9 @@ bool D3D12CommandProcessor::SetupContext() {
       return false;
     }
     view_bindless_heap_cpu_start_ =
-        view_bindless_heap_->GetCPUDescriptorHandleForHeapStart();
+        xe_d3d12_heap_cpu(view_bindless_heap_);
     view_bindless_heap_gpu_start_ =
-        view_bindless_heap_->GetGPUDescriptorHandleForHeapStart();
+        xe_d3d12_heap_gpu(view_bindless_heap_);
     view_bindless_heap_allocated_ = uint32_t(SystemBindlessView::kCount);
 
     D3D12_DESCRIPTOR_HEAP_DESC sampler_bindless_heap_desc;
@@ -709,9 +709,9 @@ bool D3D12CommandProcessor::SetupContext() {
       return false;
     }
     sampler_bindless_heap_cpu_start_ =
-        sampler_bindless_heap_current_->GetCPUDescriptorHandleForHeapStart();
+        xe_d3d12_heap_cpu(sampler_bindless_heap_current_);
     sampler_bindless_heap_gpu_start_ =
-        sampler_bindless_heap_current_->GetGPUDescriptorHandleForHeapStart();
+        xe_d3d12_heap_gpu(sampler_bindless_heap_current_);
     sampler_bindless_heap_allocated_ = 0;
   } else {
     view_bindful_heap_pool_ =
@@ -2004,7 +2004,7 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   if (!swap_texture_resource) {
     return;
   }
-  D3D12_RESOURCE_DESC swap_texture_desc = swap_texture_resource->GetDesc();
+  D3D12_RESOURCE_DESC swap_texture_desc = xe_d3d12_resource_desc(swap_texture_resource);
 
   auto aspect = graphics_system_->GetScaledAspectRatio();
 
@@ -2024,7 +2024,7 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           // Make sure the texture of the correct size is available for FXAA.
           if (fxaa_source_texture_) {
             D3D12_RESOURCE_DESC fxaa_source_texture_desc =
-                fxaa_source_texture_->GetDesc();
+                xe_d3d12_resource_desc(fxaa_source_texture_.Get());
             if (fxaa_source_texture_desc.Width != swap_texture_desc.Width ||
                 fxaa_source_texture_desc.Height != swap_texture_desc.Height) {
               if (GetCompletedSubmission() < fxaa_source_texture_submission_) {
@@ -4912,9 +4912,9 @@ bool D3D12CommandProcessor::SwitchToNewBindlessSamplerHeap() {
       std::make_pair(sampler_bindless_heap_current_, GetCurrentSubmission()));
   sampler_bindless_heap_current_ = sampler_heap_new;
   sampler_bindless_heap_cpu_start_ =
-      sampler_bindless_heap_current_->GetCPUDescriptorHandleForHeapStart();
+      xe_d3d12_heap_cpu(sampler_bindless_heap_current_);
   sampler_bindless_heap_gpu_start_ =
-      sampler_bindless_heap_current_->GetGPUDescriptorHandleForHeapStart();
+      xe_d3d12_heap_gpu(sampler_bindless_heap_current_);
   sampler_bindless_heap_allocated_ = 0;
   // The heap only holds texture cache samplers, so invalidate all of them.
   texture_cache_bindless_sampler_map_.clear();

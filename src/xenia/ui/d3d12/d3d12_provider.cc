@@ -409,7 +409,7 @@ bool D3D12Provider::Initialize() {
     DXGI_ADAPTER_DESC1 adapter_desc;
     if (SUCCEEDED(adapter->GetDesc1(&adapter_desc))) {
       if (SUCCEEDED(pfn_d3d12_create_device_(adapter, D3D_FEATURE_LEVEL_11_0,
-                                             _uuidof(ID3D12Device), nullptr))) {
+                                             __uuidof(ID3D12Device), nullptr))) {
         if (cvars::d3d12_adapter >= 0) {
           if (adapter_index == cvars::d3d12_adapter) {
             break;

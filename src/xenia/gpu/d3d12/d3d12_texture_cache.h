@@ -632,7 +632,7 @@ class D3D12TextureCache final : public TextureCache {
    public:
     explicit SRVDescriptorCachePage(ID3D12DescriptorHeap* heap)
         : heap_(heap),
-          heap_start_(heap->GetCPUDescriptorHandleForHeapStart()) {}
+          heap_start_(xe_d3d12_heap_cpu(heap)) {}
     SRVDescriptorCachePage(const SRVDescriptorCachePage& page) = delete;
     SRVDescriptorCachePage& operator=(const SRVDescriptorCachePage& page) =
         delete;

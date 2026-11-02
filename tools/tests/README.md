@@ -184,3 +184,27 @@ The primitive accepts 1D, 2D, 3D, cube and 2D-array views; execution coverage in
 this fixture is 2D. Guest coordinate/face conversion, half-texel offsets,
 signed/gamma treatment, sampler policies, texture state and register writes
 remain to be implemented. No live renderer path uses these primitives yet.
+## Windows GNU compiler and ABI checks
+
+The following fixtures are authored in MSVC-compatible C89. They can also be
+compiled with MinGW-w64 GCC using `-std=c89 -Wall -Wextra -Werror`.
+
+- `core_events_test.c` checks coalesced title-stop requests and stale-state
+  clearing. Run `make check-core-events` on Windows or Linux.
+- `context_switch_test.c` checks two fiber resumes using the owned
+  `make_x86_64_ms_pe_gas.asm` and `jump_x86_64_ms_pe_gas.asm` objects under
+  `third_party/boost_context/context/src/asm/`. Assemble with GCC using
+  `-x assembler-with-cpp -DBOOST_CONTEXT_EXPORT=`; link the objects to the test.
+- `d3d12_struct_return_test.c` checks five D3D12 C ABI adapters against real WARP
+  objects. Compile it with `src/xenia/ui/d3d12/d3d12_struct_return.c`, add
+  `-Isrc -isystem . -isystem third_party/DirectX-Headers/include`, and link
+  `-ld3d12 -ldxgi -ldxguid -lole32 -luuid`. The C adapter object can also be
+  linked to the fixture compiled as C++ to check calls from the renderer.
+- `core_load_test.c` loads a DLL, checks the 25 required libretro exports,
+  API version and core name, then unloads it. Compile with `-isystem libretro`.
+  Run `core_load_test.exe ./parallel_xbox360_libretro.dll`, then repeat with
+  `lifecycle` as the second argument for two init/deinit cycles before unload.
+
+The Windows GCC build passed all these checks, including the context-switch
+and D3D12 adapter tests compiled with MSVC. These are ABI and lifecycle smoke
+checks; they do not exercise game execution or an actual title exit.

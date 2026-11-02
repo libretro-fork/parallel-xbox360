@@ -22,11 +22,17 @@
 #include "third_party/DirectX-Headers/include/directx/d3d12.h"
 #include "third_party/DirectX-Headers/include/directx/d3d12sdklayers.h"
 
+#if defined(__MINGW32__)
+#include "xenia/ui/d3d12/graphics_analysis_compat.h"
+#else
 #include <DXProgrammableCapture.h>
+#endif
 #include <dxgi1_6.h>
 #include <dxgidebug.h>
 // For Microsoft::WRL::ComPtr.
 #include <wrl/client.h>
+
+#include "xenia/ui/d3d12/d3d12_struct_return.h"
 
 #define XELOGD3D XELOGI
 

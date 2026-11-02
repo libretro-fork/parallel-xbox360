@@ -740,7 +740,7 @@ if(WIN32)
   # override; clang (macOS) rejects the MSVC /wd flag, so those are MSVC only.
   set(_xe_s2d_meson_args
     --default-library=static --buildtype=release
-    -Dspirv-to-dxil=true
+    -Dspirv-to-dxil=true -Dspirv-tools=disabled
     -Dgallium-drivers= -Dvulkan-drivers= -Dplatforms=
     -Dglx=disabled -Degl=disabled -Dgbm=disabled
     -Dopengl=false -Dgles1=disabled -Dgles2=disabled

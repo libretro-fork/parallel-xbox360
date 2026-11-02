@@ -136,8 +136,8 @@ uint64_t D3D12DescriptorHeapPool::Request(uint64_t submission_index,
     }
     writable_first_ = new Page;
     writable_first_->heap = new_heap;
-    writable_first_->cpu_start = new_heap->GetCPUDescriptorHandleForHeapStart();
-    writable_first_->gpu_start = new_heap->GetGPUDescriptorHandleForHeapStart();
+    writable_first_->cpu_start = xe_d3d12_heap_cpu(new_heap.Get());
+    writable_first_->gpu_start = xe_d3d12_heap_gpu(new_heap.Get());
     writable_first_->last_submission_index = submission_index;
     writable_first_->next = nullptr;
     writable_last_ = writable_first_;

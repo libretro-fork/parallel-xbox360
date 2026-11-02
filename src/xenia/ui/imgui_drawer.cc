@@ -29,7 +29,7 @@
 #include "third_party/stb/stb_image.h"
 
 #if XE_PLATFORM_WIN32
-#include <ShlObj_core.h>
+#include <shlobj.h>
 #endif
 
 #if XE_PLATFORM_LINUX && !XE_PLATFORM_ANDROID

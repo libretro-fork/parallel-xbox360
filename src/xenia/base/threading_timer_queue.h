@@ -22,6 +22,9 @@ namespace xe::threading {
 
 class TimerQueue;
 
+// Called after timer users stop, before a core DLL is unloaded.
+void ShutdownTimerQueue();
+
 struct TimerQueueWaitItem {
   using clock = std::chrono::steady_clock;
 

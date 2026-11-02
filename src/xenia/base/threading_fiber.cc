@@ -41,8 +41,8 @@
 #endif
 
 // Boost.Context fcontext_t primitives. The implementation is the hand-written
-// assembly in the boostorg/context submodule (third_party/boost_context),
-// linked via the boost_context static lib. These three routines carry no Boost
+// owned assembly in third_party/boost_context, linked into the core.
+// These routines carry no Boost
 // header dependencies, so we declare the two we use directly here.
 extern "C" {
 typedef void* fcontext_t;

@@ -1,5 +1,6 @@
 # Shared, hand-maintained source selection for the GNU Make build.
 # Keep in sync with the libretro target when importing upstream changes.
+SOURCES_C += libretro/core_events.c
 CORE_DIRS := src/xenia src/xenia/base src/xenia/apu src/xenia/apu/nop \
  src/xenia/cpu src/xenia/cpu/backend src/xenia/cpu/compiler \
  src/xenia/cpu/compiler/passes src/xenia/cpu/hir src/xenia/cpu/ppc \
@@ -23,7 +24,10 @@ endif
 ifeq ($(OS),windows)
 CORE_DIRS += src/xenia/gpu/d3d12 src/xenia/ui/d3d12
 OS_SUFFIXES := win
+BOOST_VARIANT := x86_64_ms_pe_gas.asm
+ifeq ($(WINDOWS_ABI),msvc)
 BOOST_VARIANT := x86_64_ms_pe_clang_gas.S
+endif
 else ifeq ($(OS),macos)
 OS_SUFFIXES := posix mac
 BOOST_VARIANT := arm64_aapcs_macho_gas.S
@@ -44,6 +48,7 @@ SOURCES_CXX += libretro/libretro.cpp libretro/libretro_audio_driver.cc \
  libretro/libretro_hid.cc libretro/libretro_vk_presenter.cc \
  libretro/libretro_gamedb.cc libretro/libretro_disc.cc src/xenia/hid/portal/portal.cc
 ifeq ($(OS),windows)
+SOURCES_C += src/xenia/ui/d3d12/d3d12_struct_return.c
 SOURCES_CXX += libretro/libretro_d3d12_presenter.cc third_party/dxbc/DXBCChecksum.cpp \
  src/xenia/hid/portal/hardware_portal.cc
 SOURCES_C += third_party/libusb/libusb/core.c third_party/libusb/libusb/descriptor.c \

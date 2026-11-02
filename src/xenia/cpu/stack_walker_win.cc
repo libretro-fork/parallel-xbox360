@@ -308,8 +308,8 @@ class Win32StackWalker : public StackWalker {
   }
 
  private:
-  static PVOID WINAPI XSymFunctionTableAccess64(__in HANDLE hProcess,
-                                                __in DWORD64 AddrBase) {
+  static PVOID WINAPI XSymFunctionTableAccess64(_In_ HANDLE hProcess,
+                                                _In_ DWORD64 AddrBase) {
     if (AddrBase >= code_cache_min_ && AddrBase < code_cache_max_) {
       // Within our generated range so ask code cache.
       return code_cache_->LookupUnwindInfo(AddrBase);

@@ -8,7 +8,7 @@
 #include "sha256.h"
 
 // big endian architectures need #define __BYTE_ORDER __BIG_ENDIAN
-#ifndef _MSC_VER
+#if !defined(_MSC_VER) && !defined(_WIN32)
 #if defined(__APPLE__)
 #if !defined(__BYTE_ORDER) && defined(__BYTE_ORDER__) && \
     defined(__ORDER_BIG_ENDIAN__)

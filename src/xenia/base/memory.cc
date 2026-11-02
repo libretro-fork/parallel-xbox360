@@ -35,7 +35,7 @@ using xe::swcache::CacheLine;
 #if XE_ARCH_AMD64
 static constexpr unsigned NUM_CACHELINES_IN_PAGE = 4096 / sizeof(CacheLine);
 
-#if defined(__clang__)
+#if defined(__clang__) || defined(__GNUC__)
 XE_FORCEINLINE
 static void mvdir64b(void* to, const void* from) {
   __asm__("movdir64b %1, %0" : : "r"(to), "m"(*(char*)from) : "memory");

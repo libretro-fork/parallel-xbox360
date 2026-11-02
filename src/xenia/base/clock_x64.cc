@@ -16,7 +16,7 @@
 
 // Wrap all these different cpu compiler intrinsics.
 // So no inline assembler here and the compiler will remove the clutter.
-#if XE_COMPILER_MSVC
+#if XE_COMPILER_MSVC || defined(__MINGW32__)
 #define xe_cpu_cpuid(level, eax, ebx, ecx, edx)              \
   {                                                          \
     int __xe_cpuid_registers_[4];                            \
