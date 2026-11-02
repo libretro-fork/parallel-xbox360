@@ -1,6 +1,6 @@
 name: Build libretro core
 
-# xenia_edge_libretro (.so / .dll / .dylib), the xenia-libretro CMake target,
+# parallel_xbox360_libretro (.so / .dll / .dylib), the xenia-libretro CMake target,
 # built with xenia-build.py on the runners and tools upstream builds Xenia
 # Edge with.
 
@@ -63,17 +63,17 @@ jobs:
       - name: Collect
         run: |
           mkdir -p dist
-          core=$(find build -name 'xenia_edge_libretro.so' | head -1)
+          core=$(find build -name 'parallel_xbox360_libretro.so' | head -1)
           echo "core: $core"
-          cp "$core" dist/xenia_edge_libretro.so
-          cp libretro/xenia_edge_libretro.info dist/
-          strip --strip-unneeded dist/xenia_edge_libretro.so
+          cp "$core" dist/parallel_xbox360_libretro.so
+          cp libretro/parallel_xbox360_libretro.info dist/
+          strip --strip-unneeded dist/parallel_xbox360_libretro.so
           ls -la dist
-          readelf -d dist/xenia_edge_libretro.so | grep NEEDED
+          readelf -d dist/parallel_xbox360_libretro.so | grep NEEDED
 
       - uses: actions/upload-artifact@v4
         with:
-          name: xenia_edge_libretro-linux-${{ matrix.arch }}
+          name: parallel_xbox360_libretro-linux-${{ matrix.arch }}
           path: dist/
 
   windows:
@@ -112,25 +112,25 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          core=$(find build -name 'xenia_edge_libretro.dll' | head -1)
+          core=$(find build -name 'parallel_xbox360_libretro.dll' | head -1)
           echo "core: $core"
-          cp "$core" dist/xenia_edge_libretro.dll
-          cp libretro/xenia_edge_libretro.info dist/
+          cp "$core" dist/parallel_xbox360_libretro.dll
+          cp libretro/parallel_xbox360_libretro.info dist/
           ls -la dist
-          # The pdb, kept apart: a crash's "xenia_edge_libretro.dll+<offset>"
+          # The pdb, kept apart: a crash's "parallel_xbox360_libretro.dll+<offset>"
           # in xenia.log resolves against it
           mkdir -p symbols
-          pdb=$(find build -name 'xenia_edge_libretro.pdb' | head -1)
+          pdb=$(find build -name 'parallel_xbox360_libretro.pdb' | head -1)
           [ -n "$pdb" ] && cp "$pdb" symbols/ || echo "no pdb"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: xenia_edge_libretro-windows-x86_64
+          name: parallel_xbox360_libretro-windows-x86_64
           path: dist/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: xenia_edge_libretro-windows-x86_64-symbols
+          name: parallel_xbox360_libretro-windows-x86_64-symbols
           path: symbols/
           if-no-files-found: ignore
 
@@ -165,18 +165,18 @@ jobs:
       - name: Collect
         run: |
           mkdir -p dist
-          core=$(find build* -name 'xenia_edge_libretro.dylib' | head -1)
+          core=$(find build* -name 'parallel_xbox360_libretro.dylib' | head -1)
           echo "core: $core"
-          cp "$core" dist/xenia_edge_libretro.dylib
-          cp libretro/xenia_edge_libretro.info dist/
-          strip -x dist/xenia_edge_libretro.dylib
-          codesign -f -s - dist/xenia_edge_libretro.dylib
-          otool -L dist/xenia_edge_libretro.dylib
-          lipo -info dist/xenia_edge_libretro.dylib
+          cp "$core" dist/parallel_xbox360_libretro.dylib
+          cp libretro/parallel_xbox360_libretro.info dist/
+          strip -x dist/parallel_xbox360_libretro.dylib
+          codesign -f -s - dist/parallel_xbox360_libretro.dylib
+          otool -L dist/parallel_xbox360_libretro.dylib
+          lipo -info dist/parallel_xbox360_libretro.dylib
 
       - uses: actions/upload-artifact@v4
         with:
-          name: xenia_edge_libretro-macos-${{ matrix.arch }}
+          name: parallel_xbox360_libretro-macos-${{ matrix.arch }}
           path: dist/
 
   # Cross-compiled with the NDK; the shader compiler the build runs is built
@@ -223,15 +223,15 @@ jobs:
       - name: Collect
         run: |
           mkdir -p dist
-          core=$(find build-android -name 'xenia_edge_libretro_android.so' | head -1)
+          core=$(find build-android -name 'parallel_xbox360_libretro_android.so' | head -1)
           echo "core: $core"
-          cp "$core" dist/xenia_edge_libretro_android.so
-          cp libretro/xenia_edge_libretro.info dist/
-          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-unneeded dist/xenia_edge_libretro_android.so
-          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -d dist/xenia_edge_libretro_android.so | grep NEEDED
+          cp "$core" dist/parallel_xbox360_libretro_android.so
+          cp libretro/parallel_xbox360_libretro.info dist/
+          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-unneeded dist/parallel_xbox360_libretro_android.so
+          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -d dist/parallel_xbox360_libretro_android.so | grep NEEDED
           ls -la dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: xenia_edge_libretro-android-${{ matrix.abi }}
+          name: parallel_xbox360_libretro-android-${{ matrix.abi }}
           path: dist/

@@ -1,4 +1,4 @@
-# Xenia libretro core
+# parallel_xbox360 libretro core
 
 A [libretro](https://www.libretro.com/) core of [Xenia Edge](https://github.com/has207/xenia-edge), the Xbox 360 emulator, for RetroArch and other libretro frontends.
 
@@ -8,10 +8,10 @@ The emulator is upstream's: this repository follows xenia-edge and adds the libr
 
 The core is built by libretro's buildbot for Windows, Linux (x86_64, arm64) and Android (arm64-v8a, x86_64), and is installed from RetroArch: Online Updater > Core Downloader. Every push to the `libretro` branch is also built in [Actions](https://github.com/WizzardSK/xenia-libretro/actions/workflows/libretro.yml), macOS (Apple Silicon) included; the builds are the artifacts of a run, and downloading them needs a GitHub login.
 
-- **Windows:** `xenia_edge_libretro.dll`, which needs the Visual C++ 2015-2022 runtime. It carries `dxil.dll`, Direct3D 12's shader validator, inside and writes it to `system/Xenia-Edge/D3D12/` on start.
-- **Linux:** `xenia_edge_libretro.so`, glibc 2.35 or newer; besides the C/C++ runtime it uses only lz4 and fontconfig; no X11 or Wayland libraries. ARM64 uses the a64 CPU backend.
-- **macOS:** `xenia_edge_libretro.dylib`, Apple Silicon only. The x64 CPU backend needs the address space below 4 GB, which a core loaded into RetroArch cannot free, so there is no Intel build.
-- **Android:** `xenia_edge_libretro_android.so`.
+- **Windows:** `parallel_xbox360_libretro.dll`, which needs the Visual C++ 2015-2022 runtime. It carries `dxil.dll`, Direct3D 12's shader validator, inside and writes it to `system/Xenia-Edge/D3D12/` on start.
+- **Linux:** `parallel_xbox360_libretro.so`, glibc 2.35 or newer; uses fontconfig and the C/C++ runtime, with no X11 or Wayland libraries (the CMake build also links lz4 where available). ARM64 uses the a64 CPU backend.
+- **macOS:** `parallel_xbox360_libretro.dylib`, Apple Silicon only. The x64 CPU backend needs the address space below 4 GB, which a core loaded into RetroArch cannot free, so there is no Intel build.
+- **Android:** `parallel_xbox360_libretro_android.so`.
 
 ## Video
 
@@ -29,15 +29,48 @@ Games that need a signed-in profile get one: the core signs in the first profile
 
 ## Building
 
-With upstream's build dependencies (see upstream's documentation), from a checkout with its submodules:
+The checked-in `Makefile` and `Makefile.common` compile the core and its
+vendored dependencies directly, without CMake. Use a Linux build host with
+GNU Make, Python 3, clang 21, GCC 14's libstdc++, and the submodules initialized.
+Linux also needs the fontconfig development package. Slang and game patch data
+are fetched before building (there are no downloads at runtime):
 
-```
-git clone --recursive https://github.com/WizzardSK/xenia-libretro.git
-cd xenia-libretro
+```sh
+git clone --recursive https://github.com/libretro-fork/parallel-xbox360.git
+cd parallel-xbox360
 ./xenia-build.py slang
 ./xenia-build.py fetchdata
-./xenia-build.py build --config=Release --target=xenia-libretro
+make -j8 platform=linux-x86_64 CC=clang-21 CXX=clang++-21 HOST_CXX=clang++-21 AR=llvm-ar-21
 ```
+
+Every platform in `.gitlab-ci.yml` has an explicit selection:
+
+| `platform` | Output | Requirements |
+| --- | --- | --- |
+| `linux-x86_64` | `parallel_xbox360_libretro.so` | Native x86_64 Linux toolchain |
+| `linux-aarch64` | `parallel_xbox360_libretro.so` | Native aarch64 Linux toolchain, or `CC`/`CXX` cross compilers with a target sysroot |
+| `windows-x86_64` | `parallel_xbox360_libretro.dll` | LLVM, MSVC CRT/SDK, Meson, Ninja, Mesa and DXC; see `.ci/build-windows-cross.sh` |
+| `android-arm64-v8a` | `parallel_xbox360_libretro_android.so` | `NDK_ROOT=/path/to/ndk` |
+| `android-x86_64` | `parallel_xbox360_libretro_android.so` | `NDK_ROOT=/path/to/ndk` |
+
+`platform=unix` selects the native Linux architecture. `unix-arm64` and
+`windows` are aliases. Android defaults to API 28 and links the static C++
+runtime with 16 KB page alignment. `CC` and `CXX` override the target compilers;
+`HOST_CXX` always compiles build tools for the Linux host. `AR` selects LLVM's
+archiver (the NDK's `llvm-ar` on Android, `llvm-ar` otherwise). A prebuilt matching
+`xenia-shader-cc` may be supplied with `HOST_SHADER_CC=/absolute/path/to/tool`.
+Set `SLANGC_PATH` if Slang is outside `.slang/`.
+
+Build products are isolated under `build/make/<platform>/`; the final core is
+written to the repository root. `BUILD_DIR` and `HOST_DIR` override the build
+directories. `DEBUG=1` enables a debug build; `LTO=1` enables clang ThinLTO.
+`make clean platform=...` removes that target's build files and root artifact;
+shared host tools remain for other targets. `make help` lists the selections.
+The fixed zlib-ng configuration uses its portable C implementation.
+
+The CMake build remains available through `xenia-build.py` and produces the
+same renamed core. macOS remains available through that build. Existing
+`system/Xenia-Edge/` content and `xenia_*` option keys are retained.
 
 The CI workflow `.github/workflows/libretro.yml` builds every platform, including the Android cross build.
 

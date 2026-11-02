@@ -1566,7 +1566,7 @@ static bool xenia_setup_and_launch(const char *path) {
 #endif
             s_logging_initialized = true;
         }
-        XELOGI("Xenia Edge libretro core {}, built from commit {}",
+        XELOGI("parallel_xbox360 libretro core {}, built from commit {}",
                XENIA_LIBRETRO_VERSION, XENIA_LIBRETRO_COMMIT);
 
         xenia_emulator = std::make_unique<xe::Emulator>(
@@ -1877,7 +1877,7 @@ RETRO_API void retro_set_input_poll(retro_input_poll_t cb)            { core_sta
 RETRO_API void retro_set_input_state(retro_input_state_t cb)          { core_state.input_state_cb = cb; }
 
 RETRO_API void retro_init(void) {
-    xenia_log(RETRO_LOG_INFO, "Xenia Edge libretro core %s, built from commit %s\n",
+    xenia_log(RETRO_LOG_INFO, "parallel_xbox360 libretro core %s, built from commit %s\n",
               XENIA_LIBRETRO_VERSION, XENIA_LIBRETRO_COMMIT);
     core_state.audio_sample_rate  = 48000.0;
     core_state.audio_buffer_size  = 6 * 4096;   // int16 values (4096 frames of 5.1)
@@ -1903,7 +1903,7 @@ RETRO_API void retro_deinit(void) {
 
 RETRO_API void retro_get_system_info(struct retro_system_info *info) {
     memset(info, 0, sizeof(*info));
-    info->library_name     = "Xenia Edge";
+    info->library_name     = "parallel_xbox360";
     // Upstream's version and this core's commit, as rpcs3-libretro's: which
     // build a tester runs shows in RetroArch itself (NNshi)
     info->library_version  = XENIA_LIBRETRO_VERSION " (libretro core " XENIA_LIBRETRO_COMMIT ")";

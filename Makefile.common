@@ -1,0 +1,340 @@
+# Shared, hand-maintained source selection for the GNU Make build.
+# Keep in sync with the libretro target when importing upstream changes.
+CORE_DIRS := src/xenia src/xenia/base src/xenia/apu src/xenia/apu/nop \
+ src/xenia/cpu src/xenia/cpu/backend src/xenia/cpu/compiler \
+ src/xenia/cpu/compiler/passes src/xenia/cpu/hir src/xenia/cpu/ppc \
+ src/xenia/gpu src/xenia/gpu/null src/xenia/gpu/vulkan \
+ src/xenia/hid src/xenia/hid/nop \
+ src/xenia/ui src/xenia/ui/vulkan src/xenia/ui/vulkan/functions
+CORE_DIRS += $(shell find src/xenia/kernel src/xenia/patcher src/xenia/vfs -type d)
+ifeq ($(ARCH),aarch64)
+CORE_DIRS += src/xenia/cpu/backend/a64
+ARCH_SUFFIXES := arm64
+CAPSTONE_ARCH := AArch64
+CAPSTONE_DEFS := -DCAPSTONE_HAS_ARM64 -DCAPSTONE_HAS_AARCH64
+BOOST_VARIANT := arm64_aapcs_elf_gas.S
+else
+CORE_DIRS += src/xenia/cpu/backend/x64
+ARCH_SUFFIXES := amd64 x64
+CAPSTONE_ARCH := X86
+CAPSTONE_DEFS := -DCAPSTONE_HAS_X86 -DCAPSTONE_X86_ATT_DISABLE
+BOOST_VARIANT := x86_64_sysv_elf_gas.S
+endif
+ifeq ($(OS),windows)
+CORE_DIRS += src/xenia/gpu/d3d12 src/xenia/ui/d3d12
+OS_SUFFIXES := win
+BOOST_VARIANT := x86_64_ms_pe_clang_gas.S
+else ifeq ($(OS),android)
+OS_SUFFIXES := posix linux android
+else
+OS_SUFFIXES := posix linux gnulinux x11 gtk
+endif
+ALL_CORE_SOURCES := $(foreach dir,$(CORE_DIRS),$(wildcard $(dir)/*.cc))
+PLATFORM_SUFFIXES := win linux posix gnulinux x11 gtk android mac amd64 x64 arm64
+SOURCES_CXX := $(filter-out $(foreach s,$(PLATFORM_SUFFIXES),%_$(s).cc),$(ALL_CORE_SOURCES))
+SOURCES_CXX += $(filter $(foreach s,$(OS_SUFFIXES) $(ARCH_SUFFIXES),%_$(s).cc),$(ALL_CORE_SOURCES))
+SOURCES_CXX := $(filter-out %_main.cc %_test.cc %_demo.cc \
+ src/xenia/base/console_app_main_%.cc src/xenia/base/main_init_%.cc \
+ src/xenia/ui/windowed_app_main_%.cc src/xenia/vfs/vfs_dump.cc,$(SOURCES_CXX))
+SOURCES_CXX += libretro/libretro.cpp libretro/libretro_audio_driver.cc \
+ libretro/libretro_graphics_system.cc libretro/libretro_headless_stubs.cc \
+ libretro/libretro_hid.cc libretro/libretro_vk_presenter.cc \
+ libretro/libretro_gamedb.cc libretro/libretro_disc.cc src/xenia/hid/portal/portal.cc
+ifeq ($(OS),windows)
+SOURCES_CXX += libretro/libretro_d3d12_presenter.cc third_party/dxbc/DXBCChecksum.cpp \
+ src/xenia/hid/portal/hardware_portal.cc
+SOURCES_C += third_party/libusb/libusb/core.c third_party/libusb/libusb/descriptor.c \
+ third_party/libusb/libusb/hotplug.c third_party/libusb/libusb/io.c \
+ third_party/libusb/libusb/strerror.c third_party/libusb/libusb/sync.c \
+ third_party/libusb/libusb/os/events_windows.c third_party/libusb/libusb/os/threads_windows.c \
+ third_party/libusb/libusb/os/windows_common.c third_party/libusb/libusb/os/windows_usbdk.c \
+ third_party/libusb/libusb/os/windows_winusb.c
+endif
+
+INCLUDE_DIRS := $(GEN) $(GEN)/generated $(GEN)/third_party/zlib-ng third_party/ffmpeg-xenia \
+ . src libretro third_party third_party/capstone/include third_party/fmt/include \
+ third_party/glslang third_party/imgui third_party/stb third_party/snappy \
+ third_party/xxhash third_party/mspack third_party/pugixml/src \
+ third_party/asio/include third_party/tomlplusplus/include third_party/llvm/include \
+ third_party/Vulkan-Headers/include third_party/ffmpeg-xenia third_party/FFmpeg third_party/aes_128 \
+ third_party/zstd/lib third_party/zarchive/include third_party/zlib-ng
+
+SOURCES_C += third_party/aes_128/unroll/aes.c third_party/xxhash/xxhash.c \
+ third_party/mspack/lzxd.c third_party/mspack/system.c \
+ third_party/capstone/cs.c third_party/capstone/MCInst.c \
+ third_party/capstone/MCInstPrinter.c third_party/capstone/MCInstrDesc.c \
+ third_party/capstone/MCRegisterInfo.c third_party/capstone/SStream.c \
+ third_party/capstone/utils.c third_party/capstone/Mapping.c
+SOURCES_C += $(filter-out %/X86ATTInstPrinter.c,$(wildcard third_party/capstone/arch/$(CAPSTONE_ARCH)/*.c))
+SOURCES_CXX += third_party/fmt/src/format.cc third_party/fmt/src/os.cc \
+ third_party/imgui/imgui.cpp third_party/imgui/imgui_demo.cpp \
+ third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp \
+ third_party/imgui/imgui_widgets.cpp third_party/mspack/logging.cc \
+ third_party/pugixml/src/pugixml.cpp third_party/snappy/snappy.cc \
+ third_party/snappy/snappy-sinksource.cc third_party/snappy/snappy-stubs-internal.cc \
+ third_party/zarchive/src/zarchivereader.cpp third_party/zarchive/src/zarchivewriter.cpp
+SOURCES_CXX += $(filter-out %/GlslangToSpv.cpp,$(wildcard third_party/glslang/SPIRV/*.cpp))
+SOURCES_C += third_party/zarchive/src/sha_256.c
+ZSTD_SOURCES := $(filter-out %/threading.c,$(wildcard third_party/zstd/lib/common/*.c)) \
+ $(wildcard third_party/zstd/lib/compress/*.c third_party/zstd/lib/decompress/*.c)
+SOURCES_C += $(ZSTD_SOURCES)
+
+# A fixed generic zlib-ng configuration, shared by every target. Only the
+# emulator's archive/patch decompression uses it; no ISA dispatch is needed.
+ZLIB_SOURCES := $(filter-out %/gzread.c,$(wildcard third_party/zlib-ng/*.c)) \
+ $(wildcard third_party/zlib-ng/arch/generic/*.c)
+SOURCES_C += $(ZLIB_SOURCES) $(GEN)/third_party/zlib-ng/gzread.c
+SOURCES_ASM := $(addprefix third_party/boost_context/context/src/asm/,$(addsuffix _$(BOOST_VARIANT),make jump ontop))
+ifeq ($(ARCH),aarch64)
+SOURCES_CXX += third_party/xbyak_aarch64/src/xbyak_aarch64_impl.cpp \
+ third_party/xbyak_aarch64/src/util_impl.cpp
+INCLUDE_DIRS += third_party/xbyak_aarch64 third_party/xbyak_aarch64/src \
+ third_party/xbyak_aarch64/xbyak_aarch64
+endif
+
+# Host shader compiler: built for the build machine even when the core is
+# cross-compiled. SPIRV-Tools tables are generated by its own Python utilities.
+HOST_SOURCES := tools/build/shader_cc.cc \
+ $(wildcard third_party/glslang/glslang/MachineIndependent/*.cpp) \
+ $(wildcard third_party/glslang/glslang/MachineIndependent/preprocessor/*.cpp) \
+ $(wildcard third_party/glslang/glslang/GenericCodeGen/*.cpp) \
+ $(wildcard third_party/glslang/SPIRV/*.cpp) \
+ third_party/glslang/glslang/ResourceLimits/ResourceLimits.cpp \
+ third_party/glslang/glslang/OSDependent/Unix/ossource.cpp \
+ $(wildcard third_party/SPIRV-Tools/source/*.cpp) \
+ $(wildcard third_party/SPIRV-Tools/source/util/*.cpp) \
+ $(wildcard third_party/SPIRV-Tools/source/val/*.cpp) \
+ $(wildcard third_party/SPIRV-Tools/source/opt/*.cpp)
+HOST_SOURCES := $(filter-out %/pch_source.cpp %/pch.cpp %/mimalloc.cpp,$(HOST_SOURCES))
+HOST_INCLUDE_DIRS := $(HOST_DIR)/generated third_party/glslang \
+ third_party/glslang/StandAlone third_party/SPIRV-Tools \
+ third_party/SPIRV-Tools/include third_party/SPIRV-Headers/include
+
+SHADER_DIRS := src/xenia/gpu/shaders src/xenia/ui/shaders
+LEGACY_SHADERS := $(foreach d,$(SHADER_DIRS),$(wildcard $(d)/*.xesl $(d)/*.glsl))
+LEGACY_SHADERS := $(filter %vs.xesl %hs.xesl %ds.xesl %gs.xesl %ps.xesl %cs.xesl \
+ %vs.glsl %hs.glsl %ds.glsl %gs.glsl %ps.glsl %cs.glsl,$(LEGACY_SHADERS))
+SLANG_SHADERS := $(foreach d,$(SHADER_DIRS),$(wildcard $(d)/*.slang))
+SLANG_SHADERS := $(filter %vs.slang %hs.slang %ds.slang %gs.slang %ps.slang %cs.slang,$(SLANG_SHADERS))
+# Match the existing build: a legacy twin takes precedence for Vulkan.
+SPIRV_SLANG := $(foreach s,$(SLANG_SHADERS),$(if $(wildcard $(basename $(s)).xesl $(basename $(s)).glsl),,$(s)))
+SPIRV_SLANG := $(foreach s,$(SPIRV_SLANG),$(if $(shell head -1 $(s) | grep '^[[:space:]]*//[[:space:]]*XE_DXIL_ONLY'),,$(s)))
+shader-output = $(GEN)/generated/$(patsubst src/%,%,$(dir $(1)))bytecode/$(2)/$(subst .,_,$(basename $(notdir $(1)))).h
+SHADER_HEADERS := $(foreach s,$(LEGACY_SHADERS) $(SPIRV_SLANG),$(call shader-output,$(s),vulkan_spirv))
+ifeq ($(OS),windows)
+SHADER_HEADERS += $(foreach s,$(SLANG_SHADERS),$(call shader-output,$(s),d3d12_dxil))
+endif
+SOURCES_CXX += $(GEN)/embedded_font.cc $(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc
+
+# FFmpeg: the same fixed codec/container subset as the existing core.
+FFMPEG_SOURCES := \
+ third_party/FFmpeg/libavutil/adler32.c \
+ third_party/FFmpeg/libavutil/aes.c \
+ third_party/FFmpeg/libavutil/aes_ctr.c \
+ third_party/FFmpeg/libavutil/audio_fifo.c \
+ third_party/FFmpeg/libavutil/avstring.c \
+ third_party/FFmpeg/libavutil/avsscanf.c \
+ third_party/FFmpeg/libavutil/base64.c \
+ third_party/FFmpeg/libavutil/blowfish.c \
+ third_party/FFmpeg/libavutil/bprint.c \
+ third_party/FFmpeg/libavutil/buffer.c \
+ third_party/FFmpeg/libavutil/cast5.c \
+ third_party/FFmpeg/libavutil/camellia.c \
+ third_party/FFmpeg/libavutil/channel_layout.c \
+ third_party/FFmpeg/libavutil/csp.c \
+ third_party/FFmpeg/libavutil/cpu.c \
+ third_party/FFmpeg/libavutil/crc.c \
+ third_party/FFmpeg/libavutil/des.c \
+ third_party/FFmpeg/libavutil/dict.c \
+ third_party/FFmpeg/libavutil/display.c \
+ third_party/FFmpeg/libavutil/dovi_meta.c \
+ third_party/FFmpeg/libavutil/downmix_info.c \
+ third_party/FFmpeg/libavutil/encryption_info.c \
+ third_party/FFmpeg/libavutil/error.c \
+ third_party/FFmpeg/libavutil/eval.c \
+ third_party/FFmpeg/libavutil/fifo.c \
+ third_party/FFmpeg/libavutil/file.c \
+ third_party/FFmpeg/libavutil/file_open.c \
+ third_party/FFmpeg/libavutil/float_dsp.c \
+ third_party/FFmpeg/libavutil/fixed_dsp.c \
+ third_party/FFmpeg/libavutil/frame.c \
+ third_party/FFmpeg/libavutil/hash.c \
+ third_party/FFmpeg/libavutil/hdr_dynamic_metadata.c \
+ third_party/FFmpeg/libavutil/hmac.c \
+ third_party/FFmpeg/libavutil/hwcontext.c \
+ third_party/FFmpeg/libavutil/imgutils.c \
+ third_party/FFmpeg/libavutil/integer.c \
+ third_party/FFmpeg/libavutil/intmath.c \
+ third_party/FFmpeg/libavutil/lfg.c \
+ third_party/FFmpeg/libavutil/lls.c \
+ third_party/FFmpeg/libavutil/log.c \
+ third_party/FFmpeg/libavutil/log2_tab.c \
+ third_party/FFmpeg/libavutil/mathematics.c \
+ third_party/FFmpeg/libavutil/mastering_display_metadata.c \
+ third_party/FFmpeg/libavutil/md5.c \
+ third_party/FFmpeg/libavutil/mem.c \
+ third_party/FFmpeg/libavutil/murmur3.c \
+ third_party/FFmpeg/libavutil/opt.c \
+ third_party/FFmpeg/libavutil/parseutils.c \
+ third_party/FFmpeg/libavutil/pixdesc.c \
+ third_party/FFmpeg/libavutil/pixelutils.c \
+ third_party/FFmpeg/libavutil/random_seed.c \
+ third_party/FFmpeg/libavutil/rational.c \
+ third_party/FFmpeg/libavutil/reverse.c \
+ third_party/FFmpeg/libavutil/rc4.c \
+ third_party/FFmpeg/libavutil/ripemd.c \
+ third_party/FFmpeg/libavutil/samplefmt.c \
+ third_party/FFmpeg/libavutil/sha.c \
+ third_party/FFmpeg/libavutil/sha512.c \
+ third_party/FFmpeg/libavutil/slicethread.c \
+ third_party/FFmpeg/libavutil/spherical.c \
+ third_party/FFmpeg/libavutil/stereo3d.c \
+ third_party/FFmpeg/libavutil/threadmessage.c \
+ third_party/FFmpeg/libavutil/time.c \
+ third_party/FFmpeg/libavutil/timecode.c \
+ third_party/FFmpeg/libavutil/tree.c \
+ third_party/FFmpeg/libavutil/twofish.c \
+ third_party/FFmpeg/libavutil/utils.c \
+ third_party/FFmpeg/libavutil/xga_font_data.c \
+ third_party/FFmpeg/libavutil/xtea.c \
+ third_party/FFmpeg/libavutil/tea.c \
+ third_party/FFmpeg/libavutil/tx.c \
+ third_party/FFmpeg/libavutil/tx_float.c \
+ third_party/FFmpeg/libavutil/tx_double.c \
+ third_party/FFmpeg/libavutil/tx_int32.c \
+ third_party/FFmpeg/libavutil/video_enc_params.c \
+ third_party/FFmpeg/libavutil/film_grain_params.c \
+ third_party/FFmpeg/libavutil/side_data.c \
+ third_party/FFmpeg/libavutil/refstruct.c \
+ third_party/FFmpeg/libavutil/container_fifo.c \
+ third_party/FFmpeg/libavutil/float_scalarproduct.c \
+ third_party/FFmpeg/libavutil/timecode_internal.c \
+ third_party/FFmpeg/libavutil/iamf.c \
+ third_party/FFmpeg/libavutil/timestamp.c \
+ third_party/FFmpeg/libavcodec/ac3_parser.c \
+ third_party/FFmpeg/libavcodec/adts_parser.c \
+ third_party/FFmpeg/libavcodec/allcodecs.c \
+ third_party/FFmpeg/libavcodec/avcodec.c \
+ third_party/FFmpeg/libavcodec/avdct.c \
+ third_party/FFmpeg/libavcodec/packet.c \
+ third_party/FFmpeg/libavcodec/bitstream.c \
+ third_party/FFmpeg/libavcodec/bitstream_filters.c \
+ third_party/FFmpeg/libavcodec/bsf.c \
+ third_party/FFmpeg/libavcodec/codec_desc.c \
+ third_party/FFmpeg/libavcodec/codec_par.c \
+ third_party/FFmpeg/libavcodec/d3d11va.c \
+ third_party/FFmpeg/libavcodec/decode.c \
+ third_party/FFmpeg/libavcodec/dirac.c \
+ third_party/FFmpeg/libavcodec/dv_profile.c \
+ third_party/FFmpeg/libavcodec/encode.c \
+ third_party/FFmpeg/libavcodec/imgconvert.c \
+ third_party/FFmpeg/libavcodec/jni.c \
+ third_party/FFmpeg/libavcodec/mathtables.c \
+ third_party/FFmpeg/libavcodec/mediacodec.c \
+ third_party/FFmpeg/libavcodec/mpeg12framerate.c \
+ third_party/FFmpeg/libavcodec/options.c \
+ third_party/FFmpeg/libavcodec/parser.c \
+ third_party/FFmpeg/libavcodec/parsers.c \
+ third_party/FFmpeg/libavcodec/profiles.c \
+ third_party/FFmpeg/libavcodec/qsv_api.c \
+ third_party/FFmpeg/libavcodec/raw.c \
+ third_party/FFmpeg/libavcodec/utils.c \
+ third_party/FFmpeg/libavcodec/vorbis_parser.c \
+ third_party/FFmpeg/libavcodec/xiph.c \
+ third_party/FFmpeg/libavcodec/dct32_fixed.c \
+ third_party/FFmpeg/libavcodec/dct32_float.c \
+ third_party/FFmpeg/libavcodec/faandct.c \
+ third_party/FFmpeg/libavcodec/faanidct.c \
+ third_party/FFmpeg/libavcodec/fdctdsp.c \
+ third_party/FFmpeg/libavcodec/jfdctfst.c \
+ third_party/FFmpeg/libavcodec/jfdctint.c \
+ third_party/FFmpeg/libavcodec/idctdsp.c \
+ third_party/FFmpeg/libavcodec/simple_idct.c \
+ third_party/FFmpeg/libavcodec/jrevdct.c \
+ third_party/FFmpeg/libavcodec/mpegaudio.c \
+ third_party/FFmpeg/libavcodec/mpegaudiodec_common.c \
+ third_party/FFmpeg/libavcodec/mpegaudiodsp.c \
+ third_party/FFmpeg/libavcodec/mpegaudiodsp_data.c \
+ third_party/FFmpeg/libavcodec/mpegaudiodsp_fixed.c \
+ third_party/FFmpeg/libavcodec/mpegaudiodsp_float.c \
+ third_party/FFmpeg/libavcodec/mpegaudiodecheader.c \
+ third_party/FFmpeg/libavcodec/mpegaudiodata.c \
+ third_party/FFmpeg/libavcodec/sinewin.c \
+ third_party/FFmpeg/libavcodec/wma_freqs.c \
+ third_party/FFmpeg/libavcodec/mpegaudiodec_fixed.c \
+ third_party/FFmpeg/libavcodec/mpegaudiodec_float.c \
+ third_party/FFmpeg/libavcodec/wmaprodec.c \
+ third_party/FFmpeg/libavcodec/wma.c \
+ third_party/FFmpeg/libavcodec/wma_common.c \
+ third_party/FFmpeg/libavcodec/wmadec.c \
+ third_party/FFmpeg/libavcodec/aactab.c \
+ third_party/FFmpeg/libavcodec/mpegaudio_parser.c \
+ third_party/FFmpeg/libavcodec/pthread.c \
+ third_party/FFmpeg/libavcodec/pthread_slice.c \
+ third_party/FFmpeg/libavcodec/pthread_frame.c \
+ third_party/FFmpeg/libavcodec/get_buffer.c \
+ third_party/FFmpeg/libavcodec/vlc.c \
+ third_party/FFmpeg/libavcodec/threadprogress.c \
+ third_party/FFmpeg/libavcodec/bsf/null.c \
+ third_party/FFmpeg/libavcodec/exif.c \
+ third_party/FFmpeg/libavcodec/mpegaudiotabs.c \
+ third_party/FFmpeg/libavcodec/tiff_common.c \
+ third_party/FFmpeg/libavformat/allformats.c \
+ third_party/FFmpeg/libavformat/avio.c \
+ third_party/FFmpeg/libavformat/aviobuf.c \
+ third_party/FFmpeg/libavformat/dump.c \
+ third_party/FFmpeg/libavformat/format.c \
+ third_party/FFmpeg/libavformat/id3v1.c \
+ third_party/FFmpeg/libavformat/id3v2.c \
+ third_party/FFmpeg/libavformat/metadata.c \
+ third_party/FFmpeg/libavformat/mux.c \
+ third_party/FFmpeg/libavformat/options.c \
+ third_party/FFmpeg/libavformat/protocols.c \
+ third_party/FFmpeg/libavformat/riff.c \
+ third_party/FFmpeg/libavformat/sdp.c \
+ third_party/FFmpeg/libavformat/url.c \
+ third_party/FFmpeg/libavformat/utils.c \
+ third_party/FFmpeg/libavformat/riffdec.c \
+ third_party/FFmpeg/libavformat/asfdec_f.c \
+ third_party/FFmpeg/libavformat/asf.c \
+ third_party/FFmpeg/libavformat/asfcrypt.c \
+ third_party/FFmpeg/libavformat/avlanguage.c \
+ third_party/FFmpeg/libavformat/mp3dec.c \
+ third_party/FFmpeg/libavformat/replaygain.c \
+ third_party/FFmpeg/libavformat/file.c \
+ third_party/FFmpeg/libavformat/demux.c \
+ third_party/FFmpeg/libavformat/avformat.c \
+ third_party/FFmpeg/libavformat/seek.c \
+ third_party/FFmpeg/libavformat/demux_utils.c \
+ third_party/FFmpeg/libavformat/urldecode.c \
+ third_party/FFmpeg/libavformat/asf_tags.c \
+ third_party/FFmpeg/libavformat/to_upper4.c
+ifeq ($(OS),windows)
+FFMPEG_SOURCES += third_party/FFmpeg/libavcodec/file_open.c third_party/FFmpeg/libavformat/file_open.c
+endif
+ifeq ($(ARCH),x86_64)
+FFMPEG_SOURCES += \
+ third_party/FFmpeg/libavutil/x86/cpu.c \
+ third_party/FFmpeg/libavutil/x86/fixed_dsp_init.c \
+ third_party/FFmpeg/libavutil/x86/float_dsp_init.c \
+ third_party/FFmpeg/libavutil/x86/imgutils_init.c \
+ third_party/FFmpeg/libavutil/x86/lls_init.c \
+ third_party/FFmpeg/libavutil/x86/tx_float_init.c \
+ third_party/FFmpeg/libavcodec/x86/constants.c \
+ third_party/FFmpeg/libavcodec/x86/fdctdsp_init.c \
+ third_party/FFmpeg/libavcodec/x86/idctdsp_init.c \
+ third_party/FFmpeg/libavcodec/x86/mpegaudiodsp.c \
+ third_party/FFmpeg/libavcodec/x86/fdct.c
+else
+FFMPEG_SOURCES += third_party/FFmpeg/libavutil/aarch64/cpu.c \
+ third_party/FFmpeg/libavutil/aarch64/float_dsp_init.c \
+ third_party/FFmpeg/libavutil/aarch64/tx_float_init.c \
+ third_party/FFmpeg/libavcodec/aarch64/idctdsp_init_aarch64.c \
+ third_party/FFmpeg/libavcodec/aarch64/mpegaudiodsp_init.c
+SOURCES_ASM += third_party/FFmpeg/libavutil/aarch64/float_dsp_neon.S \
+ third_party/FFmpeg/libavutil/aarch64/tx_float_neon.S \
+ third_party/FFmpeg/libavcodec/aarch64/idctdsp_neon.S \
+ third_party/FFmpeg/libavcodec/aarch64/mpegaudiodsp_neon.S \
+ third_party/FFmpeg/libavcodec/aarch64/simple_idct_neon.S
+endif
+SOURCES_C += $(FFMPEG_SOURCES)

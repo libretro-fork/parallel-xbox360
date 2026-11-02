@@ -23,6 +23,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: xenia_edge_libretro-windows-x86_64-gitlab
-          path: build/windows-x86_64/xenia_edge_libretro.dll
+          name: parallel_xbox360_libretro-windows-x86_64-gitlab
+          path: build/windows-x86_64/parallel_xbox360_libretro.dll
           if-no-files-found: ignore

@@ -6,9 +6,9 @@
 # (Ubuntu 16.04, gcc 9) cannot build it, so the Linux jobs run in Ubuntu 22.04
 # (glibc 2.35) with clang 21 from apt.llvm.org, as the project's GitHub CI
 # does and as cemu-libretro's and vita3k-libretro's jobs do. The core is built
-# through xenia-build.py, which also generates the shaders and the version
-# header. Windows needs a newer MSVC than the buildbot's 2019 16.8, so it is
-# cross-built on Linux with clang-cl (.ci/build-windows-cross.sh). macOS has
+# directly through the checked-in Makefiles, including host shader tools
+# and generated headers. Windows needs a newer MSVC than the buildbot's
+# 2019 16.8, so it is cross-built with LLVM (.ci/build-windows-cross.sh). macOS has
 # not been tried on the buildbot yet.
 
 ##############################################################################
@@ -24,7 +24,7 @@ variables:
 
 .core-defs:
   variables:
-    CORENAME: xenia_edge
+    CORENAME: parallel_xbox360
 
 include:
   # Linux
@@ -76,16 +76,12 @@ default:
     - apt-get install -y --no-install-recommends
       clang-21 lld-21 libclang-rt-21-dev llvm-21 g++-14 ninja-build make
       libfontconfig1-dev liblz4-dev
-    - pip3 install --upgrade cmake
-    # The helper steps below configure CMake projects of their own too, with
-    # the default compiler, which the image does not have under cc/c++
     - export CC=clang-21 CXX=clang++-21
     - *xenia-submodules
     - ./xenia-build.py slang
     - ./xenia-build.py fetchdata
   script:
-    - ./xenia-build.py build --config=Release --target=xenia-libretro
-    - mv "$(find build -name "$LIBNAME" | head -1)" "$LIBNAME"
+    - make -j "$NUMPROC" platform=linux-$(uname -m) BUILD_DIR="$BUILD_DIR" HOST_CXX="$CXX" AR=llvm-ar-21
     - strip --strip-unneeded "$LIBNAME"
 
 # Linux 64-bit
@@ -142,8 +138,7 @@ libretro-build-windows-x64:
 # Android
 #
 # The shaders are compiled by xenia-shader-cc, a host tool, so it is built
-# first for the build machine and handed to the Android build
-# (XENIA_HOST_SHADER_CC), as in the project's GitHub CI. API 28 and the NDK
+# for the build machine by HOST_CXX independently of the NDK compiler. API 28 and the NDK
 # the template sets up.
 .core-defs-android:
   extends: .core-defs
@@ -154,19 +149,8 @@ libretro-build-windows-x64:
     - *xenia-submodules
     - ./xenia-build.py slang
     - ./xenia-build.py fetchdata
-    - cmake -S . -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release -DXENIA_ENABLE_LTO=OFF
-    - cmake --build build-host --target xenia-shader-cc -- -j $NUMPROC
-    - HOST_SHADER_CC=$(find "$PWD/build-host" -name xenia-shader-cc -type f | head -1)
-    # version.h, which xenia-build.py writes into the build directory
-    - python3 -c "import importlib.util as u; s=u.spec_from_file_location('xb','xenia-build.py'); m=u.module_from_spec(s); s.loader.exec_module(m); m.generate_version_h('$BUILD_DIR')"
-    - cmake -S . -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release
-      -DCMAKE_TOOLCHAIN_FILE=$NDK_ROOT/build/cmake/android.toolchain.cmake
-      -DANDROID_ABI=$ANDROID_ABI -DANDROID_PLATFORM=android-$API_LEVEL -DANDROID_STL=c++_static
-      -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON
-      -DXENIA_HOST_SHADER_CC=$HOST_SHADER_CC -DXENIA_ENABLE_LTO=OFF
-    - cmake --build "$BUILD_DIR" --target xenia-libretro -- -j $NUMPROC
-  after_script:
-    - mv "$(find "$BUILD_DIR" -name "$LIBNAME" | head -1)" "$LIBNAME"
+    - make -j "$NUMPROC" platform=android-$ANDROID_ABI BUILD_DIR="$BUILD_DIR"
+      NDK_ROOT="$NDK_ROOT" API_LEVEL="$API_LEVEL"
     - $NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip --strip-unneeded "$LIBNAME"
 
 # Android 64-bit (ARM)

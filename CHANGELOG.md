@@ -4,6 +4,9 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- The core is named `parallel_xbox360`, including its binaries and frontend metadata. Existing `system/Xenia-Edge/` data and core option keys are retained.
+- A direct GNU Make build supports all five GitLab CI platforms without CMake.
+
 - Core info: no longer marked experimental (NNshi).
 - Linux: the core exports only the libretro API (a version script); it exported some sixteen thousand of its own symbols, which could clash with libraries the frontend loads.
 - Music Player Volume is 70% by default, as in standalone Xenia Edge; at 100% the music of a game that does not set its own volume could clip (NNshi).

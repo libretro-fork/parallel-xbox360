@@ -23,7 +23,7 @@
 #include "xenia/vfs/xex_metadata.h"
 #include "xenia/vfs/zar_metadata.h"
 
-// The unlock list, embedded by libretro/CMakeLists.txt
+// The unlock list, embedded by the selected build system.
 extern const unsigned char xenia_libretro_framerate_unlock[];
 extern const size_t xenia_libretro_framerate_unlock_size;
 
