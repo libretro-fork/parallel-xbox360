@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Native C89 DXIL vertex-fetch lowering now decodes raw instructions, converts all 15 declared vertex formats, and handles full/mini address state, bounds and predication. A 472-word D3D12 execution check passes. Texture fetches, live resource bindings and renderer integration remain unfinished.
+
 - The independent C89 DXIL frontend now lowers guest calls, returns, loops, jumps and conditional endings. Five native shaders pass validator and D3D12 execution checks; real fetch/resource bindings and renderer integration remain unfinished.
 
 - The native DXIL ALU frontend decodes Xbox instructions and lowers all 30 vector and 50 scalar opcodes in C89. Validator and D3D12 execution checks cover co-issue, predication, relative addressing and export masks. Whole-shader integration is still in progress.

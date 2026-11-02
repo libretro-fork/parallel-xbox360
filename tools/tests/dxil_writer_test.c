@@ -10,6 +10,10 @@ int xe_dxil_alu_test(struct dxil_module *module, const char *path);
 int xe_dxil_flow_test(struct dxil_module *module, const char *path, unsigned index);
 #endif
 
+#ifdef XE_DXIL_VERTEX_TEST
+int xe_dxil_vertex_test(struct dxil_module *module, const char *path);
+#endif
+
 static int arithmetic_and_control_flow(struct dxil_module *module,
                                        struct dxil_func_def *function)
 {
@@ -172,6 +176,9 @@ int main(int argc, char **argv)
 #ifdef XE_DXIL_ALU_TEST
       && strcmp(stage, "alu")
 #endif
+#ifdef XE_DXIL_VERTEX_TEST
+      && strcmp(stage, "vertex")
+#endif
 #ifdef XE_DXIL_FLOW_TEST
       && strcmp(stage, "flow")
 #endif
@@ -204,6 +211,11 @@ int main(int argc, char **argv)
 #ifdef XE_DXIL_ALU_TEST
     if (!strcmp(stage, "alu")) {
       if (!xe_dxil_alu_test(&module, argv[1])) goto done;
+    } else
+#endif
+#ifdef XE_DXIL_VERTEX_TEST
+    if (!strcmp(stage, "vertex")) {
+      if (!xe_dxil_vertex_test(&module, argv[1])) goto done;
     } else
 #endif
     if (!arithmetic_and_control_flow(&module, function)) goto done;
