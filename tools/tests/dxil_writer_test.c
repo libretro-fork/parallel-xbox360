@@ -3,6 +3,9 @@
 #include "dxil_container.h"
 #include "dxil_function.h"
 #include <stdio.h>
+#ifdef XE_DXIL_EDRAM_TEST
+int xe_dxil_edram_format_test(struct dxil_module *module, const char *path);
+#endif
 #ifdef XE_DXIL_TEXTURE_TEST
 int xe_dxil_texture_test(struct dxil_module *module, const char *path);
 int xe_dxil_texture_pixel_test(struct dxil_module *module, const struct dxil_value *values[4]);
@@ -237,6 +240,9 @@ int main(int argc, char **argv)
       ) return 2;
   if (argc >= 3) stage = argv[2];
   if (strcmp(stage, "cs") && strcmp(stage, "vs") && strcmp(stage, "ps")
+#ifdef XE_DXIL_EDRAM_TEST
+      && strcmp(stage, "edram")
+#endif
 #ifdef XE_DXIL_ALU_TEST
       && strcmp(stage, "alu")
 #endif
@@ -276,6 +282,11 @@ int main(int argc, char **argv)
   if (!function) goto done;
   function->basic_block_ids[0] = 0;
   if (module.shader_kind == DXIL_COMPUTE_SHADER) {
+#ifdef XE_DXIL_EDRAM_TEST
+    if (!strcmp(stage, "edram")) {
+      if (!xe_dxil_edram_format_test(&module, argv[1])) goto done;
+    } else
+#endif
 #ifdef XE_DXIL_TEXTURE_TEST
     if (inputs == 2) {
       if (!xe_dxil_texture_test(&module, argv[1])) goto done;

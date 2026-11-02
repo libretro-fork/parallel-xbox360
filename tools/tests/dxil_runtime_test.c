@@ -2,7 +2,11 @@
 #define COBJMACROS
 #include <windows.h>
 #include <initguid.h>
+#ifdef __MINGW32__
+#include <directx/d3d12.h>
+#else
 #include <d3d12.h>
+#endif
 #include <dxgi1_4.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,7 +104,8 @@ static HRESULT prepare_texture(ID3D12Device *device, const char *path, TextureFi
 static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
                         ID3D12PipelineState *pipeline, const uint32_t *expected,
                         size_t bytes, int golden_records,
-                        ID3D12Resource *input, ID3D12Resource *constants, TextureFixture *texture)
+                        ID3D12Resource *input, ID3D12Resource *constants, TextureFixture *texture,
+                        unsigned raw_mode)
 {
   ID3D12Resource *output = NULL;
   ID3D12Resource *readback = NULL;
@@ -118,13 +123,13 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   HANDLE event = NULL;
   HRESULT status;
   uint32_t *values = NULL;
-  size_t i;
+  size_t i, source_index, allocation_bytes = raw_mode > 1 ? bytes / 8 * raw_mode : bytes;
   int same;
   status = buffer(device, D3D12_HEAP_TYPE_DEFAULT,
-                   D3D12_RESOURCE_STATE_UNORDERED_ACCESS, bytes, &output);
+                   D3D12_RESOURCE_STATE_UNORDERED_ACCESS, allocation_bytes, &output);
   if (FAILED(status)) goto done;
   status = buffer(device, D3D12_HEAP_TYPE_READBACK,
-                   D3D12_RESOURCE_STATE_COPY_DEST, bytes, &readback);
+                   D3D12_RESOURCE_STATE_COPY_DEST, allocation_bytes, &readback);
   if (FAILED(status)) goto done;
   memset(&queue_desc, 0, sizeof(queue_desc));
   status = ID3D12Device_CreateCommandQueue(device, &queue_desc,
@@ -165,6 +170,8 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   if (texture) {
     ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(texture->heap, &gpu);
     ID3D12GraphicsCommandList_SetComputeRootDescriptorTable(list, 1, gpu);
+    if (constants) ID3D12GraphicsCommandList_SetComputeRootConstantBufferView(list, 2,
+      ID3D12Resource_GetGPUVirtualAddress(constants));
   }
   ID3D12GraphicsCommandList_Dispatch(list, golden_records ? 1 : 32, 1, 1);
   memset(&barrier, 0, sizeof(barrier));
@@ -189,19 +196,20 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   status = ID3D12Fence_SetEventOnCompletion(fence, 1, event);
   if (FAILED(status)) goto done;
   if (WaitForSingleObject(event, 10000) != WAIT_OBJECT_0) { status = E_FAIL; goto done; }
-  range.Begin = 0; range.End = bytes;
+  range.Begin = 0; range.End = allocation_bytes;
   status = ID3D12Resource_Map(readback, 0, &range, (void **)&values);
   if (FAILED(status)) goto done;
   for (i = 0; i < bytes / sizeof(uint32_t); ++i) {
-    same = values[i] == expected[i];
-    if ((!golden_records || i % 8 < 4) &&
+    source_index = raw_mode > 1 ? (i / 8) * raw_mode + i % 8 : i;
+    same = values[source_index] == expected[i];
+    if (!raw_mode && (!golden_records || i % 8 < 4) &&
         (expected[i] & UINT32_C(0x7f800000)) == UINT32_C(0x7f800000) &&
         (expected[i] & UINT32_C(0x007fffff)))
       same = (values[i] & UINT32_C(0x7f800000)) == UINT32_C(0x7f800000) &&
         (values[i] & UINT32_C(0x007fffff));
     if (!same) {
       fprintf(stderr, "word %lu: got %08lX, expected %08lX\n", (unsigned long)i,
-        (unsigned long)values[i], (unsigned long)expected[i]);
+        (unsigned long)values[source_index], (unsigned long)expected[i]);
       status = E_FAIL; break;
     }
   }
@@ -293,9 +301,11 @@ int main(int argc, char **argv)
   uint32_t *expected = default_expected;
   size_t expected_bytes = sizeof(default_expected);
   float expected_float;
-  unsigned i;
+  unsigned i, raw_mode;
   memset(&texture, 0, sizeof(texture));
-  if (argc < 2 || argc > 5) return 2;
+  if (argc < 2 || argc > 6) return 2;
+  raw_mode = argc == 6 ? 80 : argc == 4 && !strcmp(argv[3], "raw") ? 1 : 0;
+  if (argc == 6 && strcmp(argv[5], "dump")) return 2;
   file = fopen(argv[1], "rb");
   if (!file) return 1;
   if (fseek(file, 0, SEEK_END) || (size = ftell(file)) < 32 || fseek(file, 0, SEEK_SET)) {
@@ -327,7 +337,7 @@ int main(int argc, char **argv)
   parameter[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
   parameter[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
   root_desc.NumParameters = argc == 5 ? 3 : 1; root_desc.pParameters = parameter;
-  if (argc == 4) {
+  if ((argc == 4 && !raw_mode) || argc == 6) {
     memset(&texture_range, 0, sizeof(texture_range)); texture_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     texture_range.NumDescriptors = 1;
     parameter[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
@@ -348,6 +358,14 @@ int main(int argc, char **argv)
     root_desc.NumStaticSamplers = 2; root_desc.pStaticSamplers = samplers;
     status = prepare_texture(device, argv[3], &texture);
     if (FAILED(status)) goto done;
+    if (argc == 6) {
+      root_desc.NumParameters = 3;
+      parameter[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+      parameter[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+      parameter[2].Descriptor.ShaderRegister = 1; parameter[2].Descriptor.RegisterSpace = 31;
+      status = upload_file(device, argv[4], &constants);
+      if (FAILED(status)) goto done;
+    }
   }
   if (argc == 5) {
     parameter[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
@@ -374,7 +392,8 @@ int main(int argc, char **argv)
   status = ID3D12Device_CreateComputePipelineState(device, &pipeline_desc,
       &IID_ID3D12PipelineState, (void **)&pipeline);
   if (SUCCEEDED(status)) status = execute(device, root, pipeline,
-      expected, expected_bytes, argc >= 3, input, constants, argc == 4 ? &texture : NULL);
+      expected, expected_bytes, argc >= 3, input, constants,
+      (argc == 4 && !raw_mode) || argc == 6 ? &texture : NULL, raw_mode);
 done:
   printf("D3D12 WARP pipeline and execution: 0x%08lX\n", (unsigned long)status);
   if (pipeline) ID3D12PipelineState_Release(pipeline);

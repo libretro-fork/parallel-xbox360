@@ -27,6 +27,7 @@
 #include "xenia/gpu/draw_util.h"
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/spirv_to_dxil_compiler.h"
+#include "xenia/gpu/dxil/edram_dump.h"
 #include "xenia/gpu/trace_writer.h"
 #include "xenia/gpu/xenos.h"
 #include "xenia/ui/d3d12/d3d12_provider.h"
@@ -3426,37 +3427,51 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
           : xenos::GetColorRenderTargetFormatName(key.GetColorFormat());
   uint32_t sample_count = uint32_t(1) << uint32_t(key.msaa_samples);
   ID3D12PipelineState* pipeline = nullptr;
-  std::vector<uint32_t> spirv = BuildEdramDumpShaderSpirv(key, shader_options);
-  if (spirv.empty()) {
-    XELOGE(
-        "D3D12RenderTargetCache: Failed to emit the render target dumping "
-        "shader for {}-sample render targets with format {}",
-        sample_count, format_name);
-  } else {
-    std::vector<uint8_t> dxil = SpirvToDxilCompiler::Translate(
-        spirv.data(), spirv.size(), SpirvToDxilCompiler::Stage::kCompute);
-    if (dxil.empty()) {
-      XELOGE(
-          "D3D12RenderTargetCache: Failed to translate the render target "
-          "dumping shader for {}-sample render targets with format {}",
-          sample_count, format_name);
-    } else {
-      pipeline = ui::d3d12::util::CreateComputePipeline(
-          command_processor_.GetD3D12Provider().GetDevice(), dxil.data(),
-          dxil.size(),
-          key.is_depth ? dump_root_signature_depth_
-                       : dump_root_signature_color_);
-      if (pipeline) {
-        std::u16string pipeline_name = xe::to_utf16(
-            fmt::format("RT Dump {} {}xMSAA", format_name, sample_count));
-        pipeline->SetName(reinterpret_cast<LPCWSTR>(pipeline_name.c_str()));
-      } else {
-        XELOGE(
-            "D3D12RenderTargetCache: Failed to create a render target dumping "
-            "pipeline for {}-sample render targets with format {}",
-            sample_count, format_name);
-      }
+  std::vector<uint8_t> dxil;
+  if (!key.direct_resolve) {
+    XeDxilEdramDumpOptions options;
+    XeDxilShaderBinary binary;
+    std::memset(&options, 0, sizeof(options));
+    std::memset(&binary, 0, sizeof(binary));
+    options.format = key.resource_format;
+    options.depth = key.is_depth;
+    options.msaa = uint32_t(key.msaa_samples);
+    options.scale_x = shader_options.resolution_scale_x;
+    options.scale_y = shader_options.resolution_scale_y;
+    options.native_layout = key.native_layout;
+    options.native_source = key.source_scale_native;
+    options.source_uint = shader_options.source_is_uint;
+    options.msaa_2x_supported = shader_options.msaa_2x_attachments_supported;
+    options.round_depth = shader_options.depth_float24_round;
+    options.depth_converted_in_pixel_shader =
+        shader_options.depth_float24_convert_in_pixel_shader;
+    options.destination_space = kDumpDescriptorSetEdram;
+    options.source_space = kDumpDescriptorSetSource;
+    if (xe_dxil_build_edram_dump(&options, &binary)) {
+      dxil.assign(binary.data, binary.data + binary.size);
     }
+    xe_dxil_shader_binary_free(&binary);
+  } else {
+    std::vector<uint32_t> spirv = BuildEdramDumpShaderSpirv(key, shader_options);
+    if (!spirv.empty()) {
+      dxil = SpirvToDxilCompiler::Translate(
+          spirv.data(), spirv.size(), SpirvToDxilCompiler::Stage::kCompute);
+    }
+  }
+  if (!dxil.empty()) {
+    pipeline = ui::d3d12::util::CreateComputePipeline(
+        command_processor_.GetD3D12Provider().GetDevice(), dxil.data(),
+        dxil.size(), key.is_depth ? dump_root_signature_depth_
+                                 : dump_root_signature_color_);
+    if (pipeline) {
+      std::u16string pipeline_name = xe::to_utf16(
+          fmt::format("RT Dump {} {}xMSAA", format_name, sample_count));
+      pipeline->SetName(reinterpret_cast<LPCWSTR>(pipeline_name.c_str()));
+    }
+  }
+  if (!pipeline) {
+    XELOGE("D3D12RenderTargetCache: Failed to generate or create render target "
+           "dump pipeline for {}-sample format {}", sample_count, format_name);
   }
   // Even if creation fails, still store the null pointer not to try to create
   // again.

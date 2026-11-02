@@ -1,6 +1,7 @@
 /* Private allocation and container support for the raw DXIL writer. C89. */
 #ifndef XE_GPU_DXIL_SUPPORT_H
 #define XE_GPU_DXIL_SUPPORT_H
+#include "dxil_namespace.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -14,7 +15,13 @@
 #define alloca _alloca
 #define snprintf _snprintf
 #else
+#ifdef __MINGW32__
+#ifndef alloca
+#define alloca __builtin_alloca
+#endif
+#else
 #include <alloca.h>
+#endif
 #if !defined(__cplusplus) && (!defined(__STDC_VERSION__) || __STDC_VERSION__ < 199901L)
 #define inline __inline__
 #endif

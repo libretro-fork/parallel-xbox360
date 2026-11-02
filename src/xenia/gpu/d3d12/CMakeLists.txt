@@ -10,7 +10,6 @@ xe_target_defaults(xenia-gpu-d3d12)
 # by SpirvShaderTranslator); there is no HLSL guest shader path. The wrapper and
 # the spirv_to_dxil link come from xenia-gpu, which shares them with Metal.
 # Guest translation currently uses the core-owned SPIR-V binary writer.
-target_include_directories(xenia-gpu-d3d12 PRIVATE
 target_link_libraries(xenia-gpu-d3d12 PRIVATE xenia-spirv-writer)
 # The linked tessellation path feeds the SPIR-V host vertex/hull shaders through
 # Mesa, so it includes their vulkan_spirv headers, which the Vulkan backend

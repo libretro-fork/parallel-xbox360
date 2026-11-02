@@ -47,6 +47,33 @@ typedef struct XeDxilTextureSample {
 int xe_dxil_texture_sample(XeDxilAlu *alu, const XeDxilTextureSample *sample,
                             XeDxilValue values[4]);
 
+/* Persistent guest state survives control-flow edges, like full/mini vertex
+ * fetch state. The adapter applies texture format/coordinate/sampler policies;
+ * these values have already passed guest register addressing and swizzling.
+ * Sample/query callbacks may add blocks and update io->current_block. */
+typedef struct XeDxilTextureOperands {
+  XeDxilValue coordinates[3];
+  unsigned coordinate_count, result_components;
+  XeDxilValue lod, ddx[3], ddy[3];
+} XeDxilTextureOperands;
+
+typedef struct XeDxilTextureFetch {
+  void *context;
+  XeDxilValue lod_storage, ddx_storage[3], ddy_storage[3];
+  int (*fetch)(void *context, const XeDxilTextureInstruction *instruction,
+                 const XeDxilTextureOperands *operands, XeDxilValue result[4]);
+} XeDxilTextureFetch;
+
+/* Initialize once in the entry block, before guest control flow. */
+int xe_dxil_texture_fetch_init(XeDxilAlu *alu, XeDxilTextureFetch *fetch);
+/* Setters update persistent state without touching ALU p0/ps/a0. Fetches and
+ * queries write only requested destination lanes. False predication suppresses
+ * source reads, state changes and sampling. getGradients uses native pixel
+ * derivatives; other queries are delegated with their raw opcode intact. */
+int xe_dxil_emit_texture_fetch(XeDxilAlu *alu,
+                                const XeDxilTextureInstruction *instruction,
+                                const XeDxilAluIo *io, XeDxilTextureFetch *fetch);
+
 #ifdef __cplusplus
 }
 #endif

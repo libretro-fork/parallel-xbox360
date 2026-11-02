@@ -95,3 +95,134 @@ fail:
   s->failed = 1;
   return 0;
 }
+
+static int texture_begin(XeDxilAlu *s, const XeDxilAluIo *io, unsigned block) {
+  struct dxil_func_def *function = s->module->cur_emitting_func;
+  if (block >= function->num_basic_block_ids || function->basic_block_ids[block] != -1) return 0;
+  function->basic_block_ids[block] = (int)function->curr_block;
+  *io->current_block = block;
+  return 1;
+}
+
+static XeDxilValue texture_storage(XeDxilAlu *s) {
+  XeDxilValue pointer;
+  pointer = dxil_emit_alloca(s->module, dxil_module_get_float_type(s->module, 32),
+    dxil_module_get_int32_const(s->module, 1), 4);
+  if (!pointer || !dxil_emit_store(s->module, dxil_module_get_float_const(s->module, 0.0f),
+      pointer, 4, 0)) return NULL;
+  return pointer;
+}
+
+int xe_dxil_texture_fetch_init(XeDxilAlu *s, XeDxilTextureFetch *fetch) {
+  unsigned i;
+  if (!s || !s->module || s->failed || !fetch) return 0;
+  if (!s->module->cur_emitting_func || s->module->cur_emitting_func->curr_block) goto fail;
+  fetch->lod_storage = texture_storage(s);
+  if (!fetch->lod_storage) goto fail;
+  for (i = 0; i < 3; ++i) {
+    fetch->ddx_storage[i] = texture_storage(s);
+    fetch->ddy_storage[i] = texture_storage(s);
+    if (!fetch->ddx_storage[i] || !fetch->ddy_storage[i]) goto fail;
+  }
+  return 1;
+fail:
+  s->failed = 1;
+  return 0;
+}
+
+int xe_dxil_emit_texture_fetch(XeDxilAlu *s, const XeDxilTextureInstruction *instruction,
+                                const XeDxilAluIo *io, XeDxilTextureFetch *fetch) {
+  XeDxilTextureOperands operands;
+  XeDxilValue result[4], values[4], offset, condition, args[2], pointer;
+  const struct dxil_func *function;
+  unsigned i, swizzle, mask = 0, used = 0, blocks = 0, setter, count;
+  if (!s || !s->module || s->failed || !instruction || !io || !fetch) return 0;
+  setter = instruction->opcode >= 24 && instruction->opcode <= 26;
+  if (!s->module->cur_emitting_func || !io->current_block || instruction->source > 63 ||
+      instruction->destination > 63 || instruction->source_swizzle > 63 ||
+      instruction->destination_swizzle > 4095 || instruction->dimension > 3 ||
+      (!setter && instruction->opcode != 1 && instruction->opcode != 16 &&
+       instruction->opcode != 17 && instruction->opcode != 18 && instruction->opcode != 19)) goto fail;
+  if (!setter) for (i = 0; i < 4; ++i) {
+    swizzle = (instruction->destination_swizzle >> (i * 3)) & 7;
+    if (swizzle == 6) goto fail;
+    if (swizzle != 7) mask |= 1u << i;
+    if (swizzle < 4) used |= 1u << swizzle;
+  }
+  if (!setter && !mask) return 1;
+  if ((!setter && !io->write) || ((setter || used) && (!io->read ||
+      (instruction->source_relative && !io->loop_address))) ||
+      (!setter && instruction->destination_relative && !io->loop_address)) goto fail;
+  if (instruction->predicated) {
+    condition = s->predicate;
+    if (!condition) goto fail;
+    if (!instruction->predicate_condition) condition = dxil_emit_binop(s->module, DXIL_BINOP_XOR,
+      condition, dxil_module_get_int1_const(s->module, 1), 0);
+    if (!condition || !dxil_function_reserve_blocks(s->module, 2, &blocks) ||
+        !dxil_emit_branch(s->module, condition, blocks, blocks + 1) ||
+        !texture_begin(s, io, blocks)) goto fail;
+  }
+  memset(&operands, 0, sizeof(operands));
+  for (i = 0; i < 4; ++i) result[i] = NULL;
+  if (setter || used) {
+    count = instruction->dimension == 0 ? 1 : instruction->dimension == 1 ? 2 : 3;
+    if (instruction->opcode == 24) count = 1;
+    else if (instruction->opcode == 25 || instruction->opcode == 26) count = 3;
+    else if (instruction->opcode == 18) count = 2;
+    else if (instruction->opcode == 1 && !instruction->dimension &&
+        (((instruction->source_swizzle >> 2) & 3) != (instruction->source_swizzle & 3) ||
+         ((instruction->source_swizzle >> 4) & 3) != (instruction->source_swizzle & 3))) count = 2;
+    operands.coordinate_count = count; operands.result_components = used;
+    offset = instruction->source_relative ? io->loop_address : NULL;
+    for (i = 0; i < count; ++i) {
+      operands.coordinates[i] = io->read(io->context, 0, instruction->source,
+        (instruction->source_swizzle >> (i * 2)) & 3, offset);
+      if (!is_float(s, operands.coordinates[i])) goto fail;
+    }
+    if (setter) {
+      for (i = 0; i < count; ++i) {
+        pointer = instruction->opcode == 24 ? fetch->lod_storage :
+          instruction->opcode == 25 ? fetch->ddx_storage[i] : fetch->ddy_storage[i];
+        if (!pointer || !dxil_emit_store(s->module, operands.coordinates[i], pointer, 4, 0)) goto fail;
+      }
+    } else if (instruction->opcode == 18) {
+      if (s->module->shader_kind != DXIL_PIXEL_SHADER) goto fail;
+      function = dxil_get_function(s->module, "dx.op.unary", DXIL_F32);
+      if (!function) goto fail;
+      /* {ddx(src.x), ddy(src.x), ddx(src.y), ddy(src.y)}. */
+      for (i = 0; i < 4; ++i) if (used & (1u << i)) {
+        args[0] = dxil_module_get_int32_const(s->module, (i & 1) ? 84 : 83);
+        args[1] = operands.coordinates[i >> 1];
+        result[i] = dxil_emit_call(s->module, function, args, 2);
+        if (!is_float(s, result[i])) goto fail;
+      }
+    } else {
+      if (!fetch->fetch || !fetch->lod_storage) goto fail;
+      operands.lod = dxil_emit_load(s->module, fetch->lod_storage, 4, 0);
+      if (!operands.lod) goto fail;
+      for (i = 0; i < 3; ++i) {
+        if (!fetch->ddx_storage[i] || !fetch->ddy_storage[i]) goto fail;
+        operands.ddx[i] = dxil_emit_load(s->module, fetch->ddx_storage[i], 4, 0);
+        operands.ddy[i] = dxil_emit_load(s->module, fetch->ddy_storage[i], 4, 0);
+        if (!operands.ddx[i] || !operands.ddy[i]) goto fail;
+      }
+      if (!fetch->fetch(fetch->context, instruction, &operands, result)) goto fail;
+    }
+  }
+  if (!setter) {
+    for (i = 0; i < 4; ++i) {
+      swizzle = (instruction->destination_swizzle >> (i * 3)) & 7;
+      values[i] = swizzle < 4 ? result[swizzle] : swizzle == 7 ? NULL :
+        dxil_module_get_float_const(s->module, swizzle == 5 ? 1.0f : 0.0f);
+      if ((mask & (1u << i)) && !is_float(s, values[i])) goto fail;
+    }
+    offset = instruction->destination_relative ? io->loop_address : NULL;
+    if (!io->write(io->context, 0, instruction->destination, mask, values, offset)) goto fail;
+  }
+  if (instruction->predicated && (!dxil_emit_branch(s->module, NULL, blocks + 1, 0) ||
+      !texture_begin(s, io, blocks + 1))) goto fail;
+  return !s->failed;
+fail:
+  s->failed = 1;
+  return 0;
+}

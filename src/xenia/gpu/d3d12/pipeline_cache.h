@@ -386,8 +386,8 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
     Shader::Translation* mesa_pixel_translation = nullptr;
     // Mesa DXIL for the built-in geometry shader (primitive expansion). When
     // set, the pipeline binds it as the geometry shader. Points into
-    // mesa_geometry_dxil_cache_ (never erased).
-    const std::vector<uint8_t>* mesa_geometry_dxil = nullptr;
+    // native_geometry_dxil_cache_ (never erased).
+    const std::vector<uint8_t>* native_geometry_dxil = nullptr;
     // Tessellation: the host vertex and hull shaders, produced together with
     // the guest domain shader (held in mesa_vertex_dxil, bound as the DS) by
     // one linked translation so the hull and domain signatures match. Point
@@ -469,10 +469,9 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
                                    uint64_t pixel_shader_modification,
                                    GeometryShaderKey& key_out);
 
-  // Produces and caches the Mesa DXIL for the built-in geometry shader (shared
-  // SPIR-V generator -> spirv_to_dxil), keyed by GeometryShaderKey, for the
-  // guest spirv_to_dxil path. Returns nullptr on failure. Thread safe.
-  const std::vector<uint8_t>* GetGuestMesaGeometryDxil(GeometryShaderKey key);
+  // Generates and caches native primitive-expansion DXIL directly.
+  // Keyed by GeometryShaderKey. Returns nullptr on failure. Thread safe.
+  const std::vector<uint8_t>* GetGuestNativeGeometryDxil(GeometryShaderKey key);
 
   // Hot-swap placeholder PSO variants, built with the fixed (bindless) Mesa
   // root signature so the pixel (and, for the interpreter, vertex) shader need
@@ -507,14 +506,14 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   std::unordered_map<uint64_t,
                      std::unordered_map<uint64_t, std::vector<uint8_t>>>
       mesa_dxil_cache_;
-  // Built-in geometry shader Mesa DXIL, keyed by GeometryShaderKey value.
-  std::unordered_map<uint32_t, std::vector<uint8_t>> mesa_geometry_dxil_cache_;
+  // Native geometry DXIL, keyed by GeometryShaderKey value.
+  std::unordered_map<uint32_t, std::vector<uint8_t>> native_geometry_dxil_cache_;
   // Linked tessellation DXIL (host VS + host HS + guest domain), by guest
   // domain ucode hash then SPIR-V modification.
   std::unordered_map<uint64_t,
                      std::unordered_map<uint64_t, MesaTessellationDxil>>
       mesa_tess_dxil_cache_;
-  // Guards mesa_dxil_cache_, mesa_geometry_dxil_cache_ and
+  // Guards mesa_dxil_cache_, native_geometry_dxil_cache_ and
   // mesa_tess_dxil_cache_: SPIR-V to DXIL conversion runs on both the main
   // thread (vertex/geometry/ tessellation) and the creation threads (pixel).
   std::mutex mesa_dxil_cache_mutex_;

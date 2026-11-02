@@ -1,0 +1,307 @@
+/* Native stage metadata and serialization. MSVC C89; BSD license. */
+#include "shader_module.h"
+#include <dxil_module.h>
+#include <dxil_function.h>
+#include <dxil_container.h>
+
+struct XeDxilShaderModule {
+  void *arena;
+  struct dxil_module module;
+  struct dxil_validation_state validation;
+  struct dxil_resource_v1 resource[128];
+  const struct dxil_mdnode *resource_nodes[4][32];
+  unsigned resource_counts[4];
+  unsigned stage_values[5];
+  unsigned stage_tag, stage_count, raw_buffers;
+  int finished, failed;
+};
+
+static const struct dxil_mdnode *metadata_int(XeDxilShaderModule *s, unsigned value) {
+  const struct dxil_mdnode *node = dxil_get_metadata_int32(&s->module, (int32_t)value);
+  if (!node) s->failed = 1;
+  return node;
+}
+
+XeDxilShaderModule *xe_dxil_shader_create(unsigned stage) {
+  XeDxilShaderModule *s;
+  const struct dxil_type *type;
+  struct dxil_func_def *function;
+  static const char *attributes[] = {NULL};
+  void *arena;
+  if (stage > 5) return NULL;
+  s = (XeDxilShaderModule *)calloc(1, sizeof(*s));
+  arena = ralloc_size(NULL, 0);
+  if (!s || !arena) { free(s); ralloc_free(arena); return NULL; }
+  s->arena = arena;
+  dxil_module_init(&s->module, arena);
+  s->module.shader_kind = (enum dxil_shader_kind)stage;
+  s->module.major_version = 6; s->module.minor_version = 0;
+  s->module.major_validator = 1; s->module.minor_validator = 6;
+  s->module.sem_string_table = _mesa_string_buffer_create(arena, 16);
+  if (!s->module.sem_string_table || !_mesa_string_buffer_append_len(s->module.sem_string_table, "", 1)) goto fail;
+  type = dxil_module_add_function_type(&s->module, dxil_module_get_void_type(&s->module), NULL, 0);
+  function = type ? dxil_add_function_def(&s->module, "main", type, 1, attributes, attributes) : NULL;
+  if (!function) goto fail;
+  function->basic_block_ids[0] = 0;
+  s->validation.state.psv2.psv1.shader_stage = (uint8_t)stage;
+  s->validation.state.psv2.psv1.psv0.max_expected_wave_lane_count = UINT32_MAX;
+  s->validation.resources.v1 = s->resource;
+  if (stage == DXIL_COMPUTE_SHADER && !xe_dxil_shader_threads(s, 1, 1, 1)) goto fail;
+  return s;
+fail:
+  xe_dxil_shader_destroy(s);
+  return NULL;
+}
+
+struct dxil_module *xe_dxil_shader_module(XeDxilShaderModule *s) {
+  return s && !s->finished && !s->failed ? &s->module : NULL;
+}
+
+void xe_dxil_shader_destroy(XeDxilShaderModule *s) {
+  if (!s) return;
+  dxil_module_release(&s->module);
+  ralloc_free(s->arena); free(s);
+}
+
+int xe_dxil_shader_signature(XeDxilShaderModule *s, unsigned direction,
+                               const char *name, unsigned index, unsigned kind, unsigned system,
+                               unsigned row, unsigned column, unsigned columns, unsigned interpolation) {
+  struct dxil_signature_record *record;
+  struct dxil_psv_signature_element *psv;
+  struct dxil_module *m;
+  unsigned id;
+  size_t name_length;
+  if (!s || s->failed || s->finished) return -1;
+  m = &s->module;
+  if (direction > 2 || !name || !columns || column > 3 || columns > 4 - column || row >= 32 ||
+      kind > 255 || interpolation > 7 || m->sem_index_table.size >= 128) goto fail;
+  name_length = strlen(name);
+  if (name_length >= UINT32_MAX) goto fail;
+  if (!direction) {
+    id = m->num_sig_inputs;
+    if (id >= 32) goto fail;
+    record = &m->inputs[id]; psv = &m->psv_inputs[id]; ++m->num_sig_inputs;
+    if (m->num_psv_inputs < row + 1) m->num_psv_inputs = row + 1;
+  } else if (direction == 1) {
+    id = m->num_sig_outputs;
+    if (id >= 32) goto fail;
+    record = &m->outputs[id]; psv = &m->psv_outputs[id]; ++m->num_sig_outputs;
+    if (m->num_psv_outputs[0] < row + 1) m->num_psv_outputs[0] = row + 1;
+  } else {
+    id = m->num_sig_patch_consts;
+    if (id >= 32) goto fail;
+    record = &m->patch_consts[id]; psv = &m->psv_patch_consts[id]; ++m->num_sig_patch_consts;
+    if (m->num_psv_patch_consts < row + 1) m->num_psv_patch_consts = row + 1;
+  }
+  record->num_elements = 1; record->name = ralloc_strdup(m->ralloc_ctx, name);
+  if (!record->name) goto fail;
+  record->sig_comp_type = DXIL_COMP_TYPE_F32;
+  record->elements[0].semantic_index = index; record->elements[0].system_value = system;
+  record->elements[0].comp_type = DXIL_PROG_SIG_COMP_TYPE_FLOAT32;
+  record->elements[0].reg = row; record->elements[0].mask = (uint8_t)(((1u << columns) - 1) << column);
+  if (!direction) record->elements[0].always_reads_mask = record->elements[0].mask;
+  else record->elements[0].never_writes_mask = (uint8_t)(15u & ~record->elements[0].mask);
+  psv->rows = 1; psv->start_row = (uint8_t)row; psv->cols_and_start = (uint8_t)(64 + column * 16 + columns);
+  psv->semantic_kind = (uint8_t)kind; psv->component_type = DXIL_PROG_SIG_COMP_TYPE_FLOAT32;
+  psv->interpolation_mode = (uint8_t)interpolation;
+  psv->semantic_indexes_offset = m->sem_index_table.size;
+  if (kind == DXIL_SEM_ARBITRARY) {
+    psv->semantic_name_offset = m->sem_string_table->length;
+    if (!_mesa_string_buffer_append_len(m->sem_string_table, name, (uint32_t)name_length + 1)) goto fail;
+  }
+  m->sem_index_table.data[m->sem_index_table.size++] = index;
+  if (direction == 1 && kind == DXIL_SEM_POSITION) {
+    if (m->shader_kind == DXIL_VERTEX_SHADER) s->validation.state.psv2.psv1.psv0.vs.output_position_present = 1;
+    if (m->shader_kind == DXIL_GEOMETRY_SHADER) s->validation.state.psv2.psv1.psv0.gs.output_position_present = 1;
+    if (m->shader_kind == DXIL_DOMAIN_SHADER) s->validation.state.psv2.psv1.psv0.ds.output_position_present = 1;
+  }
+  return (int)id;
+fail:
+  s->failed = 1;
+  return -1;
+}
+
+int xe_dxil_shader_resource(XeDxilShaderModule *s, unsigned resource_class, unsigned kind,
+                              unsigned space, unsigned binding, unsigned count, unsigned size) {
+  return xe_dxil_shader_resource_typed(s, resource_class, kind, space, binding, count, size, DXIL_COMP_TYPE_F32);
+}
+
+int xe_dxil_shader_resource_typed(XeDxilShaderModule *s, unsigned resource_class, unsigned kind,
+                                    unsigned space, unsigned binding, unsigned count, unsigned size,
+                                    unsigned component_type) {
+  const struct dxil_mdnode *fields[11], *pair[2], *node;
+  const struct dxil_type *element, *type;
+  struct dxil_resource_v1 *resource;
+  struct dxil_module *m;
+  unsigned id, field_count, i;
+  char type_name[64];
+  if (!s || s->failed || s->finished) return -1;
+  if (resource_class > 3 || !count || (count != UINT32_MAX && count - 1 > UINT32_MAX - binding) ||
+      !kind || kind > 14 || s->resource_counts[resource_class] >= 32 ||
+      (component_type != DXIL_COMP_TYPE_F32 && component_type != DXIL_COMP_TYPE_U32 && component_type != DXIL_COMP_TYPE_I32)) goto fail;
+  m = &s->module; id = s->resource_counts[resource_class];
+  element = dxil_module_get_int_type(m, 32);
+  if (resource_class == DXIL_RESOURCE_CLASS_CBV) {
+    if (!size || size > 65536) goto fail;
+    element = dxil_module_get_array_type(m, element, (size + 3) / 4);
+  } else if (resource_class < 2 && kind != DXIL_RESOURCE_KIND_RAW_BUFFER) {
+    element = dxil_module_get_vector_type(m, component_type == DXIL_COMP_TYPE_F32 ?
+      dxil_module_get_float_type(m, 32) : dxil_module_get_int_type(m, 32), 4);
+  }
+  snprintf(type_name, sizeof(type_name), "Resource_%u_%u", resource_class, id);
+  type = dxil_module_get_struct_type(m, type_name, &element, 1);
+  if (count != 1) type = dxil_module_get_array_type(m, type, count);
+  type = type ? dxil_module_get_pointer_type(m, type) : NULL;
+  if (!type) goto fail;
+  for (i = 0; i < 11; ++i) fields[i] = NULL;
+  fields[0] = metadata_int(s, id);
+  fields[1] = dxil_get_metadata_value(m, type, dxil_module_get_undef(m, type));
+  fields[2] = dxil_get_metadata_string(m, "");
+  fields[3] = metadata_int(s, space); fields[4] = metadata_int(s, binding); fields[5] = metadata_int(s, count);
+  if (resource_class == 2) { fields[6] = metadata_int(s, size); field_count = 8; }
+  else if (resource_class == 3) { fields[6] = metadata_int(s, 0); field_count = 8; }
+  else {
+    fields[6] = metadata_int(s, kind);
+    fields[7] = resource_class ? dxil_get_metadata_int1(m, 0) : metadata_int(s, 0);
+    if (resource_class) { fields[8] = fields[7]; fields[9] = fields[7]; field_count = 11; }
+    else field_count = 9;
+    if (kind != DXIL_RESOURCE_KIND_RAW_BUFFER) {
+      pair[0] = metadata_int(s, 0); pair[1] = metadata_int(s, component_type);
+      fields[field_count - 1] = dxil_get_metadata_node(m, pair, 2);
+    }
+  }
+  if (!fields[1] || !fields[2] || s->failed) goto fail;
+  node = dxil_get_metadata_node(m, fields, field_count);
+  if (!node) goto fail;
+  s->resource_nodes[resource_class][id] = node; ++s->resource_counts[resource_class];
+  /* PSV binding records are ordered sampler, CBV, SRV, UAV regardless of
+   * declaration order. Insert directly into that order, preserving each
+   * class's resource IDs; metadata construction uses separate class lists. */
+  i = resource_class == 3 ? id : s->resource_counts[3];
+  if (resource_class != 3 && resource_class != 2) i += s->resource_counts[2];
+  if (resource_class == 2) i += id;
+  else if (resource_class == 0) i += id;
+  else if (resource_class == 1) i += s->resource_counts[0] + id;
+  memmove(&s->resource[i + 1], &s->resource[i],
+    (s->validation.num_resources - i) * sizeof(s->resource[0]));
+  resource = &s->resource[i]; memset(resource, 0, sizeof(*resource));
+  ++s->validation.num_resources;
+  resource->v0.space = space; resource->v0.lower_bound = binding;
+  resource->v0.upper_bound = count == UINT32_MAX ? UINT32_MAX : binding + count - 1;
+  resource->resource_kind = kind;
+  if (kind == DXIL_RESOURCE_KIND_RAW_BUFFER) s->raw_buffers = 1;
+  resource->v0.resource_type = resource_class == 2 ? DXIL_RES_CBV : resource_class == 3 ? DXIL_RES_SAMPLER :
+    resource_class ? kind == DXIL_RESOURCE_KIND_RAW_BUFFER ? DXIL_RES_UAV_RAW : DXIL_RES_UAV_TYPED :
+    kind == DXIL_RESOURCE_KIND_RAW_BUFFER ? DXIL_RES_SRV_RAW : DXIL_RES_SRV_TYPED;
+  return (int)id;
+fail:
+  s->failed = 1;
+  return -1;
+}
+
+int xe_dxil_shader_geometry(XeDxilShaderModule *s, unsigned primitive, unsigned vertices, unsigned topology) {
+  if (!s || s->failed || s->finished) return 0;
+  if (s->module.shader_kind != DXIL_GEOMETRY_SHADER || !vertices || vertices > 1024 ||
+      (primitive != 1 && primitive != 2 && primitive != 3 && primitive != 6 && primitive != 7) ||
+      (topology != 1 && topology != 3 && topology != 5)) { s->failed = 1; return 0; }
+  s->stage_tag = DXIL_SHADER_TAG_GS_STATE; s->stage_count = 5;
+  s->stage_values[0] = primitive; s->stage_values[1] = vertices;
+  s->stage_values[2] = 1; s->stage_values[3] = topology; s->stage_values[4] = 1;
+  s->validation.state.psv2.psv1.max_vertex_count = (uint16_t)vertices;
+  s->validation.state.psv2.psv1.psv0.gs.input_primitive = primitive;
+  s->validation.state.psv2.psv1.psv0.gs.output_toplology = topology;
+  s->validation.state.psv2.psv1.psv0.gs.output_stream_mask = 1;
+  return 1;
+}
+
+int xe_dxil_shader_threads(XeDxilShaderModule *s, unsigned x, unsigned y, unsigned z) {
+  if (!s || s->failed || s->finished) return 0;
+  if (s->module.shader_kind != DXIL_COMPUTE_SHADER || !x || !y || !z ||
+      x > 1024 || y > 1024 || z > 64 || x * y * z > 1024) { s->failed = 1; return 0; }
+  s->stage_tag = DXIL_SHADER_TAG_NUM_THREADS; s->stage_count = 3;
+  s->stage_values[0] = x; s->stage_values[1] = y; s->stage_values[2] = z;
+  s->validation.state.psv2.num_threads_x = x;
+  s->validation.state.psv2.num_threads_y = y;
+  s->validation.state.psv2.num_threads_z = z;
+  return 1;
+}
+
+static int named_version(XeDxilShaderModule *s, const char *name, unsigned major, unsigned minor) {
+  const struct dxil_mdnode *values[2], *node;
+  values[0] = metadata_int(s, major); values[1] = metadata_int(s, minor);
+  node = dxil_get_metadata_node(&s->module, values, 2);
+  return node && dxil_add_metadata_named_node(&s->module, name, &node, 1);
+}
+
+int xe_dxil_shader_finish(XeDxilShaderModule *s, XeDxilShaderBinary *binary) {
+  static const char *models[] = {"ps","vs","gs","hs","ds","cs"};
+  const struct dxil_mdnode *values[5], *bindings, *properties = NULL, *node;
+  struct dxil_container container;
+  struct blob output;
+  struct dxil_module *m;
+  unsigned i, resources = 0, dependency_words;
+  int success = 0;
+  if (!s || !binary || s->failed || s->finished || binary->data || binary->size) return 0;
+  m = &s->module; s->finished = 1;
+  dxil_container_init(&container); blob_init(&output);
+  if (!named_version(s, "dx.version", 1, 0) || !named_version(s, "dx.valver", 1, 6)) goto done;
+  values[0] = dxil_get_metadata_string(m, models[m->shader_kind]);
+  values[1] = metadata_int(s, 6); values[2] = metadata_int(s, 0);
+  node = dxil_get_metadata_node(m, values, 3);
+  if (!node || !dxil_add_metadata_named_node(m, "dx.shaderModel", &node, 1)) goto done;
+  for (i = 0; i < 4; ++i) {
+    resources += s->resource_counts[i];
+    values[i] = s->resource_counts[i] ? dxil_get_metadata_node(m, s->resource_nodes[i], s->resource_counts[i]) : NULL;
+    if (s->resource_counts[i] && !values[i]) goto done;
+  }
+  bindings = resources ? dxil_get_metadata_node(m, values, 4) : NULL;
+  if (resources && (!bindings || !dxil_add_metadata_named_node(m, "dx.resources", &bindings, 1))) goto done;
+  if (s->stage_count) {
+    for (i = 0; i < s->stage_count; ++i) values[i] = metadata_int(s, s->stage_values[i]);
+    node = dxil_get_metadata_node(m, values, s->stage_count);
+    values[0] = metadata_int(s, s->stage_tag); values[1] = node;
+    values[2] = metadata_int(s, DXIL_SHADER_TAG_FLAGS);
+    values[3] = dxil_get_metadata_int64(m, s->raw_buffers ? 16 : 0);
+    properties = dxil_get_metadata_node(m, values, 4);
+    if (!node || !properties) goto done;
+  } else {
+    values[0] = metadata_int(s, DXIL_SHADER_TAG_FLAGS);
+    values[1] = dxil_get_metadata_int64(m, s->raw_buffers ? 16 : 0);
+    properties = dxil_get_metadata_node(m, values, 2);
+    if (!properties) goto done;
+  }
+  values[0] = dxil_get_metadata_func(m, m->cur_emitting_func->func);
+  values[1] = dxil_get_metadata_string(m, "main"); values[2] = get_signatures(m);
+  values[3] = bindings; values[4] = properties;
+  node = dxil_get_metadata_node(m, values, 5);
+  if (!node || !dxil_add_metadata_named_node(m, "dx.entryPoints", &node, 1) || s->failed || !dxil_emit_module(m)) goto done;
+  s->validation.state.psv2.psv1.sig_input_elements = (uint8_t)m->num_sig_inputs;
+  s->validation.state.psv2.psv1.sig_output_elements = (uint8_t)m->num_sig_outputs;
+  s->validation.state.psv2.psv1.sig_patch_const_or_prim_elements = (uint8_t)m->num_sig_patch_consts;
+  if (m->shader_kind == DXIL_HULL_SHADER || m->shader_kind == DXIL_DOMAIN_SHADER)
+    s->validation.state.psv2.psv1.sig_patch_const_or_prim_vectors = (uint8_t)m->num_psv_patch_consts;
+  /* SM 6.0 has no serialized ViewID metadata. The PSV still reserves the
+   * dependency table, with zero masks matching the module's absent state. */
+  dependency_words = ((m->num_psv_outputs[0] * 4 + 31) / 32) * m->num_psv_inputs * 4;
+  if (dependency_words) {
+    m->io_dependency_table[0] = rzalloc_array(m->ralloc_ctx, uint32_t, dependency_words);
+    if (!m->io_dependency_table[0]) goto done;
+    m->io_dependency_table_size[0] = dependency_words;
+  }
+  if (!dxil_container_add_features(&container, &m->feats) ||
+      !dxil_container_add_io_signature(&container, DXIL_ISG1, m->num_sig_inputs, m->inputs, 0) ||
+      !dxil_container_add_io_signature(&container, DXIL_OSG1, m->num_sig_outputs, m->outputs, 0) ||
+      (m->num_sig_patch_consts && !dxil_container_add_io_signature(&container, DXIL_PSG1, m->num_sig_patch_consts, m->patch_consts, 0)) ||
+      !dxil_container_add_state_validation(&container, m, &s->validation) ||
+      !dxil_container_add_module(&container, m) || !dxil_container_write(&container, &output)) goto done;
+  binary->data = (unsigned char *)output.data; binary->size = output.size;
+  output.data = NULL; output.size = 0; success = 1;
+done:
+  blob_finish(&output); dxil_container_finish(&container);
+  return success;
+}
+
+void xe_dxil_shader_binary_free(XeDxilShaderBinary *binary) {
+  if (!binary) return;
+  free(binary->data); binary->data = NULL; binary->size = 0;
+}

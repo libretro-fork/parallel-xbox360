@@ -35,7 +35,10 @@ Linux also needs the fontconfig
 development package. Fonts, patch data and raw SPIR-V/DXIL built-in shaders
 are included in the repository; a native C89 tool embeds them during the build.
 Linux, Android and macOS builds do not require Python or a shader compiler.
-The Windows guest-shader backend still uses Mesa and its Meson/Python build.
+D3D12 primitive-expansion geometry shaders are generated directly as DXIL.
+Standard render-target dumps also emit DXIL directly. The remaining guest
+stages, EDRAM direct resolves and ownership transfers still use Mesa and its
+Meson/Python build while their native replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in
 [`tools/tests/README.md`](tools/tests/README.md); whole-shader integration

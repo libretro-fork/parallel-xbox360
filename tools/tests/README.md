@@ -208,3 +208,47 @@ compiled with MinGW-w64 GCC using `-std=c89 -Wall -Wextra -Werror`.
 The Windows GCC build passed all these checks, including the context-switch
 and D3D12 adapter tests compiled with MSVC. These are ABI and lifecycle smoke
 checks; they do not exercise game execution or an actual title exit.
+
+## Native geometry stages
+
+`make check-dxil-geometry DXIL_VALIDATOR=/path/to/dxv` emits twelve native
+geometry variants: points, rectangles, quads and scaled lines, each with a
+minimal signature, six clip planes, or six cull planes. Large signatures
+also carry sixteen interpolators, point size, point coordinates and vertex kill.
+No SPIR-V is generated or consumed. The fixture also emits a matching native
+vertex shader alongside each geometry container as `<path>.vs`.
+
+Compile `dxil_geometry_runtime_test.c` with MSVC `/TC /W4 /WX` or MinGW GCC
+`-std=c89 -Wall -Wextra -Werror`, linking D3D12 and DXGI. Run it with a generated
+geometry filename and primitive type (1 through 4). It draws on WARP, reads
+stream output, and compares the six triangle vertices and their attributes.
+All twelve variants pass. The optional generator argument 1 injects a NaN,
+2 sets one cull plane negative, and 3 supplies zero point size or a degenerate
+line. Pass `discard` as the runtime test's final argument for these fixtures;
+ten such cases pass with no stream output.
+
+The authored stage/container, geometry, texture frontend and fixtures pass
+strict C89 checks with GCC and MSVC. The native geometry generator is connected
+to the D3D12 pipeline cache; game rendering has not been tested.
+## Native EDRAM packing and dumps
+
+`make check-dxil-edram DXIL_VALIDATOR=/path/to/dxv` emits the native format
+fixture. Run `dxil_runtime_test.exe <shader> <shader>.expected raw` for exact
+bit comparisons, including NaN payloads. Its 8,576 words cover all 1,024 7e3
+encodings, saturation, ties, 20e4 depth remapping and integer-view formats.
+
+Build `build/make/host/dxil-edram-dump-test` (append `.exe` on Windows).
+Arguments are output path, resource format, depth flag, MSAA enum (0/1/2),
+and layout configuration (0/1/2/3: native, scaled, native source in scaled
+layout, native destination). All 168 combinations of the twelve color and
+two depth formats, three MSAA modes and four configurations pass validation.
+The 0/0/0/0 fixture also writes texture, expected and constant-buffer files.
+Run `dxil_runtime_test.exe <shader> <shader>.expected <shader>.texture
+<shader>.constants dump` to compare the 128 written EDRAM samples on WARP.
+The unmodified columns outside that dispatch region are not compared.
+
+For the MinGW runtime harness, add
+`-isystem third_party/DirectX-Headers/include` and link D3D12, DXGI and dxguid.
+Both GCC and MSVC harnesses pass the format and dump execution checks.
+Standard dump generation is connected to the D3D12 render-target cache;
+direct resolves and ownership-transfer shaders still need native emitters.

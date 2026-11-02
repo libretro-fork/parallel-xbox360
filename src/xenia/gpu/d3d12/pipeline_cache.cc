@@ -32,7 +32,7 @@
 #include "xenia/gpu/draw_util.h"
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/registers.h"
-#include "xenia/gpu/spirv_builtin_geometry_shader.h"
+#include "xenia/gpu/dxil/guest_geometry.h"
 #include "xenia/gpu/spirv_shader.h"
 #include "xenia/gpu/spirv_shader_translator.h"
 #include "xenia/gpu/spirv_to_dxil_compiler.h"
@@ -824,76 +824,66 @@ SpirvShader* PipelineCache::GetGuestMesaSpirvShader(uint64_t ucode_hash) {
   return it->second->bindings_ready() ? it->second : nullptr;
 }
 
-const std::vector<uint8_t>* PipelineCache::GetGuestMesaGeometryDxil(
+const std::vector<uint8_t>* PipelineCache::GetGuestNativeGeometryDxil(
     GeometryShaderKey key) {
   {
     std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
-    auto cached = mesa_geometry_dxil_cache_.find(key.key);
-    if (cached != mesa_geometry_dxil_cache_.end()) {
+    auto cached = native_geometry_dxil_cache_.find(key.key);
+    if (cached != native_geometry_dxil_cache_.end()) {
       return cached->second.empty() ? nullptr : &cached->second;
     }
   }
 
-  // Build the SPIR-V with the same version and float controls as the guest
-  // vertex/pixel shaders so the stages link. The shared generator reads the
-  // SpirvShaderTranslator vertex output signature and SystemConstants layout.
-  const SpirvShaderTranslator::Features& features =
-      guest_shader_cache_.translator().features();
-  std::vector<unsigned int> spirv = BuildGuestPrimitiveGeometryShaderSpirv(
-      BuiltinGeometryShaderType(uint32_t(key.type)), key.interpolator_count,
-      key.user_clip_plane_count, key.user_clip_plane_cull,
-      key.has_vertex_kill_and, key.has_point_size, key.has_point_coordinates,
-      features.spirv_version, features.denorm_flush_to_zero_float32,
-      features.signed_zero_inf_nan_preserve_float32,
-      features.rounding_mode_rte_float32);
-  // Producer clip count, so the isolated GS splits its clip/cull inputs where
-  // the vertex shader does. Cull planes contribute no clip inputs.
-  uint32_t input_clip_size =
-      key.user_clip_plane_cull ? 0 : key.user_clip_plane_count;
-  std::vector<uint8_t> dxil = SpirvToDxilCompiler::Translate(
-      spirv.data(), spirv.size(), SpirvToDxilCompiler::Stage::kGeometry,
-      /*lower_to_bindless=*/true, input_clip_size);
+  XeDxilGeometryOptions options;
+  XeDxilShaderBinary binary;
+  std::memset(&options, 0, sizeof(options));
+  std::memset(&binary, 0, sizeof(binary));
+  options.type = uint32_t(key.type);
+  options.interpolators = key.interpolator_count;
+  options.clip_planes = key.user_clip_plane_cull ? 0 : key.user_clip_plane_count;
+  options.cull_planes = key.user_clip_plane_cull ? key.user_clip_plane_count : 0;
+  options.vertex_kill_and = key.has_vertex_kill_and;
+  options.point_size = key.has_point_size;
+  options.point_coordinates = key.has_point_coordinates;
+  options.point_diameter_word =
+      offsetof(SpirvShaderTranslator::SystemConstants, point_constant_diameter) / 4;
+  options.point_radius_word =
+      offsetof(SpirvShaderTranslator::SystemConstants,
+               point_screen_diameter_to_ndc_radius) / 4;
+  std::vector<uint8_t> dxil;
+  if (xe_dxil_build_geometry(&options, &binary)) {
+    dxil.assign(binary.data, binary.data + binary.size);
+  }
+  xe_dxil_shader_binary_free(&binary);
   if (dxil.empty()) {
     std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
-    mesa_geometry_dxil_cache_.emplace(key.key, std::vector<uint8_t>());
-    XELOGW("spirv_to_dxil: geometry shader DXIL conversion failed (key {:08X})",
-           key.key);
+    native_geometry_dxil_cache_.emplace(key.key, std::vector<uint8_t>());
+    XELOGW("native_dxil: geometry generation failed (key {:08X})", key.key);
     return nullptr;
   }
-
-  // With --dump_shaders, write the built-in GS SPIR-V + DXIL for signature
-  // checks.
   if (!cvars::dump_shaders.empty()) {
     std::filesystem::path dir = std::filesystem::absolute(cvars::dump_shaders);
     std::filesystem::create_directories(dir);
-    std::filesystem::path spirv_path =
-        dir / fmt::format("shader_geometry_{:08X}.spirv.bin.geom", key.key);
-    if (FILE* spirv_file = filesystem::OpenFile(spirv_path, "wb")) {
-      fwrite(spirv.data(), sizeof(unsigned int), spirv.size(), spirv_file);
-      fclose(spirv_file);
-    }
     std::filesystem::path dxil_path =
-        dir /
-        fmt::format("shader_geometry_{:08X}.spirv_dxil.bin.geom", key.key);
+        dir / fmt::format("shader_geometry_{:08X}.native_dxil.bin.geom", key.key);
     if (FILE* dxil_file = filesystem::OpenFile(dxil_path, "wb")) {
       fwrite(dxil.data(), 1, dxil.size(), dxil_file);
       fclose(dxil_file);
     }
   }
-
   size_t dxil_size = dxil.size();
   bool newly_cached;
   const std::vector<uint8_t>* result;
   {
     std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
     auto emplaced =
-        mesa_geometry_dxil_cache_.try_emplace(key.key, std::move(dxil));
+        native_geometry_dxil_cache_.try_emplace(key.key, std::move(dxil));
     newly_cached = emplaced.second;
     result = &emplaced.first->second;
   }
   if (newly_cached) {
     XELOGI(
-        "spirv_to_dxil: translated built-in geometry shader key {:08X} -> {} B "
+        "native_dxil: generated built-in geometry shader key {:08X} -> {} B "
         "DXIL",
         key.key, dxil_size);
   }
@@ -1120,9 +1110,9 @@ bool PipelineCache::BuildMesaPipelineDxil(
     if (GetGeometryShaderKey(description.geometry_shader,
                              description.vertex_shader_modification,
                              description.pixel_shader_modification, gs_key)) {
-      runtime_description.mesa_geometry_dxil = GetGuestMesaGeometryDxil(gs_key);
+      runtime_description.native_geometry_dxil = GetGuestNativeGeometryDxil(gs_key);
     }
-    if (!runtime_description.mesa_geometry_dxil) {
+    if (!runtime_description.native_geometry_dxil) {
       return false;
     }
   }
@@ -1367,9 +1357,9 @@ bool PipelineCache::ConfigurePipeline(
             description.geometry_shader, vertex_shader->modification(),
             pixel_shader ? pixel_shader->modification() : uint64_t(0),
             gs_key)) {
-      runtime_description.mesa_geometry_dxil = GetGuestMesaGeometryDxil(gs_key);
+      runtime_description.native_geometry_dxil = GetGuestNativeGeometryDxil(gs_key);
     }
-    if (!runtime_description.mesa_geometry_dxil) {
+    if (!runtime_description.native_geometry_dxil) {
       XELOGE(
           "spirv_to_dxil: built-in geometry shader translation failed; "
           "skipping draw");
@@ -2230,14 +2220,13 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
     }
   }
 
-  // Geometry shader - the guest spirv_to_dxil path supplies a Mesa-built
-  // geometry shader that matches the Mesa vertex output signature and root
-  // signature.
-  if (runtime_description.mesa_geometry_dxil) {
+  // Native primitive expansion uses the guest inter-stage semantics and
+  // existing system-constant root binding.
+  if (runtime_description.native_geometry_dxil) {
     state_desc.GS.pShaderBytecode =
-        runtime_description.mesa_geometry_dxil->data();
+        runtime_description.native_geometry_dxil->data();
     state_desc.GS.BytecodeLength =
-        runtime_description.mesa_geometry_dxil->size();
+        runtime_description.native_geometry_dxil->size();
   }
 
   // Rasterizer state.
