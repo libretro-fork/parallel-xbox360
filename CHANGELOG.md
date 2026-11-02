@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Plain guest vertex shaders now compile directly from Xbox microcode to native DXIL in the D3D12 renderer and shader-cache warm-up. The C89 adapter handles index endian/base conversion, guest position conventions, sparse interpolators, clip/cull distances, point size and vertex killing. Cached containers pass directly to pipeline creation without copying their bytecode. Six containers validate unchanged and 210 WARP executions pass. Textured/memory-export vertex shaders, pixel shaders and tessellation still require migration before Mesa can be removed.
+
 - Added the native C89 guest-program layer joining raw microcode control flow, ALU, full/mini vertex fetch and texture-state dispatch with real constant-buffer bindings. Relative accesses clamp to declared storage, static float constants retain tight packing, and export tracking follows executed writes. Export preparation initializes only referenced slots; two sample containers are roughly half their previous size. Nine WARP fixtures pass 288 exact words. Renderer stage adapters and Mesa removal remain unfinished.
 
 - ROV depth-only and VIZ survey shaders now generate native DXIL, replacing their Mesa conversions. Ordered EDRAM access, tiled/scaled sample addresses, per-face polygon offset, depth/stencil tests and query counters are handled in owned C89 code. Uncovered samples skip EDRAM access, unchanged words skip stores, and only the active depth format is converted. Native containers stay owned directly through pipeline creation. Guest shader and tessellation translation still require Mesa.

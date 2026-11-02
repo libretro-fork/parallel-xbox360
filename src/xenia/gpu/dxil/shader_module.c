@@ -175,7 +175,8 @@ static int resource_impl(XeDxilShaderModule *s, unsigned resource_class, unsigne
     element = dxil_module_get_vector_type(m, component_type == DXIL_COMP_TYPE_F32 ?
       dxil_module_get_float_type(m, 32) : dxil_module_get_int_type(m, 32), 4);
   }
-  snprintf(type_name, sizeof(type_name), "Resource_%u_%u", resource_class, id);
+  /* Class <= 3 and id < 32 above: at most 14 bytes including NUL. */
+  sprintf(type_name, "Resource_%u_%u", resource_class, id);
   type = dxil_module_get_struct_type(m, type_name, &element, 1);
   if (count != 1) type = dxil_module_get_array_type(m, type, count);
   type = type ? dxil_module_get_pointer_type(m, type) : NULL;
@@ -340,4 +341,8 @@ done:
 void xe_dxil_shader_binary_free(XeDxilShaderBinary *binary) {
   if (!binary) return;
   free(binary->data); binary->data = NULL; binary->size = 0;
+}
+void xe_dxil_shader_binary_delete(XeDxilShaderBinary *binary) {
+  if (!binary) return;
+  xe_dxil_shader_binary_free(binary); free(binary);
 }

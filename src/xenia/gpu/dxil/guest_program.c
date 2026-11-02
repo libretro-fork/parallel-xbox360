@@ -91,9 +91,8 @@ static XeDxilValue read_value(void *context, unsigned constant, unsigned index, 
 fail:
   p->alu.failed = 1; return NULL;
 }
-static int write_value(void *context, unsigned exporting, unsigned index,
-    unsigned mask, XeDxilValue values[4], XeDxilValue offset) {
-  XeDxilGuestProgram *p = (XeDxilGuestProgram *)context;
+static int write_storage(XeDxilGuestProgram *p, unsigned exporting, unsigned index,
+    unsigned mask, XeDxilValue values[4], XeDxilValue offset, unsigned notify) {
   XeDxilValue destination;
   unsigned i;
   if (mask > 15 || !values || (exporting && offset)) goto fail;
@@ -103,11 +102,15 @@ static int write_value(void *context, unsigned exporting, unsigned index,
       offset, exporting ? 64 : p->options.register_count);
     if (!destination || !values[i] || !dxil_emit_store(p->alu.module, values[i], destination, 4, 0)) goto fail;
   }
-  if (exporting && mask && p->options.export_written &&
+  if (notify && exporting && mask && p->options.export_written &&
       !p->options.export_written(p->options.context, p, index, mask)) goto fail;
   return 1;
 fail:
   p->alu.failed = 1; return 0;
+}
+static int write_value(void *context, unsigned exporting, unsigned index,
+    unsigned mask, XeDxilValue values[4], XeDxilValue offset) {
+  return write_storage((XeDxilGuestProgram *)context, exporting, index, mask, values, offset, 1);
 }
 static int kill_value(void *context, XeDxilValue condition) {
   XeDxilGuestProgram *p = (XeDxilGuestProgram *)context;
@@ -182,6 +185,9 @@ XeDxilAlu *xe_dxil_guest_program_alu(XeDxilGuestProgram *p) { return p ? &p->alu
 XeDxilAluIo *xe_dxil_guest_program_io(XeDxilGuestProgram *p) { return p ? &p->io : NULL; }
 int xe_dxil_guest_program_register(XeDxilGuestProgram *p, unsigned index, unsigned mask, XeDxilValue values[4]) {
   return p && write_value(p, 0, index, mask, values, NULL);
+}
+int xe_dxil_guest_program_default_export(XeDxilGuestProgram *p, unsigned index, unsigned mask, XeDxilValue values[4]) {
+  return p && !p->emitted && !p->alu.module->cur_emitting_func->curr_block && write_storage(p,1,index,mask,values,NULL,0);
 }
 XeDxilValue xe_dxil_guest_program_export(XeDxilGuestProgram *p, unsigned index, unsigned component) {
   XeDxilValue address;

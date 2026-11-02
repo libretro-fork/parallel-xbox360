@@ -339,6 +339,22 @@ constants at byte 0 (b1 space1), bool/loop constants at 4096 (b3 space1), and
 fetch constants at 4352 (b4 space1). Both GCC and MSVC harnesses execute the
 programs. The texture fixture instruments the stage-policy callback; it does
 not test native texture policy or replace the existing texture sampling tests.
-This layer reads ucode directly and is ready for stage adapters; it is not yet
-connected to the renderer's vertex/pixel shader compilation, which still uses
-Mesa. Memory-export allocation and kill handling require stage callbacks.
+The native plain vertex adapter connects this layer to renderer compilation.
+Memory-export allocation, pixel kill handling and texture policy still require
+stage callbacks; their renderer paths continue using Mesa.
+
+`make check-dxil-guest-vertex DXIL_VALIDATOR=/path/to/dxv` validates six complete
+native vertex containers. The C89 adapter uses SV_VertexID, raw shared memory
+and the same system/float/bool-loop/fetch CBV bindings as the renderer. Default
+point-size initialization does not report a guest export write.
+
+Build `dxil_guest_vertex_runtime_test.c` with the same MSVC/GCC Windows harness
+settings above. Run `<exe> <shader> <config 0..5> <flags 0..7> <endian 0..3>
+<signed-base> <kill 0..3>`. Flags select W-not-reciprocal, XY-divided-by-W and
+Z-divided-by-W. Kill values select zero, one, negative zero and a raw denormal.
+The 210-case WARP matrix covers all flags in all six configurations, each
+endian mode with bases -1/0/1/16777216, and nonzero kill values across the three
+kill-enabled configurations. Stream output is compared against independent CPU
+position, clip/cull and attribute calculations, including sparse raw exports
+0/3/15 densely packed into TEXCOORD0/1/2. Six runs also pass through the MSVC
+harness. These are GPU execution fixtures, not game-title compatibility tests.

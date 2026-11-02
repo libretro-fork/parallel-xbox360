@@ -32,6 +32,7 @@
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/dxil/depth_only.h"
 #include "xenia/gpu/dxil/rov_depth.h"
+#include "xenia/gpu/dxil/guest_vertex_stage.h"
 #include "xenia/gpu/guest_spirv_shader_cache.h"
 #include "xenia/gpu/pipeline_creation_queue.h"
 #include "xenia/gpu/primitive_processor.h"
@@ -135,6 +136,8 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   const std::vector<uint8_t>* ConvertGuestMesaSpirvToDxil(
       uint64_t ucode_hash, uint64_t spirv_modification,
       const std::vector<uint8_t>& spirv, xenos::ShaderType shader_type);
+  const XeDxilShaderBinary* GetGuestNativeVertexDxil(const Shader& shader,
+                                                   uint64_t modification);
   // Returns the guest SpirvShader for a ucode hash once its bindings are
   // published (bindings_ready), or nullptr. Its texture/sampler bindings define
   // the order the Mesa DXIL expects in the bindless index buffers.
@@ -377,6 +380,7 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
     // storage reload path (which builds this struct without a memset) leaves
     // them null until it re-translates the guest shaders.
     const std::vector<uint8_t>* mesa_vertex_dxil = nullptr;
+    const XeDxilShaderBinary* native_vertex_dxil = nullptr;
     const std::vector<uint8_t>* mesa_pixel_dxil = nullptr;
     // Guest SPIR-V translations deferred to a creation thread: translated
     // (ucode->SPIR-V) and converted to DXIL there, off the main thread. Point
@@ -515,9 +519,14 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   std::unordered_map<uint64_t,
                      std::unordered_map<uint64_t, MesaTessellationDxil>>
       mesa_tess_dxil_cache_;
-  // Guards mesa_dxil_cache_, native_geometry_dxil_cache_ and
-  // mesa_tess_dxil_cache_: guest translation and native geometry generation
+  // Guards the Mesa, native geometry and native vertex bytecode caches and
+  // mesa_tess_dxil_cache_: guest translation and native shader generation
   // can run on both the processor and pipeline creation threads.
+  using OwnedNativeDxil = std::unique_ptr<XeDxilShaderBinary,
+                                        void (*)(XeDxilShaderBinary*)>;
+  // Stable owned containers: no temporary bytecode vector or buffer copy.
+  std::unordered_map<uint64_t, std::unordered_map<uint64_t, OwnedNativeDxil>>
+      native_vertex_dxil_cache_;
   std::mutex mesa_dxil_cache_mutex_;
   // Native ROV depth-only shaders, indexed by guest MSAA and VIZ survey mode.
   XeDxilShaderBinary native_rov_depth_pixel_shaders_[3][2] = {};

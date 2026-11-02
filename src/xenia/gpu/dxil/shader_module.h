@@ -52,6 +52,8 @@ int xe_dxil_shader_threads(XeDxilShaderModule *shader, unsigned x, unsigned y, u
  * container buffer directly to binary; no intermediary output copy. */
 int xe_dxil_shader_finish(XeDxilShaderModule *shader, XeDxilShaderBinary *binary);
 void xe_dxil_shader_binary_free(XeDxilShaderBinary *binary);
+/* For heap-owned binary records returned by native stage factories. */
+void xe_dxil_shader_binary_delete(XeDxilShaderBinary *binary);
 #ifdef __cplusplus
 }
 #endif

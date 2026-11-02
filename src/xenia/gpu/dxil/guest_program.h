@@ -34,6 +34,9 @@ XeDxilAlu *xe_dxil_guest_program_alu(XeDxilGuestProgram *program);
 XeDxilAluIo *xe_dxil_guest_program_io(XeDxilGuestProgram *program);
 int xe_dxil_guest_program_register(XeDxilGuestProgram *program, unsigned index,
   unsigned mask, XeDxilValue values[4]);
+/* Stage defaults, before emit, do not report guest export writes. */
+int xe_dxil_guest_program_default_export(XeDxilGuestProgram *program, unsigned index,
+  unsigned mask, XeDxilValue values[4]);
 XeDxilValue xe_dxil_guest_program_export(XeDxilGuestProgram *program, unsigned index, unsigned component);
 int xe_dxil_guest_program_emit(XeDxilGuestProgram *program, const uint32_t *words,
   size_t word_count, unsigned control_flow_count);

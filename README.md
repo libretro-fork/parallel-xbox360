@@ -40,15 +40,18 @@ Render-target dumps, direct resolves and EDRAM ownership transfers also emit
 DXIL directly. Host-depth pixel shaders, including float24 conversion and
 occlusion counting, use native DXIL containers without a temporary bytecode
 copy. Depth-only ROV shaders also use native DXIL, with ordered EDRAM access
-and native depth/stencil tests. The remaining guest and tessellation stages
-still use Mesa and its
-Meson/Python build while their native replacements are implemented.
+and native depth/stencil tests. Plain guest vertex shaders without texture
+fetch results, memory exports or ALU kill instructions also generate native
+DXIL, including position conversion and clip/cull outputs. Textured and
+memory-export vertex shaders, pixel shaders and tessellation still use Mesa
+and its Meson/Python build while their native replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in
 [`tools/tests/README.md`](tools/tests/README.md); whole-shader integration
 is still in progress. The native program layer joins raw control flow, ALU and
-fetch emitters with bounded register/constant storage; renderer stage adapters
-are not yet connected to it.
+fetch emitters with bounded register/constant storage. The plain vertex adapter
+is connected to live draws and shader-cache warm-up, retaining generated
+containers directly without a temporary bytecode-vector copy.
 
 ```sh
 git clone https://github.com/libretro-fork/parallel-xbox360.git
