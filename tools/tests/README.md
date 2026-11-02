@@ -323,3 +323,22 @@ The final 324-run matrix covers both full-screen and partially covered triangles
 1x/2x/4x guest samples, native and 2x3 scaling, both faces, counter suppression,
 survey flags and nonzero query slots. Guest shaders, including their ROV color
 and export paths, and linked tessellation stages still need native integration.
+`make check-dxil-program DXIL_VALIDATOR=/path/to/dxv` validates nine complete
+raw-microcode programs through the production program layer. These cover sparse
+float constants (including indices 65 and 255), runtime relative clamping, bool
+and loop CBVs, calls, full/mini vertex fetch, invalid fetch bounds, texture LOD/
+gradient state and serialization callbacks, and true/false predicated partial
+exports. Initialization does not report guest writes. Only referenced export
+slots are initialized; never-written slots read as zero. The sparse/loop sample
+containers shrink from 11,732/12,660 to 5,556/6,264 bytes with this preparation.
+
+Run `dxil_runtime_test.exe <shader> <shader>.expected <shader>.memory
+<shader>.constants program` to compare all 32 words per fixture exactly.
+The program runtime mode binds three CBV views of the fixture upload: float
+constants at byte 0 (b1 space1), bool/loop constants at 4096 (b3 space1), and
+fetch constants at 4352 (b4 space1). Both GCC and MSVC harnesses execute the
+programs. The texture fixture instruments the stage-policy callback; it does
+not test native texture policy or replace the existing texture sampling tests.
+This layer reads ucode directly and is ready for stage adapters; it is not yet
+connected to the renderer's vertex/pixel shader compilation, which still uses
+Mesa. Memory-export allocation and kill handling require stage callbacks.

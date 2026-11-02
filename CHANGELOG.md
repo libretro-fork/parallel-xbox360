@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Added the native C89 guest-program layer joining raw microcode control flow, ALU, full/mini vertex fetch and texture-state dispatch with real constant-buffer bindings. Relative accesses clamp to declared storage, static float constants retain tight packing, and export tracking follows executed writes. Export preparation initializes only referenced slots; two sample containers are roughly half their previous size. Nine WARP fixtures pass 288 exact words. Renderer stage adapters and Mesa removal remain unfinished.
+
 - ROV depth-only and VIZ survey shaders now generate native DXIL, replacing their Mesa conversions. Ordered EDRAM access, tiled/scaled sample addresses, per-face polygon offset, depth/stencil tests and query counters are handled in owned C89 code. Uncovered samples skip EDRAM access, unchanged words skip stores, and only the active depth format is converted. Native containers stay owned directly through pipeline creation. Guest shader and tessellation translation still require Mesa.
 
 - Host-depth pixel shaders now generate native DXIL for empty rasterization, float24 truncation/rounding and hybrid occlusion coverage counting. Truncation preserves conservative depth output for early depth testing. Pipeline initialization keeps the native buffers directly and releases them after shader workers join; obsolete prebuilt float24 shaders were removed. WARP checks cover 1x/2x/4x MSAA, disabled/nonzero counter slots and float24 underflow, tie and clamping boundaries. Guest, ROV depth/stencil and tessellation shaders still need migration before Mesa can be removed.

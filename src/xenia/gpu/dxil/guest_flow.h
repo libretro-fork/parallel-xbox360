@@ -22,6 +22,9 @@ typedef struct XeDxilGuestFlow {
                 XeDxilAlu *alu, XeDxilAluIo *io);
   int (*allocation)(void *context, unsigned type, unsigned size,
                      unsigned control_flow_index, XeDxilAlu *alu, XeDxilAluIo *io);
+  /* Optional entry-block storage preparation for referenced export slots.
+   * Called during validation, before control-flow blocks are emitted. */
+  int (*prepare_export)(void *context, unsigned index);
 } XeDxilGuestFlow;
 
 /* Emit into an entry block, after the stage adapter creates storage/bindings.

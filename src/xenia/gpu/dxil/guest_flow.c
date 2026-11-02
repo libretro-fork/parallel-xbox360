@@ -256,6 +256,15 @@ static int validate(Flow *f) {
         for (slot = 0; slot < count; ++slot)
           if (((c.low >> 16) & 4095) & (1u << (slot * 2))) return 0;
       }
+      if (f->config->prepare_export) {
+        unsigned slot;
+        for (slot = 0; slot < count; ++slot) {
+          const uint32_t *instruction;
+          if (((c.low >> 16) & 4095) & (1u << (slot*2))) continue;
+          instruction = f->config->words+(address+slot)*3;
+          if ((instruction[0] & 32768) && !f->config->prepare_export(f->config->context, instruction[0] & 63)) return 0;
+        }
+      }
     } else if (c.opcode == 7 || c.opcode == 8 || c.opcode == 9 || c.opcode == 11) {
       if ((c.low & 8191) > f->config->control_flow_count) return 0;
       address = c.low & 8191;

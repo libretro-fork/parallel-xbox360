@@ -46,7 +46,9 @@ Meson/Python build while their native replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in
 [`tools/tests/README.md`](tools/tests/README.md); whole-shader integration
-is still in progress.
+is still in progress. The native program layer joins raw control flow, ALU and
+fetch emitters with bounded register/constant storage; renderer stage adapters
+are not yet connected to it.
 
 ```sh
 git clone https://github.com/libretro-fork/parallel-xbox360.git
