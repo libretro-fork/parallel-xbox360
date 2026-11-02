@@ -330,13 +330,13 @@ check-dxil-writer: $(HOST_DIR)/dxil-writer-test$(HOST_EXEEXT)
 	cmp "$(HOST_DIR)/dxil-writer-test-ps.dxil" "$(HOST_DIR)/dxil-writer-test-ps-validated.dxil"
 
 DXIL_ALU_DIR := src/xenia/gpu/dxil
-DXIL_ALU_SOURCES := $(DXIL_ALU_DIR)/guest_alu.c $(DXIL_ALU_DIR)/guest_alu_instruction.c $(DXIL_ALU_DIR)/guest_flow.c $(DXIL_ALU_DIR)/guest_vertex.c $(DXIL_ALU_DIR)/guest_resources.c $(DXIL_ALU_DIR)/guest_texture.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_ALU_DIR)/guest_geometry.c $(DXIL_ALU_DIR)/edram_format.c $(DXIL_ALU_DIR)/edram_dump.c $(DXIL_ALU_DIR)/edram_transfer.c
+DXIL_ALU_SOURCES := $(DXIL_ALU_DIR)/guest_alu.c $(DXIL_ALU_DIR)/guest_alu_instruction.c $(DXIL_ALU_DIR)/guest_flow.c $(DXIL_ALU_DIR)/guest_vertex.c $(DXIL_ALU_DIR)/guest_resources.c $(DXIL_ALU_DIR)/guest_texture.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_ALU_DIR)/guest_geometry.c $(DXIL_ALU_DIR)/edram_format.c $(DXIL_ALU_DIR)/edram_dump.c $(DXIL_ALU_DIR)/edram_transfer.c $(DXIL_ALU_DIR)/depth_only.c
 $(HOST_DIR)/dxil-alu-test$(HOST_EXEEXT): tools/tests/dxil_writer_test.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c tools/tests/dxil_test_storage.h $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -DXE_DXIL_ALU_TEST -DXE_DXIL_FLOW_TEST -DXE_DXIL_VERTEX_TEST -DXE_DXIL_RESOURCES_TEST -DXE_DXIL_TEXTURE_TEST -DXE_DXIL_EDRAM_TEST -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_writer_test.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 .PHONY: check-dxil-alu check-dxil-alu-c89
 check-dxil-alu-c89:
-	$(HOST_CC) $(HOST_CFLAGS) -std=c89 -pedantic-errors -Wall -Wextra -Werror -DXE_DXIL_ALU_TEST -DXE_DXIL_FLOW_TEST -DXE_DXIL_VERTEX_TEST -DXE_DXIL_RESOURCES_TEST -DXE_DXIL_TEXTURE_TEST -DXE_DXIL_EDRAM_TEST -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -fsyntax-only $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_DIR)/dxil_blocks.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c tools/tests/dxil_geometry_test.c tools/tests/dxil_edram_dump_test.c tools/tests/dxil_pixel_interface_test.c tools/tests/dxil_edram_transfer_test.c tools/tests/dxil_writer_test.c
+	$(HOST_CC) $(HOST_CFLAGS) -std=c89 -pedantic-errors -Wall -Wextra -Werror -DXE_DXIL_ALU_TEST -DXE_DXIL_FLOW_TEST -DXE_DXIL_VERTEX_TEST -DXE_DXIL_RESOURCES_TEST -DXE_DXIL_TEXTURE_TEST -DXE_DXIL_EDRAM_TEST -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -fsyntax-only $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_DIR)/dxil_blocks.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c tools/tests/dxil_geometry_test.c tools/tests/dxil_edram_dump_test.c tools/tests/dxil_pixel_interface_test.c tools/tests/dxil_edram_transfer_test.c tools/tests/dxil_depth_only_test.c tools/tests/dxil_writer_test.c
 check-dxil-alu: $(HOST_DIR)/dxil-alu-test$(HOST_EXEEXT) check-dxil-alu-c89
 	$< "$(HOST_DIR)/dxil-alu-test.dxil" alu
 	$(DXIL_VALIDATOR) "$(HOST_DIR)/dxil-alu-test.dxil" -o="$(HOST_DIR)/dxil-alu-test-validated.dxil"
@@ -519,3 +519,15 @@ check-dxil-edram-transfer: $(HOST_DIR)/dxil-edram-transfer-test$(HOST_EXEEXT) ch
 	  $(DXIL_VALIDATOR) "$$path" -o="$$path.validated"; \
 	  cmp "$$path" "$$path.validated"; \
 	done
+
+$(HOST_DIR)/dxil-depth-only-test$(HOST_EXEEXT): tools/tests/dxil_depth_only_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h) $(HOST_DIR)/config
+	@mkdir -p "$(@D)"
+	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_depth_only_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
+.PHONY: check-dxil-depth-only
+check-dxil-depth-only: $(HOST_DIR)/dxil-depth-only-test$(HOST_EXEEXT) check-dxil-alu-c89
+	@set -e; for mode in 0 1 2; do for count in 0 1; do \
+	  path="$(HOST_DIR)/dxil-depth-$$mode-$$count.dxil"; \
+	  $< "$$path" $$mode $$count; \
+	  $(DXIL_VALIDATOR) "$$path" -o="$$path.validated"; \
+	  cmp "$$path" "$$path.validated"; \
+	done; done

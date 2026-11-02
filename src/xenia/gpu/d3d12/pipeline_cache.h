@@ -30,6 +30,7 @@
 #include "xenia/base/threading.h"
 #include "xenia/gpu/d3d12/d3d12_render_target_cache.h"
 #include "xenia/gpu/gpu_flags.h"
+#include "xenia/gpu/dxil/depth_only.h"
 #include "xenia/gpu/guest_spirv_shader_cache.h"
 #include "xenia/gpu/pipeline_creation_queue.h"
 #include "xenia/gpu/primitive_processor.h"
@@ -531,14 +532,9 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   std::unordered_map<uint64_t, SpirvShader*, xe::hash::IdentityHasher<uint64_t>>
       shaders_;
 
-  // Host render target path - keeps RTV draws that write nothing rasterized
-  // for occlusion queries.
-  std::vector<uint8_t> mesa_depth_only_pixel_shader_;
-  // Hybrid occlusion query depth-only pixel shaders, counting pre-test
-  // coverage into the ZPD counter's Total lane.
-  std::vector<uint8_t> zpd_total_depth_only_pixel_shader_;
-  std::vector<uint8_t> zpd_total_float24_truncate_pixel_shader_;
-  std::vector<uint8_t> zpd_total_float24_round_pixel_shader_;
+  // Host-depth helpers indexed by conversion mode and coverage counting.
+  // Containers are owned directly, without a second bytecode allocation.
+  XeDxilShaderBinary native_depth_only_pixel_shaders_[3][2] = {};
 
   struct Pipeline {
     // nullptr if creation has failed or still pending. May hold a placeholder

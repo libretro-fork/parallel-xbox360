@@ -281,3 +281,17 @@ to generator variants 0, 9, 18 and 27. Each compares every rendered float bit
 for unchanged, scaled-to-native and native-to-scaled layouts. These four runtime
 checks cover color preservation and coordinate remapping; the other modes
 currently have container validation coverage rather than runtime comparisons.
+`make check-dxil-depth-only DXIL_VALIDATOR=/path/to/dxv` validates six native
+host-depth shaders: unchanged depth, float24 truncation and float24 rounding,
+each with or without coverage counting. The generator arguments are
+`<output> <depth-mode 0..2> <count-coverage 0..1>`.
+Compile `dxil_depth_only_runtime_test.c` as MSVC C with d3d12.lib and dxgi.lib.
+Run `<pixel-shader> <native-geometry-fixture.vs> <depth-mode> <count> <samples>`.
+Samples may be 1, 2 or 4. An optional `disabled` or `slot3` checks counter
+suppression or the 16-byte query stride. A final case number 0..10 selects
+independent depth-bit expectations for underflow, halfway ties and clamping;
+use `open` before the case number for the default counter slot. Single-sample
+runs compare the rendered D32 depth bits; all runs compare the full counter
+buffer, including untouched lanes. MSAA depth values are not read back.
+The native host-depth shaders are connected to pipeline initialization. ROV
+variants still require replacement of the EDRAM depth/stencil shader path.

@@ -69,8 +69,6 @@ namespace shaders {
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/discrete_quad_4cp_hs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/discrete_triangle_1cp_hs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/discrete_triangle_3cp_hs.h"
-#include "xenia/gpu/shaders/bytecode/d3d12_dxil/float24_round_ps.h"
-#include "xenia/gpu/shaders/bytecode/d3d12_dxil/float24_truncate_ps.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/placeholder_color_ps.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/placeholder_ps.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/tessellation_adaptive_vs.h"
@@ -126,52 +124,18 @@ bool PipelineCache::Initialize() {
     return false;
   }
 
-  // Generates the Mesa (spirv_to_dxil) DXIL for one of the translator's
-  // synthetic depth-only pixel shaders.
-  auto translate_depth_only = [](std::vector<uint8_t> spirv) {
-    std::vector<uint8_t> dxil;
-    if (!spirv.empty()) {
-      dxil = SpirvToDxilCompiler::Translate(
-          reinterpret_cast<const uint32_t*>(spirv.data()),
-          spirv.size() / sizeof(uint32_t), SpirvToDxilCompiler::Stage::kPixel,
-          /*lower_to_bindless=*/true);
-    }
-    return dxil;
-  };
-
-  // D3D drops pixel-shader-less draws that write no depth or stencil, which
-  // breaks occlusion queries, so those get an empty pixel shader instead.
-  mesa_depth_only_pixel_shader_ = translate_depth_only(
-      guest_shader_cache_.translator().CreateDepthOnlyFragmentShader());
-  if (mesa_depth_only_pixel_shader_.empty()) {
-    // Without it such draws fall back to no pixel shader, which D3D may drop.
-    XELOGW(
-        "spirv_to_dxil: failed to generate the Mesa depth-only pixel shader");
-  }
-
-  // Hybrid occlusion queries count pre-test coverage in the pixel shader, so a
-  // depth-only draw inside one needs the counting variant.
-  if (zpd_hybrid_supported_ &&
-      render_target_cache_.GetPath() !=
-          RenderTargetCache::Path::kPixelShaderInterlock) {
-    using DepthStencilMode =
-        SpirvShaderTranslator::Modification::DepthStencilMode;
-    SpirvShaderTranslator& translator = guest_shader_cache_.translator();
-    zpd_total_depth_only_pixel_shader_ =
-        translate_depth_only(translator.CreateDepthOnlyFragmentShader(
-            DepthStencilMode::kNoModifiers, true));
-    if (render_target_cache_.depth_float24_convert_in_pixel_shader()) {
-      zpd_total_float24_truncate_pixel_shader_ =
-          translate_depth_only(translator.CreateDepthOnlyFragmentShader(
-              DepthStencilMode::kFloat24Truncating, true));
-      zpd_total_float24_round_pixel_shader_ =
-          translate_depth_only(translator.CreateDepthOnlyFragmentShader(
-              DepthStencilMode::kFloat24Rounding, true));
-    }
-    if (zpd_total_depth_only_pixel_shader_.empty()) {
-      XELOGE(
-          "spirv_to_dxil: failed to generate a ZPD Total depth-only pixel "
-          "shader; hybrid occlusion queries will not count coverage");
+  if (render_target_cache_.GetPath() !=
+      RenderTargetCache::Path::kPixelShaderInterlock) {
+    XeDxilDepthOnlyOptions options = {};
+    options.system_constants_bytes = sizeof(SpirvShaderTranslator::SystemConstants);
+    options.counter_index_word = offsetof(SpirvShaderTranslator::SystemConstants,
+                                          zpd_fsi_counter_index) / sizeof(uint32_t);
+    options.counter_stride_bytes = XenosZPDReport::kCounterSizeBytes;
+    if (!xe_dxil_build_depth_only_set(
+            &options, render_target_cache_.depth_float24_convert_in_pixel_shader(),
+            zpd_hybrid_supported_, native_depth_only_pixel_shaders_)) {
+      XELOGE("Failed to generate native host-depth pixel shaders");
+      return false;
     }
   }
 
@@ -252,6 +216,8 @@ void PipelineCache::Shutdown() {
       parked.second->Release();
     }
   }
+
+  xe_dxil_depth_only_set_free(native_depth_only_pixel_shaders_);
 
   // Shut down the persistent shader / pipeline storage.
   ShutdownShaderStorage();
@@ -2181,21 +2147,17 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
       return nullptr;
     }
   } else if (!edram_rov_used && description.counting_depth_only &&
-             !zpd_total_depth_only_pixel_shader_.empty()) {
-    // Native ZPD query without a guest pixel shader.
-    // Coverage still has to be counted.
-    const std::vector<uint8_t>* zpd_total_pixel_shader =
-        &zpd_total_depth_only_pixel_shader_;
+             native_depth_only_pixel_shaders_[0][1].data) {
+    unsigned depth_mode = 0;
     if (render_target_cache_.depth_float24_convert_in_pixel_shader() &&
         (description.depth_func != xenos::CompareFunction::kAlways ||
          description.depth_write) &&
         description.depth_format == xenos::DepthRenderTargetFormat::kD24FS8) {
-      zpd_total_pixel_shader = render_target_cache_.depth_float24_round()
-                                   ? &zpd_total_float24_round_pixel_shader_
-                                   : &zpd_total_float24_truncate_pixel_shader_;
+      depth_mode = render_target_cache_.depth_float24_round() ? 2 : 1;
     }
-    state_desc.PS.pShaderBytecode = zpd_total_pixel_shader->data();
-    state_desc.PS.BytecodeLength = zpd_total_pixel_shader->size();
+    const XeDxilShaderBinary& bytecode = native_depth_only_pixel_shaders_[depth_mode][1];
+    state_desc.PS.pShaderBytecode = bytecode.data;
+    state_desc.PS.BytecodeLength = bytecode.size;
   } else if (edram_rov_used) {
     // Guest depth-only draw on the ROV path.
     use_rov_depth_only_pixel_shader();
@@ -2205,18 +2167,18 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
          description.depth_write) &&
         description.depth_format == xenos::DepthRenderTargetFormat::kD24FS8) {
       if (render_target_cache_.depth_float24_round()) {
-        state_desc.PS.pShaderBytecode = shaders::float24_round_ps;
-        state_desc.PS.BytecodeLength = sizeof(shaders::float24_round_ps);
+        state_desc.PS.pShaderBytecode = native_depth_only_pixel_shaders_[2][0].data;
+        state_desc.PS.BytecodeLength = native_depth_only_pixel_shaders_[2][0].size;
       } else {
-        state_desc.PS.pShaderBytecode = shaders::float24_truncate_ps;
-        state_desc.PS.BytecodeLength = sizeof(shaders::float24_truncate_ps);
+        state_desc.PS.pShaderBytecode = native_depth_only_pixel_shaders_[1][0].data;
+        state_desc.PS.BytecodeLength = native_depth_only_pixel_shaders_[1][0].size;
       }
     } else if (!description.depth_write && !description.stencil_write_mask) {
       // Bind an empty PS to force rasterization.
       // D3D drops PS-less draws without depth/stencil writes, breaking
       // occlusion queries (4541096E, 5553083B).
-      state_desc.PS.pShaderBytecode = mesa_depth_only_pixel_shader_.data();
-      state_desc.PS.BytecodeLength = mesa_depth_only_pixel_shader_.size();
+      state_desc.PS.pShaderBytecode = native_depth_only_pixel_shaders_[0][0].data;
+      state_desc.PS.BytecodeLength = native_depth_only_pixel_shaders_[0][0].size;
     }
   }
 
