@@ -5,9 +5,14 @@ SHELL := /bin/sh
 .DELETE_ON_ERROR:
 
 TARGET_NAME := parallel_xbox360
+HOST_SYSTEM := $(shell uname -s)
+HOST_WINDOWS := $(filter MINGW% MSYS% CYGWIN%,$(HOST_SYSTEM))
+HOST_EXEEXT := $(if $(HOST_WINDOWS),.exe)
 platform ?= unix
 ifeq ($(platform),unix)
-ifeq ($(shell uname -s),Darwin)
+ifneq ($(HOST_WINDOWS),)
+override platform := windows-x86_64
+else ifeq ($(HOST_SYSTEM),Darwin)
 override platform := macos-arm64
 else
 override platform := linux-$(shell uname -m)
@@ -42,7 +47,7 @@ GEN := $(BUILD_DIR)/generated
 HOST_DIR ?= build/make/host
 HOST_CC ?= cc
 HOST_CFLAGS ?= -O2
-CODEGEN := $(HOST_DIR)/core-codegen
+CODEGEN := $(HOST_DIR)/core-codegen$(HOST_EXEEXT)
 export CODEGEN_BRANCH := $(shell git symbolic-ref --short -q HEAD 2>/dev/null || echo tarball)
 export CODEGEN_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 export CODEGEN_COMMIT_SHORT := $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
@@ -188,7 +193,7 @@ $(TARGET): $(BUILD_DIR)/$(TARGET)
 
 # Run the content-preserving generator each invocation: patch filenames may
 # contain spaces, and additions/removals must also update the embedded bundle.
-generated: $(CONFIG_INPUTS) $(CODEGEN)
+generated: $(CONFIG_INPUTS) $(CODEGEN) | check-target-tools
 	@mkdir -p "$(GEN)"
 	$(CODEGEN) inputs "$(GEN)" $(if $(filter windows,$(OS)),windows) $(if $(filter aarch64,$(ARCH)),aarch64)
 
@@ -309,14 +314,14 @@ check-dxil-alu: $(HOST_DIR)/dxil-alu-test check-dxil-alu-c89
 	cmp "$(HOST_DIR)/dxil-alu-test.dxil" "$(HOST_DIR)/dxil-alu-test-validated.dxil"
 
 define shader-rule
-$(call shader-output,$(1)): $(1) $(CODEGEN)
+$(call shader-output,$(1)): $(1) $(CODEGEN) | check-target-tools
 	$$(CODEGEN) shader "$$@" "$$<" "$(notdir $(basename $(1)))" $(if $(filter %.spv,$(1)),spirv,dxil)
 endef
 $(foreach s,$(SHADER_SOURCES),$(eval $(call shader-rule,$(s))))
 shaders: $(SHADER_HEADERS)
 
 ifeq ($(OS),windows)
-$(MESA_BUILD_DIR)/build.ninja:
+$(MESA_BUILD_DIR)/build.ninja: | check-target-tools
 	meson setup "$(MESA_BUILD_DIR)" third_party/mesa $(if $(MESA_CROSS_FILE),--cross-file "$(MESA_CROSS_FILE)") \
 	 --default-library=static --buildtype=release -Db_vscrt=md -Dc_args=/wd4189 -Dcpp_args=/wd4189 \
 	 -Dspirv-to-dxil=true -Dgallium-drivers= -Dvulkan-drivers= -Dplatforms= \
@@ -328,6 +333,20 @@ $(MESA_ARCHIVES): | mesa
 	@test -f "$@"
 endif
 
+# Check target tools only for core builds. Data generation and host-only checks
+# remain usable without a target toolchain. Order-only edges gate parallel work.
+.PHONY: check-target-tools
+ifneq ($(filter-out clean help print-config host-tools generated shaders check-dxil-%,$(if $(MAKECMDGOALS),$(MAKECMDGOALS),all)),)
+check-target-tools:
+	@$(CXX) --version >/dev/null 2>&1 || { echo "Missing target C++ compiler: $(CXX). Install LLVM and put clang++ on PATH, or set CXX explicitly." >&2; exit 1; }
+	@$(CC) --version >/dev/null 2>&1 || { echo "Missing target C compiler: $(CC). Install LLVM and put clang on PATH, or set CC explicitly." >&2; exit 1; }
+ifeq ($(OS),windows)
+	@case "$$($(CXX) --version 2>/dev/null)" in *clang*) ;; *) echo "Windows builds require LLVM clang targeting the MSVC ABI, plus the MSVC CRT and Windows SDK; MinGW GCC is not supported." >&2; exit 1 ;; esac
+endif
+else
+check-target-tools:
+endif
+
 print-config:
 	@echo "platform=$(platform) OS=$(OS) ARCH=$(ARCH) TARGET=$(TARGET)"
 	@echo "CC=$(CC) CXX=$(CXX) HOST_CC=$(HOST_CC)"
@@ -335,7 +354,7 @@ print-config:
 help:
 	@echo "make platform=<$(SUPPORTED_PLATFORMS)> [-jN] [DEBUG=1] [LTO=1]"
 	@echo "Android: NDK_ROOT=/path/to/ndk [API_LEVEL=28]"
-	@echo "Windows cross build: see .ci/build-windows-cross.sh"
+	@echo "Windows: LLVM + MSVC CRT/SDK required; cross setup: .ci/build-windows-cross.sh"
 clean:
 	@root=$$(pwd -P); \
 	if test -d "$(BUILD_DIR)"; then \

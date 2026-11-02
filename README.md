@@ -57,10 +57,14 @@ Every platform in `.gitlab-ci.yml` has an explicit selection:
 | `android-x86_64` | `parallel_xbox360_libretro_android.so` | `NDK_ROOT=/path/to/ndk` |
 | `macos-arm64` | `parallel_xbox360_libretro.dylib` | Apple Silicon, Xcode command line tools, GNU Make and an external Vulkan driver |
 
-`platform=unix` selects the native Linux architecture or Apple Silicon on macOS. `unix-arm64` and
+`platform=unix` (the default) selects Windows x86_64 in MSYS2/MinGW/Cygwin shells,
+the native Linux architecture on Linux, or Apple Silicon on macOS. `unix-arm64` and
 `windows` are aliases. Android defaults to API 28 and links the static C++
 runtime with 16 KB page alignment. `CC` and `CXX` override the target compilers;
-`HOST_CC` compiles the native C89 build tool for the build host. `AR` selects
+`HOST_CC` compiles the native C89 build tool for the build host. On Windows,
+install LLVM and make `clang`/`clang++` available on PATH, and use an MSVC/Windows
+SDK developer environment (or the cross-build SDK layout via `MSVC_ROOT`). A
+MinGW shell is supported, but MinGW GCC cannot compile this MSVC-ABI target. `AR` selects
 the archiver (the NDK's `llvm-ar` on Android). macOS uses Apple's `libtool` to
 create its static archive and loads `libvulkan.1.dylib` from an external driver;
 the repository does not bundle MoltenVK or SPIRV-Cross.
