@@ -2315,12 +2315,14 @@ dxil_add_function_def(struct dxil_module *m, const char *name,
    for (int i = 0; i < num_blocks; ++i)
       def->basic_block_ids[i] = -1;
    def->num_basic_block_ids = num_blocks;
+   def->basic_block_capacity = num_blocks;
 
    list_addtail(&def->head, &m->func_def_list);
    m->cur_emitting_func = def;
 
    return def;
 }
+
 
 static unsigned
 get_attr_set(struct dxil_module *m, enum dxil_attr_kind attr)

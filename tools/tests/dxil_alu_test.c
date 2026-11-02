@@ -1,5 +1,6 @@
 /* Xbox ALU golden cases for direct DXIL lowering. MSVC C89; BSD license. */
 #include "guest_alu.h"
+#include "dxil_test_storage.h"
 #include "guest_alu_instruction.h"
 #include <dxil_module.h>
 #include <dxil_function.h>
@@ -158,7 +159,7 @@ static const BoundaryCase boundaries[] = {
   {42,0x3f800fff,0x3f800fff,0,0x3f801fff,0,0,0,0,1}
 };
 
-static uint32_t float_bits(float value) {
+uint32_t xe_dxil_test_float_bits(float value) {
   uint32_t result;
   memcpy(&result, &value, sizeof(result));
   return result;
@@ -177,7 +178,7 @@ static int store(struct dxil_module *m, XeDxilValue handle,
   return function && value && dxil_emit_call_void(m, function, args, 9);
 }
 
-static int record(struct dxil_module *m, XeDxilValue handle, unsigned index,
+int xe_dxil_test_record(struct dxil_module *m, XeDxilValue handle, unsigned index,
                     XeDxilAlu *alu, XeDxilValue values[4],
                     const uint32_t expected[8], FILE *golden) {
   XeDxilValue value;
@@ -195,16 +196,8 @@ static int record(struct dxil_module *m, XeDxilValue handle, unsigned index,
   return fwrite(expected, sizeof(uint32_t), 8, golden) == 8;
 }
 
-typedef struct InstructionStorage {
-  struct dxil_module *module;
-  XeDxilValue registers;
-  XeDxilValue exports;
-  XeDxilValue kill_count;
-  unsigned *current_block;
-  unsigned next_kill_block;
-} InstructionStorage;
 
-static XeDxilValue instruction_pointer(InstructionStorage *storage, XeDxilValue base,
+XeDxilValue xe_dxil_test_pointer(InstructionStorage *storage, XeDxilValue base,
                                        unsigned index, unsigned component, XeDxilValue offset) {
   struct dxil_module *m = storage->module;
   XeDxilValue args[3];
@@ -217,13 +210,13 @@ static XeDxilValue instruction_pointer(InstructionStorage *storage, XeDxilValue 
   return address ? dxil_emit_gep_inbounds(m, args, 3) : NULL;
 }
 
-static XeDxilValue instruction_read(void *context, unsigned constant, unsigned index,
+XeDxilValue xe_dxil_test_read(void *context, unsigned constant, unsigned index,
                                     unsigned component, XeDxilValue offset) {
   InstructionStorage *storage = (InstructionStorage *)context;
   struct dxil_module *m = storage->module;
   XeDxilValue address;
   if (!constant) {
-    address = instruction_pointer(storage, storage->registers, index, component, offset);
+    address = xe_dxil_test_pointer(storage, storage->registers, index, component, offset);
     return address ? dxil_emit_load(m, address, 4, 0) : NULL;
   }
   /* Procedural constants cN = float4(4*N, 4*N+1, 4*N+2, 4*N+3), so
@@ -236,13 +229,13 @@ static XeDxilValue instruction_read(void *context, unsigned constant, unsigned i
   return address ? dxil_emit_cast(m, DXIL_CAST_UITOFP, dxil_module_get_float_type(m, 32), address) : NULL;
 }
 
-static int instruction_write(void *context, unsigned exporting, unsigned index,
+int xe_dxil_test_write(void *context, unsigned exporting, unsigned index,
                                unsigned mask, XeDxilValue values[4], XeDxilValue offset) {
   InstructionStorage *storage = (InstructionStorage *)context;
   XeDxilValue pointer;
   unsigned i;
   for (i = 0; i < 4; ++i) if (mask & (1u << i)) {
-    pointer = instruction_pointer(storage, exporting ? storage->exports : storage->registers,
+    pointer = xe_dxil_test_pointer(storage, exporting ? storage->exports : storage->registers,
       index, i, offset);
     if (!pointer || !values[i] || !dxil_emit_store(storage->module, values[i], pointer, 4, 0)) return 0;
   }
@@ -340,12 +333,12 @@ static int instruction_test(struct dxil_module *m, XeDxilValue handle,
       !dxil_emit_store(m, dxil_module_get_int32_const(m, 0), storage.kill_count, 4, 0)) return 0;
   for (i = 0; i < 8; ++i) {
     for (j = 0; j < 4; ++j) values[j] = dxil_module_get_float_const(m, i < 4 ? initial[i][j] : 0.0f);
-    if (!instruction_write(&storage, 0, i, 15, values, NULL)) return 0;
+    if (!xe_dxil_test_write(&storage, 0, i, 15, values, NULL)) return 0;
   }
   for (j = 0; j < 4; ++j) values[j] = dxil_module_get_float_const(m, 0.0f);
-  if (!instruction_write(&storage, 1, 0, 15, values, NULL)) return 0;
+  if (!xe_dxil_test_write(&storage, 1, 0, 15, values, NULL)) return 0;
   memset(&io, 0, sizeof(io));
-  io.context = &storage; io.read = instruction_read; io.write = instruction_write;
+  io.context = &storage; io.read = xe_dxil_test_read; io.write = xe_dxil_test_write;
   io.kill = instruction_kill;
   io.loop_address = dxil_module_get_int32_const(m, 2); io.current_block = &block;
   xe_dxil_alu_init(&alu, m);
@@ -357,23 +350,23 @@ static int instruction_test(struct dxil_module *m, XeDxilValue handle,
         !xe_dxil_emit_alu_instruction(&alu, &instruction, &io,
           instruction_cases[i].body, instruction_cases[i].body + 1)) return 0;
     for (j = 0; j < 4; ++j) {
-      pointer = instruction_pointer(&storage, instruction_cases[i].exporting ?
+      pointer = xe_dxil_test_pointer(&storage, instruction_cases[i].exporting ?
         storage.exports : storage.registers, instruction_cases[i].destination, j, NULL);
       values[j] = pointer ? dxil_emit_load(m, pointer, 4, 0) : NULL;
-      expected[j] = float_bits(instruction_cases[i].result[j]);
+      expected[j] = xe_dxil_test_float_bits(instruction_cases[i].result[j]);
     }
     expected[4] = instruction_cases[i].predicate;
     expected[5] = (uint32_t)instruction_cases[i].address; expected[6] = instruction_cases[i].killed;
     expected[7] = UINT32_C(0x60000000) | i;
-    if (!record(m, handle, *index, &alu, values, expected, golden)) return 0;
+    if (!xe_dxil_test_record(m, handle, *index, &alu, values, expected, golden)) return 0;
   }
   pointer = dxil_emit_load(m, storage.kill_count, 4, 0);
   if (!pointer) return 0;
   values[0] = dxil_emit_cast(m, DXIL_CAST_UITOFP, dxil_module_get_float_type(m, 32), pointer);
   for (j = 1; j < 4; ++j) values[j] = values[0];
-  for (j = 0; j < 4; ++j) expected[j] = float_bits(1.0f);
+  for (j = 0; j < 4; ++j) expected[j] = xe_dxil_test_float_bits(1.0f);
   expected[4] = 0; expected[5] = 4; expected[6] = 1; expected[7] = UINT32_C(0x6fffffff);
-  if (!record(m, handle, *index, &alu, values, expected, golden)) return 0;
+  if (!xe_dxil_test_record(m, handle, *index, &alu, values, expected, golden)) return 0;
   ++*index;
   return 1;
 }
@@ -414,36 +407,36 @@ int xe_dxil_alu_test(struct dxil_module *m, const char *path) {
   for (i = 0; i < ARRAY_SIZE(vector_cases); ++i, ++index) {
     xe_dxil_alu_init(&alu, m);
     for (j = 0; j < 3; ++j) for (k = 0; k < 4; ++k)
-      operands[j][k] = xe_dxil_alu_float_bits(&alu, float_bits(inputs[j][k]));
+      operands[j][k] = xe_dxil_alu_float_bits(&alu, xe_dxil_test_float_bits(inputs[j][k]));
     if (!xe_dxil_alu_vector(&alu, vector_cases[i].opcode, operands, 0, values)) goto done;
-    for (k = 0; k < 4; ++k) expected[k] = float_bits(vector_cases[i].result[k]);
+    for (k = 0; k < 4; ++k) expected[k] = xe_dxil_test_float_bits(vector_cases[i].result[k]);
     expected[4] = vector_cases[i].predicate;
     expected[5] = (uint32_t)vector_cases[i].address; expected[6] = vector_cases[i].killed;
     expected[7] = UINT32_C(0x10000000) | vector_cases[i].opcode;
-    if (!record(m, handle, index, &alu, values, expected, golden)) goto done;
+    if (!xe_dxil_test_record(m, handle, index, &alu, values, expected, golden)) goto done;
   }
   for (i = 0; i < ARRAY_SIZE(scalar_cases); ++i, ++index) {
     xe_dxil_alu_init(&alu, m);
-    alu.previous_scalar = xe_dxil_alu_float_bits(&alu, float_bits(2.0f));
-    a = xe_dxil_alu_float_bits(&alu, float_bits(scalar_cases[i].opcode >= 48 &&
+    alu.previous_scalar = xe_dxil_alu_float_bits(&alu, xe_dxil_test_float_bits(2.0f));
+    a = xe_dxil_alu_float_bits(&alu, xe_dxil_test_float_bits(scalar_cases[i].opcode >= 48 &&
       scalar_cases[i].opcode <= 49 ? 0.0f : 4.0f));
-    b = xe_dxil_alu_float_bits(&alu, float_bits(-3.0f));
+    b = xe_dxil_alu_float_bits(&alu, xe_dxil_test_float_bits(-3.0f));
     values[0] = xe_dxil_alu_scalar(&alu, scalar_cases[i].opcode, a, b, 0);
-    for (k = 0; k < 4; ++k) { values[k] = values[0]; expected[k] = float_bits(scalar_cases[i].result); }
+    for (k = 0; k < 4; ++k) { values[k] = values[0]; expected[k] = xe_dxil_test_float_bits(scalar_cases[i].result); }
     expected[4] = scalar_cases[i].predicate;
     expected[5] = (uint32_t)scalar_cases[i].address; expected[6] = scalar_cases[i].killed;
     expected[7] = UINT32_C(0x20000000) | scalar_cases[i].opcode;
-    if (!record(m, handle, index, &alu, values, expected, golden)) goto done;
+    if (!xe_dxil_test_record(m, handle, index, &alu, values, expected, golden)) goto done;
   }
   for (i = 0; i < ARRAY_SIZE(extra_vectors); ++i, ++index) {
     xe_dxil_alu_init(&alu, m);
     for (j = 0; j < 3; ++j) for (k = 0; k < 4; ++k)
-      operands[j][k] = xe_dxil_alu_float_bits(&alu, float_bits(extra_vectors[i].inputs[j][k]));
+      operands[j][k] = xe_dxil_alu_float_bits(&alu, xe_dxil_test_float_bits(extra_vectors[i].inputs[j][k]));
     if (!xe_dxil_alu_vector(&alu, extra_vectors[i].opcode, operands, 0, values)) goto done;
-    for (k = 0; k < 4; ++k) expected[k] = float_bits(extra_vectors[i].result[k]);
+    for (k = 0; k < 4; ++k) expected[k] = xe_dxil_test_float_bits(extra_vectors[i].result[k]);
     expected[4] = extra_vectors[i].predicate; expected[5] = (uint32_t)extra_vectors[i].address;
     expected[6] = extra_vectors[i].killed; expected[7] = UINT32_C(0x40000000) | i;
-    if (!record(m, handle, index, &alu, values, expected, golden)) goto done;
+    if (!xe_dxil_test_record(m, handle, index, &alu, values, expected, golden)) goto done;
   }
   for (i = 0; i < ARRAY_SIZE(bit_vectors); ++i, ++index) {
     xe_dxil_alu_init(&alu, m);
@@ -453,7 +446,7 @@ int xe_dxil_alu_test(struct dxil_module *m, const char *path) {
     for (k = 0; k < 4; ++k) expected[k] = bit_vectors[i].result[k];
     expected[4] = 0; expected[5] = 0; expected[6] = bit_vectors[i].killed;
     expected[7] = UINT32_C(0x50000000) | i;
-    if (!record(m, handle, index, &alu, values, expected, golden)) goto done;
+    if (!xe_dxil_test_record(m, handle, index, &alu, values, expected, golden)) goto done;
   }
   for (i = 0; i < ARRAY_SIZE(boundaries); ++i, ++index) {
     xe_dxil_alu_init(&alu, m);
@@ -466,7 +459,7 @@ int xe_dxil_alu_test(struct dxil_module *m, const char *path) {
     expected[4] = boundaries[i].predicate;
     expected[5] = (uint32_t)boundaries[i].address; expected[6] = boundaries[i].killed;
     expected[7] = UINT32_C(0x30000000) | i;
-    if (!record(m, handle, index, &alu, values, expected, golden)) goto done;
+    if (!xe_dxil_test_record(m, handle, index, &alu, values, expected, golden)) goto done;
   }
   if (!instruction_test(m, handle, &index, golden)) goto done;
   xe_dxil_alu_init(&alu, m);

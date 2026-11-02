@@ -180,6 +180,7 @@ struct dxil_func_def {
    struct list_head instr_list;
    int *basic_block_ids; /* maps from "user" ids to LLVM ids */
    size_t num_basic_block_ids;
+   size_t basic_block_capacity;
    unsigned curr_block;
 };
 
@@ -301,6 +302,11 @@ struct dxil_func_def *
 dxil_add_function_def(struct dxil_module *m, const char *name,
                       const struct dxil_type *type, unsigned num_blocks,
                       const char *const *attr_keys, const char *const *attr_values);
+
+/* Reserve logical block IDs without preallocating a whole shader's worst-case
+ * graph. Actual LLVM block numbers are assigned when each block is emitted. */
+bool dxil_function_reserve_blocks(struct dxil_module *m, unsigned count,
+                                  unsigned *first_id);
 
 const struct dxil_func *
 dxil_add_function_decl(struct dxil_module *m, const char *name,

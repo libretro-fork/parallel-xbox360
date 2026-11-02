@@ -59,6 +59,31 @@ that inactive predicates suppress it; pixel-stage adapters must flush pending
 exports and emit discard through this hook before destination writes.
 
 The ALU frontend is independent of SPIR-V and shader-language compilers.
-Whole-shader control flow, fetch/binding lowering, export handling and D3D12
+Fetch/binding lowering, stage export handling and D3D12
 pipeline integration remain required before it can replace the core's guest
 shader backend.
+
+## Guest control-flow frontend
+
+```sh
+make check-dxil-flow DXIL_VALIDATOR=/path/to/dxv
+```
+
+Five raw guest programs cover nested calls and multiple returns, return without
+an active call, dynamic loop counts, repeated loops, signed loop increments,
+zero-count loops, predicate breaks, boolean and predicate branches, conditional
+endings and loop-relative ALU operands. Each shader reports 88 output/state
+words; use the Windows runtime fixture with `dxil-flow-N.dxil` and its
+`.expected` file for N from 0 through 4. Clang and MSVC-generated containers
+pass Microsoft's validator unchanged and execute with matching results on WARP.
+The existing 1,256-word ALU execution check also passes after the shared test
+storage refactor. Invalid target/source spans and missing required callbacks
+are rejected by six negative fixtures.
+
+Nonlocal guest edges use a program-counter dispatcher to keep the generated
+DXIL control flow reducible. ALU and loop/call state survive backedges in
+entry-block storage. Input words are decoded from the caller's span directly.
+Fetch and memory-allocation callbacks are instrumented in these fixtures;
+they do not implement real vertex/texture access. Stage resource bindings,
+fetch conversion, exports and runtime pipeline integration remain unfinished.
+The frontend is not yet used by the live renderer.

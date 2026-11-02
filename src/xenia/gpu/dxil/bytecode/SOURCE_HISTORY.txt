@@ -5,3 +5,4 @@ dxil_checksum.c/h derive from the repository's third_party/dxbc/DXBCChecksum.cpp
 The AMD and RSA Data Security notices are preserved. This C89 adaptation is
 derived from the RSA Data Security, Inc. MD5 Message Digest Algorithm.
 dxil_support.c/h provide core-owned C89 allocation and container support.
+dxil_blocks.c provides core-owned C89 dynamic block-ID allocation.
