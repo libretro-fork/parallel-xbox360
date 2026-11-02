@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Native C89 DXIL texture primitives decode guest packets and emit level, gradient, implicit and biased samples. A two-mip 2D texture passes 88-word WARP execution checks; pixel-stage implicit/bias samples pass validation. Guest texture policies and live renderer integration remain unfinished.
+
 - GNU Make now detects native Windows shells correctly, selects the DLL target, and names the host generator with .exe. Missing LLVM target compilers stop the build early with an actionable message; host-only tools and checks remain available.
 
 - The native C89 DXIL frontend can read raw GPU buffers and dynamically indexed constant-buffer words. A raw guest vertex-fetch program passes execution checks with actual D3D12 SRV/CBV bindings; invalid reads branch around memory access. Live renderer integration remains unfinished.

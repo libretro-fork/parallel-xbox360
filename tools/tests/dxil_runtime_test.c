@@ -7,6 +7,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <float.h>
+
+typedef struct TextureFixture {
+  ID3D12Resource *texture, *upload;
+  ID3D12DescriptorHeap *heap;
+  D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[2];
+} TextureFixture;
+
+static void release_texture(TextureFixture *fixture) {
+  if (fixture->heap) ID3D12DescriptorHeap_Release(fixture->heap);
+  if (fixture->upload) ID3D12Resource_Release(fixture->upload);
+  if (fixture->texture) ID3D12Resource_Release(fixture->texture);
+}
 
 static HRESULT buffer(ID3D12Device *device, D3D12_HEAP_TYPE heap_type,
                        D3D12_RESOURCE_STATES state, size_t bytes,
@@ -28,10 +41,66 @@ static HRESULT buffer(ID3D12Device *device, D3D12_HEAP_TYPE heap_type,
       &desc, state, NULL, &IID_ID3D12Resource, (void **)resource);
 }
 
+/* Two RGBA32F mips: 4x4 followed by 2x2. Read rows straight into the
+ * D3D12 upload footprints, avoiding a staging copy on the CPU. */
+static HRESULT prepare_texture(ID3D12Device *device, const char *path, TextureFixture *fixture) {
+  D3D12_HEAP_PROPERTIES heap;
+  D3D12_RESOURCE_DESC desc;
+  D3D12_DESCRIPTOR_HEAP_DESC heap_desc;
+  D3D12_SHADER_RESOURCE_VIEW_DESC view;
+  D3D12_RANGE range;
+  D3D12_CPU_DESCRIPTOR_HANDLE cpu;
+  UINT rows[2];
+  UINT64 row_sizes[2], size;
+  unsigned char *mapped;
+  unsigned mip, row;
+  FILE *file;
+  HRESULT status;
+  memset(&heap, 0, sizeof(heap)); heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+  heap.CreationNodeMask = 1; heap.VisibleNodeMask = 1;
+  memset(&desc, 0, sizeof(desc)); desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+  desc.Width = 4; desc.Height = 4; desc.DepthOrArraySize = 1; desc.MipLevels = 2;
+  desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; desc.SampleDesc.Count = 1;
+  status = ID3D12Device_CreateCommittedResource(device, &heap, D3D12_HEAP_FLAG_NONE,
+    &desc, D3D12_RESOURCE_STATE_COPY_DEST, NULL, &IID_ID3D12Resource, (void **)&fixture->texture);
+  if (FAILED(status)) return status;
+  ID3D12Device_GetCopyableFootprints(device, &desc, 0, 2, 0, fixture->footprints, rows, row_sizes, &size);
+  if (size > (UINT64)(size_t)-1) return E_FAIL;
+  status = buffer(device, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, (size_t)size, &fixture->upload);
+  if (FAILED(status)) return status;
+  file = fopen(path, "rb");
+  if (!file) return E_FAIL;
+  range.Begin = 0; range.End = 0;
+  status = ID3D12Resource_Map(fixture->upload, 0, &range, (void **)&mapped);
+  if (FAILED(status)) { fclose(file); return status; }
+  memset(mapped, 0, (size_t)size);
+  for (mip = 0; mip < 2; ++mip) for (row = 0; row < rows[mip]; ++row) {
+    if (fread(mapped + (size_t)fixture->footprints[mip].Offset +
+        (size_t)row * fixture->footprints[mip].Footprint.RowPitch, 1,
+        (size_t)row_sizes[mip], file) != (size_t)row_sizes[mip]) status = E_FAIL;
+  }
+  if (fgetc(file) != EOF || ferror(file)) status = E_FAIL;
+  if (fclose(file)) status = E_FAIL;
+  range.End = (SIZE_T)size; ID3D12Resource_Unmap(fixture->upload, 0, &range);
+  if (FAILED(status)) return status;
+  memset(&heap_desc, 0, sizeof(heap_desc));
+  heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+  heap_desc.NumDescriptors = 1; heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+  status = ID3D12Device_CreateDescriptorHeap(device, &heap_desc, &IID_ID3D12DescriptorHeap, (void **)&fixture->heap);
+  if (FAILED(status)) return status;
+  memset(&view, 0, sizeof(view)); view.Format = desc.Format;
+  view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+  view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+  view.Texture2D.MipLevels = 2;
+  ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(fixture->heap, &cpu);
+  ID3D12Device_CreateShaderResourceView(device, fixture->texture, &view, cpu);
+  return S_OK;
+}
+
 static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
                         ID3D12PipelineState *pipeline, const uint32_t *expected,
                         size_t bytes, int golden_records,
-                        ID3D12Resource *input, ID3D12Resource *constants)
+                        ID3D12Resource *input, ID3D12Resource *constants, TextureFixture *texture)
 {
   ID3D12Resource *output = NULL;
   ID3D12Resource *readback = NULL;
@@ -43,6 +112,9 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   D3D12_COMMAND_QUEUE_DESC queue_desc;
   D3D12_RESOURCE_BARRIER barrier;
   D3D12_RANGE range;
+  D3D12_TEXTURE_COPY_LOCATION source, destination;
+  D3D12_GPU_DESCRIPTOR_HANDLE gpu;
+  unsigned mip;
   HANDLE event = NULL;
   HRESULT status;
   uint32_t *values = NULL;
@@ -64,6 +136,23 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   status = ID3D12Device_CreateCommandList(device, 0, D3D12_COMMAND_LIST_TYPE_DIRECT,
       allocator, pipeline, &IID_ID3D12GraphicsCommandList, (void **)&list);
   if (FAILED(status)) goto done;
+  if (texture) {
+    for (mip = 0; mip < 2; ++mip) {
+      memset(&source, 0, sizeof(source)); memset(&destination, 0, sizeof(destination));
+      source.pResource = texture->upload; source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+      source.PlacedFootprint = texture->footprints[mip];
+      destination.pResource = texture->texture; destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+      destination.SubresourceIndex = mip;
+      ID3D12GraphicsCommandList_CopyTextureRegion(list, &destination, 0, 0, 0, &source, NULL);
+    }
+    memset(&barrier, 0, sizeof(barrier)); barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = texture->texture;
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    ID3D12GraphicsCommandList_ResourceBarrier(list, 1, &barrier);
+    ID3D12GraphicsCommandList_SetDescriptorHeaps(list, 1, &texture->heap);
+  }
   ID3D12GraphicsCommandList_SetComputeRootSignature(list, root);
   ID3D12GraphicsCommandList_SetComputeRootUnorderedAccessView(list, 0,
       ID3D12Resource_GetGPUVirtualAddress(output));
@@ -72,6 +161,10 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
         ID3D12Resource_GetGPUVirtualAddress(input));
     ID3D12GraphicsCommandList_SetComputeRootConstantBufferView(list, 2,
         ID3D12Resource_GetGPUVirtualAddress(constants));
+  }
+  if (texture) {
+    ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(texture->heap, &gpu);
+    ID3D12GraphicsCommandList_SetComputeRootDescriptorTable(list, 1, gpu);
   }
   ID3D12GraphicsCommandList_Dispatch(list, golden_records ? 1 : 32, 1, 1);
   memset(&barrier, 0, sizeof(barrier));
@@ -189,6 +282,9 @@ int main(int argc, char **argv)
   D3D12_ROOT_SIGNATURE_DESC root_desc;
   D3D12_ROOT_PARAMETER parameter[3];
   D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline_desc;
+  D3D12_DESCRIPTOR_RANGE texture_range;
+  D3D12_STATIC_SAMPLER_DESC samplers[2];
+  TextureFixture texture;
   unsigned char *data = NULL;
   FILE *file;
   long size;
@@ -198,7 +294,8 @@ int main(int argc, char **argv)
   size_t expected_bytes = sizeof(default_expected);
   float expected_float;
   unsigned i;
-  if (argc != 2 && argc != 3 && argc != 5) return 2;
+  memset(&texture, 0, sizeof(texture));
+  if (argc < 2 || argc > 5) return 2;
   file = fopen(argv[1], "rb");
   if (!file) return 1;
   if (fseek(file, 0, SEEK_END) || (size = ftell(file)) < 32 || fseek(file, 0, SEEK_SET)) {
@@ -230,6 +327,28 @@ int main(int argc, char **argv)
   parameter[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
   parameter[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
   root_desc.NumParameters = argc == 5 ? 3 : 1; root_desc.pParameters = parameter;
+  if (argc == 4) {
+    memset(&texture_range, 0, sizeof(texture_range)); texture_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    texture_range.NumDescriptors = 1;
+    parameter[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    parameter[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    parameter[1].DescriptorTable.NumDescriptorRanges = 1;
+    parameter[1].DescriptorTable.pDescriptorRanges = &texture_range;
+    root_desc.NumParameters = 2;
+    memset(samplers, 0, sizeof(samplers));
+    for (i = 0; i < 2; ++i) {
+      samplers[i].Filter = i ? D3D12_FILTER_MIN_MAG_MIP_LINEAR : D3D12_FILTER_MIN_MAG_MIP_POINT;
+      samplers[i].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+      samplers[i].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+      samplers[i].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+      samplers[i].MaxAnisotropy = 1; samplers[i].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+      samplers[i].MaxLOD = FLT_MAX; samplers[i].ShaderRegister = i;
+      samplers[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    }
+    root_desc.NumStaticSamplers = 2; root_desc.pStaticSamplers = samplers;
+    status = prepare_texture(device, argv[3], &texture);
+    if (FAILED(status)) goto done;
+  }
   if (argc == 5) {
     parameter[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     parameter[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -255,13 +374,14 @@ int main(int argc, char **argv)
   status = ID3D12Device_CreateComputePipelineState(device, &pipeline_desc,
       &IID_ID3D12PipelineState, (void **)&pipeline);
   if (SUCCEEDED(status)) status = execute(device, root, pipeline,
-      expected, expected_bytes, argc >= 3, input, constants);
+      expected, expected_bytes, argc >= 3, input, constants, argc == 4 ? &texture : NULL);
 done:
   printf("D3D12 WARP pipeline and execution: 0x%08lX\n", (unsigned long)status);
   if (pipeline) ID3D12PipelineState_Release(pipeline);
   if (root) ID3D12RootSignature_Release(root);
   if (constants) ID3D12Resource_Release(constants);
   if (input) ID3D12Resource_Release(input);
+  release_texture(&texture);
   if (errors) ID3D10Blob_Release(errors);
   if (serialized) ID3D10Blob_Release(serialized);
   if (device) ID3D12Device_Release(device);

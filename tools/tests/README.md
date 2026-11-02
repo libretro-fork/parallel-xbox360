@@ -149,3 +149,38 @@ Clang and MSVC-generated resource shaders validate unchanged and execute on
 WARP. These are development fixtures; the live core still uses its previous
 shader backend. Texture fetches, stage assembly/exports and live renderer
 integration remain unfinished.
+## Native texture sampling primitives
+
+```sh
+make check-dxil-texture DXIL_VALIDATOR=/path/to/dxv
+```
+
+The guest decoder extracts all eight texture opcode encodings, addressing,
+swizzles, filters, LOD flags, signed bias in sixteenths and signed offsets in
+halves. Decoding the packet does not yet implement all its guest semantics.
+The native sampler primitive emits DXIL sampleLevel, sampleGrad, sample and
+sampleBias operations with float results, validating stage, operand types,
+dimensions and native integer offsets before emission. Implicit and bias
+sampling are restricted to pixel shaders in the current Shader Model 6.0 path.
+
+The compute execution fixture binds an RGBA32F 2D texture containing 4x4 and
+2x2 mip levels, plus point and linear static samplers. Eleven cases compare
+88 output/state words: point/linear filtering, explicit mip selection,
+gradient-selected mips, linear mip blending, signed integer offsets and clamp
+addressing. Run the Windows fixture with the generated texture file:
+
+```bat
+dxil_runtime_test.exe build\make\host\dxil-texture-test.dxil build\make\host\dxil-texture-test.dxil.expected build\make\host\dxil-texture-test.dxil.texture
+```
+
+Rows are read directly into mapped D3D12 upload footprints, then copied to the
+GPU texture. The four-argument invocation selects this texture fixture; existing
+buffer fixtures keep their original arguments. The separate
+`dxil-texture-ps-test.dxil` checks implicit and bias sampling through the
+validator only. Clang and MSVC generators pass both shader validations; the
+2D compute fixture also passes WARP execution.
+
+The primitive accepts 1D, 2D, 3D, cube and 2D-array views; execution coverage in
+this fixture is 2D. Guest coordinate/face conversion, half-texel offsets,
+signed/gamma treatment, sampler policies, texture state and register writes
+remain to be implemented. No live renderer path uses these primitives yet.
