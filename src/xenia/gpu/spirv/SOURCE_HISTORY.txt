@@ -1,0 +1,3 @@
+Raw SPIR-V binary writer code adapted from glslang a57276bf558f5cf94d3a9854ebdf5a2236849a5a.
+The original copyright and license notices remain in each source file.
+The GLSL language compiler, parser and optimization bridge are not included.

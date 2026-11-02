@@ -1,5 +1,5 @@
 # GNU Make build for the libretro core. No CMake configure/generate step.
-# A POSIX shell, Python 3 and clang 21 (GCC 14 libstdc++ on Linux) are required.
+# A POSIX shell, a C89 host compiler and clang 21 (GCC 14 libstdc++ on Linux) are required.
 SHELL := /bin/sh
 .DEFAULT_GOAL := all
 .DELETE_ON_ERROR:
@@ -7,7 +7,11 @@ SHELL := /bin/sh
 TARGET_NAME := parallel_xbox360
 platform ?= unix
 ifeq ($(platform),unix)
+ifeq ($(shell uname -s),Darwin)
+override platform := macos-arm64
+else
 override platform := linux-$(shell uname -m)
+endif
 endif
 ifeq ($(platform),unix-arm64)
 override platform := linux-aarch64
@@ -15,13 +19,13 @@ endif
 ifeq ($(platform),windows)
 override platform := windows-x86_64
 endif
-SUPPORTED_PLATFORMS := linux-x86_64 linux-aarch64 windows-x86_64 android-arm64-v8a android-x86_64
+SUPPORTED_PLATFORMS := linux-x86_64 linux-aarch64 windows-x86_64 android-arm64-v8a android-x86_64 macos-arm64
 ifeq ($(filter $(platform),$(SUPPORTED_PLATFORMS)),)
 $(error Unsupported platform '$(platform)'; choose $(SUPPORTED_PLATFORMS))
 endif
 OS := linux
 ARCH := x86_64
-ifneq ($(filter linux-aarch64 android-arm64-v8a,$(platform)),)
+ifneq ($(filter linux-aarch64 android-arm64-v8a macos-arm64,$(platform)),)
 ARCH := aarch64
 endif
 ifneq ($(filter android-%,$(platform)),)
@@ -30,16 +34,18 @@ endif
 ifeq ($(platform),windows-x86_64)
 OS := windows
 endif
+ifeq ($(platform),macos-arm64)
+OS := macos
+endif
 BUILD_DIR ?= build/make/$(platform)
 GEN := $(BUILD_DIR)/generated
 HOST_DIR ?= build/make/host
-PYTHON ?= python3
-HOST_CXX ?= clang++
-HOST_CXXFLAGS ?= -O2
-HOST_LDFLAGS ?=
-HOST_SHADER_CC ?= $(HOST_DIR)/xenia-shader-cc
-SLANGC_PATH ?= $(firstword $(wildcard .slang/*/bin/slangc .slang/*/slangc))
-export SLANGC_PATH
+HOST_CC ?= cc
+HOST_CFLAGS ?= -O2
+CODEGEN := $(HOST_DIR)/core-codegen
+export CODEGEN_BRANCH := $(shell git symbolic-ref --short -q HEAD 2>/dev/null || echo tarball)
+export CODEGEN_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+export CODEGEN_COMMIT_SHORT := $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
 API_LEVEL ?= 28
 NDK_ROOT ?= $(ANDROID_NDK_HOME)
 NDK_HOST_TAG ?= linux-x86_64
@@ -85,6 +91,12 @@ endif
 ifeq ($(OS),windows)
 TARGET := $(TARGET_NAME)_libretro.dll
 endif
+ifeq ($(OS),macos)
+TARGET := $(TARGET_NAME)_libretro.dylib
+ifneq ($(origin AR),command line)
+AR := ar
+endif
+endif
 
 include Makefile.common
 
@@ -111,11 +123,20 @@ endif
 ifeq ($(LTO),1)
 BASE_FLAGS += -flto=thin
 LDFLAGS += -flto=thin -fuse-ld=lld
+ifeq ($(OS),macos)
+LDFLAGS := $(filter-out -fuse-ld=lld,$(LDFLAGS))
+endif
 endif
 CPPFLAGS += $(addprefix -I,$(INCLUDE_DIRS)) $(DEFINES)
 CFLAGS += -std=c17
 CXXFLAGS += -std=c++20 $(WARNINGS)
+ifeq ($(OS),macos)
+BASE_FLAGS += -mmacosx-version-min=15.0
+LDFLAGS += -dynamiclib -mmacosx-version-min=15.0 -Wl,-exported_symbols_list,libretro/exports-macos.T
+LDLIBS += -framework Cocoa -framework QuartzCore -framework CoreFoundation -framework Foundation -framework IOKit -ldl -lpthread
+else
 LDFLAGS += -shared
+endif
 ifeq ($(OS),linux)
 LDLIBS += -lstdc++fs -ldl -lm -lpthread -lrt -lfontconfig
 LDFLAGS += -Wl,-Bsymbolic -Wl,--no-undefined -Wl,--version-script=libretro/link.T -Wl,--exclude-libs,ALL
@@ -133,6 +154,9 @@ ifneq ($(MSVC_ROOT),)
 BASE_FLAGS += $(addprefix -isystem ,$(addprefix $(MSVC_ROOT)/,crt/include sdk/include/ucrt sdk/include/um sdk/include/shared sdk/include/winrt))
 LDFLAGS += $(addprefix -L,$(addprefix $(MSVC_ROOT)/,crt/lib/x86_64 sdk/lib/um/x86_64 sdk/lib/ucrt/x86_64))
 endif
+ifneq ($(SDK_OVERLAY),)
+BASE_FLAGS += -ivfsoverlay "$(SDK_OVERLAY)"
+endif
 CXXFLAGS += -fexceptions -fcxx-exceptions
 LDFLAGS += --target=x86_64-pc-windows-msvc -fuse-ld=lld -Wl,/manifest:no,/DEBUG,/OPT:REF,/OPT:ICF,/INCREMENTAL:NO
 LDLIBS += ntdll.lib wsock32.lib ws2_32.lib xinput.lib comctl32.lib shcore.lib \
@@ -148,15 +172,14 @@ MESA_ARCHIVES := $(addprefix $(MESA_BUILD_DIR)/,$(MESA_LIBS))
 LDLIBS += $(MESA_ARCHIVES)
 endif
 
-OBJECTS := $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(SOURCES_C) $(SOURCES_CXX) $(SOURCES_ASM)))
+OBJECTS := $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(SOURCES_C) $(SOURCES_CXX) $(SOURCES_ASM) $(SOURCES_OBJCXX)))
 FRONTEND_OBJECTS := $(filter $(BUILD_DIR)/obj/libretro/%,$(OBJECTS))
 CORE_OBJECTS := $(filter-out $(FRONTEND_OBJECTS),$(OBJECTS))
 CORE_ARCHIVE := $(BUILD_DIR)/core.a
-CONFIG_INPUTS := tools/build/make_generated.py tools/build/embed_bundle.py xenia-build.py \
+CONFIG_INPUTS := tools/build/core_codegen.c tools/build/core_deflate.c \
  upstream.version $(wildcard assets/font/* libretro/data/*) \
  third_party/snappy/snappy-stubs-public.h.in third_party/snappy/cmake/config.h.in \
- $(wildcard third_party/zlib-ng/*-ng.h.in) third_party/zlib-ng/gzread.c.in \
- third_party/glslang/build_info.h.tmpl third_party/glslang/CHANGES.md
+ $(wildcard third_party/zlib-ng/*-ng.h.in) third_party/zlib-ng/gzread.c.in
 
 .PHONY: all clean generated shaders host-tools mesa help print-config FORCE $(TARGET)
 all: $(TARGET)
@@ -165,16 +188,16 @@ $(TARGET): $(BUILD_DIR)/$(TARGET)
 
 # Run the content-preserving generator each invocation: patch filenames may
 # contain spaces, and additions/removals must also update the embedded bundle.
-generated: $(CONFIG_INPUTS)
+generated: $(CONFIG_INPUTS) $(CODEGEN)
 	@mkdir -p "$(GEN)"
-	$(PYTHON) tools/build/make_generated.py inputs "$(GEN)" --arch $(ARCH) $(if $(filter windows,$(OS)),--windows)
+	$(CODEGEN) inputs "$(GEN)" $(if $(filter windows,$(OS)),windows) $(if $(filter aarch64,$(ARCH)),aarch64)
 
 $(GEN)/embedded_font.cc $(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc $(GEN)/third_party/zlib-ng/gzread.c: | generated
 	@test -f "$@"
 
 export MAKE_BUILD_SIGNATURE := $(CC)|$(CXX)|$(BASE_FLAGS)|$(CPPFLAGS)|$(CFLAGS)|$(CXXFLAGS)|$(LDFLAGS)|$(LDLIBS)|$(XENIA_LIBRETRO_DXIL)
-$(BUILD_DIR)/config: FORCE
-	@$(PYTHON) tools/build/make_generated.py signature "$@"
+$(BUILD_DIR)/config: FORCE $(CODEGEN)
+	@$(CODEGEN) signature "$@"
 $(OBJECTS): Makefile Makefile.common $(BUILD_DIR)/config | generated shaders
 
 $(BUILD_DIR)/obj/%.c.o: %.c
@@ -184,6 +207,9 @@ $(BUILD_DIR)/obj/%.cc.o: %.cc
 	@mkdir -p "$(@D)"
 	$(CXX) $(BASE_FLAGS) $(CPPFLAGS) $(CXXFLAGS) -c "$<" -o "$@"
 $(BUILD_DIR)/obj/%.cpp.o: %.cpp
+	@mkdir -p "$(@D)"
+	$(CXX) $(BASE_FLAGS) $(CPPFLAGS) $(CXXFLAGS) -c "$<" -o "$@"
+$(BUILD_DIR)/obj/%.mm.o: %.mm
 	@mkdir -p "$(@D)"
 	$(CXX) $(BASE_FLAGS) $(CPPFLAGS) $(CXXFLAGS) -c "$<" -o "$@"
 $(BUILD_DIR)/obj/%.S.o: %.S
@@ -221,50 +247,59 @@ endif
 endif
 
 $(CORE_ARCHIVE): export MAKE_RESPONSE := $(foreach obj,$(CORE_OBJECTS),"$(obj)")
-$(CORE_ARCHIVE): $(CORE_OBJECTS)
-	@$(PYTHON) tools/build/make_generated.py response "$(BUILD_DIR)/archive.rsp"
+$(CORE_ARCHIVE): $(CORE_OBJECTS) $(CODEGEN)
+	@$(CODEGEN) response "$(BUILD_DIR)/archive.rsp"
 	rm -f "$@"
+ifeq ($(OS),macos)
+	@$(CODEGEN) filelist "$(BUILD_DIR)/archive.files"
+	libtool -static -o "$@" -filelist "$(BUILD_DIR)/archive.files"
+else
 	$(AR) qcs "$@" @$(BUILD_DIR)/archive.rsp
+endif
 
 # Keep the frontend's exported entry points as ordinary objects. Archive
 # extraction pulls in only the emulator/dependency members they actually use,
 # just as the existing build's static libraries do.
 $(BUILD_DIR)/$(TARGET): export MAKE_RESPONSE := $(foreach obj,$(FRONTEND_OBJECTS) $(RESOURCES) $(CORE_ARCHIVE),"$(obj)")
 $(BUILD_DIR)/$(TARGET): $(FRONTEND_OBJECTS) $(CORE_ARCHIVE) $(RESOURCES) libretro/link.T $(MESA_ARCHIVES)
-	@$(PYTHON) tools/build/make_generated.py response "$(BUILD_DIR)/objects.rsp"
+	@$(CODEGEN) response "$(BUILD_DIR)/objects.rsp"
 	$(CXX) $(LDFLAGS) -o "$@" @$(BUILD_DIR)/objects.rsp $(LDLIBS)
 
-HOST_OBJECTS := $(addprefix $(HOST_DIR)/obj/,$(addsuffix .o,$(HOST_SOURCES)))
-export HOST_BUILD_SIGNATURE := $(HOST_CXX)|$(HOST_CXXFLAGS)|$(HOST_LDFLAGS)|$(HOST_INCLUDE_DIRS)
+export HOST_BUILD_SIGNATURE := $(HOST_CC)|$(HOST_CFLAGS)
 $(HOST_DIR)/config: FORCE
-	@$(PYTHON) tools/build/make_generated.py signature "$@" --host
-$(HOST_OBJECTS): $(HOST_DIR)/config
-HOST_TABLE_INPUTS := $(wildcard third_party/SPIRV-Tools/utils/*.py third_party/SPIRV-Headers/include/spirv/unified1/*.json) \
- third_party/glslang/build_info.h.tmpl third_party/glslang/CHANGES.md \
- third_party/SPIRV-Tools/CHANGES third_party/SPIRV-Headers/include/spirv/spir-v.xml tools/build/make_generated.py
-$(HOST_DIR)/generated/tables.stamp: $(HOST_TABLE_INPUTS)
-	$(PYTHON) tools/build/make_generated.py spirv-tables "$(HOST_DIR)/generated"
-	@touch "$@"
-$(HOST_DIR)/obj/%.cc.o: %.cc | $(HOST_DIR)/generated/tables.stamp
 	@mkdir -p "$(@D)"
-	$(HOST_CXX) $(HOST_CXXFLAGS) -std=c++20 -MMD -MP $(addprefix -I,$(HOST_INCLUDE_DIRS)) -DENABLE_OPT=1 -c "$<" -o "$@"
-$(HOST_DIR)/obj/%.cpp.o: %.cpp | $(HOST_DIR)/generated/tables.stamp
+	@printf '%s\n' "$$HOST_BUILD_SIGNATURE" > "$@.tmp"; \
+	if cmp -s "$@.tmp" "$@"; then rm -f "$@.tmp"; else mv "$@.tmp" "$@"; fi
+$(CODEGEN): tools/build/core_codegen.c tools/build/core_deflate.c $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
-	$(HOST_CXX) $(HOST_CXXFLAGS) -std=c++20 -MMD -MP $(addprefix -I,$(HOST_INCLUDE_DIRS)) -DENABLE_OPT=1 -c "$<" -o "$@"
-$(HOST_DIR)/xenia-shader-cc: export MAKE_RESPONSE := $(foreach obj,$(HOST_OBJECTS),"$(obj)")
-$(HOST_DIR)/xenia-shader-cc: $(HOST_OBJECTS)
-	@$(PYTHON) tools/build/make_generated.py response "$(HOST_DIR)/objects.rsp"
-	$(HOST_CXX) $(HOST_LDFLAGS) -o "$@" @$(HOST_DIR)/objects.rsp -lpthread
-host-tools: $(HOST_SHADER_CC)
+	$(HOST_CC) $(HOST_CFLAGS) -std=c89 tools/build/core_codegen.c tools/build/core_deflate.c -o "$@"
+host-tools: $(CODEGEN)
+
+# Development check for the raw DXIL writer, independent of the core build.
+# dxv is Microsoft's validator; normal builds do not require it.
+DXIL_VALIDATOR ?= dxv
+DXIL_BYTECODE_DIR := src/xenia/gpu/dxil/bytecode
+DXIL_BYTECODE_SOURCES := $(wildcard $(DXIL_BYTECODE_DIR)/*.c)
+$(HOST_DIR)/dxil-writer-test: tools/tests/dxil_writer_test.c $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_BYTECODE_DIR)/*.h) $(HOST_DIR)/config
+	@mkdir -p "$(@D)"
+	$(HOST_CC) $(HOST_CFLAGS) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_writer_test.c $(DXIL_BYTECODE_SOURCES) -o "$@"
+.PHONY: check-dxil-writer
+check-dxil-writer: $(HOST_DIR)/dxil-writer-test
+	$< "$(HOST_DIR)/dxil-writer-test.dxil"
+	$(DXIL_VALIDATOR) "$(HOST_DIR)/dxil-writer-test.dxil" -o="$(HOST_DIR)/dxil-writer-test-validated.dxil"
+	cmp "$(HOST_DIR)/dxil-writer-test.dxil" "$(HOST_DIR)/dxil-writer-test-validated.dxil"
+	$< "$(HOST_DIR)/dxil-writer-test-vs.dxil" vs
+	$(DXIL_VALIDATOR) "$(HOST_DIR)/dxil-writer-test-vs.dxil" -o="$(HOST_DIR)/dxil-writer-test-vs-validated.dxil"
+	cmp "$(HOST_DIR)/dxil-writer-test-vs.dxil" "$(HOST_DIR)/dxil-writer-test-vs-validated.dxil"
+	$< "$(HOST_DIR)/dxil-writer-test-ps.dxil" ps
+	$(DXIL_VALIDATOR) "$(HOST_DIR)/dxil-writer-test-ps.dxil" -o="$(HOST_DIR)/dxil-writer-test-ps-validated.dxil"
+	cmp "$(HOST_DIR)/dxil-writer-test-ps.dxil" "$(HOST_DIR)/dxil-writer-test-ps-validated.dxil"
 
 define shader-rule
-$(call shader-output,$(1),$(2)): $(1) $(HOST_SHADER_CC) tools/build/make_generated.py
-	$$(PYTHON) tools/build/make_generated.py shader "$$@" --source "$$<" --backend $(3) --compiler "$$(HOST_SHADER_CC)"
+$(call shader-output,$(1)): $(1) $(CODEGEN)
+	$$(CODEGEN) shader "$$@" "$$<" "$(notdir $(basename $(1)))" $(if $(filter %.spv,$(1)),spirv,dxil)
 endef
-$(foreach s,$(LEGACY_SHADERS) $(SPIRV_SLANG),$(eval $(call shader-rule,$(s),vulkan_spirv,spirv)))
-ifeq ($(OS),windows)
-$(foreach s,$(SLANG_SHADERS),$(eval $(call shader-rule,$(s),d3d12_dxil,dxil)))
-endif
+$(foreach s,$(SHADER_SOURCES),$(eval $(call shader-rule,$(s))))
 shaders: $(SHADER_HEADERS)
 
 ifeq ($(OS),windows)
@@ -282,14 +317,25 @@ endif
 
 print-config:
 	@echo "platform=$(platform) OS=$(OS) ARCH=$(ARCH) TARGET=$(TARGET)"
-	@echo "CC=$(CC) CXX=$(CXX) HOST_CXX=$(HOST_CXX)"
+	@echo "CC=$(CC) CXX=$(CXX) HOST_CC=$(HOST_CC)"
 	@echo "BUILD_DIR=$(BUILD_DIR) HOST_DIR=$(HOST_DIR)"
 help:
 	@echo "make platform=<$(SUPPORTED_PLATFORMS)> [-jN] [DEBUG=1] [LTO=1]"
 	@echo "Android: NDK_ROOT=/path/to/ndk [API_LEVEL=28]"
 	@echo "Windows cross build: see .ci/build-windows-cross.sh"
 clean:
-	$(PYTHON) -c "import pathlib,shutil; p=pathlib.Path('$(BUILD_DIR)').resolve(); root=pathlib.Path.cwd().resolve(); assert root in p.parents and p != root / 'build', 'unsafe BUILD_DIR'; shutil.rmtree(p, ignore_errors=True)"
+	@root=$$(pwd -P); \
+	if test -d "$(BUILD_DIR)"; then \
+	  build_dir=$$(cd "$(BUILD_DIR)" && pwd -P) || exit 1; \
+	  case "$$build_dir" in \
+	    "$$root/build") echo "Unsafe BUILD_DIR: $$build_dir" >&2; exit 1 ;; \
+	    "$$root"/*) ;; \
+	    *) echo "Unsafe BUILD_DIR: $$build_dir" >&2; exit 1 ;; \
+	  esac; \
+	  rm -rf -- "$$build_dir"; \
+	elif test -e "$(BUILD_DIR)"; then \
+	  echo "BUILD_DIR is not a directory: $(BUILD_DIR)" >&2; exit 1; \
+	fi
 	rm -f "$(TARGET)"
 
--include $(OBJECTS:.o=.d) $(HOST_OBJECTS:.o=.d) $(addsuffix .d,$(SHADER_HEADERS))
+-include $(OBJECTS:.o=.d) $(addsuffix .d,$(SHADER_HEADERS))

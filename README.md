@@ -30,17 +30,17 @@ Games that need a signed-in profile get one: the core signs in the first profile
 ## Building
 
 The checked-in `Makefile` and `Makefile.common` compile the core and its
-vendored dependencies directly, without CMake. Use a Linux build host with
-GNU Make, Python 3, clang 21, GCC 14's libstdc++, and the submodules initialized.
-Linux also needs the fontconfig development package. Slang and game patch data
-are fetched before building (there are no downloads at runtime):
+owned dependency sources directly, without CMake. Use GNU Make, clang 21,
+GCC 14's libstdc++, and a host C compiler. Linux also needs the fontconfig
+development package. Fonts, patch data and raw SPIR-V/DXIL built-in shaders
+are included in the repository; a native C89 tool embeds them during the build.
+Linux, Android and macOS builds do not require Python or a shader compiler.
+The Windows guest-shader backend still uses Mesa and its Meson build.
 
 ```sh
-git clone --recursive https://github.com/libretro-fork/parallel-xbox360.git
+git clone https://github.com/libretro-fork/parallel-xbox360.git
 cd parallel-xbox360
-./xenia-build.py slang
-./xenia-build.py fetchdata
-make -j8 platform=linux-x86_64 CC=clang-21 CXX=clang++-21 HOST_CXX=clang++-21 AR=llvm-ar-21
+make -j8 platform=linux-x86_64 CC=clang-21 CXX=clang++-21 HOST_CC=clang-21 AR=llvm-ar-21
 ```
 
 Every platform in `.gitlab-ci.yml` has an explicit selection:
@@ -49,17 +49,18 @@ Every platform in `.gitlab-ci.yml` has an explicit selection:
 | --- | --- | --- |
 | `linux-x86_64` | `parallel_xbox360_libretro.so` | Native x86_64 Linux toolchain |
 | `linux-aarch64` | `parallel_xbox360_libretro.so` | Native aarch64 Linux toolchain, or `CC`/`CXX` cross compilers with a target sysroot |
-| `windows-x86_64` | `parallel_xbox360_libretro.dll` | LLVM, MSVC CRT/SDK, Meson, Ninja, Mesa and DXC; see `.ci/build-windows-cross.sh` |
+| `windows-x86_64` | `parallel_xbox360_libretro.dll` | LLVM, MSVC CRT/SDK, Meson, Ninja, Mesa and the DXIL validator; see `.ci/build-windows-cross.sh` |
 | `android-arm64-v8a` | `parallel_xbox360_libretro_android.so` | `NDK_ROOT=/path/to/ndk` |
 | `android-x86_64` | `parallel_xbox360_libretro_android.so` | `NDK_ROOT=/path/to/ndk` |
+| `macos-arm64` | `parallel_xbox360_libretro.dylib` | Apple Silicon, Xcode command line tools, GNU Make and an external Vulkan driver |
 
-`platform=unix` selects the native Linux architecture. `unix-arm64` and
+`platform=unix` selects the native Linux architecture or Apple Silicon on macOS. `unix-arm64` and
 `windows` are aliases. Android defaults to API 28 and links the static C++
 runtime with 16 KB page alignment. `CC` and `CXX` override the target compilers;
-`HOST_CXX` always compiles build tools for the Linux host. `AR` selects LLVM's
-archiver (the NDK's `llvm-ar` on Android, `llvm-ar` otherwise). A prebuilt matching
-`xenia-shader-cc` may be supplied with `HOST_SHADER_CC=/absolute/path/to/tool`.
-Set `SLANGC_PATH` if Slang is outside `.slang/`.
+`HOST_CC` compiles the native C89 build tool for the build host. `AR` selects
+the archiver (the NDK's `llvm-ar` on Android). macOS uses Apple's `libtool` to
+create its static archive and loads `libvulkan.1.dylib` from an external driver;
+the repository does not bundle MoltenVK or SPIRV-Cross.
 
 Build products are isolated under `build/make/<platform>/`; the final core is
 written to the repository root. `BUILD_DIR` and `HOST_DIR` override the build
@@ -68,8 +69,7 @@ directories. `DEBUG=1` enables a debug build; `LTO=1` enables clang ThinLTO.
 shared host tools remain for other targets. `make help` lists the selections.
 The fixed zlib-ng configuration uses its portable C implementation.
 
-The CMake build remains available through `xenia-build.py` and produces the
-same renamed core. macOS remains available through that build. Existing
+The CMake build remains available and produces the same renamed core. Existing
 `system/Xenia-Edge/` content and `xenia_*` option keys are retained.
 
 The CI workflow `.github/workflows/libretro.yml` builds every platform, including the Android cross build.

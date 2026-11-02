@@ -1,0 +1,7 @@
+Raw DXIL/LLVM bitcode writer adapted from Mesa 7a1fc756809f3bdc9771b54e6036b156389dfc85.
+Original copyright and MIT license notices remain in each file.
+The SPIR-V parser, NIR compiler, GLSL type system and shader-language frontends are not part of this writer.
+dxil_checksum.c/h derive from the repository's third_party/dxbc/DXBCChecksum.cpp/h.
+The AMD and RSA Data Security notices are preserved. This C89 adaptation is
+derived from the RSA Data Security, Inc. MD5 Message Digest Algorithm.
+dxil_support.c/h provide core-owned C89 allocation and container support.

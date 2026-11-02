@@ -129,309 +129,6 @@ add_library(fmt STATIC
 target_include_directories(fmt PUBLIC fmt/include)
 
 # ==============================================================================
-# glslang-spirv (runtime: SPIR-V emission primitives for Xenia's own
-# SpirvShaderTranslator; used by the Vulkan backend and by the Metal backend's
-# SPIRV-Cross path)
-# ==============================================================================
-file(GLOB _glslang_spirv_cpp "glslang/SPIRV/*.cpp")
-file(GLOB _glslang_spirv_h "glslang/SPIRV/*.h")
-file(GLOB _glslang_spirv_hpp "glslang/SPIRV/*.hpp11")
-# Excluding GlslangToSpv keeps MachineIndependent out of the runtime link.
-list(FILTER _glslang_spirv_cpp EXCLUDE REGEX "GlslangToSpv\\.cpp$")
-add_library(glslang-spirv STATIC
-  ${_glslang_spirv_cpp}
-  ${_glslang_spirv_h}
-  ${_glslang_spirv_hpp}
-  glslang/glslang/Include/visibility.h
-)
-target_include_directories(glslang-spirv PUBLIC glslang)
-
-# Cross-compiling x64-host → ARM64-target on Windows: the cross
-# toolchain produces an ARM64 PE for xenia-shader-cc that won't run on
-# the x64 host, so reuse the binary from a previous native build instead
-# (Windows-on-ARM runs x64 fine via Prism, and macOS handles its own
-# x86_64↔arm64 via Rosetta — both directions are unaffected).
-set(_xe_use_host_shader_cc FALSE)
-if(WIN32 AND CMAKE_CROSSCOMPILING AND XE_TARGET_AARCH64
-    AND CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64")
-  set(_xe_use_host_shader_cc TRUE)
-endif()
-# Any other cross-compile (Android) is given a host build's xenia-shader-cc.
-set(XENIA_HOST_SHADER_CC "" CACHE FILEPATH
-    "xenia-shader-cc built for the host, for cross-compiling (Android)")
-if(XENIA_HOST_SHADER_CC)
-  set(_xe_use_host_shader_cc TRUE)
-endif()
-
-if(NOT _xe_use_host_shader_cc)
-
-# ==============================================================================
-# SPIRV-Headers + SPIRV-Tools (host: SPIR-V optimization + disassembly
-# support for glslang's ENABLE_OPT path; used by the xenia-shader-cc tool)
-# ==============================================================================
-# Point SPIRV-Tools at our in-tree SPIRV-Headers checkout instead of the
-# external/spirv-headers path it expects by default.
-set(SPIRV-Headers_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/SPIRV-Headers"
-    CACHE INTERNAL "")
-set(SPIRV_SKIP_TESTS ON CACHE INTERNAL "")
-set(SPIRV_SKIP_EXECUTABLES ON CACHE INTERNAL "")
-set(SKIP_SPIRV_TOOLS_INSTALL ON CACHE INTERNAL "")
-set(SPIRV_WERROR OFF CACHE INTERNAL "")
-set(SPIRV_BUILD_FUZZER OFF CACHE INTERNAL "")
-add_subdirectory(SPIRV-Tools EXCLUDE_FROM_ALL)
-
-# SPIRV-Tools unconditionally forces /W2 /WX on MSVC via its own
-# target_compile_options, which conflicts with the directory-level /W0 and
-# produces D9025 "overriding /W0 with /W2" for every translation unit. Strip
-# the /W* and /WX flags it added so only the directory-level /W0 survives.
-if(MSVC)
-  foreach(_spvt_target
-      SPIRV-Tools-static SPIRV-Tools-shared SPIRV-Tools-opt
-      SPIRV-Tools-link SPIRV-Tools-reduce SPIRV-Tools-diff)
-    if(TARGET ${_spvt_target})
-      get_target_property(_opts ${_spvt_target} COMPILE_OPTIONS)
-      if(_opts)
-        list(FILTER _opts EXCLUDE REGEX "^/[Ww]([0-9]|all|X)$")
-        set_target_properties(${_spvt_target} PROPERTIES COMPILE_OPTIONS "${_opts}")
-      endif()
-    endif()
-  endforeach()
-endif()
-
-# ==============================================================================
-# glslang (host: full frontend + SPIR-V emission for the xenia-shader-cc
-# build-time tool; all platforms, including macOS)
-# ==============================================================================
-# Read glslang's own version file to generate build_info.h in sync with the
-# pinned submodule, matching what glslang's own CMakeLists does.
-include(${CMAKE_CURRENT_SOURCE_DIR}/glslang/parse_version.cmake)
-parse_version(${CMAKE_CURRENT_SOURCE_DIR}/glslang/CHANGES.md GLSLANG)
-set(major ${GLSLANG_VERSION_MAJOR})
-set(minor ${GLSLANG_VERSION_MINOR})
-set(patch ${GLSLANG_VERSION_PATCH})
-set(flavor ${GLSLANG_VERSION_FLAVOR})
-configure_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/glslang/build_info.h.tmpl
-  ${CMAKE_CURRENT_BINARY_DIR}/glslang-build-info/glslang/build_info.h
-  @ONLY)
-
-file(GLOB _glslang_mi
-  "glslang/glslang/MachineIndependent/*.cpp"
-  "glslang/glslang/MachineIndependent/preprocessor/*.cpp"
-  "glslang/glslang/GenericCodeGen/*.cpp")
-file(GLOB _glslang_spirv_all "glslang/SPIRV/*.cpp")
-add_library(glslang STATIC
-  ${_glslang_mi}
-  ${_glslang_spirv_all}
-  glslang/glslang/ResourceLimits/ResourceLimits.cpp
-)
-if(WIN32)
-  target_sources(glslang PRIVATE glslang/glslang/OSDependent/Windows/ossource.cpp)
-else()
-  target_sources(glslang PRIVATE glslang/glslang/OSDependent/Unix/ossource.cpp)
-endif()
-target_include_directories(glslang PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/glslang
-  ${CMAKE_CURRENT_BINARY_DIR}/glslang-build-info)
-target_compile_features(glslang PUBLIC cxx_std_17)
-# Enable glslang's SpvTools.cpp optimizer/disassembler bridge to SPIRV-Tools.
-target_compile_definitions(glslang PRIVATE ENABLE_OPT=1)
-target_link_libraries(glslang PUBLIC SPIRV-Tools-opt SPIRV-Tools-static)
-# glslang relies on exceptions internally.
-if(MSVC)
-  target_compile_options(glslang PRIVATE /EHsc)
-endif()
-if(NOT WIN32)
-  find_package(Threads)
-  if(Threads_FOUND)
-    target_link_libraries(glslang PUBLIC Threads::Threads)
-  endif()
-endif()
-
-endif()  # NOT _xe_use_host_shader_cc (SPIRV-Tools + glslang block)
-
-# ==============================================================================
-# SPIRV-Cross (Apple only — used at runtime by xenia-gpu-metal for SPIR-V → MSL
-# via MslShader, and by MoltenVKShaderConverter below)
-# ==============================================================================
-if(APPLE)
-  add_library(spirv-cross STATIC
-    SPIRV-Cross/spirv_cross.cpp
-    SPIRV-Cross/spirv_cross_parsed_ir.cpp
-    SPIRV-Cross/spirv_parser.cpp
-    SPIRV-Cross/spirv_cfg.cpp
-    SPIRV-Cross/spirv_cross_util.cpp
-    SPIRV-Cross/spirv_glsl.cpp
-    SPIRV-Cross/spirv_msl.cpp
-    SPIRV-Cross/spirv_reflect.cpp
-  )
-  target_include_directories(spirv-cross PUBLIC SPIRV-Cross)
-  target_compile_features(spirv-cross PUBLIC cxx_std_17)
-  if(MSVC)
-    target_compile_options(spirv-cross PRIVATE /EHsc)
-  endif()
-endif()
-
-# ==============================================================================
-# MoltenVK (Apple only — Vulkan-on-Metal driver, statically linked into
-# xenia-ui-vulkan so the macOS build needs no MoltenVK install at runtime)
-# ==============================================================================
-# Mirrors the layout of MoltenVK's own CMakeLists.txt (Common +
-# MoltenVKShaderConverter + MoltenVK) but builds against our in-tree
-# Vulkan-Headers / SPIRV-Cross / SPIRV-Tools / cereal instead of fetching its
-# own copies via CPM.cmake. The SPIRV-Cross and cereal submodules are pinned to
-# the revisions MoltenVK expects (see MoltenVK/ExternalRevisions/*) so the
-# spirv_msl ABI and pipeline-cache serialization format match.
-if(APPLE)
-  # Record the MoltenVK submodule revision for MVKDevice's identification
-  # string (MoltenVK's own CMake runs `git rev-parse` here; we just shell
-  # out once at configure time and bake the string into a generated header).
-  execute_process(
-    COMMAND ${GIT_EXECUTABLE} -C ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK rev-parse --short HEAD
-    OUTPUT_VARIABLE MVK_GIT_REV
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET)
-  if(NOT MVK_GIT_REV)
-    set(MVK_GIT_REV "00000000")
-  endif()
-  configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/Templates/cmake/mvkGitRevDerived.h.in
-    ${CMAKE_CURRENT_BINARY_DIR}/MoltenVK-gen/mvkGitRevDerived.h
-    @ONLY)
-
-  # MoltenVK::Common — OS/Foundation/Metal helpers shared by core + converter.
-  file(GLOB _mvk_common_src
-    "MoltenVK/Common/*.c"
-    "MoltenVK/Common/*.cpp"
-    "MoltenVK/Common/*.m"
-    "MoltenVK/Common/*.mm")
-  add_library(MoltenVK_Common STATIC ${_mvk_common_src})
-  add_library(MoltenVK::Common ALIAS MoltenVK_Common)
-  target_include_directories(MoltenVK_Common PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/Common
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/Vulkan-Headers/include)
-  target_compile_features(MoltenVK_Common PUBLIC cxx_std_17)
-  target_compile_options(MoltenVK_Common PUBLIC
-    -Wno-deprecated-declarations
-    -Wno-vla-cxx-extension)
-  target_compile_definitions(MoltenVK_Common PUBLIC
-    MVK_CONFIG_LOG_LEVEL=1          # error-only at runtime
-    MVK_USE_METAL_PRIVATE_API=1)    # primitive-restart disable + legacy SPI
-
-  # MoltenVK::ShaderConverter — wraps SPIRV-Cross + SPIRV-Tools to produce MSL.
-  file(GLOB _mvk_sc_src
-    "MoltenVK/MoltenVKShaderConverter/MoltenVKShaderConverter/*.c"
-    "MoltenVK/MoltenVKShaderConverter/MoltenVKShaderConverter/*.cpp"
-    "MoltenVK/MoltenVKShaderConverter/MoltenVKShaderConverter/*.m"
-    "MoltenVK/MoltenVKShaderConverter/MoltenVKShaderConverter/*.mm")
-  add_library(MoltenVK_ShaderConverter STATIC ${_mvk_sc_src})
-  add_library(MoltenVK::ShaderConverter ALIAS MoltenVK_ShaderConverter)
-  target_include_directories(MoltenVK_ShaderConverter PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVKShaderConverter
-    ${CMAKE_CURRENT_SOURCE_DIR}/SPIRV-Headers/include)
-  target_link_libraries(MoltenVK_ShaderConverter PUBLIC
-    MoltenVK::Common spirv-cross SPIRV-Tools-static)
-
-  # MoltenVK — the core driver. .mm files compile with manual retain/release;
-  # don't let any inherited -fobjc-arc flag flip them.
-  file(GLOB_RECURSE _mvk_core_src
-    "MoltenVK/MoltenVK/MoltenVK/*.c"
-    "MoltenVK/MoltenVK/MoltenVK/*.cpp"
-    "MoltenVK/MoltenVK/MoltenVK/*.m"
-    "MoltenVK/MoltenVK/MoltenVK/*.mm")
-  add_library(MoltenVK STATIC ${_mvk_core_src})
-  target_include_directories(MoltenVK PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/include
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK/API
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK/Commands
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK/GPUObjects
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK/Layers
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK/OS
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK/Utility
-    ${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK/Vulkan
-    ${CMAKE_CURRENT_SOURCE_DIR}/cereal/include
-    ${CMAKE_CURRENT_BINARY_DIR}/MoltenVK-gen)
-  # Unquoted: MoltenVK runs MVK_STRINGIFY on this and compares to
-  # "$MAJOR.$MINOR.$PATCH" — quotes here would survive into the stringify.
-  target_compile_definitions(MoltenVK PUBLIC
-    MVK_FRAMEWORK_VERSION=1.4.2)
-  target_link_libraries(MoltenVK PUBLIC
-    MoltenVK::ShaderConverter
-    "-framework Foundation"
-    "-framework Metal"
-    "-framework AppKit"
-    "-framework IOKit"
-    "-framework IOSurface"
-    "-framework QuartzCore"
-    "-framework CoreGraphics")
-  # MoltenVK's OS/ TUs define Objective-C categories on MTLSamplerDescriptor,
-  # MTLRenderPipelineDescriptor, CAMetalLayer, and NSString. Static archive
-  # members that only contribute categories are dropped by ld (no external
-  # symbol references them), so at runtime calls like setBorderColorMVK: raise
-  # "unrecognized selector". Force-load the archive so every member ships in
-  # the final binary.
-  target_link_options(MoltenVK INTERFACE
-    "LINKER:-force_load,$<TARGET_FILE:MoltenVK>")
-endif()
-
-# ==============================================================================
-# xenia-shader-cc (build-time host tool: GLSL/XeSL -> SPIR-V -> .h, and on
-# Apple, XeSL -> MSL metallib -> .h via xcrun metal)
-# ==============================================================================
-if(NOT _xe_use_host_shader_cc)
-
-add_executable(xenia-shader-cc ${PROJECT_SOURCE_DIR}/tools/build/shader_cc.cc)
-target_link_libraries(xenia-shader-cc PRIVATE glslang SPIRV-Tools-static)
-target_include_directories(xenia-shader-cc PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/glslang/StandAlone)
-set_target_properties(xenia-shader-cc PROPERTIES
-  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/host_tools")
-if(APPLE)
-  target_compile_definitions(xenia-shader-cc PRIVATE
-    XE_SHADER_CC_METAL=1
-    XE_METAL_MIN_OS="${CMAKE_OSX_DEPLOYMENT_TARGET}")
-endif()
-if(MSVC)
-  target_compile_options(xenia-shader-cc PRIVATE /EHsc)
-endif()
-
-elseif(XENIA_HOST_SHADER_CC)
-
-add_executable(xenia-shader-cc IMPORTED GLOBAL)
-set_target_properties(xenia-shader-cc PROPERTIES
-  IMPORTED_LOCATION "${XENIA_HOST_SHADER_CC}")
-
-else()  # _xe_use_host_shader_cc: x64→ARM64 cross-compile, use native build's binary
-
-# Native x64 build lives at <repo>/build/ (xenia-build.py: get_build_dir(None)).
-set(_xe_host_shader_cc_dir "${CMAKE_SOURCE_DIR}/build/host_tools")
-set(_xe_host_shader_cc_any "")
-foreach(_cfg Release Checked Debug)
-  if(EXISTS "${_xe_host_shader_cc_dir}/${_cfg}/xenia-shader-cc.exe")
-    set(_xe_host_shader_cc_any "${_xe_host_shader_cc_dir}/${_cfg}/xenia-shader-cc.exe")
-    break()
-  endif()
-endforeach()
-if(NOT _xe_host_shader_cc_any)
-  message(FATAL_ERROR
-    "Cross-compile to ARM64 needs a host xenia-shader-cc.exe but none was found "
-    "under ${_xe_host_shader_cc_dir}/<Config>/.\n"
-    "  Run a native build first to produce it, e.g.:\n"
-    "    xb build --target xenia-shader-cc --config=release\n"
-    "  Then re-run the cross-compile.")
-endif()
-add_executable(xenia-shader-cc IMPORTED GLOBAL)
-set_target_properties(xenia-shader-cc PROPERTIES
-  IMPORTED_LOCATION "${_xe_host_shader_cc_any}"
-  IMPORTED_LOCATION_RELEASE "${_xe_host_shader_cc_dir}/Release/xenia-shader-cc.exe"
-  IMPORTED_LOCATION_CHECKED "${_xe_host_shader_cc_dir}/Checked/xenia-shader-cc.exe"
-  IMPORTED_LOCATION_DEBUG "${_xe_host_shader_cc_dir}/Debug/xenia-shader-cc.exe")
-
-endif()
-
-# ==============================================================================
 # imgui
 # ==============================================================================
 add_library(imgui STATIC
@@ -481,35 +178,19 @@ if(CMAKE_TOOLCHAIN_FILE)
   set(_xe_nested_toolchain_flag "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
     -G "${CMAKE_GENERATOR}" -DCMAKE_BUILD_TYPE=Release)
 endif()
-# Generate snappy-stubs-public.h if missing
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/snappy/snappy-stubs-public.h")
-  if(XE_TARGET_X86_64)
-    set(_snappy_avx_flag "-DSNAPPY_REQUIRE_AVX=ON")
-  else()
-    set(_snappy_avx_flag "-DSNAPPY_REQUIRE_AVX=OFF")
-  endif()
-  execute_process(
-    COMMAND ${CMAKE_COMMAND}
-      ${_xe_nested_toolchain_flag}
-      -DSNAPPY_BUILD_TESTS=OFF
-      -DSNAPPY_BUILD_BENCHMARKS=OFF
-      ${_snappy_avx_flag}
-      ${CMAKE_CURRENT_SOURCE_DIR}/snappy
-      -B${CMAKE_CURRENT_SOURCE_DIR}/snappy
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  )
-endif()
 add_library(snappy STATIC
   snappy/snappy-internal.h
   snappy/snappy-sinksource.cc
   snappy/snappy-sinksource.h
   snappy/snappy-stubs-internal.cc
   snappy/snappy-stubs-internal.h
-  snappy/snappy-stubs-public.h
+  ${XENIA_GENERATED_DIR}/snappy-stubs-public.h
   snappy/snappy.cc
   snappy/snappy.h
 )
-target_include_directories(snappy PUBLIC snappy)
+target_include_directories(snappy BEFORE PRIVATE ${XENIA_GENERATED_DIR}/snappy)
+target_include_directories(snappy PUBLIC snappy ${XENIA_GENERATED_DIR})
+target_compile_definitions(snappy PRIVATE HAVE_CONFIG_H)
 
 # ==============================================================================
 # xxhash
@@ -562,92 +243,21 @@ target_link_libraries(zarchive PUBLIC zstd)
 # ==============================================================================
 # zlib-ng
 # ==============================================================================
-# Generate headers if missing
-set(_zlibng_needs_configure FALSE)
-foreach(_hdr zlib-ng.h zconf-ng.h zlib_name_mangling-ng.h gzread.c)
-  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/zlib-ng/${_hdr}")
-    set(_zlibng_needs_configure TRUE)
-    break()
-  endif()
-endforeach()
-if(_zlibng_needs_configure)
-  execute_process(
-    COMMAND ${CMAKE_COMMAND}
-      ${_xe_nested_toolchain_flag}
-      -DZLIB_ENABLE_TESTS=OFF
-      -DWITH_GTEST=OFF
-      ${CMAKE_CURRENT_SOURCE_DIR}/zlib-ng
-      -B${CMAKE_CURRENT_SOURCE_DIR}/zlib-ng
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  )
+# Portable zlib-ng configuration, shared with the direct Make build.
+file(GLOB _zlibng_c "zlib-ng/*.c" "zlib-ng/arch/generic/*.c")
+list(FILTER _zlibng_c EXCLUDE REGEX "/gzread\\.c$")
+add_library(zlib-ng STATIC ${_zlibng_c}
+  "${XENIA_GENERATED_DIR}/third_party/zlib-ng/gzread.c")
+target_include_directories(zlib-ng BEFORE PUBLIC
+  "${XENIA_GENERATED_DIR}/third_party/zlib-ng" zlib-ng)
+target_compile_definitions(zlib-ng PRIVATE WITH_GZFILEOP)
+if(NOT WIN32)
+  target_compile_definitions(zlib-ng PRIVATE HAVE_UNISTD_H)
 endif()
-file(GLOB _zlibng_c "zlib-ng/*.c")
-file(GLOB _zlibng_generic "zlib-ng/arch/generic/*.c")
-if(XE_TARGET_AARCH64)
-  file(GLOB _zlibng_arch "zlib-ng/arch/arm/*.c")
-  list(FILTER _zlibng_arch EXCLUDE REGEX "armv6")
-  add_library(zlib-ng STATIC
-    ${_zlibng_c}
-    ${_zlibng_arch}
-    ${_zlibng_generic}
-  )
+if(NOT MSVC OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
   target_compile_definitions(zlib-ng PRIVATE
-    ARM_FEATURES
-    ARM_NEON
-    ARM_NEON_HASLD4
-    ARM_ACLE
-    HAVE_ARM_ACLE_H
-    WITH_GZFILEOP
-  )
-  if(NOT MSVC)
-    target_compile_definitions(zlib-ng PRIVATE HAVE_BUILTIN_CTZ HAVE_BUILTIN_CTZLL HAVE_ATTRIBUTE_ALIGNED)
-  endif()
-else()
-  file(GLOB _zlibng_x86 "zlib-ng/arch/x86/*.c")
-  add_library(zlib-ng STATIC
-    ${_zlibng_c}
-    ${_zlibng_x86}
-    ${_zlibng_generic}
-  )
-  target_compile_definitions(zlib-ng PRIVATE
-    X86_FEATURES
-    X86_HAVE_XSAVE_INTRIN
-    X86_SSE2
-    X86_SSSE3
-    X86_SSE42
-    X86_AVX2
-    X86_AVX512
-    X86_AVX512VNNI
-    WITH_GZFILEOP
-  )
-  # clang-cl too: it is MSVC to CMake, but zlib-ng's fallback_builtins.h
-  # stands down for any clang, so it needs the clang setup
-  if(NOT MSVC OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    # GCC/Clang have native __builtin_ctz/__builtin_ctzll (MSVC gets these
-    # from fallback_builtins.h). Defining these enables optimized compare256
-    # and longest_match codepaths. HAVE_ATTRIBUTE_ALIGNED gates GCC-style
-    # __attribute__((aligned)); MSVC uses __declspec(align) via its fallback.
-    target_compile_definitions(zlib-ng PRIVATE HAVE_BUILTIN_CTZ HAVE_BUILTIN_CTZLL HAVE_ATTRIBUTE_ALIGNED)
-    # GCC/Clang need per-file ISA flags; MSVC handles this via runtime dispatch
-    set_source_files_properties(
-      zlib-ng/arch/x86/adler32_avx2.c
-      zlib-ng/arch/x86/chunkset_avx2.c
-      zlib-ng/arch/x86/compare256_avx2.c
-      zlib-ng/arch/x86/slide_hash_avx2.c
-      PROPERTIES COMPILE_OPTIONS "-mavx2;-mbmi2"
-    )
-    set_source_files_properties(
-      zlib-ng/arch/x86/adler32_avx512.c
-      zlib-ng/arch/x86/chunkset_avx512.c
-      PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512dq;-mavx512vl;-mavx512bw;-mbmi2"
-    )
-    set_source_files_properties(
-      zlib-ng/arch/x86/adler32_avx512_vnni.c
-      PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512dq;-mavx512vl;-mavx512bw;-mavx512vnni;-mbmi2"
-    )
-  endif()
+    HAVE_BUILTIN_CTZ HAVE_BUILTIN_CTZLL HAVE_ATTRIBUTE_ALIGNED)
 endif()
-target_include_directories(zlib-ng PUBLIC zlib-ng)
 
 # ==============================================================================
 # libusb (Windows only)
@@ -1059,8 +669,8 @@ ffmpeg_common(libavformat)
 # paths below against the real build output if Mesa is restructured.
 if(WIN32)
   # Mesa source tree built for spirv_to_dxil. Defaults to the third_party/mesa
-  # submodule (our fork with the barycentric, linking, keep_io_vars and FSI->ROV
-  # changes). Repoint this cache variable to build a different Mesa checkout.
+  # owned sources with the barycentric, linking, keep_io_vars and FSI->ROV
+  # changes. Repoint this cache variable to build a different Mesa tree.
   get_filename_component(_xe_mesa_default
       "${CMAKE_SOURCE_DIR}/third_party/mesa" ABSOLUTE)
   set(XENIA_MESA_SOURCE_DIR "${_xe_mesa_default}" CACHE PATH
@@ -1068,9 +678,8 @@ if(WIN32)
   set(_xe_mesa_dir "${XENIA_MESA_SOURCE_DIR}")
   if(NOT EXISTS "${_xe_mesa_dir}/meson.build")
     message(FATAL_ERROR
-      "spirv_to_dxil requires a Mesa tree at ${_xe_mesa_dir}. Run: "
-      "git submodule update --init third_party/mesa "
-      "(or set XENIA_MESA_SOURCE_DIR to your Mesa checkout).")
+      "spirv_to_dxil requires the owned Mesa tree at ${_xe_mesa_dir}. "
+      "Restore it or set XENIA_MESA_SOURCE_DIR to an existing Mesa tree.")
   endif()
   find_program(XE_MESON_EXECUTABLE meson)
   find_program(XE_NINJA_EXECUTABLE ninja)

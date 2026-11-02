@@ -121,3 +121,9 @@ CMakeUserPresets.json
 recent.toml
 # the Windows cross build's tools (.ci/build-windows-cross.sh in CI)
 .cross-tools/
+
+# Direct Make build outputs.
+/parallel_xbox360_libretro.so
+/parallel_xbox360_libretro.dll
+/parallel_xbox360_libretro.dylib
+/parallel_xbox360_libretro_android.so

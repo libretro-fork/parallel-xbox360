@@ -4,6 +4,11 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- macOS remains supported with an external Vulkan driver; MoltenVK is no longer bundled.
+- Dependencies are ordinary, editable source files. Native C89 build tools embed the checked-in fonts, patch data and raw built-in shader binaries.
+- The independent raw DXIL writer has validator and D3D12 execution checks for arithmetic, control flow and UAV stores. Guest shader integration remains in progress.
+- `make clean` no longer needs Python; it checks and removes the build directory with shell tools.
+
 - The core is named `parallel_xbox360`, including its binaries and frontend metadata. Existing `system/Xenia-Edge/` data and core option keys are retained.
 - A direct GNU Make build supports all five GitLab CI platforms without CMake.
 

@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include "third_party/glslang/SPIRV/GLSL.std.450.h"
+#include "xenia/gpu/spirv/GLSL.std.450.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"

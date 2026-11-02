@@ -1,7 +1,6 @@
 add_library(xenia-ui-d3d12 STATIC)
 xe_platform_sources(xenia-ui-d3d12 ${CMAKE_CURRENT_SOURCE_DIR})
-xe_shader_rules_slang(xenia-ui-d3d12 ${CMAKE_CURRENT_SOURCE_DIR}/../shaders
-                      TARGET dxil)
+xe_shader_rules_dxil(xenia-ui-d3d12 ${CMAKE_CURRENT_SOURCE_DIR}/../shaders)
 target_link_libraries(xenia-ui-d3d12 PUBLIC xenia-base xenia-ui)
 xe_target_defaults(xenia-ui-d3d12)
 
@@ -15,7 +14,7 @@ if(XENIA_BUILD_MISC)
     xenia-apu xenia-base xenia-core xenia-cpu
     xenia-gpu xenia-hid xenia-hid-portal
     xenia-kernel xenia-patcher xenia-ui xenia-ui-d3d12 xenia-vfs
-    aes_128 capstone fmt glslang-spirv imgui mspack snappy xxhash
+    aes_128 capstone fmt xenia-spirv-writer imgui mspack snappy xxhash
   )
   if(XE_TARGET_X86_64)
     target_link_libraries(xenia-ui-window-d3d12-demo PRIVATE xenia-cpu-backend-x64)

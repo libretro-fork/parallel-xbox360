@@ -1,8 +1,7 @@
 name: Build libretro core
 
-# parallel_xbox360_libretro (.so / .dll / .dylib), the xenia-libretro CMake target,
-# built with xenia-build.py on the runners and tools upstream builds Xenia
-# Edge with.
+# Direct Make builds use owned source and checked-in raw shader binaries.
+# The Windows CMake build remains until its guest shader backend is replaced.
 
 on:
   workflow_dispatch:
@@ -48,24 +47,18 @@ jobs:
           sudo add-apt-repository -y --no-update ppa:ubuntu-toolchain-r/test
           sudo apt-get -y update
           sudo apt-get -y install --no-install-recommends clang-21 lld-21 libclang-rt-21-dev llvm-21
-          sudo apt-get -y install g++-14 ninja-build libfontconfig1-dev liblz4-dev
-          pip install --upgrade cmake
-          git submodule update --init --depth=1 -j$(getconf _NPROCESSORS_ONLN) $(grep -oP '(?<=path = )(?!third_party\/(mesa|MoltenVK|SPIRV-Cross|DirectX-Headers|DirectXShaderCompiler|libusb)).+' .gitmodules)
-          ./xenia-build.py slang
-          ./xenia-build.py fetchdata
+          sudo apt-get -y install g++-14 make libfontconfig1-dev
 
       - name: Build
         env:
           CC: clang-21
           CXX: clang++-21
-        run: ./xenia-build.py build --config=Release --target=xenia-libretro -- -- -k 0
+        run: make -j$(getconf _NPROCESSORS_ONLN) HOST_CC=clang-21 AR=llvm-ar-21
 
       - name: Collect
         run: |
           mkdir -p dist
-          core=$(find build -name 'parallel_xbox360_libretro.so' | head -1)
-          echo "core: $core"
-          cp "$core" dist/parallel_xbox360_libretro.so
+          cp parallel_xbox360_libretro.so dist/
           cp libretro/parallel_xbox360_libretro.info dist/
           strip --strip-unneeded dist/parallel_xbox360_libretro.so
           ls -la dist
@@ -88,10 +81,7 @@ jobs:
       # Mesa's spirv_to_dxil, D3D12's shader backend, is built by meson
       - name: Setup
         run: |
-          git submodule update --init --depth=1 -j $env:NUMBER_OF_PROCESSORS (Select-String -CaseSensitive '(?<=path = )(?!third_party/(MoltenVK|SPIRV-Cross)$).+' .gitmodules).Matches.Value
           python -m pip install --upgrade meson mako pyyaml packaging
-          python xenia-build.py slang
-          python xenia-build.py fetchdata
 
       # Direct3D 12's shader validator, which the D3D12 backend needs and
       # standalone downloads at run time; the core carries it inside instead
@@ -102,11 +92,15 @@ jobs:
         run: |
           curl -sSL -o dxc.zip https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip
           mkdir -p dxc
-          python -c "import zipfile; open('dxc/dxil.dll','wb').write(zipfile.ZipFile('dxc.zip').read('bin/x64/dxil.dll'))"
+          unzip -p dxc.zip 'bin?x64?dxil.dll' > dxc/dxil.dll
           echo "XENIA_LIBRETRO_DXIL=$GITHUB_WORKSPACE/dxc/dxil.dll" >> $GITHUB_ENV
 
       - name: Build
-        run: python xenia-build.py build --config=Release --target=xenia-libretro -- -- -k 0
+        run: |
+          $env:XE_VS_PATH = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$env:XE_VS_PATH) { throw 'MSVC installation not found' }
+          & cmd /d /c 'call "%XE_VS_PATH%\VC\Auxiliary\Build\vcvars64.bat" && cmake -S . -B build/windows-native -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl && cmake --build build/windows-native --target xenia-libretro --parallel'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Collect
         shell: bash
@@ -134,9 +128,8 @@ jobs:
           path: symbols/
           if-no-files-found: ignore
 
-  # Vulkan through MoltenVK, linked into the core as upstream links it into
-  # the app; the core runs Xenia's own Vulkan device and hands RetroArch the
-  # frames. Apple Silicon only: the x64 backend needs the address space
+  # The frontend supplies Vulkan through an external driver. Apple Silicon
+  # only: the x64 backend needs the address space
   # below 4 GB, which a dylib can't free (the __PAGEZERO is RetroArch's)
   macos:
     if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || contains(inputs.platforms, 'macos')
@@ -153,21 +146,15 @@ jobs:
 
       - name: Setup
         run: |
-          brew install ninja
-          git submodule update --init --depth=1 -j$(sysctl -n hw.ncpu) \
-            $(grep -oE 'path = .+' .gitmodules | sed 's/path = //' | grep -vE 'mesa|DirectX-Headers|DirectXShaderCompiler|libusb')
-          ./xenia-build.py slang
-          ./xenia-build.py fetchdata
+          brew install make
 
       - name: Build
-        run: ./xenia-build.py build --config=Release --target=xenia-libretro --target-arch=${{ matrix.arch }} -- -- -k 0
+        run: gmake -j$(sysctl -n hw.ncpu) platform=macos-arm64
 
       - name: Collect
         run: |
           mkdir -p dist
-          core=$(find build* -name 'parallel_xbox360_libretro.dylib' | head -1)
-          echo "core: $core"
-          cp "$core" dist/parallel_xbox360_libretro.dylib
+          cp parallel_xbox360_libretro.dylib dist/
           cp libretro/parallel_xbox360_libretro.info dist/
           strip -x dist/parallel_xbox360_libretro.dylib
           codesign -f -s - dist/parallel_xbox360_libretro.dylib
@@ -179,8 +166,7 @@ jobs:
           name: parallel_xbox360_libretro-macos-${{ matrix.arch }}
           path: dist/
 
-  # Cross-compiled with the NDK; the shader compiler the build runs is built
-  # for the host first
+  # Cross-compiled with the NDK; the C89 embedding tool runs on the host.
   android:
     if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || contains(inputs.platforms, 'android')
     name: Android ${{ matrix.abi }}
@@ -194,38 +180,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup
-        run: |
-          sudo apt-get -y update
-          sudo apt-get -y install ninja-build
-          pip install --upgrade cmake
-          git submodule update --init --depth=1 -j$(getconf _NPROCESSORS_ONLN) $(grep -oP '(?<=path = )(?!third_party\/(mesa|MoltenVK|SPIRV-Cross|DirectX-Headers|DirectXShaderCompiler|libusb)).+' .gitmodules)
-          ./xenia-build.py slang
-          ./xenia-build.py fetchdata
-
-      - name: Host shader compiler
-        run: |
-          cmake -S . -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release -DXENIA_ENABLE_LTO=OFF
-          ninja -C build-host xenia-shader-cc
-          echo "HOST_SHADER_CC=$(find $PWD/build-host -name xenia-shader-cc -type f | head -1)" >> $GITHUB_ENV
-
       - name: Build
         run: |
-          # version.h, which xenia-build.py writes into the build directory
-          python3 -c "import importlib.util as u; s=u.spec_from_file_location('xb','xenia-build.py'); m=u.module_from_spec(s); s.loader.exec_module(m); m.generate_version_h('build-android')"
-          cmake -S . -B build-android -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=${{ matrix.abi }} -DANDROID_PLATFORM=android-28 -DANDROID_STL=c++_static \
-            -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
-            -DXENIA_HOST_SHADER_CC=$HOST_SHADER_CC -DXENIA_ENABLE_LTO=OFF
-          ninja -C build-android -k 0 xenia-libretro
+          make -j$(getconf _NPROCESSORS_ONLN) platform=android-${{ matrix.abi }} NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
 
       - name: Collect
         run: |
           mkdir -p dist
-          core=$(find build-android -name 'parallel_xbox360_libretro_android.so' | head -1)
-          echo "core: $core"
-          cp "$core" dist/parallel_xbox360_libretro_android.so
+          cp parallel_xbox360_libretro_android.so dist/
           cp libretro/parallel_xbox360_libretro.info dist/
           "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-unneeded dist/parallel_xbox360_libretro_android.so
           "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -d dist/parallel_xbox360_libretro_android.so | grep NEEDED

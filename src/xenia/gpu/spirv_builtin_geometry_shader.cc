@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "third_party/fmt/include/fmt/format.h"
-#include "third_party/glslang/SPIRV/GLSL.std.450.h"
+#include "xenia/gpu/spirv/GLSL.std.450.h"
 #include "xenia/base/assert.h"
 #include "xenia/gpu/spirv_builder.h"
 #include "xenia/gpu/spirv_compatibility.h"

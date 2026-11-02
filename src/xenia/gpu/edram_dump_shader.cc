@@ -12,7 +12,7 @@
 #include <initializer_list>
 #include <vector>
 
-#include "third_party/glslang/SPIRV/GLSL.std.450.h"
+#include "xenia/gpu/spirv/GLSL.std.450.h"
 
 #include "xenia/base/assert.h"
 #include "xenia/base/math.h"

@@ -11,7 +11,7 @@
 
 #include <cstdint>
 
-#include "third_party/glslang/SPIRV/GLSL.std.450.h"
+#include "xenia/gpu/spirv/GLSL.std.450.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/math.h"
 #include "xenia/gpu/draw_util.h"

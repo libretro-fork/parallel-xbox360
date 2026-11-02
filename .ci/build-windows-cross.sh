@@ -19,7 +19,6 @@ TOOLS=${XE_CROSS_TOOLS:-/opt/xe-cross}
 LLVM=/usr/lib/llvm-21/bin
 XWIN_VERSION=0.10.0
 DXC_URL=https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609
-DXC_LINUX=linux_dxc_2026_09_28.x86_x64.tar.gz
 DXC_WINDOWS=dxc_2026_09_29.zip
 
 export DEBIAN_FRONTEND=noninteractive
@@ -40,9 +39,9 @@ if [ ! -x "$TOOLS/venv/bin/meson" ]; then
 fi
 export PATH="$TOOLS/venv/bin:$PATH"
 
-# The MSVC CRT and the Windows SDK, laid out with lower-case links so the
-# case-sensitive file system finds <Windows.h> as well as <windows.h>
+# The MSVC CRT and the Windows SDK. Clang's VFS resolves include spelling.
 mkdir -p "$TOOLS"
+TOOLS=$(cd "$TOOLS" && pwd -P)
 # Fetched once for this xwin version; kept when TOOLS comes back from the
 # buildbot's cache (.gitlab-ci.yml)
 MSVC="$TOOLS/msvc"
@@ -58,60 +57,22 @@ if [ ! -f "$MSVC/.splat-$XWIN_VERSION" ]; then
   touch "$MSVC/.splat-$XWIN_VERSION"
 fi
 
-# DXC: on Linux for slangc, which compiles the D3D12 shaders to DXIL with
-# it, and dxil.dll from the Windows release, which the core carries inside
-# (as the project's CI does)
-if [ ! -f "$TOOLS/dxc-linux/.$DXC_LINUX" ]; then
-  rm -rf "$TOOLS/dxc-linux"
-  mkdir -p "$TOOLS/dxc-linux"
-  wget -q -O "$TOOLS/dxc-linux.tar.gz" "$DXC_URL/$DXC_LINUX"
-  tar -xzf "$TOOLS/dxc-linux.tar.gz" -C "$TOOLS/dxc-linux"
-  rm -f "$TOOLS/dxc-linux.tar.gz"
-  touch "$TOOLS/dxc-linux/.$DXC_LINUX"
-fi
-export LD_LIBRARY_PATH="$TOOLS/dxc-linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# The existing D3D12 backend still embeds the Windows DXIL validator.
 if [ ! -f "$TOOLS/dxil.dll.$DXC_WINDOWS" ]; then
   wget -q -O "$TOOLS/dxc-windows.zip" "$DXC_URL/$DXC_WINDOWS"
-  python3 -c "import sys, zipfile; open(sys.argv[2], 'wb').write(zipfile.ZipFile(sys.argv[1]).read(r'bin\x64\dxil.dll'))" \
-    "$TOOLS/dxc-windows.zip" "$TOOLS/dxil.dll"
+  unzip -p "$TOOLS/dxc-windows.zip" 'bin?x64?dxil.dll' > "$TOOLS/dxil.dll"
   rm -f "$TOOLS/dxc-windows.zip"
   touch "$TOOLS/dxil.dll.$DXC_WINDOWS"
 fi
 export XENIA_LIBRETRO_DXIL="$TOOLS/dxil.dll"
 
-# The submodules the Windows build uses, as the project's CI takes them
-git submodule update --init --depth=1 --jobs="$NUMPROC" \
-  $(grep -oP '(?<=path = )(?!third_party/(MoltenVK|SPIRV-Cross)$).+' .gitmodules)
-# Headers the sources name in another case than the SDK's files (<ObjBase.h>
-# for objbase.h): a link of that spelling next to each
-python3 - "$MSVC" <<'PY'
-import os, re, sys
-root = sys.argv[1]
-dirs = [os.path.join(root, d) for d in ("crt/include", "sdk/include/ucrt",
-        "sdk/include/um", "sdk/include/shared", "sdk/include/winrt")]
-files = {}
-for d in dirs:
-    for name in os.listdir(d):
-        files.setdefault(name.lower(), (d, name))
-wanted = set()
-pattern = re.compile(rb'#\s*include\s*[<"]([A-Za-z0-9_]+\.[hH])[>"]')
-for top in ("src", "libretro", "third_party"):
-    for base, _, names in os.walk(top):
-        for n in names:
-            if n.endswith((".h", ".hpp", ".c", ".cc", ".cpp", ".inl")):
-                try:
-                    data = open(os.path.join(base, n), "rb").read()
-                except OSError:
-                    continue
-                wanted.update(m.decode() for m in pattern.findall(data))
-made = 0
-for name in wanted:
-    hit = files.get(name.lower())
-    if hit and hit[1] != name and not os.path.exists(os.path.join(hit[0], name)):
-        os.symlink(hit[1], os.path.join(hit[0], name))
-        made += 1
-print(f"case links: {made}")
-PY
+# Native C89 tools embed the checked-in data and provide case-insensitive
+# SDK lookup through Clang's VFS, without creating aliases in the SDK tree.
+HOST_TOOLS="$BUILD_DIR/host"
+make host-tools HOST_CC="$LLVM/clang" HOST_DIR="$HOST_TOOLS"
+SDK_OVERLAY="$TOOLS/sdk-overlay.json"
+"$HOST_TOOLS/core-codegen" sdk-overlay "$SDK_OVERLAY" "$MSVC"
+export SDK_OVERLAY
 # clang-cl against the downloaded headers and libraries. For meson (Mesa) a
 # clang-cl that brings them along itself: its resource compiler step takes
 # the compiler as one argument. Mesa's MSVC atomics also use MSVC's
@@ -122,6 +83,7 @@ cat > "$TOOLS/bin/clang-cl" <<WRAPPER
 #!/bin/sh
 exec "$LLVM/clang-cl" --target=x86_64-pc-windows-msvc -fuse-ld=lld \\
   -Wno-unused-command-line-argument \\
+  -vfsoverlay "$SDK_OVERLAY" \\
   /imsvc "$MSVC/crt/include" /imsvc "$MSVC/sdk/include/ucrt" \\
   /imsvc "$MSVC/sdk/include/um" /imsvc "$MSVC/sdk/include/shared" \\
   /imsvc "$MSVC/sdk/include/winrt" \\
@@ -141,8 +103,8 @@ exec "$LLVM/llvm-rc" /I "$MSVC/crt/include" /I "$MSVC/sdk/include/ucrt" \\
   /I "$MSVC/sdk/include/um" /I "$MSVC/sdk/include/shared" "\$@"
 WRAPPER
 chmod +x "$TOOLS/bin/llvm-rc"
-# Mesa still uses its upstream Meson build; the core and host shader compiler
-# are compiled directly by GNU Make.
+# Mesa still uses its upstream Meson build; the core and native embedding
+# tool are compiled directly by GNU Make.
 MESA_CROSS_FILE="$TOOLS/mesa-windows-x86_64.ini"
 cat > "$MESA_CROSS_FILE" <<EOF
 [binaries]
@@ -161,11 +123,9 @@ export PATH="$LLVM:$PATH"
 export CC_FOR_BUILD=clang-21 CXX_FOR_BUILD=clang++-21
 export LIB="$MSVC/crt/lib/x86_64;$MSVC/sdk/lib/um/x86_64;$MSVC/sdk/lib/ucrt/x86_64"
 # The Make build has no configure step; CPU and shader sources are selected in
-# Makefile.common. Slang and the game patch data are preparation tools only.
-./xenia-build.py slang
-./xenia-build.py fetchdata
+# Makefile.common. Built-in shader modules and game data are checked in.
 make -j "$NUMPROC" platform=windows-x86_64 BUILD_DIR="$BUILD_DIR" \
-  CC="$LLVM/clang" CXX="$LLVM/clang++" HOST_CXX="$LLVM/clang++" \
+  CC="$LLVM/clang" CXX="$LLVM/clang++" HOST_CC="$LLVM/clang" HOST_DIR="$HOST_TOOLS" \
   MSVC_ROOT="$MSVC" MESA_CROSS_FILE="$MESA_CROSS_FILE" \
   AR="$LLVM/llvm-ar" LLVM_RC="$TOOLS/bin/llvm-rc"
 mv parallel_xbox360_libretro.dll "$BUILD_DIR/parallel_xbox360_libretro.dll"

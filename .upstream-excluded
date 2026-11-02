@@ -101,3 +101,6 @@ xb
 xb.bat
 xb.ps1
 xenia.entitlements
+src/xenia/gpu/shader_compiler_main.cc
+tools/build/make_generated.py
+tools/build/shader_cc.cc

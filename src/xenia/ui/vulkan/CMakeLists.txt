@@ -2,16 +2,10 @@ add_library(xenia-ui-vulkan STATIC)
 xe_platform_sources(xenia-ui-vulkan ${CMAKE_CURRENT_SOURCE_DIR})
 xe_platform_sources(xenia-ui-vulkan ${CMAKE_CURRENT_SOURCE_DIR}/functions)
 xe_shader_rules_spirv(xenia-ui-vulkan ${CMAKE_CURRENT_SOURCE_DIR}/../shaders)
-xe_shader_rules_slang(xenia-ui-vulkan ${CMAKE_CURRENT_SOURCE_DIR}/../shaders
-                      TARGET spirv)
 target_include_directories(xenia-ui-vulkan PRIVATE
   ${PROJECT_SOURCE_DIR}/third_party/Vulkan-Headers/include
-  ${PROJECT_SOURCE_DIR}/third_party/glslang
 )
 target_link_libraries(xenia-ui-vulkan PUBLIC xenia-base xenia-ui)
-if(APPLE)
-  target_link_libraries(xenia-ui-vulkan PUBLIC MoltenVK)
-endif()
 xe_target_defaults(xenia-ui-vulkan)
 
 if(XENIA_BUILD_MISC)
@@ -30,7 +24,7 @@ if(XENIA_BUILD_MISC)
     xenia-apu xenia-apu-nop xenia-base xenia-core xenia-cpu
     xenia-gpu xenia-hid xenia-hid-nop xenia-hid-portal
     xenia-kernel xenia-patcher xenia-ui xenia-ui-vulkan xenia-vfs
-    aes_128 capstone fmt glslang-spirv imgui libavcodec libavutil mspack
+    aes_128 capstone fmt xenia-spirv-writer imgui libavcodec libavutil mspack
     snappy xxhash
   )
   if(XE_TARGET_X86_64)

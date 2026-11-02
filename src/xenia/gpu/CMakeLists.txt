@@ -1,11 +1,18 @@
+# Raw SPIR-V binary writer reused as editable core source. No GLSL frontend.
+add_library(xenia-spirv-writer STATIC
+  spirv/Logger.cpp
+  spirv/SpvBuilder.cpp
+  spirv/SpvPostProcess.cpp
+  spirv/InReadableOrder.cpp
+)
+
 add_library(xenia-gpu STATIC)
 xe_platform_sources(xenia-gpu ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(xenia-gpu PRIVATE
-  ${PROJECT_SOURCE_DIR}/third_party/glslang
   ${PROJECT_SOURCE_DIR}/third_party/Vulkan-Headers/include
 )
 target_link_libraries(xenia-gpu PUBLIC fmt snappy xxhash xenia-base xenia-ui)
-target_link_libraries(xenia-gpu PRIVATE glslang-spirv)
+target_link_libraries(xenia-gpu PRIVATE xenia-spirv-writer)
 # spirv_to_dxil_compiler.cc wraps Mesa for the backends that take the guest
 # SPIR-V to DXIL: D3D12 on Windows (the core has no Metal backend). Mesa is
 # built there only. dxbc is there
@@ -29,7 +36,6 @@ if(XENIA_BUILD_MISC)
   endif()
   target_include_directories(xenia-gpu-shader-compiler PRIVATE
     ${PROJECT_SOURCE_DIR}/third_party/Vulkan-Headers/include
-    ${PROJECT_SOURCE_DIR}/third_party/glslang
   )
   # The shader translators only need xenia-gpu, but linking it drags in
   # command_processor and graphics_system, so the kernel side comes with it.
@@ -37,7 +43,7 @@ if(XENIA_BUILD_MISC)
     xenia-apu xenia-apu-nop xenia-base xenia-core xenia-cpu
     xenia-gpu xenia-hid xenia-hid-nop xenia-hid-portal
     xenia-kernel xenia-patcher xenia-ui xenia-ui-vulkan xenia-vfs
-    aes_128 capstone fmt glslang-spirv imgui libavcodec libavutil mspack
+    aes_128 capstone fmt xenia-spirv-writer imgui libavcodec libavutil mspack
     snappy xxhash
   )
   if(XE_TARGET_X86_64)

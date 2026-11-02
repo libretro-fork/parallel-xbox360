@@ -13,8 +13,8 @@
 
 #pragma once
 
-#include "third_party/glslang/SPIRV/spirv.hpp11"
-#include "third_party/glslang/SPIRV/spvUtil.h"
+#include "xenia/gpu/spirv/spirv.hpp11"
+#include "xenia/gpu/spirv/spvUtil.h"
 
 namespace spv {
 

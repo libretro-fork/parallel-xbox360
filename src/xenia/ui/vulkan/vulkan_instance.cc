@@ -23,20 +23,11 @@
 #include "xenia/ui/redist_installer_wx.h"
 #include "xenia/ui/vulkan/vulkan_presenter.h"
 
-#if XE_PLATFORM_LINUX
+#if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
 #include <dlfcn.h>
 #elif XE_PLATFORM_WIN32
 #include "xenia/base/platform_win.h"
-#elif XE_PLATFORM_MAC
-// MoltenVK is statically linked; declare the two entry points we resolve at
-// load time (vulkan_api.h sets VK_NO_PROTOTYPES, so the prototypes from
-// vulkan.h aren't visible).
-extern "C" {
-VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
-vkGetInstanceProcAddr(VkInstance instance, const char* pName);
-VKAPI_ATTR void VKAPI_CALL
-vkDestroyInstance(VkInstance instance, const VkAllocationCallbacks* pAllocator);
-}
+
 #endif
 
 DEFINE_bool(
@@ -62,9 +53,11 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
   Functions& ifn = vulkan_instance->functions_;
 
   bool functions_loaded = true;
-#if XE_PLATFORM_LINUX
+#if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
 #if XE_PLATFORM_ANDROID
   const char* const loader_library_name = "libvulkan.so";
+#elif XE_PLATFORM_MAC
+  const char* const loader_library_name = "libvulkan.1.dylib";
 #else
   const char* const loader_library_name = "libvulkan.so.1";
 #endif
@@ -78,9 +71,6 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
   functions_loaded &=                                                    \
       (ifn.name = PFN_##name(dlsym(vulkan_instance->loader_, #name))) != \
       nullptr;
-#elif XE_PLATFORM_MAC
-  // MoltenVK is statically linked; the vk* entry points are real symbols.
-#define XE_VULKAN_LOAD_LOADER_FUNCTION(name) ifn.name = &::name;
 #elif XE_PLATFORM_WIN32
   // Offer to download the loader into a "Vulkan" folder next to the executable
   // if it's missing, then load it from there by full path. Fall back to the
@@ -675,7 +665,7 @@ VulkanInstance::~VulkanInstance() {
     functions_.vkDestroyInstance(instance_, nullptr);
   }
 
-#if XE_PLATFORM_LINUX
+#if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
   if (loader_) {
     dlclose(loader_);
   }

@@ -120,7 +120,7 @@ set(_xe_libretro_libs
   aes_128
   capstone
   fmt
-  glslang-spirv
+  xenia-spirv-writer
   imgui
   libavcodec
   libavutil
