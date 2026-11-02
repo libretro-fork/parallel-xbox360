@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- The native C89 DXIL frontend can read raw GPU buffers and dynamically indexed constant-buffer words. A raw guest vertex-fetch program passes execution checks with actual D3D12 SRV/CBV bindings; invalid reads branch around memory access. Live renderer integration remains unfinished.
+
 - Native C89 DXIL vertex-fetch lowering now decodes raw instructions, converts all 15 declared vertex formats, and handles full/mini address state, bounds and predication. A 472-word D3D12 execution check passes. Texture fetches, live resource bindings and renderer integration remain unfinished.
 
 - The independent C89 DXIL frontend now lowers guest calls, returns, loops, jumps and conditional endings. Five native shaders pass validator and D3D12 execution checks; real fetch/resource bindings and renderer integration remain unfinished.

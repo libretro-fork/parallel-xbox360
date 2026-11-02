@@ -3,6 +3,9 @@
 #include "dxil_container.h"
 #include "dxil_function.h"
 #include <stdio.h>
+#ifdef XE_DXIL_RESOURCES_TEST
+int xe_dxil_resources_test(struct dxil_module *module, const char *path);
+#endif
 #ifdef XE_DXIL_ALU_TEST
 int xe_dxil_alu_test(struct dxil_module *module, const char *path);
 #endif
@@ -78,11 +81,13 @@ static int arithmetic_and_control_flow(struct dxil_module *module,
     dxil_emit_call_void(module, thread_id, args, 9) && dxil_emit_ret_void(module);
 }
 
-static const struct dxil_mdnode *resources(struct dxil_module *module)
+static const struct dxil_mdnode *resources(struct dxil_module *module, int inputs)
 {
   const struct dxil_mdnode *fields[11];
   const struct dxil_mdnode *resource;
   const struct dxil_mdnode *uavs;
+  const struct dxil_mdnode *srvs = NULL;
+  const struct dxil_mdnode *cbvs = NULL;
   const struct dxil_type *type;
   const struct dxil_type *element;
   element = dxil_module_get_int_type(module, 32);
@@ -98,7 +103,26 @@ static const struct dxil_mdnode *resources(struct dxil_module *module)
   fields[8] = fields[7]; fields[9] = fields[7]; fields[10] = NULL;
   resource = dxil_get_metadata_node(module, fields, 11);
   uavs = dxil_get_metadata_node(module, &resource, 1);
-  fields[0] = NULL; fields[1] = uavs; fields[2] = NULL; fields[3] = NULL;
+  if (inputs) {
+    type = dxil_module_get_struct_type(module, "ByteAddressBuffer", &element, 1);
+    type = dxil_module_get_pointer_type(module, type);
+    fields[1] = dxil_get_metadata_value(module, type, dxil_module_get_undef(module, type));
+    fields[2] = dxil_get_metadata_string(module, "shared_memory");
+    fields[7] = dxil_get_metadata_int32(module, 0); fields[8] = NULL;
+    resource = dxil_get_metadata_node(module, fields, 9);
+    srvs = dxil_get_metadata_node(module, &resource, 1);
+    element = dxil_module_get_array_type(module, element, 192);
+    type = dxil_module_get_struct_type(module, "FetchConstants", &element, 1);
+    type = dxil_module_get_pointer_type(module, type);
+    fields[1] = dxil_get_metadata_value(module, type, dxil_module_get_undef(module, type));
+    fields[2] = dxil_get_metadata_string(module, "fetch_constants");
+    fields[3] = dxil_get_metadata_int32(module, 1); fields[4] = dxil_get_metadata_int32(module, 4);
+    fields[6] = dxil_get_metadata_int32(module, 768); fields[7] = NULL;
+    resource = dxil_get_metadata_node(module, fields, 8);
+    cbvs = dxil_get_metadata_node(module, &resource, 1);
+    if (!srvs || !cbvs) return NULL;
+  }
+  fields[0] = srvs; fields[1] = uavs; fields[2] = cbvs; fields[3] = NULL;
   return dxil_get_metadata_node(module, fields, 4);
 }
 
@@ -152,7 +176,7 @@ int main(int argc, char **argv)
   struct dxil_module module;
   struct dxil_container container;
   struct dxil_validation_state validation;
-  struct dxil_resource_v1 resource;
+  struct dxil_resource_v1 resource[3];
   struct blob output;
   struct dxil_func_def *function;
   const struct dxil_type *type;
@@ -166,6 +190,7 @@ int main(int argc, char **argv)
   FILE *file;
   int result = 1;
   const char *stage = "cs";
+  int inputs = 0;
   if (argc != 2 && argc != 3
 #ifdef XE_DXIL_FLOW_TEST
       && argc != 4
@@ -179,10 +204,14 @@ int main(int argc, char **argv)
 #ifdef XE_DXIL_VERTEX_TEST
       && strcmp(stage, "vertex")
 #endif
+#ifdef XE_DXIL_RESOURCES_TEST
+      && strcmp(stage, "resources")
+#endif
 #ifdef XE_DXIL_FLOW_TEST
       && strcmp(stage, "flow")
 #endif
       ) return 2;
+  inputs = !strcmp(stage, "resources");
   arena = ralloc_size(NULL, 0);
   if (!arena) return 1;
   dxil_module_init(&module, arena);
@@ -203,6 +232,11 @@ int main(int argc, char **argv)
   if (!function) goto done;
   function->basic_block_ids[0] = 0;
   if (module.shader_kind == DXIL_COMPUTE_SHADER) {
+#ifdef XE_DXIL_RESOURCES_TEST
+    if (inputs) {
+      if (!xe_dxil_resources_test(&module, argv[1])) goto done;
+    } else
+#endif
 #ifdef XE_DXIL_FLOW_TEST
     if (!strcmp(stage, "flow")) {
       if (!xe_dxil_flow_test(&module, argv[1], argc == 4 ? (unsigned)strtoul(argv[3], NULL, 10) : 0)) goto done;
@@ -237,7 +271,7 @@ int main(int argc, char **argv)
   values[2] = dxil_get_metadata_int32(&module, DXIL_SHADER_TAG_FLAGS);
   values[3] = dxil_get_metadata_int64(&module, 16);
   properties = dxil_get_metadata_node(&module, values, 4);
-  bindings = resources(&module);
+  bindings = resources(&module, inputs);
   if (!bindings || !dxil_add_metadata_named_node(&module, "dx.resources", &bindings, 1)) goto done;
   }
   values[0] = dxil_get_metadata_func(&module, function->func);
@@ -251,10 +285,18 @@ int main(int argc, char **argv)
   memset(&validation, 0, sizeof(validation));
   memset(&resource, 0, sizeof(resource));
   if (module.shader_kind == DXIL_COMPUTE_SHADER) {
-  resource.v0.resource_type = DXIL_RES_UAV_RAW;
-  resource.resource_kind = DXIL_RESOURCE_KIND_RAW_BUFFER;
-  validation.resources.v1 = &resource;
-  validation.num_resources = 1;
+  resource[inputs ? 2 : 0].v0.resource_type = DXIL_RES_UAV_RAW;
+  resource[inputs ? 2 : 0].resource_kind = DXIL_RESOURCE_KIND_RAW_BUFFER;
+  validation.resources.v1 = resource;
+  validation.num_resources = inputs ? 3 : 1;
+  if (inputs) {
+    resource[1].v0.resource_type = DXIL_RES_SRV_RAW;
+    resource[1].resource_kind = DXIL_RESOURCE_KIND_RAW_BUFFER;
+    resource[0].v0.resource_type = DXIL_RES_CBV;
+    resource[0].resource_kind = DXIL_RESOURCE_KIND_CBUFFER;
+    resource[0].v0.space = 1;
+    resource[0].v0.lower_bound = 4; resource[0].v0.upper_bound = 4;
+  }
   validation.state.psv2.num_threads_x = 1;
   validation.state.psv2.num_threads_y = 1;
   validation.state.psv2.num_threads_z = 1;

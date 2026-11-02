@@ -117,3 +117,35 @@ the authored code also passes strict C89 and MSVC `/TC /W4 /WX` checks.
 Fixture memory is a shader-local array. Live shared-memory resource binding,
 texture fetches, stage exports and renderer integration are still required.
 No live renderer path uses this frontend yet.
+## Bound GPU resources
+
+```sh
+make check-dxil-resources DXIL_VALIDATOR=/path/to/dxv
+```
+
+The native resource helpers create DXIL handles, read raw buffers, and select
+scalar words from dynamically indexed constant-buffer vectors. Guarded reads
+branch around the buffer instruction and merge zero for inactive accesses.
+The vertex adapter also rejects physical addresses outside the 512 MiB Xbox
+window before converting dword addresses to bytes. The stage assembler remains
+responsible for declaring resources and assigning registers/ranges.
+
+The fixture declares an output UAV (`u0, space0`), a shared-memory SRV
+(`t0, space0`) and fetch-constant CBV (`b4, space1`). A raw guest program
+executes full and mini vertex fetches through the control-flow frontend,
+using those actual bindings. Additional cases cross constant-buffer vectors,
+exercise every vector component, and reject out-of-buffer, outside-window
+and wrapping addresses. Malformed input types and resource indices are also
+rejected before emitting invalid DXIL. The shader produces 128 output/state
+words. Run it with the generated input files:
+
+```bat
+dxil_runtime_test.exe build\make\host\dxil-resources-test.dxil build\make\host\dxil-resources-test.dxil.expected build\make\host\dxil-resources-test.dxil.memory build\make\host\dxil-resources-test.dxil.constants
+```
+
+The Windows fixture reads input files directly into mapped upload buffers.
+Its original two/three-argument invocations still use the single output UAV.
+Clang and MSVC-generated resource shaders validate unchanged and execute on
+WARP. These are development fixtures; the live core still uses its previous
+shader backend. Texture fetches, stage assembly/exports and live renderer
+integration remain unfinished.
