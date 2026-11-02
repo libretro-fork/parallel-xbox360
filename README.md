@@ -36,6 +36,9 @@ development package. Fonts, patch data and raw SPIR-V/DXIL built-in shaders
 are included in the repository; a native C89 tool embeds them during the build.
 Linux, Android and macOS builds do not require Python or a shader compiler.
 The Windows guest-shader backend still uses Mesa and its Meson build.
+The native DXIL ALU frontend and its execution checks are documented in
+[`tools/tests/README.md`](tools/tests/README.md); whole-shader integration
+is still in progress.
 
 ```sh
 git clone https://github.com/libretro-fork/parallel-xbox360.git

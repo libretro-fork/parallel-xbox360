@@ -6,9 +6,11 @@
 #include <dxgi1_4.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 static HRESULT buffer(ID3D12Device *device, D3D12_HEAP_TYPE heap_type,
-                       D3D12_RESOURCE_STATES state, ID3D12Resource **resource)
+                       D3D12_RESOURCE_STATES state, size_t bytes,
+                       ID3D12Resource **resource)
 {
   D3D12_HEAP_PROPERTIES heap;
   D3D12_RESOURCE_DESC desc;
@@ -17,7 +19,7 @@ static HRESULT buffer(ID3D12Device *device, D3D12_HEAP_TYPE heap_type,
   heap.CreationNodeMask = 1; heap.VisibleNodeMask = 1;
   memset(&desc, 0, sizeof(desc));
   desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-  desc.Width = 128; desc.Height = 1; desc.DepthOrArraySize = 1;
+  desc.Width = bytes; desc.Height = 1; desc.DepthOrArraySize = 1;
   desc.MipLevels = 1; desc.SampleDesc.Count = 1;
   desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
   if (heap_type == D3D12_HEAP_TYPE_DEFAULT)
@@ -27,7 +29,8 @@ static HRESULT buffer(ID3D12Device *device, D3D12_HEAP_TYPE heap_type,
 }
 
 static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
-                        ID3D12PipelineState *pipeline)
+                        ID3D12PipelineState *pipeline, const uint32_t *expected,
+                        size_t bytes, int golden_records)
 {
   ID3D12Resource *output = NULL;
   ID3D12Resource *readback = NULL;
@@ -41,14 +44,14 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   D3D12_RANGE range;
   HANDLE event = NULL;
   HRESULT status;
-  float *values = NULL;
-  float expected;
-  unsigned i;
+  uint32_t *values = NULL;
+  size_t i;
+  int same;
   status = buffer(device, D3D12_HEAP_TYPE_DEFAULT,
-                   D3D12_RESOURCE_STATE_UNORDERED_ACCESS, &output);
+                   D3D12_RESOURCE_STATE_UNORDERED_ACCESS, bytes, &output);
   if (FAILED(status)) goto done;
   status = buffer(device, D3D12_HEAP_TYPE_READBACK,
-                   D3D12_RESOURCE_STATE_COPY_DEST, &readback);
+                   D3D12_RESOURCE_STATE_COPY_DEST, bytes, &readback);
   if (FAILED(status)) goto done;
   memset(&queue_desc, 0, sizeof(queue_desc));
   status = ID3D12Device_CreateCommandQueue(device, &queue_desc,
@@ -63,7 +66,7 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   ID3D12GraphicsCommandList_SetComputeRootSignature(list, root);
   ID3D12GraphicsCommandList_SetComputeRootUnorderedAccessView(list, 0,
       ID3D12Resource_GetGPUVirtualAddress(output));
-  ID3D12GraphicsCommandList_Dispatch(list, 32, 1, 1);
+  ID3D12GraphicsCommandList_Dispatch(list, golden_records ? 1 : 32, 1, 1);
   memset(&barrier, 0, sizeof(barrier));
   barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
   barrier.Transition.pResource = output;
@@ -86,19 +89,26 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   status = ID3D12Fence_SetEventOnCompletion(fence, 1, event);
   if (FAILED(status)) goto done;
   if (WaitForSingleObject(event, 10000) != WAIT_OBJECT_0) { status = E_FAIL; goto done; }
-  range.Begin = 0; range.End = 128;
+  range.Begin = 0; range.End = bytes;
   status = ID3D12Resource_Map(readback, 0, &range, (void **)&values);
   if (FAILED(status)) goto done;
-  for (i = 0; i < 32; ++i) {
-    expected = (float)(i < 16 ? i + 1 : i * 3) + 0.25f;
-    if (values[i] != expected) {
-      fprintf(stderr, "lane %u: got %g, expected %g\n", i, (double)values[i], (double)expected);
+  for (i = 0; i < bytes / sizeof(uint32_t); ++i) {
+    same = values[i] == expected[i];
+    if ((!golden_records || i % 8 < 4) &&
+        (expected[i] & UINT32_C(0x7f800000)) == UINT32_C(0x7f800000) &&
+        (expected[i] & UINT32_C(0x007fffff)))
+      same = (values[i] & UINT32_C(0x7f800000)) == UINT32_C(0x7f800000) &&
+        (values[i] & UINT32_C(0x007fffff));
+    if (!same) {
+      fprintf(stderr, "word %lu: got %08lX, expected %08lX\n", (unsigned long)i,
+        (unsigned long)values[i], (unsigned long)expected[i]);
       status = E_FAIL; break;
     }
   }
   range.Begin = 0; range.End = 0;
   ID3D12Resource_Unmap(readback, 0, &range);
-  if (SUCCEEDED(status)) puts("Native DXIL arithmetic, branches, phi and UAV stores: 32 lanes matched.");
+  if (SUCCEEDED(status)) printf("Native DXIL execution: %lu words matched.\n",
+    (unsigned long)(bytes / sizeof(uint32_t)));
 done:
   if (event) CloseHandle(event);
   if (fence) ID3D12Fence_Release(fence);
@@ -108,6 +118,25 @@ done:
   if (readback) ID3D12Resource_Release(readback);
   if (output) ID3D12Resource_Release(output);
   return status;
+}
+
+static uint32_t *read_expected(const char *path, size_t *bytes)
+{
+  FILE *file;
+  long size;
+  uint32_t *data;
+  file = fopen(path, "rb");
+  if (!file) return NULL;
+  if (fseek(file, 0, SEEK_END) || (size = ftell(file)) <= 0 ||
+      size % 32 || fseek(file, 0, SEEK_SET)) { fclose(file); return NULL; }
+  data = (uint32_t *)malloc((size_t)size);
+  if (!data) { fclose(file); return NULL; }
+  if (fread(data, 1, (size_t)size, file) != (size_t)size) {
+    fclose(file); free(data); return NULL;
+  }
+  if (fclose(file)) { free(data); return NULL; }
+  *bytes = (size_t)size;
+  return data;
 }
 
 int main(int argc, char **argv)
@@ -126,7 +155,12 @@ int main(int argc, char **argv)
   FILE *file;
   long size;
   HRESULT status = E_FAIL;
-  if (argc != 2) return 2;
+  uint32_t default_expected[32];
+  uint32_t *expected = default_expected;
+  size_t expected_bytes = sizeof(default_expected);
+  float expected_float;
+  unsigned i;
+  if (argc != 2 && argc != 3) return 2;
   file = fopen(argv[1], "rb");
   if (!file) return 1;
   if (fseek(file, 0, SEEK_END) || (size = ftell(file)) < 32 || fseek(file, 0, SEEK_SET)) {
@@ -138,6 +172,14 @@ int main(int argc, char **argv)
     fclose(file); free(data); return 1;
   }
   fclose(file);
+  for (i = 0; i < 32; ++i) {
+    expected_float = (float)(i < 16 ? i + 1 : i * 3) + 0.25f;
+    memcpy(&default_expected[i], &expected_float, sizeof(expected_float));
+  }
+  if (argc == 3) {
+    expected = read_expected(argv[2], &expected_bytes);
+    if (!expected) { free(data); return 1; }
+  }
   status = CreateDXGIFactory1(&IID_IDXGIFactory4, (void **)&factory);
   if (FAILED(status)) goto done;
   status = IDXGIFactory4_EnumWarpAdapter(factory, &IID_IDXGIAdapter, (void **)&adapter);
@@ -163,9 +205,10 @@ int main(int argc, char **argv)
   pipeline_desc.CS.BytecodeLength = (SIZE_T)size;
   status = ID3D12Device_CreateComputePipelineState(device, &pipeline_desc,
       &IID_ID3D12PipelineState, (void **)&pipeline);
-  if (SUCCEEDED(status)) status = execute(device, root, pipeline);
+  if (SUCCEEDED(status)) status = execute(device, root, pipeline,
+      expected, expected_bytes, argc == 3);
 done:
-  printf("D3D12 WARP CreateComputePipelineState: 0x%08lX\n", (unsigned long)status);
+  printf("D3D12 WARP pipeline and execution: 0x%08lX\n", (unsigned long)status);
   if (pipeline) ID3D12PipelineState_Release(pipeline);
   if (root) ID3D12RootSignature_Release(root);
   if (errors) ID3D10Blob_Release(errors);
@@ -174,5 +217,6 @@ done:
   if (adapter) IDXGIAdapter_Release(adapter);
   if (factory) IDXGIFactory4_Release(factory);
   free(data);
+  if (expected != default_expected) free(expected);
   return FAILED(status) ? 1 : 0;
 }

@@ -4,6 +4,7 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- The native DXIL ALU frontend decodes Xbox instructions and lowers all 30 vector and 50 scalar opcodes in C89. Validator and D3D12 execution checks cover co-issue, predication, relative addressing and export masks. Whole-shader integration is still in progress.
 - macOS remains supported with an external Vulkan driver; MoltenVK is no longer bundled.
 - Dependencies are ordinary, editable source files. Native C89 build tools embed the checked-in fonts, patch data and raw built-in shader binaries.
 - The independent raw DXIL writer has validator and D3D12 execution checks for arithmetic, control flow and UAV stores. Guest shader integration remains in progress.

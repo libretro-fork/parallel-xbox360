@@ -3,6 +3,9 @@
 #include "dxil_container.h"
 #include "dxil_function.h"
 #include <stdio.h>
+#ifdef XE_DXIL_ALU_TEST
+int xe_dxil_alu_test(struct dxil_module *module, const char *path);
+#endif
 
 static int arithmetic_and_control_flow(struct dxil_module *module,
                                        struct dxil_func_def *function)
@@ -158,7 +161,11 @@ int main(int argc, char **argv)
   const char *stage = "cs";
   if (argc != 2 && argc != 3) return 2;
   if (argc == 3) stage = argv[2];
-  if (strcmp(stage, "cs") && strcmp(stage, "vs") && strcmp(stage, "ps")) return 2;
+  if (strcmp(stage, "cs") && strcmp(stage, "vs") && strcmp(stage, "ps")
+#ifdef XE_DXIL_ALU_TEST
+      && strcmp(stage, "alu")
+#endif
+      ) return 2;
   arena = ralloc_size(NULL, 0);
   if (!arena) return 1;
   dxil_module_init(&module, arena);
@@ -175,14 +182,19 @@ int main(int argc, char **argv)
   if (!module.sem_string_table || !_mesa_string_buffer_append_len(module.sem_string_table, "", 1)) goto done;
   type = dxil_module_add_function_type(&module, dxil_module_get_void_type(&module), NULL, 0);
   function = dxil_add_function_def(&module, "main", type,
-      module.shader_kind == DXIL_COMPUTE_SHADER ? 4 : 1, attributes, attributes);
+      module.shader_kind == DXIL_COMPUTE_SHADER ? 64 : 1, attributes, attributes);
   if (!function) goto done;
   function->basic_block_ids[0] = 0;
   if (module.shader_kind == DXIL_COMPUTE_SHADER) {
+#ifdef XE_DXIL_ALU_TEST
+    if (!strcmp(stage, "alu")) {
+      if (!xe_dxil_alu_test(&module, argv[1])) goto done;
+    } else
+#endif
     if (!arithmetic_and_control_flow(&module, function)) goto done;
   } else if (!constant_output(&module)) goto done;
   if (!version(&module, "dx.version", 1, 0) || !version(&module, "dx.valver", 1, 6)) goto done;
-  values[0] = dxil_get_metadata_string(&module, stage);
+  values[0] = dxil_get_metadata_string(&module, module.shader_kind == DXIL_COMPUTE_SHADER ? "cs" : stage);
   values[1] = dxil_get_metadata_int32(&module, 6);
   values[2] = dxil_get_metadata_int32(&module, 0);
   shader_model = dxil_get_metadata_node(&module, values, 3);

@@ -31,3 +31,34 @@ implementation retains its original C code and license notices.
 These checks validate the writer foundation. The guest shader translator and
 the remaining D3D12 rendering paths still need to be connected to it before
 the old conversion backend can be removed.
+
+## Guest ALU instruction frontend
+
+```sh
+make check-dxil-alu DXIL_VALIDATOR=/path/to/dxv
+```
+
+This emits a shader directly from all 30 vector and 50 scalar ALU opcodes,
+plus raw 96-bit Xbox ALU instruction snippets. Golden cases cover signed
+zero, NaN, precision reduction, non-contracted multiply-add, dot-product
+ordering, cube faces, predicate/address state, co-issue hazards, relative
+addressing, source modifiers, scalar swizzles and mixed export masks.
+The target also checks the authored frontend and fixtures as strict C89;
+the reused bitcode headers retain their existing language requirements.
+
+After compiling the Windows runtime fixture above, execute:
+
+```bat
+dxil_runtime_test.exe build\make\host\dxil-alu-test.dxil build\make\host\dxil-alu-test.dxil.expected
+```
+
+The fixture compares every result and state word, accepting any NaN payload
+where the expected value is NaN. Integer state and signed zero are checked
+exactly. The stage kill hook is instrumented in the compute fixture to verify
+that inactive predicates suppress it; pixel-stage adapters must flush pending
+exports and emit discard through this hook before destination writes.
+
+The ALU frontend is independent of SPIR-V and shader-language compilers.
+Whole-shader control flow, fetch/binding lowering, export handling and D3D12
+pipeline integration remain required before it can replace the core's guest
+shader backend.
