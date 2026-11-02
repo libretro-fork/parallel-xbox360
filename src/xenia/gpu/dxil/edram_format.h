@@ -11,6 +11,9 @@ XeDxilValue xe_dxil_unpack_float7e3(XeDxilAlu *alu, XeDxilValue value);
  * representing guest [0,2). Packed values contain the low 24 depth bits. */
 XeDxilValue xe_dxil_pack_depth20e4(XeDxilAlu *alu, XeDxilValue value, int round_even, int remap);
 XeDxilValue xe_dxil_unpack_depth20e4(XeDxilAlu *alu, XeDxilValue value, int remap);
+/* Guest piecewise gamma conversions for pre-saturated float values. */
+XeDxilValue xe_dxil_gamma_encode(XeDxilAlu *alu, XeDxilValue linear);
+XeDxilValue xe_dxil_gamma_decode(XeDxilAlu *alu, XeDxilValue gamma);
 /* Format numbers follow xenos::ColorRenderTargetFormat. Integer-view formats
  * preserve all bits, including half-float NaNs and signed fixed-point minima.
  * Return the number of packed dwords (one or two), or zero on failure. */

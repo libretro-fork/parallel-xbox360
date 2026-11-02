@@ -26,8 +26,9 @@
 #include "xenia/gpu/d3d12/deferred_command_list.h"
 #include "xenia/gpu/draw_util.h"
 #include "xenia/gpu/gpu_flags.h"
-#include "xenia/gpu/spirv_to_dxil_compiler.h"
+
 #include "xenia/gpu/dxil/edram_dump.h"
+#include "xenia/gpu/dxil/edram_transfer.h"
 #include "xenia/gpu/trace_writer.h"
 #include "xenia/gpu/xenos.h"
 #include "xenia/ui/d3d12/d3d12_provider.h"
@@ -635,9 +636,9 @@ bool D3D12RenderTargetCache::Initialize() {
                 kTransferUsedRootParameterPushConstantsBit)];
         parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         parameter.Constants.ShaderRegister =
-            SpirvToDxilCompiler::kPushConstantShaderRegister;
+            XE_DXIL_PUSH_CONSTANT_REGISTER;
         parameter.Constants.RegisterSpace =
-            SpirvToDxilCompiler::kPushConstantRegisterSpace;
+            XE_DXIL_PUSH_CONSTANT_SPACE;
         parameter.Constants.Num32BitValues = kTransferRootPushConstantDwords;
         parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
       }
@@ -709,9 +710,9 @@ bool D3D12RenderTargetCache::Initialize() {
       dump_root_push_constants.ParameterType =
           D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
       dump_root_push_constants.Constants.ShaderRegister =
-          SpirvToDxilCompiler::kPushConstantShaderRegister;
+          XE_DXIL_PUSH_CONSTANT_REGISTER;
       dump_root_push_constants.Constants.RegisterSpace =
-          SpirvToDxilCompiler::kPushConstantRegisterSpace;
+          XE_DXIL_PUSH_CONSTANT_SPACE;
       dump_root_push_constants.Constants.Num32BitValues =
           kDumpRootPushConstantDwords;
       dump_root_push_constants.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -2004,8 +2005,7 @@ D3D12RenderTargetCache::GetTransferRootSignatureInfo(
   uint32_t used_sets =
       kEdramTransferPipelineLayoutInfos[size_t(mode_info.pipeline_layout)]
           .used_descriptor_sets;
-  // The emitter numbers the sets it uses densely, in the order of their bits,
-  // and Mesa gives each set the register space of the same number.
+  // Resource register spaces follow the dense descriptor-set order.
   auto space_of = [used_sets](uint32_t set_bit) {
     return xe::bit_count(used_sets & (set_bit - 1));
   };
@@ -2073,63 +2073,47 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(
   bool source_is_color = EdramTransferSourceIsColor(key.mode);
   bool dest_is_color = (mode.output == EdramTransferOutput::kColor);
 
-  EdramTransferShaderOptions options;
-  // The host depth buffer is declared with the pre-1.3 BufferBlock and Uniform
-  // forms, like the dump shader's EDRAM buffer.
-  options.spirv_version = 0x00010000;
-  options.resolution_scale_x = draw_resolution_scale_x();
-  options.resolution_scale_y = draw_resolution_scale_y();
-  options.msaa_2x_attachments_supported = msaa_2x_supported_;
-  // The emitter only needs to know whether each side is an integer texture,
-  // which is this backend's own format policy.
+  const TransferRootSignatureInfo root_info = GetTransferRootSignatureInfo(key.mode);
+  XeDxilEdramTransferOptions options = {};
+  options.mode = unsigned(key.mode);
+  options.source_format = key.source_resource_format;
+  options.destination_format = key.dest_resource_format;
+  options.color_target = key.dest_color_rt_index;
+  options.source_msaa = unsigned(key.source_msaa_samples);
+  options.destination_msaa = unsigned(key.dest_msaa_samples);
+  options.host_depth_msaa = unsigned(key.host_depth_source_msaa_samples);
+  options.scale_x = draw_resolution_scale_x();
+  options.scale_y = draw_resolution_scale_y();
+  options.source_native = key.source_scale_native;
+  options.destination_native = key.dest_scale_native;
+  options.msaa_2x_supported = msaa_2x_supported_;
+  bool source_uint = false, destination_uint = false;
   if (source_is_color) {
-    GetColorOwnershipTransferDXGIFormat(source_color_format,
-                                        &options.source_color_is_uint);
+    GetColorOwnershipTransferDXGIFormat(source_color_format, &source_uint);
   }
   if (dest_is_color) {
-    GetColorOwnershipTransferDXGIFormat(dest_color_format,
-                                        &options.dest_color_is_uint);
+    GetColorOwnershipTransferDXGIFormat(dest_color_format, &destination_uint);
   }
-  options.stencil_reference_output_supported = use_stencil_reference_output_;
-  // A pixel shader reading SV_SampleIndex runs per sample on Direct3D 12, and
-  // the sample mask is pipeline state, so neither of the per-draw-sample
-  // fallbacks is needed.
-  options.sample_rate_shading_supported = true;
-  options.depth_float24_round = depth_float24_round();
-  options.depth_float24_convert_in_pixel_shader =
-      depth_float24_convert_in_pixel_shader();
+  options.source_uint = source_uint;
+  options.destination_uint = destination_uint;
+  options.stencil_reference = use_stencil_reference_output_;
+  options.round_depth = depth_float24_round();
+  options.depth_converted_in_pixel_shader = depth_float24_convert_in_pixel_shader();
   options.no_discard_stencil = cvars::no_discard_stencil_in_transfer_pipelines;
-
-  std::vector<uint8_t> pixel_shader_dxil;
-  {
-    std::vector<uint32_t> spirv = BuildEdramTransferShaderSpirv(key, options);
-    if (!spirv.empty()) {
-      pixel_shader_dxil = SpirvToDxilCompiler::Translate(
-          spirv.data(), spirv.size(), SpirvToDxilCompiler::Stage::kPixel);
-      if (pixel_shader_dxil.empty()) {
-        XELOGE(
-            "D3D12RenderTargetCache: Failed to translate the render target "
-            "ownership transfer shader 0x{:08X}",
-            key.key);
-      }
+  options.value_convert = key.value_convert;
+  options.source_space = root_info.space_source;
+  options.host_depth_space = root_info.space_host_depth;
+  XeDxilShaderBinary pixel_shader_dxil = {};
+  if (!xe_dxil_build_edram_transfer(&options, &pixel_shader_dxil)) {
+    XELOGE("D3D12RenderTargetCache: Failed to generate native ownership transfer shader 0x{:08X}", key.key);
+    if (dest_is_stencil_bit) {
+      transfer_stencil_bit_pipelines_.emplace(
+          std::piecewise_construct, std::make_tuple(key), std::make_tuple());
     } else {
-      XELOGE(
-          "D3D12RenderTargetCache: Failed to emit the render target ownership "
-          "transfer shader 0x{:08X}",
-          key.key);
+      transfer_pipelines_.emplace(key, nullptr);
     }
-    if (pixel_shader_dxil.empty()) {
-      // Store the null pointers not to try to build it again.
-      if (dest_is_stencil_bit) {
-        transfer_stencil_bit_pipelines_.emplace(
-            std::piecewise_construct, std::make_tuple(key), std::make_tuple());
-      } else {
-        transfer_pipelines_.emplace(key, nullptr);
-      }
-      return nullptr;
-    }
+    return nullptr;
   }
-
   ID3D12PipelineState* const* pipelines;
   ID3D12Device* device = command_processor_.GetD3D12Provider().GetDevice();
   D3D12_INPUT_ELEMENT_DESC pipeline_input_element_desc;
@@ -2145,8 +2129,8 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(
   pipeline_desc.pRootSignature = transfer_root_signatures_[size_t(key.mode)];
   pipeline_desc.VS.pShaderBytecode = shaders::passthrough_position_xy_vs;
   pipeline_desc.VS.BytecodeLength = sizeof(shaders::passthrough_position_xy_vs);
-  pipeline_desc.PS.pShaderBytecode = pixel_shader_dxil.data();
-  pipeline_desc.PS.BytecodeLength = UINT(pixel_shader_dxil.size());
+  pipeline_desc.PS.pShaderBytecode = pixel_shader_dxil.data;
+  pipeline_desc.PS.BytecodeLength = UINT(pixel_shader_dxil.size);
   if (key.dest_msaa_samples == xenos::MsaaSamples::k2X && !msaa_2x_supported_) {
     // Using sample 0 as 0 and 3 as 1 for 2x instead.
     pipeline_desc.SampleMask = 0b1001;
@@ -2274,6 +2258,7 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(
           uint32_t(key.mode));
     }
   }
+  xe_dxil_shader_binary_free(&pixel_shader_dxil);
   return pipelines;
 }
 

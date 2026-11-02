@@ -251,7 +251,7 @@ For the MinGW runtime harness, add
 `-isystem third_party/DirectX-Headers/include` and link D3D12, DXGI and dxguid.
 Both GCC and MSVC harnesses pass the format and dump execution checks.
 Standard dump generation is connected to the D3D12 render-target cache;
-direct resolves and ownership-transfer shaders still need native emitters.
+direct resolves and ownership-transfer shaders also use native emitters.
 The dump generator accepts an additional `1` argument for a direct resolve.
 All 168 direct variants also validate. The optional final case number 0..7
 selects unchanged output, 8in16, 8in32, 16in32, red/blue swap, array slice,
@@ -263,10 +263,21 @@ All four scaling configurations pass all eight cases for both pixel widths:
 64 WARP executions. Cases with 64bpp data also cover low-half red/blue swapping
 and the 8in64 dword exchange. The runtime fixture compiles with GCC and MSVC.
 D3D12 dump and direct-resolve generation now call the native emitter directly;
-ownership transfer remains to be migrated.
+ownership transfers now do the same.
 `make check-dxil-pixel-interface DXIL_VALIDATOR=/path/to/dxv` checks float and
 integer color outputs, unpacked depth/stencil outputs, and per-sample input
 metadata needed by ownership transfers. All five validate and pass WARP pipeline
 creation. For that pipeline check, place a compatible native VS from the geometry
 fixture at `<pixel-path>.vs` and run `dxil_geometry_runtime_test.exe <pixel-path>
 <mode> pixel`. This checks pipeline creation, not pixel execution.
+`make check-dxil-edram-transfer DXIL_VALIDATOR=/path/to/dxv` validates all
+10 ownership-transfer modes across 36 MSAA/scaling configurations, plus all
+144 color-format pairings, 136 depth/stencil pairings and six policy variants. Depth and stencil SRVs are declared only when read.
+Policy flag bits select no-discard stencil (1), 7e3 value conversion (2) and pixel-converted depth (4). The fixture arguments are `<output> <mode> <variant> [source-format dest-format [flags]]`.
+`dxil_edram_transfer_runtime_test.c` executes color-to-color transfers on WARP.
+Compile as C89 with the Windows SDK, linking d3d12.lib and dxgi.lib. Run it with
+`<pixel-shader> <native-geometry-fixture.vs> <config>`; configs 0..3 correspond
+to generator variants 0, 9, 18 and 27. Each compares every rendered float bit
+for unchanged, scaled-to-native and native-to-scaled layouts. These four runtime
+checks cover color preservation and coordinate remapping; the other modes
+currently have container validation coverage rather than runtime comparisons.

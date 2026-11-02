@@ -36,8 +36,7 @@ development package. Fonts, patch data and raw SPIR-V/DXIL built-in shaders
 are included in the repository; a native C89 tool embeds them during the build.
 Linux, Android and macOS builds do not require Python or a shader compiler.
 D3D12 primitive-expansion geometry shaders are generated directly as DXIL.
-Render-target dumps and direct resolves also emit DXIL directly. The remaining
-guest stages and EDRAM ownership transfers still use Mesa and its
+Render-target dumps, direct resolves and EDRAM ownership transfers also emit DXIL directly. The remaining guest and tessellation stages still use Mesa and its
 Meson/Python build while their native replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in

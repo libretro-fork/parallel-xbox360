@@ -4,6 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 struct dxil_module;
+enum {
+  XE_DXIL_PUSH_CONSTANT_REGISTER = 1,
+  XE_DXIL_PUSH_CONSTANT_SPACE = 31
+};
 typedef struct XeDxilShaderModule XeDxilShaderModule;
 typedef struct XeDxilShaderBinary {
   unsigned char *data;

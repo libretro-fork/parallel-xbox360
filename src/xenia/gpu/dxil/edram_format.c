@@ -102,6 +102,27 @@ static XeDxilValue gamma_to_linear(XeDxilAlu *s, XeDxilValue byte) {
   }
   return bin(s, DXIL_BINOP_ADD, bin(s, DXIL_BINOP_MUL, cast(s, DXIL_CAST_UITOFP, 1, byte), scale), offset);
 }
+XeDxilValue xe_dxil_gamma_encode(XeDxilAlu *s, XeDxilValue value) {
+  return ready(s, value) ? linear_to_gamma(s, value) : NULL;
+}
+XeDxilValue xe_dxil_gamma_decode(XeDxilAlu *s, XeDxilValue value) {
+  XeDxilValue condition, scale, offset, args[2], linear, truncated;
+  const struct dxil_func *function;
+  if (!ready(s, value)) return NULL;
+  scale = fc(s, 1.0f / 1024.0f); offset = fc(s, 0.0f);
+  condition = cmp(s, DXIL_FCMP_OGE, value, fc(s, 64.0f / 255.0f));
+  scale = choose(s, condition, fc(s, 2.0f / 1024.0f), scale); offset = choose(s, condition, fc(s, -64.0f), offset);
+  condition = cmp(s, DXIL_FCMP_OGE, value, fc(s, 96.0f / 255.0f));
+  scale = choose(s, condition, fc(s, 4.0f / 1024.0f), scale); offset = choose(s, condition, fc(s, -256.0f), offset);
+  condition = cmp(s, DXIL_FCMP_OGE, value, fc(s, 192.0f / 255.0f));
+  scale = choose(s, condition, fc(s, 8.0f / 1024.0f), scale); offset = choose(s, condition, fc(s, -1024.0f), offset);
+  linear = bin(s, DXIL_BINOP_ADD, bin(s, DXIL_BINOP_MUL,
+    bin(s, DXIL_BINOP_MUL, value, fc(s, 255.0f * 1024.0f)), scale), offset);
+  args[0] = ic(s, 29); args[1] = bin(s, DXIL_BINOP_MUL, linear, scale);
+  function = dxil_get_function(s->module, "dx.op.unary", DXIL_F32);
+  truncated = function && args[1] ? dxil_emit_call(s->module, function, args, 2) : NULL;
+  return bin(s, DXIL_BINOP_MUL, bin(s, DXIL_BINOP_ADD, linear, truncated), fc(s, 1.0f / 1023.0f));
+}
 static int word_count(unsigned format) {
   switch (format) {
   case 0: case 1: case 2: case 3: case 4: case 6: case 10: case 12: case 14: return 1;

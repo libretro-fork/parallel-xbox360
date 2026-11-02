@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- D3D12 EDRAM ownership-transfer shaders now generate native DXIL for all ten modes, including color/depth reinterpretation, stencil-bit passes and host-depth preservation. Compatible transfers avoid pack/unpack conversions and pipeline creation uses the native container directly. Container checks cover MSAA, native/scaled layouts and all color-format pairings; four WARP executions verify exact color preservation and scale remapping. Guest and tessellation stages still require migration before Mesa can be removed.
+
 - D3D12 direct resolves now generate DXIL directly, including scaled layouts, array destinations, byte-order changes, red/blue swapping and half-pixel fill. All 168 variants validate; 64 WARP executions cover 32bpp and 64bpp output. Dump/resolve pipeline creation consumes the native container without copying it through a temporary vector. Native pixel-interface metadata for ownership transfer also passes five validator and WARP pipeline checks. Ownership transfer and guest/tessellation paths still need migration before Mesa removal is complete.
 
 - D3D12 primitive expansion now generates DXIL directly for points, rectangles, quads and scaled lines, without SPIR-V or Mesa conversion. WARP execution checks cover attributes, clipping/culling signatures and primitive discard. Other shader paths still require replacement before Mesa can be removed.
