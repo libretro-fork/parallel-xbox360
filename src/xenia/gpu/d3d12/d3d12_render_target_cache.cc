@@ -3404,72 +3404,46 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
     return pipeline_it->second;
   }
 
-  EdramDumpShaderOptions shader_options;
-  // The emitter declares the EDRAM buffer with the pre-1.3 BufferBlock and
-  // Uniform forms, so it has to be emitted as SPIR-V 1.0.
-  shader_options.spirv_version = 0x00010000;
-  shader_options.descriptor_set_dest = kDumpDescriptorSetEdram;
-  shader_options.descriptor_set_source = kDumpDescriptorSetSource;
-  shader_options.resolution_scale_x = draw_resolution_scale_x();
-  shader_options.resolution_scale_y = draw_resolution_scale_y();
-  shader_options.msaa_2x_attachments_supported = msaa_2x_supported_;
+  XeDxilEdramDumpOptions options;
+  XeDxilShaderBinary binary;
+  bool source_uint = false;
+  std::memset(&options, 0, sizeof(options));
+  std::memset(&binary, 0, sizeof(binary));
   if (!key.is_depth) {
-    GetColorOwnershipTransferDXGIFormat(key.GetColorFormat(),
-                                        &shader_options.source_is_uint);
+    GetColorOwnershipTransferDXGIFormat(key.GetColorFormat(), &source_uint);
   }
-  shader_options.depth_float24_round = depth_float24_round();
-  shader_options.depth_float24_convert_in_pixel_shader =
-      depth_float24_convert_in_pixel_shader();
-
+  options.format = key.resource_format;
+  options.depth = key.is_depth;
+  options.msaa = uint32_t(key.msaa_samples);
+  options.scale_x = draw_resolution_scale_x();
+  options.scale_y = draw_resolution_scale_y();
+  options.native_layout = key.native_layout;
+  options.native_source = key.source_scale_native;
+  options.source_uint = source_uint;
+  options.msaa_2x_supported = msaa_2x_supported_;
+  options.round_depth = depth_float24_round();
+  options.depth_converted_in_pixel_shader = depth_float24_convert_in_pixel_shader();
+  options.destination_space = kDumpDescriptorSetEdram;
+  options.source_space = kDumpDescriptorSetSource;
+  options.direct_resolve = key.direct_resolve;
   const char* format_name =
-      key.is_depth
-          ? xenos::GetDepthRenderTargetFormatName(key.GetDepthFormat())
-          : xenos::GetColorRenderTargetFormatName(key.GetColorFormat());
+      key.is_depth ? xenos::GetDepthRenderTargetFormatName(key.GetDepthFormat())
+                   : xenos::GetColorRenderTargetFormatName(key.GetColorFormat());
   uint32_t sample_count = uint32_t(1) << uint32_t(key.msaa_samples);
   ID3D12PipelineState* pipeline = nullptr;
-  std::vector<uint8_t> dxil;
-  if (!key.direct_resolve) {
-    XeDxilEdramDumpOptions options;
-    XeDxilShaderBinary binary;
-    std::memset(&options, 0, sizeof(options));
-    std::memset(&binary, 0, sizeof(binary));
-    options.format = key.resource_format;
-    options.depth = key.is_depth;
-    options.msaa = uint32_t(key.msaa_samples);
-    options.scale_x = shader_options.resolution_scale_x;
-    options.scale_y = shader_options.resolution_scale_y;
-    options.native_layout = key.native_layout;
-    options.native_source = key.source_scale_native;
-    options.source_uint = shader_options.source_is_uint;
-    options.msaa_2x_supported = shader_options.msaa_2x_attachments_supported;
-    options.round_depth = shader_options.depth_float24_round;
-    options.depth_converted_in_pixel_shader =
-        shader_options.depth_float24_convert_in_pixel_shader;
-    options.destination_space = kDumpDescriptorSetEdram;
-    options.source_space = kDumpDescriptorSetSource;
-    if (xe_dxil_build_edram_dump(&options, &binary)) {
-      dxil.assign(binary.data, binary.data + binary.size);
-    }
-    xe_dxil_shader_binary_free(&binary);
-  } else {
-    std::vector<uint32_t> spirv = BuildEdramDumpShaderSpirv(key, shader_options);
-    if (!spirv.empty()) {
-      dxil = SpirvToDxilCompiler::Translate(
-          spirv.data(), spirv.size(), SpirvToDxilCompiler::Stage::kCompute);
-    }
-  }
-  if (!dxil.empty()) {
+  if (xe_dxil_build_edram_dump(&options, &binary)) {
     pipeline = ui::d3d12::util::CreateComputePipeline(
-        command_processor_.GetD3D12Provider().GetDevice(), dxil.data(),
-        dxil.size(), key.is_depth ? dump_root_signature_depth_
-                                 : dump_root_signature_color_);
-    if (pipeline) {
-      std::u16string pipeline_name = xe::to_utf16(
-          fmt::format("RT Dump {} {}xMSAA", format_name, sample_count));
-      pipeline->SetName(reinterpret_cast<LPCWSTR>(pipeline_name.c_str()));
-    }
+        command_processor_.GetD3D12Provider().GetDevice(), binary.data,
+        binary.size, key.is_depth ? dump_root_signature_depth_
+                                  : dump_root_signature_color_);
   }
-  if (!pipeline) {
+  // Pipeline creation consumes the container synchronously; no vector copy.
+  xe_dxil_shader_binary_free(&binary);
+  if (pipeline) {
+    std::u16string pipeline_name = xe::to_utf16(
+        fmt::format("RT Dump {} {}xMSAA", format_name, sample_count));
+    pipeline->SetName(reinterpret_cast<LPCWSTR>(pipeline_name.c_str()));
+  } else {
     XELOGE("D3D12RenderTargetCache: Failed to generate or create render target "
            "dump pipeline for {}-sample format {}", sample_count, format_name);
   }

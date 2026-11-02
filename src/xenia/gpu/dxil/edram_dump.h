@@ -8,6 +8,7 @@ typedef struct XeDxilEdramDumpOptions {
   unsigned source_uint, msaa_2x_supported;
   unsigned round_depth, depth_converted_in_pixel_shader;
   unsigned destination_space, source_space;
+  unsigned direct_resolve;
 } XeDxilEdramDumpOptions;
 #ifdef __cplusplus
 extern "C" {

@@ -252,3 +252,21 @@ For the MinGW runtime harness, add
 Both GCC and MSVC harnesses pass the format and dump execution checks.
 Standard dump generation is connected to the D3D12 render-target cache;
 direct resolves and ownership-transfer shaders still need native emitters.
+The dump generator accepts an additional `1` argument for a direct resolve.
+All 168 direct variants also validate. The optional final case number 0..7
+selects unchanged output, 8in16, 8in32, 16in32, red/blue swap, array slice,
+array plus byte swap, or half-pixel fill. Format 0 emits executable 32bpp
+data; format 15 with case numbers 8..15 emits executable 64bpp float data.
+These fixtures initialize the output buffer to zero and compare all words,
+including untouched bytes, using the runtime harness's `resolve` mode.
+All four scaling configurations pass all eight cases for both pixel widths:
+64 WARP executions. Cases with 64bpp data also cover low-half red/blue swapping
+and the 8in64 dword exchange. The runtime fixture compiles with GCC and MSVC.
+D3D12 dump and direct-resolve generation now call the native emitter directly;
+ownership transfer remains to be migrated.
+`make check-dxil-pixel-interface DXIL_VALIDATOR=/path/to/dxv` checks float and
+integer color outputs, unpacked depth/stencil outputs, and per-sample input
+metadata needed by ownership transfers. All five validate and pass WARP pipeline
+creation. For that pipeline check, place a compatible native VS from the geometry
+fixture at `<pixel-path>.vs` and run `dxil_geometry_runtime_test.exe <pixel-path>
+<mode> pixel`. This checks pipeline creation, not pixel execution.

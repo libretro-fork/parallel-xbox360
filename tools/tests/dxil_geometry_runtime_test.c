@@ -71,12 +71,14 @@ int main(int argc, char **argv) {
   UINT stride = 32;
   UINT64 written;
   unsigned type, i, j, k, seen = 0;
+  int pixel_interface;
   char *vs_path = NULL;
   HRESULT status = E_FAIL;
   if (argc != 3 && argc != 4) return 2;
-  if (argc == 4 && strcmp(argv[3], "discard")) return 2;
+  pixel_interface = argc == 4 && !strcmp(argv[3], "pixel");
+  if (argc == 4 && strcmp(argv[3], "discard") && !pixel_interface) return 2;
   type = (unsigned)strtoul(argv[2], NULL, 10);
-  if (type < 1 || type > 4) return 2;
+  if ((!pixel_interface && type < 1) || type > 4) return 2;
   gs = read_binary(argv[1], &gs_size);
   length = strlen(argv[1]); vs_path = (char *)malloc(length + 4);
   if (!gs || !vs_path) goto done;
@@ -100,7 +102,8 @@ int main(int argc, char **argv) {
   if (FAILED(status)) goto done;
   memset(&desc, 0, sizeof(desc)); memset(&input, 0, sizeof(input)); memset(declarations, 0, sizeof(declarations));
   desc.pRootSignature = root; desc.VS.pShaderBytecode = vs; desc.VS.BytecodeLength = vs_size;
-  desc.GS.pShaderBytecode = gs; desc.GS.BytecodeLength = gs_size;
+  if (pixel_interface) { desc.PS.pShaderBytecode = gs; desc.PS.BytecodeLength = gs_size; }
+  else { desc.GS.pShaderBytecode = gs; desc.GS.BytecodeLength = gs_size; }
   input.SemanticName = "POSITION"; input.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
   desc.InputLayout.pInputElementDescs = &input; desc.InputLayout.NumElements = 1;
   declarations[0].SemanticName = "SV_Position"; declarations[0].ComponentCount = 4;
@@ -112,8 +115,30 @@ int main(int argc, char **argv) {
     type == 2 ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE : D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
   desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID; desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
   desc.RasterizerState.DepthClipEnable = TRUE; desc.SampleMask = UINT_MAX; desc.SampleDesc.Count = 1;
+  if (pixel_interface) {
+    memset(&desc.StreamOutput, 0, sizeof(desc.StreamOutput));
+    desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    if (type == 2 || type == 3) {
+      desc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+      desc.DepthStencilState.DepthEnable = TRUE;
+      desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+      desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+      desc.DepthStencilState.StencilEnable = type == 3;
+      desc.DepthStencilState.StencilReadMask = 255; desc.DepthStencilState.StencilWriteMask = 255;
+      desc.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+      desc.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+      desc.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_REPLACE;
+      desc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+      desc.DepthStencilState.BackFace = desc.DepthStencilState.FrontFace;
+    } else {
+      desc.NumRenderTargets = 1;
+      desc.RTVFormats[0] = type ? DXGI_FORMAT_R32_UINT : DXGI_FORMAT_R32G32B32A32_FLOAT;
+    }
+    if (type == 4) desc.SampleDesc.Count = 4;
+  }
   status = ID3D12Device_CreateGraphicsPipelineState(device, &desc, &IID_ID3D12PipelineState, (void **)&pipeline);
   if (FAILED(status)) goto done;
+  if (pixel_interface) { puts("Native DXIL pixel interface: WARP pipeline accepted."); goto done; }
   status = buffer(device, D3D12_HEAP_TYPE_UPLOAD, 8192, D3D12_RESOURCE_STATE_GENERIC_READ, &upload);
   if (FAILED(status)) goto done;
   status = buffer(device, D3D12_HEAP_TYPE_DEFAULT, 1024, D3D12_RESOURCE_STATE_COPY_DEST, &output);

@@ -109,6 +109,7 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
 {
   ID3D12Resource *output = NULL;
   ID3D12Resource *readback = NULL;
+  ID3D12Resource *initial = NULL;
   ID3D12CommandQueue *queue = NULL;
   ID3D12CommandAllocator *allocator = NULL;
   ID3D12GraphicsCommandList *list = NULL;
@@ -123,11 +124,21 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   HANDLE event = NULL;
   HRESULT status;
   uint32_t *values = NULL;
-  size_t i, source_index, allocation_bytes = raw_mode > 1 ? bytes / 8 * raw_mode : bytes;
+  void *initial_data;
+  size_t i, source_index, allocation_bytes = raw_mode > 2 ? bytes / 8 * raw_mode : bytes;
   int same;
   status = buffer(device, D3D12_HEAP_TYPE_DEFAULT,
-                   D3D12_RESOURCE_STATE_UNORDERED_ACCESS, allocation_bytes, &output);
+                   raw_mode == 2 ? D3D12_RESOURCE_STATE_COPY_DEST : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                   allocation_bytes, &output);
   if (FAILED(status)) goto done;
+  if (raw_mode == 2) {
+    status = buffer(device, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, allocation_bytes, &initial);
+    if (FAILED(status)) goto done;
+    range.Begin = 0; range.End = 0;
+    status = ID3D12Resource_Map(initial, 0, &range, &initial_data);
+    if (FAILED(status)) goto done;
+    memset(initial_data, 0, allocation_bytes); ID3D12Resource_Unmap(initial, 0, NULL);
+  }
   status = buffer(device, D3D12_HEAP_TYPE_READBACK,
                    D3D12_RESOURCE_STATE_COPY_DEST, allocation_bytes, &readback);
   if (FAILED(status)) goto done;
@@ -141,6 +152,14 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   status = ID3D12Device_CreateCommandList(device, 0, D3D12_COMMAND_LIST_TYPE_DIRECT,
       allocator, pipeline, &IID_ID3D12GraphicsCommandList, (void **)&list);
   if (FAILED(status)) goto done;
+  if (initial) {
+    ID3D12GraphicsCommandList_CopyResource(list, output, initial);
+    memset(&barrier, 0, sizeof(barrier)); barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = output; barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    ID3D12GraphicsCommandList_ResourceBarrier(list, 1, &barrier);
+  }
   if (texture) {
     for (mip = 0; mip < 2; ++mip) {
       memset(&source, 0, sizeof(source)); memset(&destination, 0, sizeof(destination));
@@ -200,7 +219,7 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   status = ID3D12Resource_Map(readback, 0, &range, (void **)&values);
   if (FAILED(status)) goto done;
   for (i = 0; i < bytes / sizeof(uint32_t); ++i) {
-    source_index = raw_mode > 1 ? (i / 8) * raw_mode + i % 8 : i;
+    source_index = raw_mode > 2 ? (i / 8) * raw_mode + i % 8 : i;
     same = values[source_index] == expected[i];
     if (!raw_mode && (!golden_records || i % 8 < 4) &&
         (expected[i] & UINT32_C(0x7f800000)) == UINT32_C(0x7f800000) &&
@@ -224,6 +243,7 @@ done:
   if (allocator) ID3D12CommandAllocator_Release(allocator);
   if (queue) ID3D12CommandQueue_Release(queue);
   if (readback) ID3D12Resource_Release(readback);
+  if (initial) ID3D12Resource_Release(initial);
   if (output) ID3D12Resource_Release(output);
   return status;
 }
@@ -304,8 +324,8 @@ int main(int argc, char **argv)
   unsigned i, raw_mode;
   memset(&texture, 0, sizeof(texture));
   if (argc < 2 || argc > 6) return 2;
-  raw_mode = argc == 6 ? 80 : argc == 4 && !strcmp(argv[3], "raw") ? 1 : 0;
-  if (argc == 6 && strcmp(argv[5], "dump")) return 2;
+  raw_mode = argc == 6 ? !strcmp(argv[5], "resolve") ? 2 : 80 : argc == 4 && !strcmp(argv[3], "raw") ? 1 : 0;
+  if (argc == 6 && strcmp(argv[5], "dump") && strcmp(argv[5], "resolve")) return 2;
   file = fopen(argv[1], "rb");
   if (!file) return 1;
   if (fseek(file, 0, SEEK_END) || (size = ftell(file)) < 32 || fseek(file, 0, SEEK_SET)) {

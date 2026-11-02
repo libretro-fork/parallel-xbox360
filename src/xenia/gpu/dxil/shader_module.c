@@ -13,6 +13,8 @@ struct XeDxilShaderModule {
   unsigned resource_counts[4];
   unsigned stage_values[5];
   unsigned stage_tag, stage_count, raw_buffers;
+  uint64_t shader_flags;
+  unsigned sample_shadow;
   int finished, failed;
 };
 
@@ -66,6 +68,14 @@ void xe_dxil_shader_destroy(XeDxilShaderModule *s) {
 int xe_dxil_shader_signature(XeDxilShaderModule *s, unsigned direction,
                                const char *name, unsigned index, unsigned kind, unsigned system,
                                unsigned row, unsigned column, unsigned columns, unsigned interpolation) {
+  return xe_dxil_shader_signature_typed(s, direction, name, index, kind, system,
+    row, column, columns, interpolation, DXIL_COMP_TYPE_F32);
+}
+
+int xe_dxil_shader_signature_typed(XeDxilShaderModule *s, unsigned direction,
+                                     const char *name, unsigned index, unsigned kind, unsigned system,
+                                     unsigned row, unsigned column, unsigned columns, unsigned interpolation,
+                                     unsigned component_type) {
   struct dxil_signature_record *record;
   struct dxil_psv_signature_element *psv;
   struct dxil_module *m;
@@ -73,36 +83,39 @@ int xe_dxil_shader_signature(XeDxilShaderModule *s, unsigned direction,
   size_t name_length;
   if (!s || s->failed || s->finished) return -1;
   m = &s->module;
-  if (direction > 2 || !name || !columns || column > 3 || columns > 4 - column || row >= 32 ||
-      kind > 255 || interpolation > 7 || m->sem_index_table.size >= 128) goto fail;
+  if (direction > 2 || !name || !columns || column > 3 || columns > 4 - column ||
+      (row >= 32 && row != UINT32_MAX) || kind > 255 || interpolation > 7 || m->sem_index_table.size >= 128 ||
+      (component_type != DXIL_COMP_TYPE_F32 && component_type != DXIL_COMP_TYPE_U32 && component_type != DXIL_COMP_TYPE_I32)) goto fail;
   name_length = strlen(name);
   if (name_length >= UINT32_MAX) goto fail;
   if (!direction) {
     id = m->num_sig_inputs;
     if (id >= 32) goto fail;
     record = &m->inputs[id]; psv = &m->psv_inputs[id]; ++m->num_sig_inputs;
-    if (m->num_psv_inputs < row + 1) m->num_psv_inputs = row + 1;
+    if (row != UINT32_MAX && m->num_psv_inputs < row + 1) m->num_psv_inputs = row + 1;
   } else if (direction == 1) {
     id = m->num_sig_outputs;
     if (id >= 32) goto fail;
     record = &m->outputs[id]; psv = &m->psv_outputs[id]; ++m->num_sig_outputs;
-    if (m->num_psv_outputs[0] < row + 1) m->num_psv_outputs[0] = row + 1;
+    if (row != UINT32_MAX && m->num_psv_outputs[0] < row + 1) m->num_psv_outputs[0] = row + 1;
   } else {
     id = m->num_sig_patch_consts;
     if (id >= 32) goto fail;
     record = &m->patch_consts[id]; psv = &m->psv_patch_consts[id]; ++m->num_sig_patch_consts;
-    if (m->num_psv_patch_consts < row + 1) m->num_psv_patch_consts = row + 1;
+    if (row != UINT32_MAX && m->num_psv_patch_consts < row + 1) m->num_psv_patch_consts = row + 1;
   }
   record->num_elements = 1; record->name = ralloc_strdup(m->ralloc_ctx, name);
   if (!record->name) goto fail;
-  record->sig_comp_type = DXIL_COMP_TYPE_F32;
+  record->sig_comp_type = (uint8_t)component_type;
   record->elements[0].semantic_index = index; record->elements[0].system_value = system;
-  record->elements[0].comp_type = DXIL_PROG_SIG_COMP_TYPE_FLOAT32;
+  record->elements[0].comp_type = component_type == DXIL_COMP_TYPE_F32 ? DXIL_PROG_SIG_COMP_TYPE_FLOAT32 :
+    component_type == DXIL_COMP_TYPE_U32 ? DXIL_PROG_SIG_COMP_TYPE_UINT32 : DXIL_PROG_SIG_COMP_TYPE_SINT32;
   record->elements[0].reg = row; record->elements[0].mask = (uint8_t)(((1u << columns) - 1) << column);
   if (!direction) record->elements[0].always_reads_mask = record->elements[0].mask;
   else record->elements[0].never_writes_mask = (uint8_t)(15u & ~record->elements[0].mask);
-  psv->rows = 1; psv->start_row = (uint8_t)row; psv->cols_and_start = (uint8_t)(64 + column * 16 + columns);
-  psv->semantic_kind = (uint8_t)kind; psv->component_type = DXIL_PROG_SIG_COMP_TYPE_FLOAT32;
+  psv->rows = 1; psv->start_row = row == UINT32_MAX ? 0 : (uint8_t)row;
+  psv->cols_and_start = (uint8_t)((row == UINT32_MAX ? 0 : 64) + column * 16 + columns);
+  psv->semantic_kind = (uint8_t)kind; psv->component_type = (uint8_t)record->elements[0].comp_type;
   psv->interpolation_mode = (uint8_t)interpolation;
   psv->semantic_indexes_offset = m->sem_index_table.size;
   if (kind == DXIL_SEM_ARBITRARY) {
@@ -115,10 +128,23 @@ int xe_dxil_shader_signature(XeDxilShaderModule *s, unsigned direction,
     if (m->shader_kind == DXIL_GEOMETRY_SHADER) s->validation.state.psv2.psv1.psv0.gs.output_position_present = 1;
     if (m->shader_kind == DXIL_DOMAIN_SHADER) s->validation.state.psv2.psv1.psv0.ds.output_position_present = 1;
   }
+  if (direction == 1 && (kind == DXIL_SEM_DEPTH || kind == DXIL_SEM_DEPTH_LE || kind == DXIL_SEM_DEPTH_GE))
+    s->validation.state.psv2.psv1.psv0.ps.depth_output = 1;
+  if (direction == 1 && kind == DXIL_SEM_STENCIL_REF) { s->module.feats.stencil_ref = 1; s->shader_flags |= 2048; }
   return (int)id;
 fail:
   s->failed = 1;
   return -1;
+}
+
+int xe_dxil_shader_sample_frequency(XeDxilShaderModule *s) {
+  if (!s || s->failed || s->finished || s->module.shader_kind != DXIL_PIXEL_SHADER) return 0;
+  if (s->sample_shadow) return 1;
+  if (xe_dxil_shader_signature_typed(s, 0, "SV_SampleIndex", 0, DXIL_SEM_SAMPLE_INDEX,
+      DXIL_PROG_SEM_SAMPLE_INDEX, UINT32_MAX, 0, 1, DXIL_INTERP_CONSTANT, DXIL_COMP_TYPE_U32) < 0) return 0;
+  s->validation.state.psv2.psv1.psv0.ps.sample_frequency = 1;
+  s->sample_shadow = 1;
+  return 1;
 }
 
 int xe_dxil_shader_resource(XeDxilShaderModule *s, unsigned resource_class, unsigned kind,
@@ -261,12 +287,12 @@ int xe_dxil_shader_finish(XeDxilShaderModule *s, XeDxilShaderBinary *binary) {
     node = dxil_get_metadata_node(m, values, s->stage_count);
     values[0] = metadata_int(s, s->stage_tag); values[1] = node;
     values[2] = metadata_int(s, DXIL_SHADER_TAG_FLAGS);
-    values[3] = dxil_get_metadata_int64(m, s->raw_buffers ? 16 : 0);
+    values[3] = dxil_get_metadata_int64(m, s->shader_flags | (s->raw_buffers ? 16 : 0));
     properties = dxil_get_metadata_node(m, values, 4);
     if (!node || !properties) goto done;
   } else {
     values[0] = metadata_int(s, DXIL_SHADER_TAG_FLAGS);
-    values[1] = dxil_get_metadata_int64(m, s->raw_buffers ? 16 : 0);
+    values[1] = dxil_get_metadata_int64(m, s->shader_flags | (s->raw_buffers ? 16 : 0));
     properties = dxil_get_metadata_node(m, values, 2);
     if (!properties) goto done;
   }

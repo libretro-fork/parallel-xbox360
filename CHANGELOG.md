@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- D3D12 direct resolves now generate DXIL directly, including scaled layouts, array destinations, byte-order changes, red/blue swapping and half-pixel fill. All 168 variants validate; 64 WARP executions cover 32bpp and 64bpp output. Dump/resolve pipeline creation consumes the native container without copying it through a temporary vector. Native pixel-interface metadata for ownership transfer also passes five validator and WARP pipeline checks. Ownership transfer and guest/tessellation paths still need migration before Mesa removal is complete.
+
 - D3D12 primitive expansion now generates DXIL directly for points, rectangles, quads and scaled lines, without SPIR-V or Mesa conversion. WARP execution checks cover attributes, clipping/culling signatures and primitive discard. Other shader paths still require replacement before Mesa can be removed.
 - Standard D3D12 render-target dumps now emit DXIL directly. All 168 color/depth, MSAA and scaling variants pass validation; a WARP dump checks 128 words. Shared native EDRAM conversions pass 8,576 bit-exact words, including every 7e3 encoding and depth rounding boundaries. Direct resolves and ownership transfers remain to be replaced.
 - The native C89 guest texture frontend now handles persistent LOD/gradients, predication, relative register addressing, destination swizzles and pixel derivatives. Raw instruction execution checks pass 168 words.
