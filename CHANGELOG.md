@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fixed an exit crash where a Windows APC could interrupt the logger join and let shutdown free its queue while the writer was still running. The writer is now joined non-alertably before its storage and sinks are destroyed.
+
 - XEX block/image and title-update signature hashing now use libretro-common SHA-1. Account HMAC uses common streaming primitives through a bounded C89 span adapter, writing full digests directly to their destination. Account RC4 is now C89 with exact in-place support and checked key/output/overlap bounds; its unused key copy is removed. Guest-visible crypto state migration remains in progress.
 
 - ZArchive writing now uses owned libretro-common streaming SHA-256 with inline state, preserving footer digests. Complete input blocks bypass staging copies; modern MSVC can use the runtime-checked SHA-NI path, with a bounded rolling scalar fallback. The private archive SHA implementation is removed.

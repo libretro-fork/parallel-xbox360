@@ -966,3 +966,23 @@ It tests all lengths below 1024, unaligned input and additional lengths through
 1 MiB. The reference header remains needed by guest-state crypto during migration;
 the bridge is transitional test infrastructure. These are byte-compatibility
 checks, not gameplay or throughput measurements.
+
+
+`core_logger_apc_test.c` exercises the real DLL and logger through the public
+libretro API. It holds the writer in a frontend log callback, waits for the
+other core workers to stop, and queues an APC to the thread closing the core.
+An alertable join returns before the writer exits; the test records that failure
+while leaving the writer parked until process termination to avoid deliberately
+accessing freed memory. A correct join defers the APC, waits for the released
+writer, and permits safe DLL unload. The queued test APC is then explicitly
+delivered through a bounded alertable event wait. The installed b66630a MinGW
+DLL failed with lifetime error 4; the fixed MSVC and MinGW builds pass.
+
+Build as C89 with the libretro include directory and run:
+
+```
+core-logger-apc.exe <core.dll> <private-system-directory> <invalid-content.xex>
+```
+
+The non-Windows build reports that the Windows APC test is skipped. The existing
+content-close and Vulkan/D3D12 lifetime tests cover the ordinary shutdown path.

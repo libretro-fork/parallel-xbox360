@@ -244,7 +244,8 @@ class Logger {
 
   ~Logger() {
     AppendLine(0, '\0', nullptr, 0, true);  // append a terminator
-    xe::threading::Wait(write_thread_.get(), true);
+    // An APC must not end this join while the writer still owns the queue.
+    xe::threading::Wait(write_thread_.get(), false);
   }
 
   void AddLogSink(std::unique_ptr<LogSink>&& sink) {

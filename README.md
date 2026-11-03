@@ -33,7 +33,7 @@ Everything the core keeps is in `system/Xenia-Edge/`: saves, title updates and D
 
 On Windows, the fiber stack exception callback is removed when the last stack is released and explicitly detached after emulator shutdown, including when retired guest frames retain stack owners. Any retained owners are reported in `xenia.log`.
 
-Content close also flushes and joins the logging writer before the core DLL can unload. Reset and graphics context rebuild share the existing logger; reopening content starts it again.
+Content close flushes and joins the logging writer non-alertably before the core DLL can unload. Windows APC delivery cannot release its queue and sinks before the writer exits. Reset and graphics context rebuild share the existing logger; reopening content starts it again.
 
 Each `retro_run` supplies one video callback and one run's audio duration at the declared refresh rate. Fractional sample counts carry forward; audio underruns and a missing mixer produce silence for the remainder. Muting drains audio without adding a backlog. Stereo frontends may use either the batch or per-sample callback.
 
