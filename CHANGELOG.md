@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Expanded the Windows content-close regression to reject any surviving thread whose entry point belongs to the core DLL, verify that the DLL really unloads, and document how to run the test without a ROM.
+
 - Content close now flushes and joins Xenia's logging writer before the core can unload. Reset/context rebuild retains one logger; reopening content creates a fresh logger and frontend log sink. Repeated shutdown and late log messages safely handle an already stopped logger.
 
 - Removed the Windows first-run disclaimer dialog, browser launch and Xenia registry acknowledgement check. Core startup no longer depends on a desktop prompt or the standalone emulator's registry state.

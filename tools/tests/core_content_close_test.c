@@ -46,8 +46,43 @@ static unsigned logger_threads(void) {
   CloseHandle(snapshot);
   return count;
 }
+/* Check every thread started in the DLL, including statically linked runtime
+ * wrappers, rather than relying only on the logger's descriptive name. */
+static unsigned core_threads(HMODULE module) {
+  typedef LONG (NTAPI *QueryThread)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+  QueryThread query;
+  FARPROC symbol;
+  IMAGE_DOS_HEADER *dos;
+  IMAGE_NT_HEADERS *nt;
+  ULONG_PTR base, end, start;
+  HANDLE snapshot, thread;
+  THREADENTRY32 entry;
+  unsigned count = 0;
+  symbol = GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryInformationThread");
+  if (!symbol) return 999;
+  memcpy(&query, &symbol, sizeof(query));
+  base = (ULONG_PTR)module;
+  dos = (IMAGE_DOS_HEADER *)module;
+  nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+  end = base + nt->OptionalHeader.SizeOfImage;
+  snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) return 999;
+  memset(&entry, 0, sizeof(entry)); entry.dwSize = sizeof(entry);
+  if (Thread32First(snapshot, &entry)) do {
+    if (entry.th32OwnerProcessID != GetCurrentProcessId()) continue;
+    thread = OpenThread(THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
+    if (!thread) continue;
+    start = 0;
+    /* ThreadQuerySetWin32StartAddress = 9. */
+    if (query(thread, 9, &start, sizeof(start), NULL) >= 0 &&
+        start >= base && start < end) ++count;
+    CloseHandle(thread);
+  } while (Thread32Next(snapshot, &entry));
+  CloseHandle(snapshot);
+  return count;
+}
 int main(int argc, char **argv) {
-  HMODULE module;
+  HMODULE module, still_loaded;
   FARPROC symbol;
   SetEnvironment set_environment;
   Lifecycle init, deinit, unload;
@@ -74,8 +109,15 @@ int main(int argc, char **argv) {
     if (count) { fprintf(stderr, "Logger survived content close: %u thread(s)\n", count); return 7; }
     /* Repeated close/deinit must be safe. Next cycle must start a new logger. */
     unload(); deinit(); deinit();
+    count = core_threads(module);
+    if (count) { fprintf(stderr, "Core-owned thread entry points survived deinit: %u\n", count); return 9; }
   }
   if (!FreeLibrary(module)) return 8;
+  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                        (LPCSTR)module, &still_loaded)) {
+    fputs("Core remained loaded after FreeLibrary\n", stderr); return 10;
+  }
   Sleep(250);
   puts("PASS: three real failed-content opens/closes, logger restart/join, repeated teardown and DLL unload");
   return 0;

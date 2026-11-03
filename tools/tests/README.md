@@ -1,5 +1,27 @@
 # Raw DXIL writer checks
 
+## Windows content-close regression
+
+`core_content_close_test.c` is a C89 libretro frontend that starts the real
+emulator with synthetic invalid content, checks that a logging writer was
+created, closes content, and requires that writer to be joined. It repeats
+startup/teardown three times in one DLL, checks for any surviving threads whose
+entry points lie in the core image, then verifies that the DLL really unloads. It needs a working
+Vulkan driver, but no game or ROM. Use a private system directory because core
+setup creates logs, embedded data and a test profile there.
+
+From a Visual Studio developer prompt at the repository root:
+
+```bat
+cl /TC /W4 /WX /O2 /Ilibretro tools\tests\core_content_close_test.c
+mkdir build\content-close-system
+echo synthetic invalid content>build\invalid.xex
+core_content_close_test.exe C:\absolute\parallel_xbox360_libretro.dll C:\absolute\build\content-close-system C:\absolute\build\invalid.xex
+```
+
+This exercises failed-load cleanup and DLL thread lifetime, not gameplay or
+frontend-shared-device rendering.
+
 `dxil_writer_test.c` emits a compute shader directly from typed operations using
 the owned DXIL/LLVM bitcode writer. It exercises integer and floating-point
 arithmetic, dynamic control flow, phi nodes, casts, thread IDs and raw UAV
