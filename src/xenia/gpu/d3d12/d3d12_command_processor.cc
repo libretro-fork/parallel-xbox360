@@ -4800,6 +4800,13 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
       sampler_count = spirv_samplers->size();
     }
     size_t entry_count = texture_count + sampler_count;
+    if (!entry_count) {
+      // The submission's zero upload is already resident and valid as a raw
+      // SRV too. Empty stages need no fresh allocation or CPU initialization.
+      deferred_command_list_.D3DSetGraphicsRootShaderResourceView(
+          root_parameter, cbuffer_binding_runtime_data_.address);
+      return true;
+    }
     // 2 uint32 per entry: [0] = texture heap index, [1] = sampler heap index.
     size_t buffer_size =
         std::max(entry_count, size_t(1)) * 2 * sizeof(uint32_t);

@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
   unsigned mode, variant, i, reg, rop_config = 0;
   int result;
   if (argc != 3 && argc != 4) return 2;
-  mode = (unsigned)strtoul(argv[2],NULL,10); if (mode > 475) return 2;
+  mode = (unsigned)strtoul(argv[2],NULL,10); if (mode > 562) return 2;
   variant = mode/28; mode %= 28;
   memset(&o,0,sizeof(o)); o.program.register_count = 16; o.program.float_constant_count = 5;
   o.system_constants_bytes = 256; o.flags_word = 0; o.alpha_reference_word = 1; o.alpha_to_mask_word = 2;
@@ -103,7 +103,8 @@ int main(int argc, char **argv) {
   }
   if (variant == 3) { o.param_gen = 1; o.param_point = 1; }
   if (variant == 5) o.native_2x = 1;
-  if (variant >= 7) { o.blend_rgb_factor = factors[variant-7]; o.blend_alpha_factor = factors[16-variant]; }
+  if (variant >= 7 && variant <= 16) { o.blend_rgb_factor = factors[variant-7]; o.blend_alpha_factor = factors[16-variant]; }
+  if (variant >= 17) { o.param_gen = 0; o.interpolator_mask = 1; o.writes_depth = 0; }
   if (argc == 4) {
     static const unsigned formats[12] = {0,1,2,3,4,5,6,7,10,12,14,15};
     rop_config = (unsigned)strtoul(argv[3],NULL,10); if ((rop_config&3) > 2) return 2;
@@ -135,7 +136,14 @@ int main(int argc, char **argv) {
   if (o.param_gen || (variant >= 1 && variant <= 4)) words[8] = variant == 4 ? 0xc2030300 : 0xc2000000;
   if (variant == 6) words[4] = (1u<<28)|(1u<<27);
   words[18] = 50u<<26; words[19] = 0; words[20] = (24u<<24)|(4u<<8);
+  if (variant >= 17) {
+    words[0] |= 1u<<22;
+    words[12] = (variant == 20 ? (mode == 0 ? 1u : mode == 1 ? 16u : 17u) : variant == 18 ? 18u : 19u) | (15u<<12) | (36u<<26) | (variant == 19 ? 1u<<25 : 0);
+    words[13] = 1672; words[14] = 1u<<14;
+    words[15] = (50u<<26)|(15u<<16)|(1u<<15)|3; words[16] = 0; words[17] = 0xc20f0f00;
+  }
   binary = xe_dxil_build_guest_pixel_owned(&o,words,sizeof(words)/4,2);
+  if (variant == 20) { if (!binary) return 0; xe_dxil_shader_binary_delete(binary); return 1; }
   if (!binary) return 1;
   file = fopen(argv[1],"wb"); if (!file) { xe_dxil_shader_binary_delete(binary); return 1; }
   result = fwrite(binary->data,1,binary->size,file) != binary->size;

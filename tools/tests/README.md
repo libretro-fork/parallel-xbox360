@@ -438,3 +438,47 @@ The verification batch also passed 3,375 blend-factor/equation executions,
 18 MSVC ROV executions and 368 host-render-target regression executions.
 GCC and MSVC C89 checks pass; the Windows GCC core builds and passes ABI
 load/unload and two initialization/deinitialization cycles.
+
+`make check-dxil-bindless check-dxil-bindless-array DXIL_VALIDATOR=/path/to/dxv`
+validates native SM 6.6 descriptor-heap sampling. The C89 fixture uses a bound
+raw SRV at t3 (matching the renderer's pixel descriptor-index buffer), a CBV,
+a raw UAV, and direct resource/sampler heaps. It uses the renderer's two-dword entries
+with samplers following textures. It covers four nonzero/zero
+texture indices, mip-restricted views, point/linear samplers and uniform/nonuniform
+index annotations. The module keeps CBV/sampler/SRV/UAV PSV records in validator
+order, and bound handles use createHandleFromBinding plus annotateHandle.
+Barycentric setup preserves a previously selected newer shader model.
+Run the Windows `dxil_runtime_test.c` harness with `<shader> <shader.expected>
+<shader.texture> <shader.constants> heap` (or `heap-array`). Each fixture checks
+64 exact output words. The harness also reports D3D12 debug-layer failures.
+
+`make check-dxil-texture-weights DXIL_VALIDATOR=/path/to/dxv` checks four shaders totaling 256 numeric
+query cases and 2,048 exact GPU output words via the `resource-raw` harness mode.
+Sizes include wide 1D textures through 2^24, all dimensional packing layouts,
+normalized/unnormalized coordinates, negative/outside coordinates and signed
+half-texel offsets. This follows the existing core's base-level query policy:
+unused coordinates and the mip-filter weight are zero.
+
+`make check-dxil-guest-texture-query DXIL_VALIDATOR=/path/to/dxv` validates 84
+complete pixel query containers (modes 476..559), two vertex query containers
+(configs 6/7), and verifies unsupported sample/border/LOD queries and vertex
+derivatives fail native generation so the renderer can retain its fallback.
+Pixel groups 17/18/19 select normalized weights, derivatives and unnormalized
+weights; they export results through RT3. The 1,344-case HRT matrix uses real
+guest and synthetic vertex producers, alpha/kill/gamma/bias/coverage cases and
+all host-depth modes. Vertex stream-output checks cover 256 combinations of
+position flags, endian modes and signed/large index bases.
+
+The ROV reference/runtime harnesses also accept query modes 476/504/532.
+Their 234-case matrix covers all twelve render formats, native/2x3 resolution,
+masking, exponent bias and depth/stencil/query outcomes. Packed results and
+query counters are exact. Changed floating RT3 query outputs allow a small
+interpolation/derivative tolerance; untouched memory still compares exactly.
+Derivative bias cases avoid packed-format quantization ties, since hardware
+interpolation can differ slightly from the analytic CPU gradient.
+Full native guest texture sampling policy is not integrated by these tests.
+
+The native numeric fixtures split their cases across four small shaders to
+avoid excessive driver JIT latency. The harness allows a bounded 50-second
+GPU wait for loaded build machines. SM 6.6 pixel validation also combines
+direct heaps with barycentrics to check that version selection is preserved.

@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 static void *read_binary(const char *path, size_t *size) {
   FILE *file = fopen(path, "rb");
@@ -140,6 +141,7 @@ int main(int argc, char **argv) {
   memcpy((unsigned char *)mapped+bytes+2048,(unsigned char *)mapped+bytes,sizeof(vertices));
   ((uint32_t *)((unsigned char *)mapped+bytes+1536))[0] = 2;
   ((uint32_t *)((unsigned char *)mapped+bytes+1536))[1] = sizeof(vertices);
+  if (constants[101]) ((uint32_t *)((unsigned char *)mapped+bytes+1536))[2] = 3u|(3u<<13);
   {
     static const float vs_constants[12] = {.5f,-.5f,0,0,.5f,.5f,3,4,4,4,4,4};
     memcpy((unsigned char *)mapped+bytes+2560,vs_constants,sizeof(vs_constants));
@@ -192,6 +194,11 @@ int main(int argc, char **argv) {
   if (WaitForSingleObject(event, 10000) != WAIT_OBJECT_0) { status = E_FAIL; goto done; }
   range.Begin = 0; range.End = bytes+256; CHECK(ID3D12Resource_Map(readback, 0, &range, &mapped)); values = (uint32_t *)mapped;
   for (x = 0; x < words; ++x) if (values[x] != golden[x]) {
+    if (constants[101] && constants[102] >= 14 && golden[x] != initial[x] && x >= constants[43] && x < constants[43]+bytes/24) {
+      float actual, expected;
+      memcpy(&actual,values+x,4); memcpy(&expected,golden+x,4);
+      if (fabs((double)actual-expected) <= .00001) continue;
+    }
     fprintf(stderr, "EDRAM word %u mismatch: %08lX != %08lX\n", x, (unsigned long)values[x], (unsigned long)golden[x]); status = E_FAIL; goto done;
   }
   values += words;

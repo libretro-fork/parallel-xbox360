@@ -1,5 +1,6 @@
 /* Direct DXIL resource operations. MSVC C89; BSD license, see LICENSE. */
 #include "guest_resources.h"
+#include "shader_module.h"
 #include <dxil_module.h>
 #include <dxil_function.h>
 
@@ -21,6 +22,11 @@ XeDxilValue xe_dxil_resource_handle(XeDxilAlu *s, unsigned resource_class, unsig
   const struct dxil_func *function;
   XeDxilValue args[5], value;
   if (!active(s) || resource_class > XE_DXIL_RESOURCE_SAMPLER) return failed(s);
+  if (s->module->minor_version >= 6) {
+    value = xe_dxil_shader_bound_handle((XeDxilShaderModule *)s->module->native_shader_owner,
+      resource_class,id,binding);
+    return value ? value : failed(s);
+  }
   args[0] = integer(s, 57); args[1] = dxil_module_get_int8_const(s->module, (uint8_t)resource_class);
   args[2] = integer(s, id); args[3] = integer(s, binding); args[4] = dxil_module_get_int1_const(s->module, 0);
   function = dxil_get_function(s->module, "dx.op.createHandle", DXIL_NONE);

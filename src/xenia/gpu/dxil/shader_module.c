@@ -36,6 +36,7 @@ XeDxilShaderModule *xe_dxil_shader_create(unsigned stage) {
   if (!s || !arena) { free(s); ralloc_free(arena); return NULL; }
   s->arena = arena;
   dxil_module_init(&s->module, arena);
+  s->module.native_shader_owner = s;
   s->module.shader_kind = (enum dxil_shader_kind)stage;
   s->module.major_version = 6; s->module.minor_version = 0;
   s->module.major_validator = 1; s->module.minor_validator = 6;
@@ -139,7 +140,8 @@ fail:
 
 int xe_dxil_shader_barycentrics(XeDxilShaderModule *s) {
   if (!s || s->failed || s->finished || s->module.shader_kind != DXIL_PIXEL_SHADER) return -1;
-  s->module.minor_version = 1; s->module.feats.barycentrics = 1; s->shader_flags |= 1u<<22;
+  if (s->module.minor_version < 1) s->module.minor_version = 1;
+  s->module.feats.barycentrics = 1; s->shader_flags |= 1u<<22;
   return xe_dxil_shader_signature(s,0,"SV_Barycentrics",0,DXIL_SEM_BARYCENTRICS,
     DXIL_PROG_SEM_BARYCENTRICS,UINT32_MAX,0,3,DXIL_INTERP_LINEAR);
 }
@@ -208,12 +210,12 @@ static int resource_impl(XeDxilShaderModule *s, unsigned resource_class, unsigne
   node = dxil_get_metadata_node(m, fields, field_count);
   if (!node) goto fail;
   s->resource_nodes[resource_class][id] = node; ++s->resource_counts[resource_class];
-  /* PSV binding records are ordered sampler, CBV, SRV, UAV regardless of
+  /* PSV binding records are ordered CBV, sampler, SRV, UAV regardless of
    * declaration order. Insert directly into that order, preserving each
    * class's resource IDs; metadata construction uses separate class lists. */
-  i = resource_class == 3 ? id : s->resource_counts[3];
-  if (resource_class != 3 && resource_class != 2) i += s->resource_counts[2];
-  if (resource_class == 2) i += id;
+  i = resource_class == 2 ? id : s->resource_counts[2];
+  if (resource_class != 2 && resource_class != 3) i += s->resource_counts[3];
+  if (resource_class == 3) i += id;
   else if (resource_class == 0) i += id;
   else if (resource_class == 1) i += s->resource_counts[0] + id;
   memmove(&s->resource[i + 1], &s->resource[i],
@@ -240,6 +242,62 @@ int xe_dxil_shader_resource_typed(XeDxilShaderModule *s, unsigned resource_class
 }
 int xe_dxil_shader_ordered_buffer(XeDxilShaderModule *s, unsigned space, unsigned binding) {
   return resource_impl(s, 1, DXIL_RESOURCE_KIND_RAW_BUFFER, space, binding, 1, 0, DXIL_COMP_TYPE_U32, 1);
+}
+int xe_dxil_shader_bindless(XeDxilShaderModule *s) {
+  if (!s || s->failed || s->finished) return 0;
+  s->module.minor_version = 6;
+  return 1;
+}
+static const struct dxil_value *annotate(XeDxilShaderModule *s, unsigned resource_class,
+    unsigned id, const struct dxil_value *handle) {
+  const struct dxil_func *function;
+  const struct dxil_value *args[3];
+  if (!handle) return NULL;
+  args[0] = dxil_module_get_int32_const(&s->module,216); args[1] = handle;
+  args[2] = dxil_module_get_res_props_const(&s->module,(enum dxil_resource_class)resource_class,
+    s->resource_nodes[resource_class][id]);
+  function = dxil_get_function(&s->module,"dx.op.annotateHandle",DXIL_NONE);
+  return args[0] && args[2] && function ? dxil_emit_call(&s->module,function,args,3) : NULL;
+}
+const struct dxil_value *xe_dxil_shader_bound_handle(XeDxilShaderModule *s,
+    unsigned resource_class, unsigned id, unsigned binding) {
+  struct dxil_module *m;
+  const struct dxil_resource_v0 *resource;
+  const struct dxil_func *function;
+  const struct dxil_value *args[4], *value;
+  unsigned offset;
+  if (!s || s->failed || s->finished || s->module.minor_version < 6 || resource_class > 3 ||
+      id >= s->resource_counts[resource_class]) return NULL;
+  m = &s->module;
+  offset = resource_class == 2 ? 0 : s->resource_counts[2];
+  if (resource_class < 2) offset += s->resource_counts[3];
+  if (resource_class == 1) offset += s->resource_counts[0];
+  resource = &s->resource[offset+id].v0;
+  if (binding < resource->lower_bound || binding > resource->upper_bound) return NULL;
+  args[0] = dxil_module_get_int32_const(m,217);
+  args[1] = dxil_module_get_res_bind_const(m,resource->lower_bound,resource->upper_bound,
+    resource->space,(uint8_t)resource_class);
+  args[2] = dxil_module_get_int32_const(m,(int32_t)binding); args[3] = dxil_module_get_int1_const(m,0);
+  function = dxil_get_function(m,"dx.op.createHandleFromBinding",DXIL_NONE);
+  value = function && args[0] && args[1] && args[2] && args[3] ? dxil_emit_call(m,function,args,4) : NULL;
+  return annotate(s,resource_class,id,value);
+}
+const struct dxil_value *xe_dxil_shader_heap_handle(XeDxilShaderModule *s,
+    unsigned resource_class, unsigned id, const struct dxil_value *heap_index, unsigned non_uniform) {
+  struct dxil_module *m;
+  const struct dxil_func *function;
+  const struct dxil_value *args[4], *value;
+  if (!s || s->failed || s->finished || s->module.minor_version < 6 || resource_class > 3 ||
+      id >= s->resource_counts[resource_class] || !heap_index ||
+      dxil_value_get_type(heap_index) != dxil_module_get_int_type(&s->module,32)) return NULL;
+  m = &s->module;
+  if (resource_class == 3) { m->feats.sampler_descriptor_heap_indexing = 1; s->shader_flags |= (uint64_t)1<<31; }
+  else { m->feats.resource_descriptor_heap_indexing = 1; s->shader_flags |= (uint64_t)1<<30; }
+  args[0] = dxil_module_get_int32_const(m,218); args[1] = heap_index;
+  args[2] = dxil_module_get_int1_const(m,resource_class == 3); args[3] = dxil_module_get_int1_const(m,non_uniform != 0);
+  function = dxil_get_function(m,"dx.op.createHandleFromHeap",DXIL_NONE);
+  value = function && args[0] && args[2] && args[3] ? dxil_emit_call(m,function,args,4) : NULL;
+  return annotate(s,resource_class,id,value);
 }
 
 int xe_dxil_shader_geometry(XeDxilShaderModule *s, unsigned primitive, unsigned vertices, unsigned topology) {

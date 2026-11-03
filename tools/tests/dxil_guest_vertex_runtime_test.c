@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 static void *read_binary(const char *path, size_t *size) {
   FILE *file = fopen(path, "rb");
@@ -86,10 +87,10 @@ int main(int argc, char **argv) {
   if (argc != 7) return 2;
   config = (unsigned)strtoul(argv[2],NULL,10); flags = (unsigned)strtoul(argv[3],NULL,10);
   endian = (unsigned)strtoul(argv[4],NULL,10); base = (int32_t)strtol(argv[5],NULL,10); kill = (unsigned)strtoul(argv[6],NULL,10);
-  if (config > 5 || flags > 7 || endian > 3 || kill > 3) return 2;
+  if (config > 7 || flags > 7 || endian > 3 || kill > 3) return 2;
   clips = config == 1 ? 6 : config == 3 ? 3 : 0;
   culls = config == 1 ? 1 : config == 2 ? 7 : 0;
-  point = config != 0 && config != 5; interpolators = config == 5 ? 3 : 1; components = 4+interpolators*4+clips+culls+point; stride = components*4;
+  point = config >= 1 && config <= 4; interpolators = config == 5 ? 3 : 1; components = 4+interpolators*4+clips+culls+point; stride = components*4;
   vs = read_binary(argv[1],&vs_size); if (!vs) goto done;
 #define CHECK(expression) do { status = (expression); if (FAILED(status)) { fprintf(stderr,"Failed at line %d\n",__LINE__); goto done; } } while (0)
   CHECK(CreateDXGIFactory1(&IID_IDXGIFactory4,(void **)&factory));
@@ -138,7 +139,7 @@ int main(int argc, char **argv) {
   words = (uint32_t *)((unsigned char *)mapped+512); ((float *)words)[0] = 2;
   for (i = 0; i < 4; ++i) ((float *)words)[4+i] = (float)(11+i);
   words[2] = kill == 1 ? 0x3f800000 : kill == 2 ? 0x80000000 : kill == 3 ? 1 : 0;
-  words = (uint32_t *)((unsigned char *)mapped+1024); words[0] = 2; words[1] = 64;
+  words = (uint32_t *)((unsigned char *)mapped+1024); words[0] = 2; words[1] = 64; if (config >= 6) words[2] = 3u|(3u<<13);
   ID3D12Resource_Unmap(upload,0,NULL); mapped = NULL;
   memset(&queue_desc,0,sizeof(queue_desc));
   CHECK(ID3D12Device_CreateCommandQueue(device,&queue_desc,&IID_ID3D12CommandQueue,(void **)&queue));
@@ -181,6 +182,13 @@ int main(int argc, char **argv) {
     for (j = 0; j < count; ++j) { expected[n] = 0; for (k = 0; k < 4; ++k) expected[n] += original[k]*planes[j][k]; ++n; }
     if (config == 1 || config == 2) expected[n++] = kill == 1 || kill == 3 ? -1.0f : 0.0f;
     expected[n++] = index_float; expected[n++] = 0; expected[n++] = 0; expected[n++] = 0;
+    if (config >= 6) {
+      float value;
+      for (j = 0; j < 2; ++j) {
+        value = j ? 0 : index_float; if (config == 6) value *= 4;
+        value += -.5f+1.5f/1024; value -= (float)floor((double)value); expected[n-4+j] = value;
+      }
+    }
     if (config == 5) {
       for (j = 0; j < 4; ++j) expected[n++] = (float)(11+j);
       for (j = 0; j < 4; ++j) expected[n++] = id < 4 ? vertices[id][j] : 0;

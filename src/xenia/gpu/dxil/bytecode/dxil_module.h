@@ -185,6 +185,8 @@ struct dxil_func_def {
 };
 
 struct dxil_module {
+   /* Native stage owner, for SM 6.6 binding metadata. Borrowed by emitters. */
+   void *native_shader_owner;
    void *ralloc_ctx;
    enum dxil_shader_kind shader_kind;
    unsigned major_version, minor_version;

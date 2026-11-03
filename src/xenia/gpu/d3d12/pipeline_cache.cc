@@ -703,9 +703,13 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
   SpirvShaderTranslator::Modification mod(modification);
   if (!shader.is_ucode_analyzed() ||
       mod.vertex.host_vertex_shader_type != Shader::HostVertexShaderType::kVertex ||
-      shader.memexport_eM_written() || shader.uses_texture_fetch_instruction_results() ||
+      shader.memexport_eM_written() ||
       shader.kills_pixels()) {
     return nullptr;
+  }
+  for (const auto& binding : shader.texture_bindings()) {
+    if (binding.fetch_instr.result.GetUsedResultComponents() &&
+        !xe_dxil_texture_query_supported(uint32_t(binding.fetch_instr.opcode), 0)) return nullptr;
   }
   {
     std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
@@ -747,8 +751,11 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
 const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
     const Shader& shader, uint64_t modification) {
   SpirvShaderTranslator::Modification mod(modification);
-  if (!shader.is_ucode_analyzed() || shader.memexport_eM_written() ||
-      shader.uses_texture_fetch_instruction_results()) return nullptr;
+  if (!shader.is_ucode_analyzed() || shader.memexport_eM_written()) return nullptr;
+  for (const auto& binding : shader.texture_bindings()) {
+    if (binding.fetch_instr.result.GetUsedResultComponents() &&
+        !xe_dxil_texture_query_supported(uint32_t(binding.fetch_instr.opcode), 1)) return nullptr;
+  }
   bool edram_rov_used = render_target_cache_.GetPath() == RenderTargetCache::Path::kPixelShaderInterlock;
   {
     std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);

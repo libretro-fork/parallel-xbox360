@@ -52,7 +52,14 @@ and equations, color formats and write masks. Full overwrites avoid EDRAM
 reads; merged/blended outputs skip unchanged stores. Native format conversion
 retains signed fixed-point [-32,32] and finite extended-half values through
 131008. Failure counters retain early-test semantics across later pixel kills.
-Textured and memory-export shaders and tessellation
+Guest filtering-weight queries also compile natively in vertex and pixel
+shaders, and pixel gradient queries use native derivatives. Query-only shaders
+need no texture descriptors. Empty descriptor-index tables reuse the existing
+zero buffer instead of allocating and clearing an upload for every draw.
+Native shader-model 6.6 heap sampling is verified
+for 2D and 2D-array resources with runtime texture/sampler indices; full guest
+sampling policy still requires integration.
+Texture-sampling and memory-export shaders and tessellation
 still use Mesa and its Meson/Python build while their replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in

@@ -19,6 +19,8 @@ typedef struct XeDxilTextureInstruction {
 
 int xe_dxil_decode_texture(const uint32_t *words, size_t count,
                             XeDxilTextureInstruction *instruction);
+/* Cheap renderer preflight for descriptor-free queries with used results. */
+int xe_dxil_texture_query_supported(unsigned opcode, unsigned pixel_shader);
 
 enum XeDxilSampleMode {
   XE_DXIL_SAMPLE_LEVEL = 0, XE_DXIL_SAMPLE_GRAD = 1,
@@ -56,6 +58,11 @@ typedef struct XeDxilTextureOperands {
   unsigned coordinate_count, result_components;
   XeDxilValue lod, ddx[3], ddy[3];
 } XeDxilTextureOperands;
+/* Base-level filtering weights, matching the core's guest query policy.
+ * Cube queries return ST weights, unused lanes (including mip weight) are
+ * zero. Dimensions come directly from the raw six-word fetch constant. */
+int xe_dxil_texture_weights(XeDxilAlu *alu, const XeDxilTextureInstruction *instruction,
+  const XeDxilTextureOperands *operands, XeDxilValue fetch_constants, XeDxilValue result[4]);
 
 typedef struct XeDxilTextureFetch {
   void *context;

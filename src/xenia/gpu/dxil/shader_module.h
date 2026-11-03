@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 struct dxil_module;
+struct dxil_value;
 enum {
   XE_DXIL_PUSH_CONSTANT_REGISTER = 1,
   XE_DXIL_PUSH_CONSTANT_SPACE = 31
@@ -36,6 +37,14 @@ int xe_dxil_shader_signature_typed(XeDxilShaderModule *shader, unsigned directio
 int xe_dxil_shader_sample_frequency(XeDxilShaderModule *shader);
 /* Perspective barycentrics and attributeAtVertex require shader model 6.1. */
 int xe_dxil_shader_barycentrics(XeDxilShaderModule *shader);
+/* Enable before creating handles. Existing bound resources then use SM 6.6
+ * binding/annotation operations, alongside direct descriptor-heap handles. */
+int xe_dxil_shader_bindless(XeDxilShaderModule *shader);
+const struct dxil_value *xe_dxil_shader_bound_handle(XeDxilShaderModule *shader,
+  unsigned resource_class, unsigned id, unsigned binding);
+const struct dxil_value *xe_dxil_shader_heap_handle(XeDxilShaderModule *shader,
+  unsigned resource_class, unsigned id, const struct dxil_value *heap_index,
+  unsigned non_uniform);
 /* Resource class: SRV=0, UAV=1, CBV=2, sampler=3. Kind values follow DXIL.
  * Returns a class-local resource ID, or -1. count must be nonzero; UINT32_MAX
  * declares an unbounded array. CBVs additionally specify their byte size. */

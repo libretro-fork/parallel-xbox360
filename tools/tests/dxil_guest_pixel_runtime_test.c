@@ -104,12 +104,12 @@ int main(int argc, char **argv) {
   D3D12_VIEWPORT viewport; D3D12_RECT scissor; D3D12_RANGE range;
   HANDLE event = NULL; void *ps = NULL, *vs = NULL, *mapped = NULL;
   uint32_t *data, expected_bits; float expected[4], unmultiplied[4], float_constants[20], clear[4] = {-99,-99,-99,-99};
-  size_t ps_size = 0, vs_size = 0; unsigned guest_msaa = 0, native_2x, conditional_color, factor_variant, mode, variant, scenario, i, j, x, y, alpha_function = 7, fail, slot, count = 0;
+  size_t ps_size = 0, vs_size = 0; unsigned query, guest_msaa = 0, native_2x, conditional_color, factor_variant, mode, variant, scenario, i, j, x, y, alpha_function = 7, fail, slot, count = 0;
   HRESULT status = E_FAIL;
   if (argc != 5 && argc != 6) return 2;
   mode = (unsigned)strtoul(argv[3],NULL,10); scenario = (unsigned)strtoul(argv[4],NULL,10);
-  if (mode > 475 || scenario > 39) return 2;
-  variant = mode/28; mode %= 28; native_2x = variant == 5; conditional_color = variant == 6; factor_variant = variant >= 7 ? variant-7 : UINT32_MAX; if (variant >= 5) variant = 0;
+  if (mode > 559 || scenario > 39) return 2;
+  variant = mode/28; query = variant >= 17 ? variant-16 : 0; mode %= 28; native_2x = variant == 5; conditional_color = variant == 6; factor_variant = variant >= 7 && variant <= 16 ? variant-7 : UINT32_MAX; if (variant >= 5) variant = 0;
   if (argc == 6) guest_msaa = (unsigned)strtoul(argv[5],NULL,10);
   if (guest_msaa > 2) return 2;
   sample_count = guest_msaa ? native_2x && guest_msaa == 1 ? 2 : 4 : 1;
@@ -188,6 +188,7 @@ int main(int argc, char **argv) {
     static const float vertex_constants[12] = {.5f,-.5f,0,0, .5f,.5f,3,4, 4,4,4,4};
     memcpy((unsigned char *)mapped+2560,vertex_constants,sizeof(vertex_constants));
   }
+  if (query) ((uint32_t *)mapped)[768/4+2] = 3u|(3u<<13);
   ((float *)data)[8] = .0625f; ((float *)data)[9] = .125f; ((float *)data)[10] = .25f; ((float *)data)[11] = .5f;
   ((float *)data)[14] = .125f; ((float *)data)[15] = .25f;
   ID3D12Resource_Unmap(upload,0,NULL); mapped = NULL;
@@ -256,15 +257,21 @@ int main(int argc, char **argv) {
     for (i = 0; i < 5; ++i) {
       if (i == 4 && sample_count > 1) continue;
       for (j = 0; j < 4; ++j) expected[j] = conditional_color && !i ? 0 : float_constants[i*4+j];
-      if (i == 1 && ((mode%14 >= 7 && !variant) || variant == 3)) { expected[0] = (float)x; expected[1] = (float)y; expected[2] = 0; expected[3] = 0;
+      if (i == 1 && ((mode%14 >= 7 && !variant && !query) || variant == 3)) { expected[0] = (float)x; expected[1] = (float)y; expected[2] = 0; expected[3] = 0;
         if (variant == 3) { expected[1] = -expected[1]; expected[2] = ((float)x+.5f)/160; expected[3] = ((float)y+.5f)/48; }
       }
       if (i == 1 && variant && variant != 3) { expected[0] = ((float)x+.5f)/160; expected[1] = ((float)y+.5f)/48; expected[2] = 3; expected[3] = 4; if (variant == 4) for (j = 0; j < 4; ++j) expected[j] += 4; }
+      if (i == 3 && query) {
+        if (query == 2) { expected[0] = 1.0f/160; expected[1] = expected[2] = 0; expected[3] = 1.0f/48; }
+        else { expected[0] = ((float)x+.5f)/160; expected[1] = ((float)y+.5f)/48;
+          for (j = 0; j < 2; ++j) { if (query == 1) expected[j] *= 4; expected[j] += -.5f+1.5f/1024; expected[j] -= (float)floor((double)expected[j]); }
+          expected[2] = expected[3] = 0; }
+      }
       if (i < 4) for (j = 0; j < 4; ++j) { if (scenario == 4) expected[j] *= (float)(1u<<i);
   if (scenario == 3 && j < 3) expected[j] = gamma_value(expected[j]); }
-      else { expected[0] = mode >= 14 ? .375f : .25f;
-  if (mode < 14 && mode%7 >= 4) expected[0] += .125f;
-  if (mode%7 == 2 || mode%7 == 3 || mode%7 == 5 || mode%7 == 6) { if (mode < 14) expected[0] = expected[0]*2 > 1 ? 1 : expected[0]*2; expected[0] *= .5f; } }
+      else { expected[0] = mode >= 14 && !query ? .375f : .25f;
+  if ((mode < 14 || query) && mode%7 >= 4) expected[0] += .125f;
+  if (mode%7 == 2 || mode%7 == 3 || mode%7 == 5 || mode%7 == 6) { if (mode < 14 || query) expected[0] = expected[0]*2 > 1 ? 1 : expected[0]*2; expected[0] *= .5f; } }
       if (!i && factor_variant != UINT32_MAX) {
         static const unsigned factors[10] = {0,1,4,5,6,7,12,13,14,15};
         memcpy(unmultiplied,expected,sizeof(expected));
@@ -276,7 +283,7 @@ int main(int argc, char **argv) {
         /* Floating resolve may discard NaN contributions. Other lanes and
          * the exact counter still verify whether the NaN alpha test passed. */
         if (sample_count > 1 && i < 4 && (expected_bits&0x7fffffff)>0x7f800000) continue;
-        if (data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j] != expected_bits && !((expected_bits&0x7fffffff)>0x7f800000 && (data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j]&0x7fffffff)>0x7f800000) && !(passed && i == 1 && variant && (scenario != 3 || j == 3) && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) < .00001) && !(sample_count > 1 && i < 4 && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) <= .000002*(fabs((double)expected[j])+1))) { fprintf(stderr,"RT%u %u,%u component%u: %08lX != %08lX\n",i,x,y,j,(unsigned long)data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j],(unsigned long)expected_bits); status = E_FAIL; goto done; }
+        if (data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j] != expected_bits && !((expected_bits&0x7fffffff)>0x7f800000 && (data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j]&0x7fffffff)>0x7f800000) && !(passed && i == 1 && variant && (scenario != 3 || j == 3) && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) < .00001) && !(passed && i == 3 && query && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) < .00001) && !(sample_count > 1 && i < 4 && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) <= .000002*(fabs((double)expected[j])+1))) { fprintf(stderr,"RT%u %u,%u component%u: %08lX != %08lX\n",i,x,y,j,(unsigned long)data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j],(unsigned long)expected_bits); status = E_FAIL; goto done; }
       }
     }
   }

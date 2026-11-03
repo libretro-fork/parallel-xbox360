@@ -1,13 +1,73 @@
 /* Native texture operations. MSVC C89; BSD license, see LICENSE.
  * Guest encodings follow ucode.h, copyright Ben Vanik and contributors. */
 #include "guest_texture.h"
+#include "guest_resources.h"
 #include <dxil_module.h>
 #include <dxil_function.h>
+int xe_dxil_texture_query_supported(unsigned opcode, unsigned pixel_shader) {
+  return opcode == 19 || (opcode == 18 && pixel_shader);
+}
 
 static int signed_field(uint32_t value, unsigned shift, unsigned width) {
   unsigned mask = (1u << width) - 1;
   int field = (int)((value >> shift) & mask);
   return field & (1u << (width - 1)) ? field - (int)(1u << width) : field;
+}
+static XeDxilValue weights_field(XeDxilAlu *s, XeDxilValue word, unsigned shift, unsigned mask) {
+  XeDxilValue value = word ? dxil_emit_binop(s->module,DXIL_BINOP_LSHR,word,
+    dxil_module_get_int32_const(s->module,(int32_t)shift),0) : NULL;
+  return value ? dxil_emit_binop(s->module,DXIL_BINOP_AND,value,
+    dxil_module_get_int32_const(s->module,(int32_t)mask),0) : NULL;
+}
+int xe_dxil_texture_weights(XeDxilAlu *s, const XeDxilTextureInstruction *instruction,
+    const XeDxilTextureOperands *operands, XeDxilValue fetch_constants, XeDxilValue result[4]) {
+  struct dxil_module *m;
+  const struct dxil_func *fraction;
+  XeDxilValue packed = NULL, dimension = NULL, size, size_3d, value, args[2];
+  unsigned count, i;
+  if (!s || !s->module || s->failed || !instruction || !operands || !result ||
+      instruction->opcode != 19 || instruction->constant_index > 31 || instruction->dimension > 3 ||
+      operands->result_components > 15) return 0;
+  m = s->module; count = instruction->dimension == 0 ? 1 : instruction->dimension == 2 ? 3 : 2;
+  fraction = dxil_get_function(m,"dx.op.unary",DXIL_F32);
+  if (!instruction->unnormalized) {
+    if (!fetch_constants) goto fail;
+    packed = xe_dxil_cbuffer_word(s,fetch_constants,
+      dxil_module_get_int32_const(m,(int32_t)(instruction->constant_index*6+2)));
+    if (!packed) goto fail;
+    if (instruction->dimension == 2) {
+      value = xe_dxil_cbuffer_word(s,fetch_constants,
+        dxil_module_get_int32_const(m,(int32_t)(instruction->constant_index*6+5)));
+      value = weights_field(s,value,9,3);
+      dimension = value ? dxil_emit_cmp(m,DXIL_ICMP_EQ,value,dxil_module_get_int32_const(m,2)) : NULL;
+      if (!dimension) goto fail;
+    }
+  }
+  for (i = 0; i < 4; ++i) {
+    result[i] = dxil_module_get_float_const(m,0);
+    if (i >= count || !(operands->result_components&(1u<<i))) continue;
+    value = operands->coordinates[i];
+    if (!value || dxil_value_get_type(value) != dxil_module_get_float_type(m,32)) goto fail;
+    if (!instruction->unnormalized) {
+      size = weights_field(s,packed,instruction->dimension == 0 ? 0 : i*13,
+        instruction->dimension == 0 ? 0xffffff : i == 2 ? 63 : 8191);
+      if (instruction->dimension == 2) {
+        size_3d = weights_field(s,packed,i*11,i == 2 ? 1023 : 2047);
+        size = size && size_3d ? dxil_emit_select(m,dimension,size_3d,size) : NULL;
+      }
+      size = size ? dxil_emit_binop(m,DXIL_BINOP_ADD,size,dxil_module_get_int32_const(m,1),0) : NULL;
+      size = size ? dxil_emit_cast(m,DXIL_CAST_UITOFP,dxil_module_get_float_type(m,32),size) : NULL;
+      value = size ? dxil_emit_binop(m,DXIL_BINOP_MUL,value,size,0) : NULL;
+    }
+    value = value ? dxil_emit_binop(m,DXIL_BINOP_ADD,value,dxil_module_get_float_const(m,
+      (float)instruction->offset_halves[i]*.5f-.5f+1.5f/1024.0f),0) : NULL;
+    args[0] = dxil_module_get_int32_const(m,22); args[1] = value;
+    result[i] = fraction && args[0] && value ? dxil_emit_call(m,fraction,args,2) : NULL;
+    if (!result[i]) goto fail;
+  }
+  return 1;
+fail:
+  s->failed = 1; return 0;
 }
 
 int xe_dxil_decode_texture(const uint32_t *words, size_t count, XeDxilTextureInstruction *out) {

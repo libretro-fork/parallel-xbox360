@@ -132,8 +132,9 @@ static XeDxilValue loop_constant(void *context, unsigned index) {
 static int texture_fetch(void *context, const XeDxilTextureInstruction *instruction,
     const XeDxilTextureOperands *operands, XeDxilValue values[4]) {
   XeDxilGuestProgram *p = (XeDxilGuestProgram *)context;
-  return p->options.texture && p->options.texture(p->options.context, &p->alu, &p->io,
+  if (p->options.texture) return p->options.texture(p->options.context, &p->alu, &p->io,
     instruction, operands, p->serialized, values);
+  return xe_dxil_texture_weights(&p->alu,instruction,operands,p->resources.fetch_constants,values);
 }
 static int fetch(void *context, const uint32_t *words, unsigned serialized, XeDxilAlu *alu, XeDxilAluIo *io) {
   XeDxilGuestProgram *p = (XeDxilGuestProgram *)context;

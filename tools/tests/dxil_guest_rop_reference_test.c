@@ -35,13 +35,13 @@ int main(int argc, char **argv) {
   float slope;
   float destination[4] = {-24,.25f,70000,.5f}, output[4], biased[4], depth;
   uint32_t constants[128], counters[64], *golden, *initial, old[2], packed[2];
-  unsigned variant, mode, config, scenario, msaa, sx, sy, width, height, words, bytes, tile_words, pitch;
+  unsigned query, variant, mode, config, scenario, msaa, sx, sy, width, height, words, bytes, tile_words, pitch;
   unsigned x, y, sample, rt, j, f, u, v, address, base, covered = 0, passed, failed_depth, failed_stencil;
   int ok;
   if (argc != 5) return 2;
   mode = (unsigned)strtoul(argv[2],NULL,10); config = (unsigned)strtoul(argv[3],NULL,10); scenario = (unsigned)strtoul(argv[4],NULL,10);
-  msaa = config&3; if (msaa > 2 || (mode != 0 && mode != 14 && mode != 168 && mode != 182) || scenario > 1144) return 2;
-  variant = mode/28; mode %= 28;
+  msaa = config&3; if (msaa > 2 || (mode != 0 && mode != 14 && mode != 168 && mode != 182 && mode != 476 && mode != 504 && mode != 532) || scenario > 1144) return 2;
+  variant = mode/28; query = variant >= 17 ? variant-16 : 0; mode %= 28;
   sx = config&4 ? 2 : 1; sy = config&4 ? 3 : 1; width = (scenario >= 1143 ? 64u : 80u)*sx; height = (scenario >= 1143 ? 8u : 16u)*sy;
   tile_words = 1280*sx*sy; words = (scenario == 3 ? 2048u : 48u)*tile_words; bytes = words*4; pitch = 2*tile_words;
   golden = (uint32_t *)malloc(bytes); initial = (uint32_t *)malloc(bytes); if (!golden || !initial) { free(golden); free(initial); return 1; }
@@ -55,7 +55,8 @@ int main(int argc, char **argv) {
     if (scenario == 6 || scenario == 14) { constants[0] |= 1u<<22; constants[36] = constants[37] = 3u<<3; }
     if (scenario == 7) { constants[0] |= 1u<<22; constants[0] &= ~(7u<<18); constants[0] |= 7u<<18; }
   }
-  constants[100] = scenario;
+  if (query == 2 && scenario == 10) constants[7] = color_bits(4);
+  constants[100] = scenario; constants[101] = query; constants[102] = formats[(((config>>3)&15)%12+3)%12];
   if (scenario >= 1141) { constants[0] &= ~(7u<<18); constants[0] |= 7u<<18; }
   if (scenario == 1141) constants[0] |= 1u<<10;
   if (scenario == 1142) { constants[14] = color_bits(.125f); constants[15] = color_bits(.25f); }
@@ -85,9 +86,9 @@ int main(int argc, char **argv) {
     base = (v/(16*sy))*pitch+(u/(80*sx))*tile_words+(v%(16*sy))*(80*sx);
     address = base+(u%(80*sx)+40*sx)%(80*sx);
     if ((scenario >= 4 && scenario <= 7) || (scenario >= 13 && scenario <= 15) || scenario >= 1141) {
-      depth = mode >= 14 ? .375f : .25f;
-      if (mode < 14 && scenario == 1142) depth += .125f;
-      if (mode < 14 && scenario >= 1143) {
+      depth = mode >= 14 && !query ? .375f : .25f;
+      if ((mode < 14 || query) && scenario == 1142) depth += .125f;
+      if ((mode < 14 || query) && scenario >= 1143) {
         slope = .125f/(float)width;
         depth = .125f+slope*((float)x+.5f); depth += slope*(scenario == 1144 ? 8.0f : 4.0f);
         if (msaa) depth += slope*sample_x[msaa == 1 && sample == 1 ? 3 : sample];
@@ -103,13 +104,20 @@ int main(int argc, char **argv) {
       address = constants[40+rt]+(color_words(f) == 1 ? base+u%(80*sx) : (v/(16*sy))*pitch*2+(u/(40*sx))*tile_words+(v%(16*sy))*(80*sx)+2*(u%(40*sx)));
       address %= words;
       for (j = 0; j < 4; ++j) output[j] = source[rt][j]*(scenario == 10 ? (float)(1u<<rt) : 1);
+      if (rt == 3 && query) {
+        if (query == 2) { output[0] = 1.0f/(float)width; output[1] = output[2] = 0; output[3] = 1.0f/(float)height; }
+        else { output[0] = ((float)x+.5f)/(float)width; output[1] = ((float)y+.5f)/(float)height;
+          for (j = 0; j < 2; ++j) { if (query == 1) output[j] *= 4; output[j] += -.5f+1.5f/1024; output[j] -= (float)floor((double)output[j]); }
+          output[2] = output[3] = 0; }
+        if (scenario == 10) for (j = 0; j < 4; ++j) output[j] *= query == 2 ? 4 : 8;
+      }
       old[0] = golden[address]; old[1] = golden[address+1];
       if (scenario >= 16 && scenario <= 1140 && !(config&128)) { memcpy(biased,output,sizeof(biased)); blended(f,constants[44+rt],biased,old,output); }
       color_pack(f,output,packed);
       for (j = 0; j < color_words(f); ++j) golden[address+j] = (old[j]&constants[48+rt*2+j]) | (packed[j]&~constants[48+rt*2+j]);
     }
   }
-  if (scenario != 12) { counters[14] = passed ? covered : 0; if (!(config&256)) { counters[13] = failed_depth ? (mode < 14 ? width*height*(1u<<msaa) : covered) : 0; counters[15] = failed_stencil ? (mode < 14 ? width*height*(1u<<msaa) : covered) : 0; } }
+  if (scenario != 12) { counters[14] = passed ? covered : 0; if (!(config&256)) { counters[13] = failed_depth ? (mode < 14 || query ? width*height*(1u<<msaa) : covered) : 0; counters[15] = failed_stencil ? (mode < 14 || query ? width*height*(1u<<msaa) : covered) : 0; } }
   ok = write_file(argv[1],".initial",initial,bytes) && write_file(argv[1],".expected",golden,bytes) && write_file(argv[1],".constants",constants,sizeof(constants)) && write_file(argv[1],".colors",source,sizeof(source)) && write_file(argv[1],".counters",counters,sizeof(counters));
   free(initial); free(golden); return !ok;
 }
