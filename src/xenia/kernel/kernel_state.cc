@@ -34,7 +34,7 @@
 #include "xenia/kernel/xthread.h"
 #include "xenia/kernel/xtimer.h"
 
-#include "third_party/crypto/TinySHA1.hpp"
+#include <lrc_hash.h>
 
 DEFINE_bool(apply_title_update, true, "Apply title updates.", "Kernel");
 DEFINE_bool(allow_incompatible_title_update, false,
@@ -892,10 +892,9 @@ bool KernelState::IsPatchSignatureProper(
 
   // Compare hash inside delta descriptor to base XEX signature
   uint8_t digest[0x14];
-  sha1::SHA1 s;
-  s.processBytes(title_module->xex_module()->xex_security_info()->rsa_signature,
-                 0x100);
-  s.finalize(digest);
+  SHA1Digest(reinterpret_cast<const uint8_t*>(
+                 title_module->xex_module()->xex_security_info()->rsa_signature),
+             0x100, digest);
 
   if (memcmp(digest, patch_header->digest_source, 0x14) != 0) {
     XELOGW(

@@ -181,6 +181,9 @@ target_compile_definitions(snappy PRIVATE HAVE_CONFIG_H)
 # ==============================================================================
 add_library(retro-common STATIC
   libretro-common/hash/lrc_hash.c
+  libretro-common/crypto/crypto.c
+  libretro-common/crypto/kdf.c
+  libretro-common/utils/md5.c
   libretro-common/encodings/encoding_xxh3.c
   libretro-common/encodings/encoding_xxh64.c
   libretro-common/encodings/encoding_rzstd.c
@@ -233,6 +236,7 @@ add_library(zarchive STATIC
   ../libretro/core_file.c
   ../libretro/core_zarchive.c
   ../libretro/core_xex_metadata.c
+  ../libretro/core_crypto.c
   zarchive/include/zarchive/zarchivecommon.h
   zarchive/include/zarchive/zarchivewriter.h
   zarchive/src/zarchivewriter.cpp

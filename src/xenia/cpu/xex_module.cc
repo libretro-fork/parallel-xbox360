@@ -34,7 +34,7 @@
 #include "xenia/kernel/util/xex2_util.h"
 #include "xenia/kernel/xmodule.h"
 
-#include "third_party/crypto/TinySHA1.hpp"
+#include <lrc_hash.h>
 #include "third_party/crypto/rijndael-alg-fst.c"
 #include "third_party/crypto/rijndael-alg-fst.h"
 #include "xenia/cpu/ppc/ppc_decode_data.h"
@@ -428,15 +428,12 @@ int XexModule::ApplyPatch(XexModule* module) {
   }
 
   uint8_t digest[0x14];
-  sha1::SHA1 s;
   // Now loop through each block and apply the delta patches inside
   while (cur_block->block_size) {
     const auto* next_block = (const xex2_compressed_block_info*)p;
 
     // Compare block hash, if no match we probably used wrong decrypt key
-    s.reset();
-    s.processBytes(p, cur_block->block_size);
-    s.finalize(digest);
+    SHA1Digest(p, cur_block->block_size, digest);
 
     if (memcmp(digest, cur_block->block_hash, 0x14) != 0) {
       result_code = 9;
@@ -698,7 +695,6 @@ int XexModule::ReadImageCompressed(const void* xex_addr, size_t xex_length) {
   uint8_t* compress_buffer = NULL;
   const uint8_t* p = NULL;
   uint8_t* d = NULL;
-  sha1::SHA1 s;
 
   // Decrypt (if needed).
   bool free_input = false;
@@ -739,9 +735,7 @@ int XexModule::ReadImageCompressed(const void* xex_addr, size_t xex_length) {
     const auto* next_block = (const xex2_compressed_block_info*)p;
 
     // Compare block hash, if no match we probably used wrong decrypt key
-    s.reset();
-    s.processBytes(p, cur_block->block_size);
-    s.finalize(block_calced_digest);
+    SHA1Digest(p, cur_block->block_size, block_calced_digest);
     if (memcmp(block_calced_digest, cur_block->block_hash, 0x14) != 0) {
       result_code = 2;
       break;
@@ -1208,15 +1202,10 @@ bool XexModule::LoadContinue() {
 }
 
 void XexModule::Precompile() {
-  sha1::SHA1 final_image_sha_;
-
-  final_image_sha_.reset();
-
   unsigned high_code = this->high_address_ - this->low_address_;
 
-  final_image_sha_.processBytes(memory()->TranslateVirtual(this->low_address_),
-                                high_code);
-  final_image_sha_.finalize(image_sha_bytes_);
+  SHA1Digest(memory()->TranslateVirtual(this->low_address_), high_code,
+             image_sha_bytes_);
 
   image_sha_str_.clear();
   for (unsigned i = 0; i < sizeof(image_sha_bytes_); ++i) {

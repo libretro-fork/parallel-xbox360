@@ -95,3 +95,14 @@ unaligned and alias-safe words. Only incomplete blocks enter the state buffer.
 Hashes above record pristine upstream bytes before these changes.
 Scalar SHA-256 uses a 16-word local rolling schedule; CPU dispatch is once per batch.
 Imported header indentation expanded to spaces for repository whitespace rules.
+
+Crypto import from RetroArch f3316c77d8dafd329cdcdfec4d553a571b806b61.
+Selected HMAC/key-derivation unit, its crypto_memzero helper unit and MD5 dependency.
+Original SHA256 bytes before whitespace normalization:
+e8ab1ff515ae5ec5eb49430da59664a8faed89c3d0e6aa5fb08da1c8268bcf60  crypto/crypto.c
+8c2eb8ba0a08479dc48ec8089d22788dbb6595f27f18da3b1ee436a56fd26efe  crypto/kdf.c
+6e21a4170c655573b3a4a715e899101a653c61e841af22a0f41f3abacb7475b0  utils/md5.c
+c0416b7b41c607525ea5ad27d1aa356082b3739b79e15cdc031dce742ba5c0ac  include/crypto/crypto.h
+625df188e6cdfd9fd50e50e7b4276a3bc7f29d4dcc71d756e7706bcf1d58513d  include/crypto/kdf.h
+MD5 source indentation expanded to spaces to satisfy repository whitespace rules.
+Crypto header scope comment adapted for the selected always-built core primitives.

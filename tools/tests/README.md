@@ -950,3 +950,19 @@ the bridge and production `src/xenia/vfs/xex_metadata.cc`, and define
 projection into the final metadata/string, including an embedded NUL. Linux
 function sections plus linker garbage collection allow testing these overloads
 without the unused native-path adapter and filesystem dependency graph.
+
+`core_crypto_test.c` verifies the C89 account-crypto boundary using independent
+HMAC-SHA1 known answers (including a key longer than one block), all three-span
+split positions, every output length through 25 bytes, output canaries, input/key
+aliasing and invalid-span failure. A 128-bit RC4 known answer, exact in-place
+round trip, short keys/output and both partial-overlap directions cover the
+account-file cipher. Full HMAC digests go directly to caller storage; truncated
+digests require only 20 bytes of scratch. The account decryptor retains its
+private verification buffer so failed authentication cannot publish partial data.
+
+`core_sha1_test.c` with the minimal `core_sha1_bridge.cc` compares the previous
+TinySHA1 implementation with the production common one-shot and streamed hashes.
+It tests all lengths below 1024, unaligned input and additional lengths through
+1 MiB. The reference header remains needed by guest-state crypto during migration;
+the bridge is transitional test infrastructure. These are byte-compatibility
+checks, not gameplay or throughput measurements.
