@@ -70,6 +70,7 @@ int main(int argc, char **argv) {
   ID3D12CommandQueue *queue = NULL; ID3D12CommandAllocator *allocator = NULL;
   ID3D12GraphicsCommandList *list = NULL; ID3D12CommandList *commands[1]; ID3D12Fence *fence = NULL;
   ID3D12Resource *upload = NULL, *output = NULL, *readback = NULL;
+  ID3D12Resource *domain_memory = NULL, *domain_readback = NULL;
   ID3DBlob *serialized = NULL, *errors = NULL; HANDLE event = NULL;
   D3D12_ROOT_SIGNATURE_DESC root_desc; D3D12_ROOT_PARAMETER parameters[10];
   D3D12_SO_DECLARATION_ENTRY declarations[4]; D3D12_STREAM_OUTPUT_BUFFER_VIEW stream; UINT stride = 64;
@@ -87,7 +88,7 @@ int main(int argc, char **argv) {
   constants = read_file(argv[1],".constants",&constants_size); system = read_file(argv[argc >= 3 ? 2 : 1],".system",&system_size);
   expected = read_file(argv[1],".expected",&expected_size);
   if (!vs || (domain_mode ? (!hs || !ds) : !ps) || !constants || !system || !expected || constants_size != 256 || (system_size != 256 && system_size != 768) || expected_size != 128) goto done;
-  constant_offset = system_size; initial_offset = constant_offset+256; output_bytes = domain_mode ? 8320 : 128; upload_bytes = initial_offset+output_bytes;
+  constant_offset = system_size; initial_offset = constant_offset+256; output_bytes = domain_mode ? 8320 : 128; upload_bytes = initial_offset+output_bytes+(domain_mode ? 128 : 0);
   if (SUCCEEDED(D3D12GetDebugInterface(&IID_ID3D12Debug,(void **)&debug))) ID3D12Debug_EnableDebugLayer(debug);
   CHECK(CreateDXGIFactory1(&IID_IDXGIFactory4,(void **)&factory));
   CHECK(IDXGIFactory4_EnumWarpAdapter(factory,&IID_IDXGIAdapter,(void **)&adapter));
@@ -122,9 +123,14 @@ int main(int argc, char **argv) {
   CHECK(buffer(device,D3D12_HEAP_TYPE_UPLOAD,upload_bytes,D3D12_RESOURCE_STATE_GENERIC_READ,0,&upload));
   CHECK(buffer(device,D3D12_HEAP_TYPE_DEFAULT,output_bytes,D3D12_RESOURCE_STATE_COPY_DEST,1,&output));
   CHECK(buffer(device,D3D12_HEAP_TYPE_READBACK,output_bytes,D3D12_RESOURCE_STATE_COPY_DEST,0,&readback));
+  if (domain_mode) {
+    CHECK(buffer(device,D3D12_HEAP_TYPE_DEFAULT,128,D3D12_RESOURCE_STATE_COPY_DEST,1,&domain_memory));
+    CHECK(buffer(device,D3D12_HEAP_TYPE_READBACK,128,D3D12_RESOURCE_STATE_COPY_DEST,0,&domain_readback));
+  }
   memset(&range,0,sizeof(range)); CHECK(ID3D12Resource_Map(upload,0,&range,(void **)&mapped));
   memset(mapped,0,upload_bytes); memcpy(mapped,system,system_size); memcpy(mapped+constant_offset,constants,256);
   if (!domain_mode) for (i = 0; i < 32; ++i) ((uint32_t *)(mapped+initial_offset))[i] = 0xa5c39e71;
+  if (domain_mode) for (i = 0; i < 32; ++i) ((uint32_t *)(mapped+initial_offset+output_bytes))[i] = 0xa5c39e71;
   ID3D12Resource_Unmap(upload,0,NULL); mapped = NULL;
   memset(&queue_desc,0,sizeof(queue_desc)); CHECK(ID3D12Device_CreateCommandQueue(device,&queue_desc,&IID_ID3D12CommandQueue,(void **)&queue));
   CHECK(ID3D12Device_CreateCommandAllocator(device,D3D12_COMMAND_LIST_TYPE_DIRECT,&IID_ID3D12CommandAllocator,(void **)&allocator));
@@ -133,12 +139,17 @@ int main(int argc, char **argv) {
   memset(&barrier,0,sizeof(barrier)); barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barrier.Transition.pResource = output;
   barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST; barrier.Transition.StateAfter = domain_mode ? D3D12_RESOURCE_STATE_STREAM_OUT : D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
   ID3D12GraphicsCommandList_ResourceBarrier(list,1,&barrier);
+  if (domain_mode) {
+    ID3D12GraphicsCommandList_CopyBufferRegion(list,domain_memory,0,upload,initial_offset+output_bytes,128);
+    barrier.Transition.pResource = domain_memory; barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    ID3D12GraphicsCommandList_ResourceBarrier(list,1,&barrier); barrier.Transition.pResource = output;
+  }
   ID3D12GraphicsCommandList_SetGraphicsRootSignature(list,root);
-  ID3D12GraphicsCommandList_SetGraphicsRootUnorderedAccessView(list,0,ID3D12Resource_GetGPUVirtualAddress(output));
-  ID3D12GraphicsCommandList_SetGraphicsRootShaderResourceView(list,1,ID3D12Resource_GetGPUVirtualAddress(output));
+  ID3D12GraphicsCommandList_SetGraphicsRootUnorderedAccessView(list,0,ID3D12Resource_GetGPUVirtualAddress(domain_mode ? domain_memory : output));
+  ID3D12GraphicsCommandList_SetGraphicsRootShaderResourceView(list,1,ID3D12Resource_GetGPUVirtualAddress(domain_mode ? domain_memory : output));
   for (i = 2; i < 7; ++i) ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(list,i,ID3D12Resource_GetGPUVirtualAddress(upload)+(i == 2 ? 0 : constant_offset));
-  ID3D12GraphicsCommandList_SetGraphicsRootUnorderedAccessView(list,7,ID3D12Resource_GetGPUVirtualAddress(output));
-  ID3D12GraphicsCommandList_SetGraphicsRootUnorderedAccessView(list,8,ID3D12Resource_GetGPUVirtualAddress(output));
+  ID3D12GraphicsCommandList_SetGraphicsRootUnorderedAccessView(list,7,ID3D12Resource_GetGPUVirtualAddress(domain_mode ? domain_memory : output));
+  ID3D12GraphicsCommandList_SetGraphicsRootUnorderedAccessView(list,8,ID3D12Resource_GetGPUVirtualAddress(domain_mode ? domain_memory : output));
   memset(&viewport,0,sizeof(viewport)); viewport.Width = viewport.Height = 1; viewport.MaxDepth = 1;
   if (((uint32_t *)system)[63]) { viewport.Width = (float)(((uint32_t *)system)[63]&255); viewport.Height = (float)(((uint32_t *)system)[63]>>8); }
   scissor.left = scissor.top = 0; scissor.right = (LONG)viewport.Width; scissor.bottom = (LONG)viewport.Height;
@@ -153,19 +164,37 @@ int main(int argc, char **argv) {
   ID3D12GraphicsCommandList_DrawInstanced(list,domain_mode ? points : 1,1,0,0);
   barrier.Transition.StateBefore = domain_mode ? D3D12_RESOURCE_STATE_STREAM_OUT : D3D12_RESOURCE_STATE_UNORDERED_ACCESS; barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
   ID3D12GraphicsCommandList_ResourceBarrier(list,1,&barrier); ID3D12GraphicsCommandList_CopyBufferRegion(list,readback,0,output,0,output_bytes);
+  if (domain_mode) {
+    barrier.Transition.pResource = domain_memory; barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    ID3D12GraphicsCommandList_ResourceBarrier(list,1,&barrier);
+    ID3D12GraphicsCommandList_CopyBufferRegion(list,domain_readback,0,domain_memory,0,128);
+  }
   CHECK(ID3D12GraphicsCommandList_Close(list)); commands[0] = (ID3D12CommandList *)list; ID3D12CommandQueue_ExecuteCommandLists(queue,1,commands);
   CHECK(ID3D12Device_CreateFence(device,0,D3D12_FENCE_FLAG_NONE,&IID_ID3D12Fence,(void **)&fence));
   event = CreateEvent(NULL,FALSE,FALSE,NULL); if (!event) { status = E_FAIL; goto done; }
   CHECK(ID3D12CommandQueue_Signal(queue,fence,1)); CHECK(ID3D12Fence_SetEventOnCompletion(fence,1,event));
   if (WaitForSingleObject(event,30000) != WAIT_OBJECT_0) { status = E_FAIL; goto done; }
   range.Begin = 0; range.End = output_bytes; CHECK(ID3D12Resource_Map(readback,0,&range,(void **)&mapped));
-  if (domain_mode) { if (!domain_output(mapped,config)) { status = E_FAIL; goto done; } }
+  if (domain_mode) {
+    i = (unsigned)domain_output(mapped,config); ID3D12Resource_Unmap(readback,0,NULL); mapped = NULL;
+    if (!i) { status = E_FAIL; goto done; }
+  }
   else for (i = 0; i < 32; ++i) if (((uint32_t *)mapped)[i] != ((uint32_t *)expected)[i]) {
     fprintf(stderr,"Word %u: %08lX != %08lX\n",i,(unsigned long)((uint32_t *)mapped)[i],(unsigned long)((uint32_t *)expected)[i]); status = E_FAIL; goto done;
   }
-  puts(domain_mode ? "Native guest domain: all stream-output coordinates and indices matched." : "Native guest graphics exports: all 128 bytes matched.");
+  if (domain_mode) {
+    range.End = 128;
+    CHECK(ID3D12Resource_Map(domain_readback,0,&range,(void **)&mapped));
+    for (i = 0; i < 32; ++i) if (((uint32_t *)mapped)[i] != ((uint32_t *)expected)[i]) {
+      fprintf(stderr,"Domain export word %u: %08lX != %08lX\n",i,(unsigned long)((uint32_t *)mapped)[i],(unsigned long)((uint32_t *)expected)[i]);
+      status = E_FAIL;
+    }
+    ID3D12Resource_Unmap(domain_readback,0,NULL); mapped = NULL;
+    if (FAILED(status)) goto done;
+  }
+  puts(domain_mode ? "Native guest domain: stream output and memory exports matched." : "Native guest graphics exports: all 128 bytes matched.");
 done:
-  if (mapped && readback) ID3D12Resource_Unmap(readback,0,NULL);
+  if (mapped) ID3D12Resource_Unmap(domain_mode ? domain_readback : readback,0,NULL);
   if (info) {
     UINT64 n, total = ID3D12InfoQueue_GetNumStoredMessages(info);
     for (n = 0; n < total; ++n) {
@@ -177,6 +206,7 @@ done:
   }
   if (event) CloseHandle(event);
   RELEASE(fence,ID3D12Fence); RELEASE(list,ID3D12GraphicsCommandList); RELEASE(allocator,ID3D12CommandAllocator); RELEASE(queue,ID3D12CommandQueue);
+  RELEASE(domain_memory,ID3D12Resource); RELEASE(domain_readback,ID3D12Resource);
   RELEASE(upload,ID3D12Resource); RELEASE(output,ID3D12Resource); RELEASE(readback,ID3D12Resource);
   RELEASE(pipeline,ID3D12PipelineState); RELEASE(root,ID3D12RootSignature); RELEASE(serialized,ID3D10Blob); RELEASE(errors,ID3D10Blob);
   RELEASE(info,ID3D12InfoQueue); RELEASE(device,ID3D12Device); RELEASE(adapter,IDXGIAdapter); RELEASE(factory,IDXGIFactory4); RELEASE(debug,ID3D12Debug);

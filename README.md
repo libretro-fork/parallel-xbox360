@@ -111,7 +111,8 @@ Every platform in `.gitlab-ci.yml` has an explicit selection:
 
 `platform=unix` (the default) selects Windows x86_64 in MSYS2/MinGW/Cygwin shells,
 the native Linux architecture on Linux, or Apple Silicon on macOS. `unix-arm64` and
-`windows` are aliases. Android defaults to API 28 and links the static C++
+`windows` are aliases. Info-cache updates do not require libc++ `atomic_ref` support.
+Android defaults to API 28 and links the static C++
 runtime with 16 KB page alignment. `CC` and `CXX` override the target compilers;
 `HOST_CC` compiles the native C89 build tool for the build host. `CC`, `CXX` and
 `AR` default to GCC/G++ and GNU ar; their environment or command-line settings

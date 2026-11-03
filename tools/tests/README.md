@@ -640,12 +640,12 @@ while the backing resource is in its write state.
 
 ### Native guest domain shaders
 
-`make check-dxil-guest-domain DXIL_VALIDATOR=/path/to/dxv` checks 70 domain
+`make check-dxil-guest-domain DXIL_VALIDATOR=/path/to/dxv` checks 90 domain
 containers and optimized C89 compilation. Modes 0..3 select triangle CP/patch
 and quad CP/patch layouts. Add 4 for continuous tessellation or 8 for adaptive
 (patch modes 9 and 11 only). Flags 16/32 add an actual texture fetch or memory
 export, 64 adds six clip planes, and 128 adds cull planes, point size and vertex
-kill output. Flag 240 combines all those interfaces. Texture/export combinations
+kill output. Flag 240 combines all those interfaces. Texture-bearing variants
 are container checks; the domain GPU runs do not claim textured gameplay.
 
 The `dxil-guest-domain-test prefix config` fixture writes `.ds`, `.system`,
@@ -664,7 +664,10 @@ patch indices. All corners must appear, and vertex counts must match the chosen
 tessellator partition. Factor-2 fractional-even triangle patches form six
 triangles around a center; factor-2 quads form an eight-triangle grid. The GPU
 matrix covers ten supported mode/layout combinations, each with ordinary,
-clip-plane, cull/kill/point-size and combined output interfaces (40 executions).
+clip-plane and cull/kill/point-size interfaces, with and without memory exports
+(60 executions). Exports write a known float4 into a separate UAV; all 32 words
+are checked, including untouched sentinels. Stream output has its own buffer
+and resource state.
 The raw host helpers use b0/space0 with pinned system offsets; guest stages use
 b0/space1, so both root bindings alias the same existing constant upload.
 There is no intermediate SPIR-V conversion or owned copy of the static helpers.

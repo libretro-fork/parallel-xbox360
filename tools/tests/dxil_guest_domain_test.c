@@ -58,7 +58,7 @@ int main(int argc, char **argv) {
   if (flags&32) {
     o.program.memexport_mask = 1; o.program.float_constant_count = 2;
     slot = 3+(slots++)*3; words[slot] = (50u<<26)|(15u<<16)|(1u<<15)|32; words[slot+2] = (2u<<24)|(1u<<16)|(1u<<8);
-    slot = 3+(slots++)*3; words[slot] = (50u<<26)|(15u<<16)|(1u<<15)|33; words[slot+2] = 0xc2000000;
+    slot = 3+(slots++)*3; words[slot] = (50u<<26)|(15u<<16)|(1u<<15)|33; words[slot+2] = 2u<<24;
   }
   if (flags&64) { o.clip_planes = 6; o.clip_planes_word = 16; }
   if (flags&128) { o.clip_planes = 0; o.cull_planes = 6; o.clip_planes_word = 16; o.point_size = o.vertex_kill = o.vertex_kill_and = 1; }
@@ -67,6 +67,11 @@ int main(int argc, char **argv) {
   system[128] = system[129] = bits(mode ? 2.0f : 1.0f); system[133] = 17; system[135] = 0xffffff;
   constants[2] = bits(.5f); constants[3] = bits(1);
   for (i = 0; i < 32; ++i) expected[i] = 0xa5c39e71;
+  if (flags&32) {
+    constants[4] = 0x40000001; constants[5] = 0x4b000001;
+    constants[6] = 0x4b002600; constants[7] = 0x4b000002;
+    for (i = 0; i < 4; ++i) expected[5+i] = constants[i];
+  }
   binary = xe_dxil_build_guest_vertex_owned(&o,words,3+slots*3,2); if (!binary) return 1;
   result = write_file(argv[1],".ds",binary->data,binary->size) && write_file(argv[1],".system",system,sizeof(system)) &&
     write_file(argv[1],".constants",constants,sizeof(constants)) && write_file(argv[1],".expected",expected,sizeof(expected)) &&

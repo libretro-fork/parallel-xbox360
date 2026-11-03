@@ -277,8 +277,8 @@ $(BUILD_DIR)/$(TARGET): $(FRONTEND_OBJECTS) $(CORE_ARCHIVE) libretro/link.T
 export HOST_BUILD_SIGNATURE := $(HOST_CC)|$(HOST_CFLAGS)
 $(HOST_DIR)/config: FORCE
 	@mkdir -p "$(@D)"
-	@printf '%s\n' "$$HOST_BUILD_SIGNATURE" > "$@.tmp"; \
-	if cmp -s "$@.tmp" "$@"; then rm -f "$@.tmp"; else mv "$@.tmp" "$@"; fi
+	@temporary="$@.tmp.$$$$"; printf '%s\n' "$$HOST_BUILD_SIGNATURE" > "$$temporary"; \
+	if cmp -s "$$temporary" "$@"; then rm -f "$$temporary"; else mv "$$temporary" "$@"; fi
 $(CODEGEN): tools/build/core_codegen.c tools/build/core_deflate.c $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c89 tools/build/core_codegen.c tools/build/core_deflate.c -o "$@"
@@ -749,7 +749,7 @@ $(HOST_DIR)/dxil-guest-domain-test$(HOST_EXEEXT): tools/tests/dxil_guest_domain_
 
 .PHONY: check-dxil-guest-domain check-dxil-domain-c89
 check-dxil-guest-domain: $(HOST_DIR)/dxil-guest-domain-test$(HOST_EXEEXT) check-dxil-domain-c89 check-dxil-alu-c89
-	@set -e; for mode in 0 1 2 3 4 5 6 7 9 11; do for flags in 0 16 32 48 64 128 240; do \
+	@set -e; for mode in 0 1 2 3 4 5 6 7 9 11; do for flags in 0 16 32 48 64 96 128 160 240; do \
 	  config=$$((mode+flags)); path="$(HOST_DIR)/dxil-guest-domain-$$config"; $< "$$path" $$config; \
 	  $(DXIL_VALIDATOR) "$$path.ds" -o="$$path.ds.validated"; cmp "$$path.ds" "$$path.ds.validated"; \
 	done; done
