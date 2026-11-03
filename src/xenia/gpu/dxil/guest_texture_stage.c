@@ -34,12 +34,12 @@ int xe_dxil_texture_layout_add(XeDxilTextureLayout *l, const XeDxilTextureInstru
   unsigned sign, needed = 0; XeDxilSamplerBinding *s; XeDxilTextureBinding *t; int sampler;
   if (!layout_valid(l) || !i || i->constant_index > 31) return 0;
   if (xe_dxil_texture_query_supported(i->opcode,pixel)) return 1;
-  if (i->opcode != 1 || i->dimension != 1 || i->mag_filter > 3 || i->min_filter > 3 || i->mip_filter > 3 || i->aniso_filter > 7) return 0;
-  for (sign = 0; sign < 2; ++sign) if (xe_dxil_texture_layout_texture(l,i->constant_index,1,sign) < 0) ++needed;
+  if (i->opcode != 1 || (i->dimension > 1 && i->dimension != 3) || i->mag_filter > 3 || i->min_filter > 3 || i->mip_filter > 3 || i->aniso_filter > 7) return 0;
+  for (sign = 0; sign < 2; ++sign) if (xe_dxil_texture_layout_texture(l,i->constant_index,i->dimension == 3 ? 3 : 1,sign) < 0) ++needed;
   sampler = xe_dxil_texture_layout_sampler(l,i,pixel);
   if (needed > XE_DXIL_TEXTURE_BINDINGS_MAX-l->texture_count || (sampler < 0 && l->sampler_count == XE_DXIL_SAMPLER_BINDINGS_MAX)) return 0;
-  for (sign = 0; sign < 2; ++sign) if (xe_dxil_texture_layout_texture(l,i->constant_index,1,sign) < 0) {
-    t = &l->textures[l->texture_count++]; t->fetch_constant = i->constant_index; t->dimension = 1; t->is_signed = sign;
+  for (sign = 0; sign < 2; ++sign) if (xe_dxil_texture_layout_texture(l,i->constant_index,i->dimension == 3 ? 3 : 1,sign) < 0) {
+    t = &l->textures[l->texture_count++]; t->fetch_constant = i->constant_index; t->dimension = i->dimension == 3 ? 3 : 1; t->is_signed = sign;
   }
   if (sampler < 0) { s = &l->samplers[l->sampler_count++]; s->fetch_constant = i->constant_index;
     s->mag_filter = i->mag_filter; s->min_filter = i->min_filter; s->mip_filter = i->mip_filter; s->aniso_filter = aniso(i,pixel); }
@@ -50,8 +50,8 @@ struct XeDxilTextureStage {
   XeDxilShaderModule *shader;
   XeDxilAlu alu;
   XeDxilTextureStageOptions options;
-  XeDxilValue system, fetch, indices, signs[32], integer_bits[32], constants[32][3];
-  unsigned texture_resource, sampler_resource, current_block;
+  XeDxilValue system, fetch, indices, signs[32], integer_bits[32], constants[32][4];
+  unsigned texture_resource[4], sampler_resource, current_block;
 };
 typedef struct XeDxilTextureStage TextureStage;
 static XeDxilValue ic(TextureStage *t, uint32_t v) { return dxil_module_get_int32_const(t->alu.module,(int32_t)v); }
@@ -85,31 +85,54 @@ static XeDxilValue maximum(TextureStage *t, XeDxilValue a, XeDxilValue b) {
   v = function && a && b ? dxil_emit_call(t->alu.module,function,args,3) : NULL; if (!v) t->alu.failed = 1; return v;
 }
 static void begin(TextureStage *t, unsigned block) { t->alu.module->cur_emitting_func->basic_block_ids[block] = (int)t->alu.module->cur_emitting_func->curr_block; t->current_block = block; }
+/* All metadata loads dominate guest control flow. Reuse each 16-byte CBV
+ * vector and extract a constant lane instead of emitting dynamic lane selects. */
+static XeDxilValue cached_word(TextureStage *t, XeDxilValue handle, unsigned word,
+    unsigned base_vector, XeDxilValue *vectors, unsigned count) {
+  const struct dxil_func *function; XeDxilValue args[3], value; unsigned vector = word/4;
+  if (vector < base_vector || vector-base_vector >= count) { t->alu.failed = 1; return NULL; }
+  vector -= base_vector;
+  if (!vectors[vector]) {
+    function = dxil_get_function(t->alu.module,"dx.op.cbufferLoadLegacy",DXIL_I32);
+    args[0] = ic(t,59); args[1] = handle; args[2] = ic(t,word/4);
+    vectors[vector] = function ? dxil_emit_call(t->alu.module,function,args,3) : NULL;
+  }
+  value = vectors[vector] ? dxil_emit_extractval(t->alu.module,vectors[vector],word%4) : NULL;
+  if (!value) t->alu.failed = 1;
+  return value;
+}
 XeDxilTextureStage *xe_dxil_texture_stage_create(XeDxilShaderModule *shader, XeDxilValue system,
     XeDxilValue fetch, const XeDxilTextureStageOptions *o) {
-  TextureStage *t; struct dxil_module *m; unsigned n, j, words, seen = 0; int resource;
+  TextureStage *t; struct dxil_module *m; unsigned n, j, words, dimension, declared = 0, seen = 0; int resource;
+  XeDxilValue fetch_vectors[48], sign_vectors[3], integer_vectors[9];
   if (!shader || !system || !fetch || !o || !layout_valid(o->layout) || !o->layout->texture_count || !o->layout->sampler_count || o->system_constants_bytes > 65536) return NULL;
   m = xe_dxil_shader_module(shader); if (!m || m->minor_version < 6 || !m->cur_emitting_func || m->cur_emitting_func->curr_block ||
       (o->pixel_shader ? m->shader_kind != DXIL_PIXEL_SHADER : (m->shader_kind != DXIL_VERTEX_SHADER && m->shader_kind != DXIL_COMPUTE_SHADER))) return NULL;
   t = (TextureStage *)calloc(1,sizeof(*t)); if (!t) return NULL;
+  memset((void *)fetch_vectors,0,sizeof(fetch_vectors)); memset((void *)sign_vectors,0,sizeof(sign_vectors)); memset((void *)integer_vectors,0,sizeof(integer_vectors));
   t->shader = shader; t->options = *o; t->system = system; t->fetch = fetch; xe_dxil_alu_init(&t->alu,m); words = o->system_constants_bytes/4;
   resource = xe_dxil_shader_resource(shader,XE_DXIL_RESOURCE_SRV,DXIL_RESOURCE_KIND_RAW_BUFFER,0,o->pixel_shader ? 3 : 2,1,0);
   if (resource < 0) goto fail;
   t->indices = xe_dxil_resource_handle(&t->alu,XE_DXIL_RESOURCE_SRV,(unsigned)resource,o->pixel_shader ? 3 : 2);
-  resource = xe_dxil_shader_resource(shader,XE_DXIL_RESOURCE_SRV,DXIL_RESOURCE_KIND_TEXTURE2D_ARRAY,o->pixel_shader ? 3 : 2,0,1,0);
-  if (resource < 0) goto fail;
-  t->texture_resource = (unsigned)resource;
+  for (n = 0; n < o->layout->texture_count; ++n) {
+    dimension = o->layout->textures[n].dimension;
+    if (dimension != 1 && dimension != 3) goto fail;
+    if (declared&(1u<<dimension)) continue;
+    resource = xe_dxil_shader_resource(shader,XE_DXIL_RESOURCE_SRV,dimension == 3 ? DXIL_RESOURCE_KIND_TEXTURECUBE : DXIL_RESOURCE_KIND_TEXTURE2D_ARRAY,o->pixel_shader ? 3 : 2,dimension-1,1,0);
+    if (resource < 0) goto fail;
+    t->texture_resource[dimension] = (unsigned)resource; declared |= 1u<<dimension;
+  }
   resource = xe_dxil_shader_resource(shader,XE_DXIL_RESOURCE_SAMPLER,DXIL_RESOURCE_KIND_SAMPLER,o->pixel_shader ? 3 : 2,0,1,0);
   if (resource < 0) goto fail;
   t->sampler_resource = (unsigned)resource;
   for (n = 0; n < o->layout->texture_count; ++n) {
     unsigned f = o->layout->textures[n].fetch_constant;
-    if (f > 31 || o->layout->textures[n].dimension != 1 || o->layout->textures[n].is_signed > 1 || o->signs_word >= words || f/4 >= words-o->signs_word || o->integer_scale_word >= words || f >= words-o->integer_scale_word) goto fail;
+    if (f > 31 || (o->layout->textures[n].dimension != 1 && o->layout->textures[n].dimension != 3) || o->layout->textures[n].is_signed > 1 || o->signs_word >= words || f/4 >= words-o->signs_word || o->integer_scale_word >= words || f >= words-o->integer_scale_word) goto fail;
     if (seen&(1u<<f)) continue;
     seen |= 1u<<f;
-    t->signs[f] = field(t,xe_dxil_cbuffer_word(&t->alu,system,ic(t,o->signs_word+f/4)),(f%4)*8,255);
-    t->integer_bits[f] = xe_dxil_cbuffer_word(&t->alu,system,ic(t,o->integer_scale_word+f));
-    for (j = 0; j < 3; ++j) t->constants[f][j] = xe_dxil_cbuffer_word(&t->alu,fetch,ic(t,f*6+2+j));
+    t->signs[f] = field(t,cached_word(t,system,o->signs_word+f/4,o->signs_word/4,sign_vectors,3),(f%4)*8,255);
+    t->integer_bits[f] = cached_word(t,system,o->integer_scale_word+f,o->integer_scale_word/4,integer_vectors,9);
+    for (j = 0; j < 4; ++j) t->constants[f][j] = cached_word(t,fetch,f*6+2+j,0,fetch_vectors,48);
   }
   if (!t->indices || t->alu.failed) goto fail;
   return t;
@@ -124,7 +147,7 @@ static int sample_if(TextureStage *t, XeDxilValue condition, unsigned binding, u
   if (!condition || !dxil_function_reserve_blocks(m,2,&blocks) || !dxil_emit_branch(m,condition,blocks,blocks+1)) return 0;
   begin(t,blocks);
   index = xe_dxil_raw_buffer_load(&t->alu,t->indices,ic(t,binding*8));
-  sample.texture = xe_dxil_shader_heap_handle(t->shader,XE_DXIL_RESOURCE_SRV,t->texture_resource,index,0);
+  sample.texture = xe_dxil_shader_heap_handle(t->shader,XE_DXIL_RESOURCE_SRV,t->texture_resource[sample.dimension == XE_DXIL_SAMPLE_CUBE ? 3 : 1],index,0);
   index = xe_dxil_raw_buffer_load(&t->alu,t->indices,ic(t,(t->options.layout->texture_count+sampler)*8+4));
   sample.sampler = xe_dxil_shader_heap_handle(t->shader,XE_DXIL_RESOURCE_SAMPLER,t->sampler_resource,index,0);
   if (!xe_dxil_texture_sample(&t->alu,&sample,values) || !dxil_emit_branch(m,NULL,blocks+1,0)) return 0;
@@ -139,6 +162,20 @@ static int sample_if(TextureStage *t, XeDxilValue condition, unsigned binding, u
 static unsigned point_allowed(const XeDxilTextureInstruction *i, unsigned pixel) {
   return i->mag_filter != 1 && i->min_filter != 1 && i->mip_filter != 1 &&
     (!computed_lod(i,pixel) || i->aniso_filter == 0 || i->aniso_filter == 7);
+}
+static void cube_coordinates(TextureStage *t, XeDxilTextureSample *sample, XeDxilValue face, int offset) {
+  XeDxilValue s, v, ns, nv, axis, negative, sign, x, y, z;
+  s = bin(t,DXIL_BINOP_ADD,bin(t,DXIL_BINOP_MUL,sample->coordinates[0],fc(t,2)),fc(t,-3));
+  v = bin(t,DXIL_BINOP_ADD,bin(t,DXIL_BINOP_MUL,sample->coordinates[1],fc(t,2)),fc(t,-3));
+  face = maximum(t,bin(t,DXIL_BINOP_ADD,face,fc(t,(float)offset*.5f)),fc(t,0));
+  face = pick(t,cmp(t,DXIL_FCMP_OLT,face,fc(t,5)),face,fc(t,5));
+  face = cast(t,DXIL_CAST_FPTOUI,0,face);
+  axis = bin(t,DXIL_BINOP_LSHR,face,ic(t,1)); negative = cmp(t,DXIL_ICMP_NE,bin(t,DXIL_BINOP_AND,face,ic(t,1)),ic(t,0));
+  sign = pick(t,negative,fc(t,-1),fc(t,1)); ns = bin(t,DXIL_BINOP_SUB,fc(t,0),s); nv = bin(t,DXIL_BINOP_SUB,fc(t,0),v);
+  x = pick(t,cmp(t,DXIL_ICMP_EQ,axis,ic(t,0)),sign,pick(t,cmp(t,DXIL_ICMP_EQ,axis,ic(t,1)),s,pick(t,negative,ns,s)));
+  y = pick(t,cmp(t,DXIL_ICMP_EQ,axis,ic(t,1)),sign,nv);
+  z = pick(t,cmp(t,DXIL_ICMP_EQ,axis,ic(t,0)),pick(t,negative,s,ns),pick(t,cmp(t,DXIL_ICMP_EQ,axis,ic(t,1)),pick(t,negative,nv,v),sign));
+  sample->coordinates[0] = x; sample->coordinates[1] = y; sample->coordinates[2] = z;
 }
 static XeDxilValue sign_transform(TextureStage *t, XeDxilValue sign, XeDxilValue integer_bits,
     unsigned component, XeDxilValue value) {
@@ -231,25 +268,32 @@ static int numeric_format(TextureStage *t, XeDxilValue bits, unsigned used, unsi
 }
 int xe_dxil_texture_stage_fetch(XeDxilTextureStage *stage, XeDxilAlu *alu, XeDxilAluIo *io,
     const XeDxilTextureInstruction *i, const XeDxilTextureOperands *op, XeDxilValue result[4]) {
-  TextureStage *t = stage; XeDxilTextureSample sample; XeDxilValue sizes[2], coordinates[2], grad_coordinates[2], lod, scale, shift, value, snap, signs[4], any_signed, any_unsigned, unsigned_values[4], signed_values[4], exponent;
-  unsigned f, j, point, computed; int texture[2], sampler;
+  TextureStage *t = stage; XeDxilTextureSample sample; XeDxilValue sizes[2], coordinates[2], grad_coordinates[2], original_width, actual_1d, wide, rows, linear_x, row, lod, scale, shift, value, snap, signs[4], any_signed, any_unsigned, unsigned_values[4], signed_values[4], exponent;
+  unsigned f, j, point, computed, components; int texture[2], sampler;
   if (!t || !alu || alu->module != t->alu.module || !io || !io->current_block || !i || !op || !result) return 0;
   if (i->opcode == 19) return xe_dxil_texture_weights(alu,i,op,t->fetch,result);
-  if (i->opcode != 1 || i->dimension != 1 || i->constant_index > 31 || op->coordinate_count < 2) return 0;
+  if (i->opcode != 1 || (i->dimension > 1 && i->dimension != 3) || i->constant_index > 31 || !op->coordinate_count || (i->dimension && op->coordinate_count < (i->dimension == 3 ? 3u : 2u))) return 0;
   f = i->constant_index; if (!t->signs[f] || !t->integer_bits[f]) return 0;
-  for (j = 0; j < 2; ++j) { texture[j] = xe_dxil_texture_layout_texture(t->options.layout,f,1,j); if (texture[j] < 0) return 0; }
+  for (j = 0; j < 2; ++j) { texture[j] = xe_dxil_texture_layout_texture(t->options.layout,f,i->dimension == 3 ? 3 : 1,j); if (texture[j] < 0) return 0; }
   sampler = xe_dxil_texture_layout_sampler(t->options.layout,i,t->options.pixel_shader); if (sampler < 0) return 0;
   t->current_block = *io->current_block; point = point_allowed(i,t->options.pixel_shader); computed = computed_lod(i,t->options.pixel_shader);
   memset(&sample,0,sizeof(sample)); sample.dimension = XE_DXIL_SAMPLE_2D_ARRAY; sample.mode = computed ? XE_DXIL_SAMPLE_GRAD : XE_DXIL_SAMPLE_LEVEL;
-  snap = !i->unnormalized && point ? cmp(t,DXIL_ICMP_NE,field(t,t->integer_bits[f],26,1),ic(t,0)) : dxil_module_get_int1_const(t->alu.module,0);
+  components = !i->dimension && op->coordinate_count == 1 ? 1 : 2;
+  actual_1d = original_width = NULL;
+  if (!i->dimension) {
+    actual_1d = cmp(t,DXIL_ICMP_EQ,field(t,t->constants[f][3],9,3),ic(t,0));
+    original_width = bin(t,DXIL_BINOP_ADD,field(t,t->constants[f][0],0,16777215),ic(t,1));
+  }
+  snap = i->dimension == 1 && !i->unnormalized && point ? cmp(t,DXIL_ICMP_NE,field(t,t->integer_bits[f],26,1),ic(t,0)) : dxil_module_get_int1_const(t->alu.module,0);
   for (j = 0; j < 2; ++j) {
     sizes[j] = bin(t,DXIL_BINOP_ADD,field(t,t->constants[f][0],j*13,8191),ic(t,1));
-    if (i->unnormalized) {
+    if (!i->dimension) sizes[j] = components == 1 ? (j ? ic(t,1) : original_width) : pick(t,actual_1d,j ? ic(t,1) : original_width,sizes[j]);
+    if (i->unnormalized && i->dimension == 1) {
       shift = field(t,t->constants[f][2],2,15); value = bin(t,DXIL_BINOP_LSHR,sizes[j],shift);
       value = pick(t,cmp(t,DXIL_ICMP_NE,value,ic(t,0)),value,ic(t,1));
       sizes[j] = pick(t,cmp(t,DXIL_ICMP_EQ,shift,field(t,t->constants[f][2],6,15)),value,sizes[j]);
     }
-    sizes[j] = cast(t,DXIL_CAST_UITOFP,1,sizes[j]); value = op->coordinates[j];
+    sizes[j] = cast(t,DXIL_CAST_UITOFP,1,sizes[j]); value = j < components ? op->coordinates[j] : fc(t,0);
     if (i->unnormalized) coordinates[j] = bin(t,DXIL_BINOP_SDIV,bin(t,DXIL_BINOP_ADD,value,fc(t,(float)i->offset_halves[j]*.5f)),sizes[j]);
     else coordinates[j] = bin(t,DXIL_BINOP_ADD,value,bin(t,DXIL_BINOP_SDIV,fc(t,(float)i->offset_halves[j]*.5f),sizes[j]));
     grad_coordinates[j] = !i->unnormalized && point ? coordinates[j] : bin(t,DXIL_BINOP_ADD,coordinates[j],bin(t,DXIL_BINOP_SDIV,fc(t,1.5f/1024),sizes[j]));
@@ -257,20 +301,46 @@ int xe_dxil_texture_stage_fetch(XeDxilTextureStage *stage, XeDxilAlu *alu, XeDxi
       bin(t,DXIL_BINOP_SDIV,bin(t,DXIL_BINOP_ADD,unary(t,27,bin(t,DXIL_BINOP_MUL,coordinates[j],sizes[j])),fc(t,.5f)),sizes[j]),
       bin(t,DXIL_BINOP_ADD,coordinates[j],bin(t,DXIL_BINOP_SDIV,fc(t,1.5f/1024),sizes[j])));
   }
+  if (components == 1) { sample.coordinates[1] = coordinates[1] = grad_coordinates[1] = fc(t,0); }
+  if (!i->dimension) {
+    wide = bin(t,DXIL_BINOP_AND,actual_1d,cmp(t,DXIL_ICMP_UGT,original_width,ic(t,8192)));
+    original_width = cast(t,DXIL_CAST_UITOFP,1,original_width);
+    rows = unary(t,28,bin(t,DXIL_BINOP_SDIV,original_width,fc(t,8192)));
+    rows = pick(t,cmp(t,DXIL_FCMP_OLT,rows,fc(t,64)),rows,fc(t,64));
+    linear_x = bin(t,DXIL_BINOP_MUL,sample.coordinates[0],original_width);
+    row = unary(t,27,bin(t,DXIL_BINOP_SDIV,linear_x,fc(t,8192)));
+    value = bin(t,DXIL_BINOP_SDIV,bin(t,DXIL_BINOP_SUB,linear_x,bin(t,DXIL_BINOP_MUL,row,fc(t,8192))),fc(t,8192));
+    sample.coordinates[0] = pick(t,wide,value,sample.coordinates[0]);
+    value = bin(t,DXIL_BINOP_SDIV,bin(t,DXIL_BINOP_ADD,row,fc(t,.5f)),rows);
+    sample.coordinates[1] = pick(t,wide,value,sample.coordinates[1]);
+    if (components == 1 || (computed && !i->register_gradients)) { grad_coordinates[0] = sample.coordinates[0]; grad_coordinates[1] = sample.coordinates[1]; }
+  }
   sample.coordinates[2] = fc(t,0);
+  if (i->dimension == 3) { sample.dimension = XE_DXIL_SAMPLE_CUBE; cube_coordinates(t,&sample,op->coordinates[2],i->offset_halves[2]); }
   lod = bin(t,DXIL_BINOP_MUL,cast(t,DXIL_CAST_SITOFP,1,signed_bits(t,t->constants[f][2],12,10)),fc(t,1.0f/32));
   if (i->register_lod) lod = bin(t,DXIL_BINOP_ADD,op->lod,lod);
   if (i->lod_bias_sixteenths) lod = bin(t,DXIL_BINOP_ADD,lod,fc(t,(float)i->lod_bias_sixteenths/16));
+  if (i->dimension == 3 && computed && !i->register_gradients) {
+    value = signed_bits(t,t->constants[f][2],22,5); shift = signed_bits(t,t->constants[f][2],27,5);
+    value = pick(t,cmp(t,DXIL_ICMP_SGT,value,shift),value,shift);
+    lod = bin(t,DXIL_BINOP_ADD,lod,cast(t,DXIL_CAST_SITOFP,1,value)); sample.mode = XE_DXIL_SAMPLE_BIAS;
+  }
   sample.lod_or_bias = lod;
-  if (computed) for (j = 0; j < 2; ++j) {
+  if (computed && sample.mode == XE_DXIL_SAMPLE_GRAD) for (j = 0; j < (i->dimension == 3 ? 3u : 2u); ++j) {
     shift = signed_bits(t,t->constants[f][2],22,5);
     scale = unary(t,21,bin(t,DXIL_BINOP_ADD,lod,cast(t,DXIL_CAST_SITOFP,1,shift)));
-    sample.ddx[j] = bin(t,DXIL_BINOP_MUL,i->register_gradients ?
-      (i->unnormalized ? bin(t,DXIL_BINOP_SDIV,op->ddx[j],sizes[j]) : op->ddx[j]) : unary(t,83,grad_coordinates[j]),scale);
+    sample.ddx[j] = bin(t,DXIL_BINOP_MUL,i->register_gradients && (components > 1 || !t->options.pixel_shader) ?
+      (i->dimension == 3 ? op->ddx[j] : j >= components ? fc(t,0) : i->unnormalized ? bin(t,DXIL_BINOP_SDIV,op->ddx[j],sizes[j]) : op->ddx[j]) : unary(t,83,grad_coordinates[j]),scale);
     shift = signed_bits(t,t->constants[f][2],27,5);
     scale = unary(t,21,bin(t,DXIL_BINOP_ADD,lod,cast(t,DXIL_CAST_SITOFP,1,shift)));
-    sample.ddy[j] = bin(t,DXIL_BINOP_MUL,i->register_gradients ?
-      (i->unnormalized ? bin(t,DXIL_BINOP_SDIV,op->ddy[j],sizes[j]) : op->ddy[j]) : unary(t,84,grad_coordinates[j]),scale);
+    sample.ddy[j] = bin(t,DXIL_BINOP_MUL,i->register_gradients && (components > 1 || !t->options.pixel_shader) ?
+      (i->dimension == 3 ? op->ddy[j] : j >= components ? fc(t,0) : i->unnormalized ? bin(t,DXIL_BINOP_SDIV,op->ddy[j],sizes[j]) : op->ddy[j]) : unary(t,84,grad_coordinates[j]),scale);
+  }
+  if (!i->dimension && computed && i->register_gradients && (components > 1 || !t->options.pixel_shader)) {
+    scale = pick(t,wide,bin(t,DXIL_BINOP_SDIV,original_width,fc(t,8192)),fc(t,1));
+    sample.ddx[0] = bin(t,DXIL_BINOP_MUL,sample.ddx[0],scale);
+    sample.ddy[0] = bin(t,DXIL_BINOP_MUL,sample.ddy[0],scale);
+    sample.ddx[1] = pick(t,wide,fc(t,0),sample.ddx[1]); sample.ddy[1] = pick(t,wide,fc(t,0),sample.ddy[1]);
   }
   any_signed = any_unsigned = dxil_module_get_int1_const(t->alu.module,0);
   for (j = 0; j < 4; ++j) {

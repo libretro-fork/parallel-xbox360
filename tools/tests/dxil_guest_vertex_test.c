@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
   FILE *file;
   int result;
   if (argc != 3) return 2;
-  config = (unsigned)strtoul(argv[2],NULL,10); if (config > 10) return 2;
+  config = (unsigned)strtoul(argv[2],NULL,10); if (config > 13) return 2;
   memset(&options,0,sizeof(options)); memcpy(words,code,sizeof(code));
   options.program.context = &observed; options.program.export_written = observed_export;
   options.program.register_count = 2; options.program.float_constant_count = 2;
@@ -47,10 +47,12 @@ int main(int argc, char **argv) {
   }
   if (config >= 9) {
     memset(&layout,0,sizeof(layout)); memset(&textures,0,sizeof(textures)); memset(&instruction,0,sizeof(instruction));
-    instruction.opcode = 1; instruction.dimension = 1;
+    instruction.opcode = 1; instruction.dimension = config == 11 || config == 12 ? 3 : config == 13 ? 0 : 1; instruction.computed_lod = instruction.register_gradients = config == 12;
     if (!xe_dxil_texture_layout_add(&layout,&instruction,0)) return 1;
     textures.layout = &layout; textures.system_constants_bytes = 256; textures.signs_word = 40; textures.integer_scale_word = 48;
     options.textures = &textures;
+    if (config == 11 || config == 12) { words[11] = 3u<<14; if (config == 12) { words[10] |= 1u<<28; words[11] |= 1; } }
+    if (config == 13) { words[9] &= ~(63u<<26); words[11] = 0; }
   }
   binary = xe_dxil_build_guest_vertex_owned(&options,words,sizeof(words)/4,2);
   if (config == 8) { if (!binary) return 0; xe_dxil_shader_binary_delete(binary); return 1; }

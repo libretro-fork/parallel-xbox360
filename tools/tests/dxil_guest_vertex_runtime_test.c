@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
   if (argc != 7) return 2;
   config = (unsigned)strtoul(argv[2],NULL,10); flags = (unsigned)strtoul(argv[3],NULL,10);
   endian = (unsigned)strtoul(argv[4],NULL,10); base = (int32_t)strtol(argv[5],NULL,10); kill = (unsigned)strtoul(argv[6],NULL,10);
-  if (config > 10 || flags > 7 || endian > 3 || kill > 3) return 2;
+  if ((config > 10 && config != 13) || flags > 7 || endian > 3 || kill > 3) return 2;
   clips = config == 1 ? 6 : config == 3 ? 3 : 0;
   culls = config == 1 ? 1 : config == 2 ? 7 : 0;
   point = config >= 1 && config <= 4; interpolators = config == 5 ? 3 : 1; components = 4+interpolators*4+clips+culls+point; stride = components*4;
@@ -174,7 +174,7 @@ int main(int argc, char **argv) {
   words = (uint32_t *)((unsigned char *)mapped+512); ((float *)words)[0] = 2;
   for (i = 0; i < 4; ++i) ((float *)words)[4+i] = (float)(11+i);
   words[2] = kill == 1 ? 0x3f800000 : kill == 2 ? 0x80000000 : kill == 3 ? 1 : 0;
-  words = (uint32_t *)((unsigned char *)mapped+1024); words[0] = 2; words[1] = 64; if (config >= 6) words[2] = 3u|(3u<<13);
+  words = (uint32_t *)((unsigned char *)mapped+1024); words[0] = 2; words[1] = 64; if (config >= 6) words[2] = config == 13 ? 3u : 3u|(3u<<13);
   if (config >= 9) {
     words[4] = 1u<<6;
     words = (uint32_t *)((unsigned char *)mapped+256); words[48] = 1u<<26;
@@ -256,7 +256,7 @@ int main(int argc, char **argv) {
       }
     }
     if (config >= 9) {
-      float coordinate = config == 9 ? index_float*4 : index_float;
+      float coordinate = config == 9 || config == 13 ? index_float*4 : index_float;
       unsigned tx = coordinate < 0 ? 0 : coordinate >= 4 ? 3 : (unsigned)coordinate;
       expected[n-4] = (float)(tx+1); expected[n-3] = 1; expected[n-2] = (float)(tx+1); expected[n-1] = 1;
     }

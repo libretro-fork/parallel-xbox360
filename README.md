@@ -55,13 +55,14 @@ Guest filtering-weight queries also compile natively in vertex and pixel
 shaders, and pixel gradient queries use native derivatives. Query-only shaders
 need no texture descriptors. Empty descriptor-index tables reuse the existing
 zero buffer instead of allocating and clearing an upload for every draw.
-Native shader-model 6.6 heap sampling now handles guest 2D texture fetches
+Native shader-model 6.6 heap sampling now handles guest 1D, 2D and cube texture fetches
 in vertex and pixel stages at unit draw resolution. Raw fetch constants drive
 coordinate normalization, offsets, explicit/gradient LOD and bias, point
 snapping, signed/unsigned view selection, integer conversion, gamma and exponent
-adjustment. Resource layouts are published once and retained across native and
+adjustment. Wide 1D textures map directly to the cache's bounded row layout;
+cube coordinates convert directly to native directions. Resource layouts are published once and retained across native and
 remaining SPIR-V variants. Only required sign views are sampled, and fetch
-metadata is loaded once per used constant. Other dimensions, scaled sampling,
+metadata is loaded once per used constant. 3D/stacked textures, remaining queries, scaled sampling,
 memory exports and tessellation still use Mesa and its Meson/Python build while
 their replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.

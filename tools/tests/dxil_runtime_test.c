@@ -19,8 +19,8 @@
 typedef struct TextureFixture {
   ID3D12Resource *texture, *upload;
   ID3D12DescriptorHeap *heap, *sampler_heap;
-  unsigned heap_mode, array_mode, policy_mode;
-  D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[2];
+  unsigned heap_mode, array_mode, policy_mode, cube_mode, mixed_mode;
+  D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[12];
 } TextureFixture;
 
 static void release_texture(TextureFixture *fixture) {
@@ -60,8 +60,8 @@ static HRESULT prepare_texture(ID3D12Device *device, const char *path, TextureFi
   D3D12_SAMPLER_DESC sampler;
   D3D12_RANGE range;
   D3D12_CPU_DESCRIPTOR_HANDLE cpu;
-  UINT rows[2];
-  UINT64 row_sizes[2], size;
+  UINT rows[12];
+  UINT64 row_sizes[12], size;
   unsigned char *mapped;
   unsigned mip, row;
   FILE *file;
@@ -69,12 +69,12 @@ static HRESULT prepare_texture(ID3D12Device *device, const char *path, TextureFi
   memset(&heap, 0, sizeof(heap)); heap.Type = D3D12_HEAP_TYPE_DEFAULT;
   heap.CreationNodeMask = 1; heap.VisibleNodeMask = 1;
   memset(&desc, 0, sizeof(desc)); desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-  desc.Width = 4; desc.Height = 4; desc.DepthOrArraySize = 1; desc.MipLevels = 2;
+  desc.Width = 4; desc.Height = 4; desc.DepthOrArraySize = fixture->cube_mode ? 6 : 1; desc.MipLevels = 2;
   desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; desc.SampleDesc.Count = 1;
   status = ID3D12Device_CreateCommittedResource(device, &heap, D3D12_HEAP_FLAG_NONE,
     &desc, D3D12_RESOURCE_STATE_COPY_DEST, NULL, &IID_ID3D12Resource, (void **)&fixture->texture);
   if (FAILED(status)) return status;
-  ID3D12Device_GetCopyableFootprints(device, &desc, 0, 2, 0, fixture->footprints, rows, row_sizes, &size);
+  ID3D12Device_GetCopyableFootprints(device, &desc, 0, fixture->cube_mode ? 12 : 2, 0, fixture->footprints, rows, row_sizes, &size);
   if (size > (UINT64)(size_t)-1) return E_FAIL;
   status = buffer(device, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, (size_t)size, &fixture->upload);
   if (FAILED(status)) return status;
@@ -84,7 +84,7 @@ static HRESULT prepare_texture(ID3D12Device *device, const char *path, TextureFi
   status = ID3D12Resource_Map(fixture->upload, 0, &range, (void **)&mapped);
   if (FAILED(status)) { fclose(file); return status; }
   memset(mapped, 0, (size_t)size);
-  for (mip = 0; mip < 2; ++mip) for (row = 0; row < rows[mip]; ++row) {
+  for (mip = 0; mip < (fixture->cube_mode ? 12u : 2u); ++mip) for (row = 0; row < rows[mip]; ++row) {
     if (fread(mapped + (size_t)fixture->footprints[mip].Offset +
         (size_t)row * fixture->footprints[mip].Footprint.RowPitch, 1,
         (size_t)row_sizes[mip], file) != (size_t)row_sizes[mip]) status = E_FAIL;
@@ -99,12 +99,13 @@ static HRESULT prepare_texture(ID3D12Device *device, const char *path, TextureFi
   status = ID3D12Device_CreateDescriptorHeap(device, &heap_desc, &IID_ID3D12DescriptorHeap, (void **)&fixture->heap);
   if (FAILED(status)) return status;
   memset(&view, 0, sizeof(view)); view.Format = desc.Format;
-  view.ViewDimension = fixture->array_mode ? D3D12_SRV_DIMENSION_TEXTURE2DARRAY : D3D12_SRV_DIMENSION_TEXTURE2D;
+  view.ViewDimension = fixture->cube_mode ? D3D12_SRV_DIMENSION_TEXTURECUBE : fixture->array_mode ? D3D12_SRV_DIMENSION_TEXTURE2DARRAY : D3D12_SRV_DIMENSION_TEXTURE2D;
   if (fixture->array_mode) view.Texture2DArray.ArraySize = 1;
   view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
   view.Texture2D.MipLevels = 2;
   ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(fixture->heap, &cpu);
   for (mip = 0; mip < (fixture->heap_mode ? 4u : 1u); ++mip) {
+    if (fixture->mixed_mode) { view.ViewDimension = mip ? D3D12_SRV_DIMENSION_TEXTURECUBE : D3D12_SRV_DIMENSION_TEXTURE2DARRAY; if (!mip) view.Texture2DArray.ArraySize = 6; }
     view.Texture2D.MostDetailedMip = fixture->heap_mode && mip == 2 ? 1 : 0;
     view.Texture2D.MipLevels = fixture->heap_mode && (mip == 1 || mip == 2) ? 1 : 2;
     ID3D12Device_CreateShaderResourceView(device, fixture->texture, &view, cpu);
@@ -188,7 +189,7 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
     ID3D12GraphicsCommandList_ResourceBarrier(list, 1, &barrier);
   }
   if (texture) {
-    for (mip = 0; mip < 2; ++mip) {
+    for (mip = 0; mip < (texture->cube_mode ? 12u : 2u); ++mip) {
       memset(&source, 0, sizeof(source)); memset(&destination, 0, sizeof(destination));
       source.pResource = texture->upload; source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
       source.PlacedFootprint = texture->footprints[mip];
@@ -366,7 +367,9 @@ int main(int argc, char **argv)
   if (argc < 2 || argc > 6) return 2;
   program_mode = argc == 6 && !strcmp(argv[5], "program");
   resource_mode = argc == 6 && !strcmp(argv[5], "resource-raw");
-  texture.policy_mode = argc == 6 && !strcmp(argv[5], "heap-policy");
+  texture.mixed_mode = argc == 6 && !strcmp(argv[5], "heap-mixed");
+  texture.cube_mode = texture.mixed_mode || (argc == 6 && !strcmp(argv[5], "heap-cube"));
+  texture.policy_mode = texture.cube_mode || (argc == 6 && !strcmp(argv[5], "heap-policy"));
   texture.array_mode = texture.policy_mode || (argc == 6 && !strcmp(argv[5], "heap-array"));
   texture.heap_mode = texture.array_mode || (argc == 6 && !strcmp(argv[5], "heap"));
   raw_mode = program_mode || resource_mode || texture.heap_mode ? 1 : argc == 6 ? !strcmp(argv[5], "resolve") ? 2 : 80 : argc == 4 && !strcmp(argv[3], "raw") ? 1 : 0;
@@ -408,7 +411,7 @@ int main(int argc, char **argv)
   root_desc.NumParameters = argc == 5 || program_mode || resource_mode ? 3 : 1; root_desc.pParameters = parameter;
   if ((argc == 4 && !raw_mode) || (argc == 6 && !program_mode && !resource_mode)) {
     memset(&texture_range, 0, sizeof(texture_range)); texture_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    texture_range.NumDescriptors = 1; texture_range.RegisterSpace = texture.policy_mode ? 2 : 0;
+    texture_range.NumDescriptors = texture.cube_mode ? 3 : 1; texture_range.RegisterSpace = texture.policy_mode ? 2 : 0;
     parameter[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     parameter[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     parameter[1].DescriptorTable.NumDescriptorRanges = 1;

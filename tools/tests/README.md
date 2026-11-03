@@ -485,9 +485,9 @@ direct heaps with barycentrics to check that version selection is preserved.
 
 ## Integrated native guest 2D sampling
 
-`make check-dxil-guest-sampling DXIL_VALIDATOR=/path/to/dxv` validates 30
-C89 sampling-policy containers, 84 complete guest pixel shaders (560..643),
-and two textured guest vertex shaders (9 and 10). All containers must validate
+`make check-dxil-guest-sampling DXIL_VALIDATOR=/path/to/dxv` validates 45
+C89 sampling-policy containers, 224 complete guest pixel shaders (560..783),
+and five textured guest vertex shaders (9..13). All containers must validate
 without changes. Shader logic is separately checked as strict C89.
 
 Run each policy container with `dxil_runtime_test.c` using arguments
@@ -507,8 +507,8 @@ normalized/unnormalized sampling through stream output, preserving positions
 and the export observer. Both use shader-model 6.6 dynamic resource/sampler
 heaps and the renderer's two-dword descriptor-index entry ABI.
 
-Current renderer sampling integration covers 2D at unit draw resolution.
-Other dimensions, scaled sampling, memory export and tessellation still require
+Current renderer sampling integration covers 1D, 2D and cube at unit draw resolution.
+3D/stacked textures, remaining queries, scaled sampling, memory export and tessellation still require
 native implementation; these tests do not establish game compatibility.
 
 `make check-dxil-guest-sampling-rov` validates 108 complete sampled ROV shaders.
@@ -518,3 +518,33 @@ then `dxil-guest-rop-reference-test shader.dxil MODE CONFIG SCENARIO` and
 `dxil-guest-rop-runtime-test shader.dxil shader.dxil.guest.vs CONFIG`.
 Checks include all twelve formats, 1x/2x/4x coverage, masks, depth tests,
 kills and exponent adjustment. Every EDRAM word and query counter is checked.
+
+## Native 1D and cube guest sampling
+
+The guest-sampling target also validates policy modes 30..44, guest pixel modes
+644..783, and vertex configurations 11..13. Vertex configurations 11/12 check
+cube explicit/gradient containers; configuration 13 executes 1D sampling through
+stream output. Pixel groups 23/24/25 check 1D, wide 1D, and promoted wide 1D
+with computed gradients. Groups 26/27 check cube sampling with explicit and
+automatic LOD through the full guest pixel adapter.
+
+`make check-dxil-cube-sampling DXIL_VALIDATOR=/path/to/dxv` validates 20 cube
+policy containers. Run them with the generic GPU harness using
+`shader.dxil shader.dxil.expected shader.dxil.texture shader.dxil.constants heap-cube`.
+The file contains six distinguishable faces, each with two distinguishable mips.
+Checks cover every face orientation, clamped face indices, offsets, unnormalized
+coordinates, signed-view selection and explicit/register-gradient LOD.
+
+The 1D policy fixtures use the existing four-by-four host fixture to isolate
+coordinate remapping independently of physical allocation size. They check both
+sides of a wide row boundary, the row cap, negative coordinates and explicit
+gradients; full-size texture-cache allocation is not covered by these fixtures.
+The complete pixel tests use 1D/wide metadata with the same small image to verify
+raw microcode dispatch, policy output and native pixel epilogues together.
+
+Cube policy case 19 samples both an array view and a cube view of the same
+resource in one shader, with shared fetch metadata and deduplicated samplers.
+Run it with `heap-mixed`; the other cube cases use `heap-cube`. This checks
+mixed resource annotations and descriptor offsets, not just isolated view types.
+Metadata reads reuse their 16-byte CBV vector in the entry block and extract
+constant lanes; the policy and full guest execution suites cover the result.

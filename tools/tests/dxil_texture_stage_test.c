@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
   unsigned test, i, j, current_block = 0, sign, signs = 0, int_bits = 1u<<26, linear = 0, level, width = 8, normalized = 0, integer = 0;
   int status = 1;
   if (argc != 3) return 2;
-  test = (unsigned)strtoul(argv[2],NULL,10); if (test > 29) return 2;
+  test = (unsigned)strtoul(argv[2],NULL,10); if (test > 44) return 2;
   memset(&binary,0,sizeof(binary)); memset(&instruction,0,sizeof(instruction)); memset(&operands,0,sizeof(operands)); memset(&layout,0,sizeof(layout)); memset(&options,0,sizeof(options)); memset(&io,0,sizeof(io)); memset(words,0,sizeof(words)); memset(golden,0,sizeof(golden));
   instruction.opcode = 1; instruction.dimension = 1; instruction.constant_index = 1;
   words[0] = 3; words[2] = 2; words[5] = 0; words[8] = 3u|(3u<<13); words[10] = 1u<<6;
@@ -78,6 +78,20 @@ int main(int argc, char **argv) {
     for (i = 0; i < 4; ++i) { sign = (signs>>(i*2))&3; j = sign == 3 ? 0 : (normalized && sign == 0 && width == 8 ? 0 : width-1)|(sign<<4); int_bits |= j<<(i*6); }
     if (normalized) int_bits |= 1u<<24;
   }
+  if (test >= 30) {
+    instruction.dimension = 0; words[8] = 3; coords[0] = .625f; coords[1] = .625f;
+    if (test == 31) { instruction.unnormalized = 1; coords[0] = 2.5f; }
+    if (test == 33) { words[8] = 3u|(3u<<13); words[11] = 1u<<9; }
+    if (((test >= 34 && test <= 42) || test == 44)) words[8] = 16383;
+    if (test == 35) { instruction.unnormalized = 1; coords[0] = 10240.5f; }
+    if (test == 36 || test == 37) coords[0] = (test == 36 ? 8191.5f : 8192.5f)/16384;
+    if (test == 38) { words[8] = 1048575; coords[0] = .75f; }
+    if (test == 39) words[11] = 1u<<9;
+    if (test == 40) instruction.offset_halves[0] = 1;
+    if (test == 41) coords[0] = -.125f;
+    if (test == 42 || test == 43 || test == 44) { instruction.computed_lod = instruction.register_gradients = 1; ddx[0] = test == 42 || test == 44 ? 1.0f/8192 : .5f; ddx[1] = ddy[0] = ddy[1] = 0; if (test == 43) bias = 1; }
+  }
+  if (test == 44) ddx[1] = .5f;
   words[16] = signs<<8; words[33] = int_bits;
   for (i = 0; i < 16; ++i) for (j = 0; j < 4; ++j) texture[i*4+j] = (float)((i*13+j*37)%256)/255;
   if (width == 4) for (i = 0; i < 64; ++i) texture[i] = (float)((i*3+1)%16)/15;
@@ -85,10 +99,18 @@ int main(int argc, char **argv) {
   if (test == 23) { static const uint32_t special[4] = {0x7fc12345,0x7f800000,0xff800000,0xbf000000}; memcpy(texture,special,16); }
   u = coords[0]; v = coords[1];
   for (i = 0; i < 2; ++i) {
-    float *coordinate = i ? &v : &u; float size = test == 5 ? 2.0f : 4.0f;
+    float *coordinate = i ? &v : &u; float size = test == 5 ? 2.0f : test >= 30 && !(test == 33) ? (i ? 1.0f : (float)(words[8]+1)) : 4.0f;
     *coordinate = instruction.unnormalized ? (*coordinate+(float)instruction.offset_halves[i]*.5f)/size : *coordinate+(float)instruction.offset_halves[i]*.5f/size;
-    if (!instruction.unnormalized && !linear && (int_bits&(1u<<26))) *coordinate = ((float)floor((double)(*coordinate*size))+.5f)/size;
+    if (instruction.dimension == 1 && !instruction.unnormalized && !linear && (int_bits&(1u<<26))) *coordinate = ((float)floor((double)(*coordinate*size))+.5f)/size;
     else *coordinate += 1.5f/1024/size;
+  }
+  if (test >= 30) {
+    if (test != 32 && test != 33 && test != 44) v = 0;
+    if (((test >= 34 && test <= 42) || test == 44) && test != 39) {
+      float size = (float)(words[8]+1), linear_x = u*size, row = (float)floor((double)(linear_x/8192)), rows = (float)ceil((double)(size/8192));
+      if (rows > 64) rows = 64;
+      u = (linear_x-row*8192)/8192; v = (row+.5f)/rows;
+    }
   }
   level = lod+bias >= .5f ? 1 : 0;
   for (i = 0; i < 4; ++i) {
@@ -112,7 +134,7 @@ int main(int argc, char **argv) {
   output = xe_dxil_resource_handle(&alu,1,0,0); constants = xe_dxil_resource_handle(&alu,2,0,1);
   options.layout = &layout; options.system_constants_bytes = sizeof(words); options.signs_word = 16; options.integer_scale_word = 32;
   stage = xe_dxil_texture_stage_create(shader,constants,constants,&options); if (!stage) goto done;
-  operands.coordinate_count = 2; operands.result_components = 15; operands.lod = dxil_module_get_float_const(m,lod);
+  operands.coordinate_count = test >= 30 && test != 32 && test != 33 && test != 44 ? 1 : 2; operands.result_components = 15; operands.lod = dxil_module_get_float_const(m,lod);
   for (i = 0; i < 2; ++i) { operands.coordinates[i] = dxil_module_get_float_const(m,coords[i]); operands.ddx[i] = dxil_module_get_float_const(m,ddx[i]); operands.ddy[i] = dxil_module_get_float_const(m,ddy[i]); }
   if (!xe_dxil_texture_stage_fetch(stage,&alu,&io,&instruction,&operands,result)) goto done;
   for (i = 0; i < 8; ++i) { value = i < 4 ? dxil_emit_cast(m,DXIL_CAST_BITCAST,dxil_module_get_int_type(m,32),result[i]) : dxil_module_get_int32_const(m,0); if (!xe_dxil_raw_buffer_store(&alu,output,dxil_module_get_int32_const(m,(int32_t)(i*4)),value)) goto done; }
