@@ -107,3 +107,10 @@ c0416b7b41c607525ea5ad27d1aa356082b3739b79e15cdc031dce742ba5c0ac  include/crypto
 MD5 source indentation expanded to spaces to satisfy repository whitespace rules.
 Crypto header scope comment adapted for the selected always-built core primitives.
 Local MD5 change: byte-safe little-endian direct reads remove x86 unaligned/aliasing UB.
+
+XML parser import: RetroArch f3316c77d8dafd329cdcdfec4d553a571b806b61 (origin/master verified).
+cd27749d43508333315bc3edbd70b830f0372177ded7d9f92172e38b31621762  formats/xml/rxml.c
+b1ab7251aa3d8eb908feab50ad8da244a77f4bf1802de31d0d6f06ba9dcaad0d  include/formats/rxml.h
+Local XML changes: safe partial-allocation cleanup (also published in RetroArch 7d8c433ba5),
+lazy accumulator allocation and sixteen inline parser frames with checked heap growth.
+d97b1deab898071d7b11d8c10ae90d23b94b37be49eb6755ef9daa5e40cf096d  formats/xml/rxml.c (local source)

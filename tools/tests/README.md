@@ -1031,3 +1031,16 @@ historical finalization yields a different digest. Normal runs also check a
 synthetic boundary counter. Host benchmarks and raw measurements are in
 `results/sha1-9950x3d/README.md`; `run_sha1_benchmark.sh` reproduces them. Timers
 are confined to developer benchmarks.
+
+### XLast metadata
+
+`bash tools/tests/run_xlast_tests.sh` checks the C89 XML/query adapter against
+pugixml extracted from Git history, including text encodings, malformed input,
+localized metadata and query results. It also injects parser/index allocation
+failures and checks cleanup. The Linux default enables ASan/UBSan; use
+`SANITIZER=` with the same runner under MSYS2 MinGW. Native MSVC builds of the
+C adapter and drivers use `/TC /W4 /WX`.
+
+The production core has no pugixml dependency. `run_xlast_benchmark.sh` measures
+construction, destruction and repeated lookups separately; its reference code
+also comes from Git history. Benchmark timers are not part of emulation.

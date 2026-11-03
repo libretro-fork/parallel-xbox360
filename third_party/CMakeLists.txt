@@ -143,14 +143,6 @@ target_include_directories(mspack PUBLIC mspack)
 target_link_libraries(mspack PUBLIC xenia-base)
 
 # ==============================================================================
-# pugixml
-# ==============================================================================
-add_library(pugixml STATIC
-  pugixml/src/pugixml.cpp
-)
-target_include_directories(pugixml PUBLIC pugixml/src)
-
-# ==============================================================================
 # snappy
 # ==============================================================================
 # Snappy configuration is generated into the build directory
@@ -180,6 +172,7 @@ target_compile_definitions(snappy PRIVATE HAVE_CONFIG_H)
 # Selected owned RetroArch libretro-common primitives
 # ==============================================================================
 add_library(retro-common STATIC
+  libretro-common/formats/xml/rxml.c
   libretro-common/hash/lrc_hash.c
   libretro-common/crypto/crypto.c
   libretro-common/crypto/kdf.c

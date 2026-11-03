@@ -155,3 +155,5 @@ third_party/crypto/sha256.h
 third_party/crypto/TinySHA1.hpp
 
 third_party/rapidjson
+
+third_party/pugixml

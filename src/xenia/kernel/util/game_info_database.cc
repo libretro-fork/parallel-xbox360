@@ -318,39 +318,15 @@ GameInfoDatabase::ProductInformation GameInfoDatabase::GetProductInformation()
 
   ProductInformation info = {};
 
-  const auto attributes = xlast_gamedata_->GetProductInformationAttributes();
-  for (const auto& attribute : attributes) {
-    switch (attribute.first) {
-      case ProductInformationEntry::MaxOfflinePlayers:
-        info.max_offline_players_count = attribute.second;
-        break;
-      case ProductInformationEntry::MaxSystemLinkPlayers:
-        info.max_systemlink_players_count = attribute.second;
-        break;
-      case ProductInformationEntry::MaxLivePlayers:
-        info.max_live_players_count = attribute.second;
-        break;
-      case ProductInformationEntry::PublisherString:
-        info.publisher_name = xe::to_utf8(xlast_gamedata_->GetLocalizedString(
-            attribute.second, XLanguage::kEnglish));
-        break;
-      case ProductInformationEntry::DeveloperString:
-        info.developer_name = xe::to_utf8(xlast_gamedata_->GetLocalizedString(
-            attribute.second, XLanguage::kEnglish));
-        break;
-      case ProductInformationEntry::MarketingString:
-        info.marketing_info = xe::to_utf8(xlast_gamedata_->GetLocalizedString(
-            attribute.second, XLanguage::kEnglish));
-        break;
-      case ProductInformationEntry::GenreTypeString:
-        info.genre_description =
-            xe::to_utf8(xlast_gamedata_->GetLocalizedString(
-                attribute.second, XLanguage::kEnglish));
-        break;
-      default:
-        break;
-    }
-  }
+  uint32_t values[7];
+  const unsigned mask = xlast_gamedata_->GetProductInformationAttributes(values);
+  if (mask & 1) info.max_offline_players_count = values[0];
+  if (mask & 2) info.max_systemlink_players_count = values[1];
+  if (mask & 4) info.max_live_players_count = values[2];
+  if (mask & 8) info.publisher_name = xlast_gamedata_->GetLocalizedStringUtf8(values[3], XLanguage::kEnglish);
+  if (mask & 16) info.developer_name = xlast_gamedata_->GetLocalizedStringUtf8(values[4], XLanguage::kEnglish);
+  if (mask & 32) info.marketing_info = xlast_gamedata_->GetLocalizedStringUtf8(values[5], XLanguage::kEnglish);
+  if (mask & 64) info.genre_description = xlast_gamedata_->GetLocalizedStringUtf8(values[6], XLanguage::kEnglish);
   return info;
 }
 

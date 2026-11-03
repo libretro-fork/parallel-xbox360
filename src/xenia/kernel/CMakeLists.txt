@@ -17,8 +17,9 @@ if(XE_TARGET_X86_64)
   )
 endif()
 target_link_libraries(xenia-kernel PUBLIC
-  aes_128 asio fmt retro-common pugixml xenia-apu xenia-base xenia-cpu xenia-hid xenia-vfs
+  aes_128 asio fmt retro-common xenia-apu xenia-base xenia-cpu xenia-hid xenia-vfs
 )
+target_sources(xenia-kernel PRIVATE "${PROJECT_SOURCE_DIR}/libretro/core_xlast.c")
 xe_target_defaults(xenia-kernel)
 
 if(XENIA_BUILD_TESTS)

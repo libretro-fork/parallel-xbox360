@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Replaced pugixml/XPath in XLast metadata with owned libretro-common XML parsing and C89 indexes. Compressed XML decodes into parser storage; game metadata reads localized UTF-8 strings directly. Removed the obsolete dependency; differential tests retain their reference implementation in Git history.
+
 - Replaced remaining TinySHA1 guest callers with C89 common SHA-1 adapters and removed its private header. Preserved guest state, alias ordering and final padded blocks; corrected the bit length above 512 MiB. Streamed HMAC now pads the whole block for short keys, retaining its 64-byte key cap. Added exact-state/RFC/513 MiB tests and measured hardware-dispatch/scalar benchmarks.
 
 - Removed unused RapidJSON sources. XLast still uses pugixml while a common XML replacement is evaluated.

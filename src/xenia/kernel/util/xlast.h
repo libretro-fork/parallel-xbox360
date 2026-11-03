@@ -10,52 +10,22 @@
 #ifndef XENIA_KERNEL_UTIL_XLAST_H_
 #define XENIA_KERNEL_UTIL_XLAST_H_
 
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include "third_party/pugixml/src/pugixml.hpp"
+#include "libretro/core_xlast.h"
 #include "xenia/xbox.h"
 
 namespace xe {
 namespace kernel {
 namespace util {
 
-enum class ProductInformationEntry {
-  MaxOfflinePlayers,
-  MaxSystemLinkPlayers,
-  MaxLivePlayers,
-  PublisherString,
-  DeveloperString,
-  MarketingString,
-  GenreTypeString
-};
-
-inline const std::map<std::string, ProductInformationEntry>
-    product_information_entry_string_to_enum = {
-        {"offlinePlayersMax", ProductInformationEntry::MaxOfflinePlayers},
-        {"systemLinkPlayersMax", ProductInformationEntry::MaxSystemLinkPlayers},
-        {"livePlayersMax", ProductInformationEntry::MaxLivePlayers},
-        {"publisherStringId", ProductInformationEntry::PublisherString},
-        {"developerStringId", ProductInformationEntry::DeveloperString},
-        {"sellTextStringId", ProductInformationEntry::MarketingString},
-        {"genreTextStringId", ProductInformationEntry::GenreTypeString},
-};
-
-inline const std::map<XLanguage, std::string> language_mapping = {
-    {XLanguage::kEnglish, "en-US"},    {XLanguage::kJapanese, "ja-JP"},
-    {XLanguage::kGerman, "de-DE"},     {XLanguage::kFrench, "fr-FR"},
-    {XLanguage::kSpanish, "es-ES"},    {XLanguage::kItalian, "it-IT"},
-    {XLanguage::kKorean, "ko-KR"},     {XLanguage::kTChinese, "zh-CHT"},
-    {XLanguage::kPortuguese, "pt-PT"}, {XLanguage::kPolish, "pl-PL"},
-    {XLanguage::kRussian, "ru-RU"}};
-
 class XLastMatchmakingQuery {
  public:
   XLastMatchmakingQuery();
-  XLastMatchmakingQuery(const pugi::xpath_node query_node);
+  explicit XLastMatchmakingQuery(const xe_xlast_query* query_node);
 
   std::string GetName() const;
   std::vector<uint32_t> GetReturns() const;
@@ -63,7 +33,7 @@ class XLastMatchmakingQuery {
   std::vector<uint32_t> GetFilters() const;
 
  private:
-  pugi::xpath_node node_;
+  const xe_xlast_query* node_ = nullptr;
 };
 
 class XLast {
@@ -74,9 +44,9 @@ class XLast {
   ~XLast() = default;
 
   std::u16string GetTitleName() const;
-  std::map<ProductInformationEntry, uint32_t> GetProductInformationAttributes()
-      const;
+  unsigned GetProductInformationAttributes(uint32_t values[7]) const;
 
+  const char* GetLocalizedStringUtf8(uint32_t string_id, XLanguage language) const;
   std::vector<XLanguage> GetSupportedLanguages() const;
   std::u16string GetLocalizedString(uint32_t string_id,
                                     XLanguage language) const;
@@ -86,21 +56,14 @@ class XLast {
                                             const XLanguage language);
   const std::optional<uint32_t> GetContextStringId(
       const uint32_t context_id, const uint32_t context_value);
-  XLastMatchmakingQuery* GetMatchmakingQuery(uint32_t query_id) const;
-  static std::vector<uint32_t> GetAllValuesFromNode(
-      const pugi::xpath_node node, const std::string child_name,
-      const std::string attribute_name);
-
-  void Dump(std::string file_name) const;
-
-  const bool HasXLast() const { return !xlast_decompressed_xml_.empty(); };
+  std::optional<XLastMatchmakingQuery> GetMatchmakingQuery(uint32_t query_id) const;
+  bool HasXLast() const { return parsed_xlast_ != nullptr; }
 
  private:
-  std::string GetLocaleStringFromLanguage(XLanguage language) const;
-
-  std::vector<uint8_t> xlast_decompressed_xml_;
-  std::unique_ptr<pugi::xml_document> parsed_xlast_ = nullptr;
-  pugi::xml_parse_result parse_result_ = {};
+  struct Delete {
+    void operator()(xe_xlast* doc) const { xe_xlast_destroy(doc); }
+  };
+  std::unique_ptr<xe_xlast, Delete> parsed_xlast_;
 };
 
 }  // namespace util

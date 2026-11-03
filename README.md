@@ -77,8 +77,9 @@ correct above 512 MiB, and streamed HMAC pads short keys over a full block while
 preserving its 64-byte key limit. Other guest AES/DES/RSA state and
 remaining third-party crypto callers still need their own migration and tests.
 
-Unused RapidJSON sources have been removed. XLast metadata still uses pugixml;
-replacement with owned libretro-common XML code is under investigation.
+Unused RapidJSON and pugixml sources have been removed. XLast metadata uses
+owned libretro-common XML parsing with C89 indexed queries for localized strings,
+product information, presence, properties and matchmaking metadata.
 
 Selected RetroArch libretro-common sources now provide XXH3/XXH64 hashing and DEFLATE decompression. Persistent hash values remain compatible. Embedded patch data decodes directly into its final allocation, using its generated raw size; XLast requires complete, checksum-valid gzip data with the declared output size. Threading and file-I/O migration to libretro-common is still in progress. Source provenance and local changes are recorded in `third_party/libretro-common/SOURCE.txt`.
 
