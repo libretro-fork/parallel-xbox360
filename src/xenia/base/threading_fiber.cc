@@ -19,7 +19,7 @@
 #include "xenia/base/threading.h"
 
 #if XE_PLATFORM_WIN32
-#include <Windows.h>
+#include <windows.h>
 #else
 #include <pthread.h>
 #include <sys/mman.h>

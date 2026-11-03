@@ -13,10 +13,6 @@ target_include_directories(xenia-gpu PRIVATE
 )
 target_link_libraries(xenia-gpu PUBLIC fmt snappy xxhash xenia-base xenia-ui)
 target_link_libraries(xenia-gpu PRIVATE xenia-spirv-writer)
-# spirv_to_dxil_compiler.cc wraps Mesa for the backends that take the guest
-# SPIR-V to DXIL: D3D12 on Windows (the core has no Metal backend). Mesa is
-# built there only. dxbc is there
-# for DXBCChecksum, which stamps the container digest of the produced DXIL.
 if(WIN32)
   file(GLOB _native_dxil_sources CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/dxil/*.c"
@@ -24,7 +20,7 @@ if(WIN32)
   add_library(xenia-native-dxil STATIC ${_native_dxil_sources})
   target_include_directories(xenia-native-dxil PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/dxil/bytecode")
-  target_link_libraries(xenia-gpu PUBLIC spirv_to_dxil dxbc xenia-native-dxil)
+  target_link_libraries(xenia-gpu PUBLIC dxbc xenia-native-dxil)
 endif()
 xe_target_defaults(xenia-gpu)
 

@@ -6,9 +6,9 @@ The emulator is upstream's: this repository follows xenia-edge and adds the libr
 
 ## Downloads
 
-The core is built by libretro's buildbot for Windows, Linux (x86_64, arm64) and Android (arm64-v8a, x86_64), and is installed from RetroArch: Online Updater > Core Downloader. Every push to the `libretro` branch is also built in [Actions](https://github.com/WizzardSK/xenia-libretro/actions/workflows/libretro.yml), macOS (Apple Silicon) included; the builds are the artifacts of a run, and downloading them needs a GitHub login.
+The core is built by libretro's buildbot for Windows, Linux (x86_64, arm64) and Android (arm64-v8a, x86_64), and is installed from RetroArch: Online Updater > Core Downloader. Every push to the `libretro` branch is also built in [Actions](https://github.com/libretro-fork/parallel-xbox360/actions/workflows/libretro.yml), macOS (Apple Silicon) included; the builds are the artifacts of a run, and downloading them needs a GitHub login.
 
-- **Windows:** `parallel_xbox360_libretro.dll`, whose MSVC builds need the Visual C++ 2015-2022 runtime (GNU Make/MinGW builds link their compiler runtimes statically). It carries `dxil.dll`, Direct3D 12's shader validator, inside and writes it to `system/Xenia-Edge/D3D12/` on start.
+- **Windows:** `parallel_xbox360_libretro.dll`, whose MSVC builds need the Visual C++ 2015-2022 runtime (GNU Make/MinGW builds link their compiler runtimes statically).
 - **Linux:** `parallel_xbox360_libretro.so`, glibc 2.35 or newer; uses fontconfig and the C/C++ runtime, with no X11 or Wayland libraries (the CMake build also links lz4 where available). ARM64 uses the a64 CPU backend.
 - **macOS:** `parallel_xbox360_libretro.dylib`, Apple Silicon only. The x64 CPU backend needs the address space below 4 GB, which a core loaded into RetroArch cannot free, so there is no Intel build.
 - **Android:** `parallel_xbox360_libretro_android.so`.
@@ -82,9 +82,9 @@ Triangle and quad tessellation now generate guest domain DXIL directly. The
 checked-in raw vertex/hull helpers share matching patch/control-point signatures
 and borrow the existing system constants through a root alias. Discrete,
 continuous and adaptive modes need no linked conversion or temporary shader copy.
-The Mesa fallback and its Meson/Python build remain while final removal and
-platform checks are completed.
-Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
+D3D12 uses owned DXIL generation exclusively; Vulkan uses raw SPIR-V.
+The build and runtime need no Mesa, Meson, Python, GLSL frontend, SPIRV-Cross,
+glslang, shader compiler executable or separate DXIL validator DLL.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in
 [`tools/tests/README.md`](tools/tests/README.md); whole-shader integration
 is still in progress. The native program layer joins raw control flow, ALU and
@@ -104,7 +104,7 @@ Every platform in `.gitlab-ci.yml` has an explicit selection:
 | --- | --- | --- |
 | `linux-x86_64` | `parallel_xbox360_libretro.so` | Native x86_64 Linux toolchain |
 | `linux-aarch64` | `parallel_xbox360_libretro.so` | Native aarch64 Linux toolchain, or `CC`/`CXX` cross compilers with a target sysroot |
-| `windows-x86_64` | `parallel_xbox360_libretro.dll` | MinGW-w64 GCC/binutils, zlib development files, Meson and Ninja (for owned Mesa sources) |
+| `windows-x86_64` | `parallel_xbox360_libretro.dll` | MinGW-w64 GCC/binutils and GNU Make |
 | `android-arm64-v8a` | `parallel_xbox360_libretro_android.so` | `NDK_ROOT=/path/to/ndk` |
 | `android-x86_64` | `parallel_xbox360_libretro_android.so` | `NDK_ROOT=/path/to/ndk` |
 | `macos-arm64` | `parallel_xbox360_libretro.dylib` | Apple Silicon, Xcode command line tools, GNU Make and an external Vulkan driver |
@@ -116,9 +116,8 @@ runtime with 16 KB page alignment. `CC` and `CXX` override the target compilers;
 `HOST_CC` compiles the native C89 build tool for the build host. `CC`, `CXX` and
 `AR` default to GCC/G++ and GNU ar; their environment or command-line settings
 are respected. `CROSS_COMPILE` supplies a tool prefix. In a MinGW64 shell,
-`make -j32` selects the native Windows target and GNU tools. The optional
-MSVC-ABI cross build remains documented in `.ci/build-windows-cross.sh`; its
-SDK/LLVM setup is not needed for the MinGW path.
+`make -j32` selects the native Windows target and GNU tools.
+`.ci/build-windows-cross.sh` builds the same target with MinGW-w64 GCC on Linux.
 macOS uses Apple's `libtool` to
 create its static archive and loads `libvulkan.1.dylib` from an external driver;
 the repository does not bundle MoltenVK or SPIRV-Cross.

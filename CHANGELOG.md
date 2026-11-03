@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed Mesa and its SPIR-V-to-DXIL fallback, source tree, build archives, Meson/Python setup and runtime DXIL validator DLL. D3D12 now generates guest and helper DXIL directly; Vulkan retains raw SPIR-V and macOS keeps its external driver. Windows and Linux CI use GCC with the static Makefiles. Sampler layouts now cover the renderer's 2,000-entry heap, and geometry cache publication keeps native bytecode without a copy. Added GCC cross-build portability fixes.
+
 - Triangle/quad guest domain shaders now compile directly to DXIL and pair with the checked-in raw host vertex/hull helpers for discrete, continuous and adaptive tessellation. Matching patch signatures and a constant-buffer root alias avoid linked SPIR-V/Mesa conversion and bytecode copies. GPU stream-output checks cover coordinates, index layouts and clip/cull interfaces. Mesa fallback/dependency removal and platform checks remain.
 
 - Guest vertex and pixel memory exports now compile directly to DXIL, including all existing export formats, extended half floats, endian modes, stream bounds and atomic subword writes. Executed writes mark only their eM elements dirty; ALLOC and true kills commit pending exports before resetting or suppressing later writes. Shared-memory reads during export draws use the UAV. Scaled pixel exports retain the center-host-pixel rule. Tessellation remains before Mesa removal.

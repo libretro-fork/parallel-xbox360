@@ -4,7 +4,7 @@
 #include "guest_texture.h"
 #include "shader_module.h"
 #define XE_DXIL_TEXTURE_BINDINGS_MAX 192 /* 32 constants, 3 view types, 2 signs. */
-#define XE_DXIL_SAMPLER_BINDINGS_MAX 256
+#define XE_DXIL_SAMPLER_BINDINGS_MAX 2000 /* D3D12 guest sampler heap capacity. */
 typedef struct XeDxilTextureBinding { unsigned fetch_constant, dimension, is_signed; } XeDxilTextureBinding;
 typedef struct XeDxilSamplerBinding { unsigned fetch_constant, mag_filter, min_filter, mip_filter, aniso_filter; } XeDxilSamplerBinding;
 typedef struct XeDxilTextureLayout {

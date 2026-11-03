@@ -318,13 +318,13 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   };
 
   // Root parameters of the ownership transfer pixel shaders, in the register
-  // layout Mesa's spirv_to_dxil emits for the emitter's descriptor sets: each
+  // layout native DXIL preserves for the emitter's descriptor sets: each
   // set becomes the register space of the same number, the host depth copy's
-  // storage buffer becomes a UAV, and the push constants land in Mesa's push
+  // storage buffer becomes a UAV, and the push constants land in the shared push
   // constant CBV.
   enum TransferUsedRootParameter : uint32_t {
     // The address, the host depth address and the stencil mask (changed 8
-    // times per transfer) are dwords of Mesa's one push constant CBV.
+    // times per transfer) are dwords of the shared push constant CBV.
     kTransferUsedRootParameterPushConstants,
     kTransferUsedRootParameterColorSRV,
     // Mutually exclusive with ColorSRV.
@@ -334,7 +334,7 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
     kTransferUsedRootParameterHostDepthSRV,
     // Mutually exclusive with HostDepthSRV - the copy modes read the previous
     // owner's depth back out of the EDRAM buffer, which the emitter declares
-    // as a read-only storage buffer, so Mesa gives it a raw buffer SRV rather
+    // as a read-only storage buffer, so Native gives it a raw buffer SRV rather
     // than the UAV the written EDRAM buffer of a dump shader gets.
     kTransferUsedRootParameterHostDepthBuffer,
     kTransferUsedRootParameterCount,
@@ -353,12 +353,12 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
         uint32_t(1) << kTransferUsedRootParameterHostDepthBuffer,
   };
 
-  // Mesa sizes the push constant CBV from the dwords the shader actually
+  // The shader sizes its push constant CBV from the dwords the shader actually
   // loads, rounded up to a 16-byte row - no layout uses more than two.
   static constexpr uint32_t kTransferRootPushConstantDwords = 4;
 
   // What one mode's root signature has to declare: which of the root
-  // parameters above its shader uses, and the register space Mesa gives each
+  // parameters above its shader uses, and the register space Native gives each
   // of the emitter's descriptor sets. The mode fixes both, since
   // use_stencil_reference_output_ doesn't change for the lifetime of the
   // cache.
@@ -417,25 +417,22 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
     kHostDepthStoreRootParameterCount,
   };
 
-  // Descriptor sets of the dump shaders, which Mesa's spirv_to_dxil turns into
+  // Descriptor sets of the dump shaders, which native DXIL maps to
   // the register spaces of the same number.
   enum DumpDescriptorSet : uint32_t {
     kDumpDescriptorSetEdram,
     kDumpDescriptorSetSource,
   };
 
-  // Mesa sizes the push constant CBV from the dwords the shader actually
+  // The shader sizes its push constant CBV from the dwords the shader actually
   // loads, rounded up to a 16-byte row. A direct resolve reads all of them,
   // which is what the root constants have to cover - a plain dump reads only
   // the pitches and the offsets and leaves the rest of the rows unread.
   static constexpr uint32_t kDumpRootPushConstantDwords =
       (kEdramDumpShaderPushConstantCount + 3) & ~uint32_t(3);
 
-  // Root parameters of the dump compute shaders, in the register layout Mesa
-  // emits for the emitter's descriptor sets: the EDRAM buffer is set 0
-  // binding 0, so UAV u0 space0; the source and its stencil are set 1 bindings
-  // 0 and 1, so SRV t0 and t1 of space1; the push constants land in Mesa's
-  // push constant CBV at b1 space31.
+  // Native dump shader bindings: EDRAM UAV u0 space0, source and stencil
+  // SRVs t0/t1 space1, and root constants at b1 space31.
   enum DumpRootParameter : uint32_t {
     // Pitches and offsets in one root constants parameter - the offsets may be
     // changed multiple times for the same source.

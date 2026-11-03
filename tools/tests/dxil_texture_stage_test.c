@@ -42,6 +42,19 @@ static float sample(const float *data, unsigned mip, unsigned linear, float u, f
   }
   return out;
 }
+static int sampler_capacity(void) {
+  XeDxilTextureLayout layout; XeDxilTextureInstruction instruction; unsigned i;
+  memset(&layout,0,sizeof(layout)); memset(&instruction,0,sizeof(instruction));
+  instruction.opcode = 1; instruction.dimension = 1;
+  /* Many legal filter overrides can exceed the old 256-entry ceiling even
+   * though the renderer's single guest sampler heap still has room. */
+  for (i = 0; i < 257; ++i) {
+    instruction.constant_index = i%32; instruction.mag_filter = (i/32)%4;
+    instruction.min_filter = (i/128)%4;
+    if (!xe_dxil_texture_layout_add(&layout,&instruction,0)) return 0;
+  }
+  return layout.sampler_count == 257 && layout.texture_count == 64;
+}
 int main(int argc, char **argv) {
   XeDxilShaderModule *shader; XeDxilShaderBinary binary; XeDxilAlu alu; XeDxilAluIo io;
   XeDxilTextureLayout layout; XeDxilTextureStageOptions options; XeDxilTextureStage *stage = NULL;
@@ -52,6 +65,7 @@ int main(int argc, char **argv) {
   unsigned test, i, j, current_block = 0, sign, signs = 0, int_bits = 1u<<26, linear = 0, level, width = 8, normalized = 0, integer = 0;
   int status = 1;
   if (argc != 3) return 2;
+  if (!sampler_capacity()) return 1;
   test = (unsigned)strtoul(argv[2],NULL,10); if (test > 61) return 2;
   memset(&binary,0,sizeof(binary)); memset(&instruction,0,sizeof(instruction)); memset(&operands,0,sizeof(operands)); memset(&layout,0,sizeof(layout)); memset(&options,0,sizeof(options)); memset(&io,0,sizeof(io)); memset(words,0,sizeof(words)); memset(golden,0,sizeof(golden));
   instruction.opcode = 1; instruction.dimension = 1; instruction.constant_index = 1;

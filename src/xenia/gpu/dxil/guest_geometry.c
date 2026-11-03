@@ -3,6 +3,7 @@
  * Copyright 2026 Ben Vanik and contributors. BSD license, see LICENSE. */
 #include "stage_layout.h"
 #include "guest_geometry.h"
+#include <stdlib.h>
 #include "guest_resources.h"
 #include <dxil_module.h>
 #include <dxil_function.h>
@@ -236,4 +237,12 @@ int xe_dxil_build_geometry(const XeDxilGeometryOptions *o, XeDxilShaderBinary *b
 done:
   xe_dxil_shader_destroy(g.shader);
   return result;
+}
+XeDxilShaderBinary *xe_dxil_build_geometry_owned(const XeDxilGeometryOptions *options) {
+  XeDxilShaderBinary *binary = (XeDxilShaderBinary *)calloc(1,sizeof(*binary));
+  if (!binary) return NULL;
+  if (!xe_dxil_build_geometry(options,binary)) {
+    xe_dxil_shader_binary_delete(binary); return NULL;
+  }
+  return binary;
 }

@@ -469,7 +469,9 @@ static void configs(const char *out, int windows, int arm64, int msvc) {
   for (i = 0; zlib_names[i]; ++i) {
     name = (char *)allocate(strlen(zlib_names[i]) + 4);
     strcpy(name, zlib_names[i]); strcat(name, ".in");
-    path = join("third_party/zlib-ng", name);
+    path = join("third_party/zlib-ng",
+                !strcmp(zlib_names[i], "zlib_name_mangling-ng.h")
+                    ? "zlib_name_mangling.h.empty" : name);
     file = read_file(path, 1); free(name); free(path);
     replace(&file, "@ZLIB_SYMBOL_PREFIX@", "");
     path = join(out, "third_party/zlib-ng");

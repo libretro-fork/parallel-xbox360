@@ -55,11 +55,6 @@ API_LEVEL ?= 28
 NDK_ROOT ?= $(ANDROID_NDK_HOME)
 NDK_HOST_TAG ?= linux-x86_64
 MSVC_ROOT ?=
-MESA_BUILD_DIR ?= $(BUILD_DIR)/mesa-$(WINDOWS_ABI)
-MESA_CROSS_FILE ?=
-XENIA_LIBRETRO_DXIL ?=
-LLVM_RC ?= llvm-rc
-WINDRES ?= $(CROSS_COMPILE)windres
 WINDOWS_ABI ?= gnu
 DEBUG ?= 0
 LTO ?= 0
@@ -154,6 +149,8 @@ else
 LDFLAGS += -shared
 endif
 ifeq ($(OS),linux)
+# Match local binding at link time and permit GCC to inline PM4 helpers.
+BASE_FLAGS += -fno-semantic-interposition
 LDLIBS += -lstdc++fs -ldl -lm -lpthread -lrt -lfontconfig
 LDFLAGS += -Wl,-Bsymbolic -Wl,--no-undefined -Wl,--version-script=libretro/link.T -Wl,--exclude-libs,ALL
 endif
@@ -163,6 +160,7 @@ LDLIBS += -landroid -llog -ldl -lm
 endif
 ifeq ($(OS),windows)
 BASE_FLAGS := $(filter-out -fPIC,$(BASE_FLAGS))
+INCLUDE_DIRS += third_party/DirectX-Headers/include/directx
 DEFINES += -DWIN32 -D_WIN64=1 -D_AMD64=1 -DUNICODE -D_UNICODE \
  -D_CRT_NONSTDC_NO_DEPRECATE -D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0A00
 ifeq ($(WINDOWS_ABI),msvc)
@@ -180,6 +178,7 @@ LDFLAGS += --target=x86_64-pc-windows-msvc -fuse-ld=lld -Wl,/manifest:no,/DEBUG,
 LDLIBS += ntdll.lib wsock32.lib ws2_32.lib xinput.lib comctl32.lib shcore.lib \
  shlwapi.lib dxguid.lib bcrypt.lib d3d12.lib dxgi.lib synchronization.lib version.lib
 else
+DEFINES += -D__REQUIRED_RPCNDR_H_VERSION__=475
 CXXFLAGS += -fexceptions
 LDFLAGS += -static -static-libgcc -static-libstdc++ -Wl,--no-undefined,--exclude-all-symbols
 ifneq ($(DEBUG),1)
@@ -187,20 +186,7 @@ LDFLAGS += -Wl,--strip-debug
 endif
 LDLIBS += -lntdll -lwsock32 -lws2_32 -lxinput -lcomctl32 -lshcore -lshlwapi -ldxguid -lbcrypt -ld3d12 -ldxgi -lsynchronization -lversion -lole32 -luuid -lshell32 -luser32 -lgdi32 -limm32 -lwinmm -ladvapi32 -lsetupapi -lcfgmgr32 -lhid -ldwmapi -lcomdlg32 -loleaut32
 endif
-INCLUDE_DIRS += third_party/mesa/src/microsoft/spirv_to_dxil third_party/mesa/src/microsoft/compiler
 INCLUDE_DIRS += third_party/libusb/libusb
-MESA_LIBS := src/microsoft/spirv_to_dxil/libspirv_to_dxil.a \
- src/microsoft/compiler/libdxil_compiler.a src/compiler/spirv/libvtn.a \
- src/compiler/nir/libnir.a src/compiler/libcompiler.a src/util/libmesa_util.a \
- src/util/libmesa_util_simd.a src/c11/impl/libmesa_util_c11.a \
- src/util/blake3/libblake3.a
-ifeq ($(WINDOWS_ABI),msvc)
-MESA_LIBS += subprojects/zlib-1.3.1/libz.a
-else
-LDLIBS += -lz
-endif
-MESA_ARCHIVES := $(addprefix $(MESA_BUILD_DIR)/,$(MESA_LIBS))
-LDLIBS := $(MESA_ARCHIVES) $(LDLIBS)
 endif
 
 OBJECTS := $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(SOURCES_C) $(SOURCES_CXX) $(SOURCES_ASM) $(SOURCES_OBJCXX)))
@@ -210,9 +196,10 @@ CORE_ARCHIVE := $(BUILD_DIR)/core.a
 CONFIG_INPUTS := tools/build/core_codegen.c tools/build/core_deflate.c \
  upstream.version $(wildcard assets/font/* libretro/data/*) \
  third_party/snappy/snappy-stubs-public.h.in third_party/snappy/cmake/config.h.in \
- $(wildcard third_party/zlib-ng/*-ng.h.in) third_party/zlib-ng/gzread.c.in
+ $(wildcard third_party/zlib-ng/*-ng.h.in) third_party/zlib-ng/gzread.c.in \
+ third_party/zlib-ng/zlib_name_mangling.h.empty
 
-.PHONY: all clean generated shaders host-tools mesa help print-config FORCE $(TARGET)
+.PHONY: all clean generated shaders host-tools help print-config FORCE $(TARGET)
 all: $(TARGET)
 $(TARGET): $(BUILD_DIR)/$(TARGET)
 	cp "$<" "$@"
@@ -226,7 +213,7 @@ generated: $(CONFIG_INPUTS) $(CODEGEN) | check-target-tools
 $(GEN)/embedded_font.cc $(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc $(GEN)/third_party/zlib-ng/gzread.c: | generated
 	@test -f "$@"
 
-export MAKE_BUILD_SIGNATURE := $(CC)|$(CXX)|$(BASE_FLAGS)|$(CPPFLAGS)|$(CFLAGS)|$(CXXFLAGS)|$(LDFLAGS)|$(LDLIBS)|$(XENIA_LIBRETRO_DXIL)
+export MAKE_BUILD_SIGNATURE := $(CC)|$(CXX)|$(BASE_FLAGS)|$(CPPFLAGS)|$(CFLAGS)|$(CXXFLAGS)|$(LDFLAGS)|$(LDLIBS)
 $(BUILD_DIR)/config: FORCE $(CODEGEN)
 	@$(CODEGEN) signature "$@"
 $(OBJECTS): Makefile Makefile.common $(BUILD_DIR)/config | generated shaders
@@ -268,18 +255,6 @@ else
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(FFMPEG_SOURCES))): CPPFLAGS += -Ithird_party/FFmpeg/compat/atomics/win32
 endif
 
-ifeq ($(OS),windows)
-ifneq ($(XENIA_LIBRETRO_DXIL),)
-RESOURCES := $(BUILD_DIR)/dxil.res
-CPPFLAGS += -DXENIA_LIBRETRO_DXIL
-$(BUILD_DIR)/dxil.rc: $(XENIA_LIBRETRO_DXIL) Makefile
-	@mkdir -p "$(@D)"
-	@printf 'XENIA_DXIL RCDATA "%s"\n' '$(abspath $(XENIA_LIBRETRO_DXIL))' > "$@"
-$(BUILD_DIR)/dxil.res: $(BUILD_DIR)/dxil.rc $(XENIA_LIBRETRO_DXIL)
-	$(if $(filter msvc,$(WINDOWS_ABI)),$(LLVM_RC) /fo "$@" "$<",$(WINDRES) -i "$<" -o "$@" -O coff)
-endif
-endif
-
 $(CORE_ARCHIVE): export MAKE_RESPONSE := $(foreach obj,$(CORE_OBJECTS),"$(obj)")
 $(CORE_ARCHIVE): $(CORE_OBJECTS) $(CODEGEN)
 	@$(CODEGEN) response "$(BUILD_DIR)/archive.rsp"
@@ -294,8 +269,8 @@ endif
 # Keep the frontend's exported entry points as ordinary objects. Archive
 # extraction pulls in only the emulator/dependency members they actually use,
 # just as the existing build's static libraries do.
-$(BUILD_DIR)/$(TARGET): export MAKE_RESPONSE := $(foreach obj,$(FRONTEND_OBJECTS) $(RESOURCES) $(CORE_ARCHIVE),"$(obj)")
-$(BUILD_DIR)/$(TARGET): $(FRONTEND_OBJECTS) $(CORE_ARCHIVE) $(RESOURCES) libretro/link.T $(MESA_ARCHIVES)
+$(BUILD_DIR)/$(TARGET): export MAKE_RESPONSE := $(foreach obj,$(FRONTEND_OBJECTS) $(CORE_ARCHIVE),"$(obj)")
+$(BUILD_DIR)/$(TARGET): $(FRONTEND_OBJECTS) $(CORE_ARCHIVE) libretro/link.T
 	@$(CODEGEN) response "$(BUILD_DIR)/objects.rsp"
 	$(CXX) $(LDFLAGS) -o "$@" @$(BUILD_DIR)/objects.rsp $(LDLIBS)
 
@@ -349,19 +324,6 @@ endef
 $(foreach s,$(SHADER_SOURCES),$(eval $(call shader-rule,$(s))))
 shaders: $(SHADER_HEADERS)
 
-ifeq ($(OS),windows)
-$(MESA_BUILD_DIR)/build.ninja: | check-target-tools
-	meson setup "$(MESA_BUILD_DIR)" third_party/mesa $(if $(MESA_CROSS_FILE),--cross-file "$(MESA_CROSS_FILE)") \
-	 --default-library=static --buildtype=release -Db_vscrt=md $(if $(filter msvc,$(WINDOWS_ABI)),-Dc_args=/wd4189 -Dcpp_args=/wd4189) \
-	 -Dspirv-to-dxil=true -Dspirv-tools=disabled -Dgallium-drivers= -Dvulkan-drivers= -Dplatforms= \
-	 -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=false \
-	 -Dgles1=disabled -Dgles2=disabled -Dllvm=disabled -Dvideo-codecs=
-mesa: $(MESA_BUILD_DIR)/build.ninja
-	ninja -C "$(MESA_BUILD_DIR)" $(MESA_LIBS)
-$(MESA_ARCHIVES): | mesa
-	@test -f "$@"
-endif
-
 # Check target tools only for core builds. Data generation and host-only checks
 # remain usable without a target toolchain. Order-only edges gate parallel work.
 .PHONY: check-target-tools
@@ -385,7 +347,7 @@ print-config:
 help:
 	@echo "make platform=<$(SUPPORTED_PLATFORMS)> [-jN] [DEBUG=1] [LTO=1]"
 	@echo "Android: NDK_ROOT=/path/to/ndk [API_LEVEL=28]"
-	@echo "Windows: MinGW GCC/binutils; optional MSVC-ABI cross setup: .ci/build-windows-cross.sh"
+	@echo "Windows: MinGW GCC/binutils; Linux cross build: .ci/build-windows-cross.sh"
 clean:
 	@root=$$(pwd -P); \
 	if test -d "$(BUILD_DIR)"; then \

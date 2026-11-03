@@ -1,1 +1,0 @@
-spec@!opengl 1.2@tex3d-maxsize

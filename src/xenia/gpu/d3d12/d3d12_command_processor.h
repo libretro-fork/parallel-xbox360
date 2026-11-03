@@ -136,10 +136,10 @@ class D3D12CommandProcessor final : public CommandProcessor {
   void PushUAVBarrier(ID3D12Resource* resource);
   void SubmitBarriers();
 
-  // Fixed root signature for the spirv_to_dxil guest path. Null if creation
+  // Fixed root signature for the native DXIL guest path. Null if creation
   // failed.
-  ID3D12RootSignature* GetMesaRootSignature() const {
-    return root_signature_mesa_;
+  ID3D12RootSignature* GetNativeRootSignature() const {
+    return root_signature_native_;
   }
 
   ui::d3d12::D3D12UploadBufferPool& GetConstantBufferPool() const {
@@ -436,48 +436,48 @@ class D3D12CommandProcessor final : public CommandProcessor {
   static constexpr uint32_t kQueueFrames = 3;
 
   // Shader registers of SpirvShaderTranslator's
-  // kDescriptorSetSharedMemoryAndEdram bindings, which Mesa maps one-to-one to
+  // kDescriptorSetSharedMemoryAndEdram bindings, which Native maps one-to-one to
   // registers of space 0.
   enum : UINT {
-    kMesaRegister_SharedMemory = 0,
-    kMesaRegister_ZpdCounter = 1,
-    kMesaRegister_Edram = 2,
+    kNativeRegister_SharedMemory = 0,
+    kNativeRegister_ZpdCounter = 1,
+    kNativeRegister_Edram = 2,
   };
 
-  // Root parameters for the spirv_to_dxil guest path (texture-less milestone).
-  // CBVs in space1, shared memory in space0, matching the Mesa DXIL layout.
+  // Root parameters for the native DXIL guest path (native guest stages).
+  // CBVs in space1, shared memory in space0, matching the Native DXIL layout.
   // All-visibility for simplicity in the first cut.
   enum : uint32_t {
-    kRootParameter_Mesa_SystemConstants = 0,   // b0, space1.
-    kRootParameter_Mesa_FloatConstantsVertex,  // b1, space1.
-    kRootParameter_Mesa_FloatConstantsPixel,   // b2, space1.
-    kRootParameter_Mesa_BoolLoopConstants,     // b3, space1.
-    kRootParameter_Mesa_FetchConstants,        // b4, space1.
-    kRootParameter_Mesa_SharedMemory,          // t0 SRV + u0 UAV, space0.
-    kRootParameter_Mesa_RuntimeData,           // b0, space31 (Dozen sysvals).
-    // Bindless texture/sampler index buffers (Mesa lower_bindless): raw-buffer
+    kRootParameter_Native_SystemConstants = 0,   // b0, space1.
+    kRootParameter_Native_FloatConstantsVertex,  // b1, space1.
+    kRootParameter_Native_FloatConstantsPixel,   // b2, space1.
+    kRootParameter_Native_BoolLoopConstants,     // b3, space1.
+    kRootParameter_Native_FetchConstants,        // b4, space1.
+    kRootParameter_Native_SharedMemory,          // t0 SRV + u0 UAV, space0.
+    kRootParameter_Native_RuntimeData,           // b0, space31 (Dozen sysvals).
+    // Bindless texture/sampler index buffers (Native lower_bindless): raw-buffer
     // SRVs of {texture_idx, sampler_idx} entries indexed by SPIR-V binding. The
     // shader reads a heap index from these, then ResourceDescriptorHeap /
     // SamplerDescriptorHeap. set2 (VS textures) -> t2, set3 (PS) -> t3, space0.
-    kRootParameter_Mesa_VertexTextureIndices,  // t2, space0.
-    kRootParameter_Mesa_PixelTextureIndices,   // t3, space0.
+    kRootParameter_Native_VertexTextureIndices,  // t2, space0.
+    kRootParameter_Native_PixelTextureIndices,   // t3, space0.
     // The bindless lowering leaves the original texture/sampler declarations in
     // the DXIL (t#/s# space2 for VS, space3 for PS) even though every access is
     // via the heap. D3D12 still requires the root signature to cover them, so
     // bind unbounded ranges (pointed at the bindless heaps, never dereferenced
     // since the heap is indexed directly).
-    kRootParameter_Mesa_VertexTextureRange,  // SRV t0+, space2.
-    kRootParameter_Mesa_PixelTextureRange,   // SRV t0+, space3.
-    kRootParameter_Mesa_VertexSamplerRange,  // sampler s0+, space2.
-    kRootParameter_Mesa_PixelSamplerRange,   // sampler s0+, space3.
+    kRootParameter_Native_VertexTextureRange,  // SRV t0+, space2.
+    kRootParameter_Native_PixelTextureRange,   // SRV t0+, space3.
+    kRootParameter_Native_VertexSamplerRange,  // sampler s0+, space2.
+    kRootParameter_Native_PixelSamplerRange,   // sampler s0+, space3.
     // ZPD counter (u1) and EDRAM (u2) raw UAVs in space0. EDRAM is referenced
     // only on the ROV (fragment shader interlock) path; the counter is also
     // used by RTV hybrid occlusion queries.
-    kRootParameter_Mesa_ZpdCounter,  // u1 UAV, space0.
-    kRootParameter_Mesa_Edram,       // u2 UAV, space0.
+    kRootParameter_Native_ZpdCounter,  // u1 UAV, space0.
+    kRootParameter_Native_Edram,       // u2 UAV, space0.
     kRootParameter_Native_TessellationConstants,  // b0, space0; raw host stages.
 
-    kRootParameter_Mesa_Count,
+    kRootParameter_Native_Count,
   };
 
   // BeginSubmission and EndSubmission may be called at any time. If there's an
@@ -534,12 +534,12 @@ class D3D12CommandProcessor final : public CommandProcessor {
       uint32_t normalized_color_mask,
       uint32_t bound_depth_and_color_render_target_bits);
 
-  // Parallel binding for the spirv_to_dxil guest path (Mesa root signature).
+  // Parallel binding for the native DXIL guest path (native root signature).
   // Fills a SpirvShaderTranslator::SystemConstants (mirroring the Vulkan
   // command processor, non-FSI subset), uploads the system / float / bool /
   // fetch CBVs (space1) plus a zeroed runtime data CBV (space31), and binds the
   // shared memory descriptor table. Bindless only.
-  bool UpdateBindingsMesa(
+  bool UpdateBindingsNative(
       const SpirvShader* vertex_shader, const SpirvShader* pixel_shader,
       bool memexport_used, bool route_to_host, bool primitive_polygonal,
       const PrimitiveProcessor::ProcessingResult& primitive_processing_result,
@@ -548,11 +548,11 @@ class D3D12CommandProcessor final : public CommandProcessor {
       uint32_t normalized_color_mask,
       const draw_util::HostDepthPolygonOffset* host_depth_polygon_offset,
       bool interpreter_placeholder);
-  // Resolves a sampler to its index in the bindless sampler heap for the Mesa
+  // Resolves a sampler to its index in the bindless sampler heap for the Native
   // path, allocating and writing the descriptor on first use. Returns
   // UINT32_MAX if the heap is full, so the caller switches to a fresh heap and
   // retries.
-  uint32_t GetOrCreateMesaBindlessSamplerIndex(
+  uint32_t GetOrCreateNativeBindlessSamplerIndex(
       D3D12TextureCache::SamplerParameters parameters);
   // Retires the full bindless sampler heap and switches to a fresh one (reusing
   // a retired heap once its submission completes). Returns false if a new heap
@@ -747,7 +747,7 @@ class D3D12CommandProcessor final : public CommandProcessor {
 
   // Root signatures for different descriptor counts.
   std::unordered_map<uint32_t, ID3D12RootSignature*> root_signatures_bindful_;
-  ID3D12RootSignature* root_signature_mesa_ = nullptr;
+  ID3D12RootSignature* root_signature_native_ = nullptr;
 
   std::unique_ptr<D3D12PrimitiveProcessor> primitive_processor_;
 
@@ -910,14 +910,14 @@ class D3D12CommandProcessor final : public CommandProcessor {
   ConstantBufferBinding cbuffer_binding_runtime_data_;
   ConstantBufferBinding cbuffer_binding_descriptor_indices_vertex_;
   ConstantBufferBinding cbuffer_binding_descriptor_indices_pixel_;
-  // Shadow of the last uploaded Mesa system constants, for the dirty compare.
+  // Shadow of the last uploaded Native system constants, for the dirty compare.
   // The derived system constants have no per register write invalidation.
-  std::vector<uint8_t> mesa_system_constants_shadow_;
+  std::vector<uint8_t> native_system_constants_shadow_;
   // Whether the vertex float constant buffer currently holds the full 256
   // float4 register file (for a ucode interpreter placeholder draw) rather than
   // the packed subset, so it is invalidated when switching between the two
   // layouts.
-  bool mesa_float_constants_vertex_full_ = false;
+  bool native_float_constants_vertex_full_ = false;
 
   // Whether the latest shared memory and EDRAM buffer binding contains the
   // shared memory UAV rather than the SRV.

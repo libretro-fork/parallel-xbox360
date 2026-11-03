@@ -613,7 +613,7 @@ bool D3D12CommandProcessor::SetupContext() {
   bindless_resources_used_ =
       cvars::d3d12_bindless &&
       provider.GetResourceBindingTier() >= D3D12_RESOURCE_BINDING_TIER_2;
-  // The guest shader path is Mesa spirv_to_dxil only, which is bindless (SM 6.6
+  // The guest shader path is native DXIL only, which is bindless (SM 6.6
   // ResourceDescriptorHeap). There is no bindful guest shader path anymore, so
   // a device without bindless support (resource binding tier 1, or
   // d3d12_bindless disabled) cannot use the D3D12 backend - use the Vulkan
@@ -724,40 +724,40 @@ bool D3D12CommandProcessor::SetupContext() {
   }
 
   {
-    // Fixed root signature for the spirv_to_dxil guest path. CBVs in space1,
+    // Fixed root signature for the native DXIL guest path. CBVs in space1,
     // shared memory in space0 (same registers as the other paths), runtime data
-    // in space31, matching the Mesa DXIL binding layout.
-    D3D12_ROOT_PARAMETER root_parameters_mesa[kRootParameter_Mesa_Count] = {};
-    auto set_mesa_cbv = [&](uint32_t index, uint32_t shader_register,
+    // in space31, matching the Native DXIL binding layout.
+    D3D12_ROOT_PARAMETER root_parameters_native[kRootParameter_Native_Count] = {};
+    auto set_native_cbv = [&](uint32_t index, uint32_t shader_register,
                             uint32_t register_space) {
-      auto& parameter = root_parameters_mesa[index];
+      auto& parameter = root_parameters_native[index];
       parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
       parameter.Descriptor.ShaderRegister = shader_register;
       parameter.Descriptor.RegisterSpace = register_space;
       parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     };
-    set_mesa_cbv(kRootParameter_Mesa_SystemConstants, 0, 1);
-    set_mesa_cbv(kRootParameter_Mesa_FloatConstantsVertex, 1, 1);
-    set_mesa_cbv(kRootParameter_Mesa_FloatConstantsPixel, 2, 1);
-    set_mesa_cbv(kRootParameter_Mesa_BoolLoopConstants, 3, 1);
-    set_mesa_cbv(kRootParameter_Mesa_FetchConstants, 4, 1);
-    set_mesa_cbv(kRootParameter_Mesa_RuntimeData, 0, 31);
-    set_mesa_cbv(kRootParameter_Native_TessellationConstants, 0, 0);
-    auto set_mesa_srv = [&](uint32_t index, uint32_t shader_register,
+    set_native_cbv(kRootParameter_Native_SystemConstants, 0, 1);
+    set_native_cbv(kRootParameter_Native_FloatConstantsVertex, 1, 1);
+    set_native_cbv(kRootParameter_Native_FloatConstantsPixel, 2, 1);
+    set_native_cbv(kRootParameter_Native_BoolLoopConstants, 3, 1);
+    set_native_cbv(kRootParameter_Native_FetchConstants, 4, 1);
+    set_native_cbv(kRootParameter_Native_RuntimeData, 0, 31);
+    set_native_cbv(kRootParameter_Native_TessellationConstants, 0, 0);
+    auto set_native_srv = [&](uint32_t index, uint32_t shader_register,
                             uint32_t register_space) {
-      auto& parameter = root_parameters_mesa[index];
+      auto& parameter = root_parameters_native[index];
       parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
       parameter.Descriptor.ShaderRegister = shader_register;
       parameter.Descriptor.RegisterSpace = register_space;
       parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     };
-    set_mesa_srv(kRootParameter_Mesa_VertexTextureIndices, 2, 0);
-    set_mesa_srv(kRootParameter_Mesa_PixelTextureIndices, 3, 0);
+    set_native_srv(kRootParameter_Native_VertexTextureIndices, 2, 0);
+    set_native_srv(kRootParameter_Native_PixelTextureIndices, 3, 0);
     // Unbounded ranges covering the (heap-accessed) texture/sampler
     // declarations the bindless lowering leaves behind, so D3D12 accepts the
     // root signature.
-    D3D12_DESCRIPTOR_RANGE mesa_declaration_ranges[4] = {};
-    auto set_mesa_declaration_range =
+    D3D12_DESCRIPTOR_RANGE native_declaration_ranges[4] = {};
+    auto set_native_declaration_range =
         [&](uint32_t index, D3D12_DESCRIPTOR_RANGE_TYPE range_type,
             uint32_t register_space, D3D12_DESCRIPTOR_RANGE& range) {
           range.RangeType = range_type;
@@ -765,93 +765,93 @@ bool D3D12CommandProcessor::SetupContext() {
           range.BaseShaderRegister = 0;
           range.RegisterSpace = register_space;
           range.OffsetInDescriptorsFromTableStart = 0;
-          auto& parameter = root_parameters_mesa[index];
+          auto& parameter = root_parameters_native[index];
           parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
           parameter.DescriptorTable.NumDescriptorRanges = 1;
           parameter.DescriptorTable.pDescriptorRanges = &range;
           parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         };
-    set_mesa_declaration_range(kRootParameter_Mesa_VertexTextureRange,
+    set_native_declaration_range(kRootParameter_Native_VertexTextureRange,
                                D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2,
-                               mesa_declaration_ranges[0]);
-    set_mesa_declaration_range(kRootParameter_Mesa_PixelTextureRange,
+                               native_declaration_ranges[0]);
+    set_native_declaration_range(kRootParameter_Native_PixelTextureRange,
                                D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3,
-                               mesa_declaration_ranges[1]);
-    set_mesa_declaration_range(kRootParameter_Mesa_VertexSamplerRange,
+                               native_declaration_ranges[1]);
+    set_native_declaration_range(kRootParameter_Native_VertexSamplerRange,
                                D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 2,
-                               mesa_declaration_ranges[2]);
-    set_mesa_declaration_range(kRootParameter_Mesa_PixelSamplerRange,
+                               native_declaration_ranges[2]);
+    set_native_declaration_range(kRootParameter_Native_PixelSamplerRange,
                                D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 3,
-                               mesa_declaration_ranges[3]);
-    D3D12_DESCRIPTOR_RANGE mesa_shared_memory_ranges[2] = {};
+                               native_declaration_ranges[3]);
+    D3D12_DESCRIPTOR_RANGE native_shared_memory_ranges[2] = {};
     {
-      auto& parameter = root_parameters_mesa[kRootParameter_Mesa_SharedMemory];
+      auto& parameter = root_parameters_native[kRootParameter_Native_SharedMemory];
       parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
       parameter.DescriptorTable.NumDescriptorRanges =
-          uint32_t(xe::countof(mesa_shared_memory_ranges));
-      parameter.DescriptorTable.pDescriptorRanges = mesa_shared_memory_ranges;
+          uint32_t(xe::countof(native_shared_memory_ranges));
+      parameter.DescriptorTable.pDescriptorRanges = native_shared_memory_ranges;
       parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
       {
-        auto& range = mesa_shared_memory_ranges[0];
+        auto& range = native_shared_memory_ranges[0];
         range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         range.NumDescriptors = 1;
-        range.BaseShaderRegister = kMesaRegister_SharedMemory;
+        range.BaseShaderRegister = kNativeRegister_SharedMemory;
         range.RegisterSpace = 0;
         range.OffsetInDescriptorsFromTableStart = 0;
       }
       {
-        auto& range = mesa_shared_memory_ranges[1];
+        auto& range = native_shared_memory_ranges[1];
         range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
         range.NumDescriptors = 1;
-        range.BaseShaderRegister = kMesaRegister_SharedMemory;
+        range.BaseShaderRegister = kNativeRegister_SharedMemory;
         range.RegisterSpace = 0;
         range.OffsetInDescriptorsFromTableStart = 1;
       }
     }
     // ZPD counter (u1) and EDRAM (u2) raw UAVs. Single descriptor tables
     // pointed into the bindless system view heap at draw time
-    // (UpdateBindingsMesa), mirroring the shared memory table. The Mesa DXIL
+    // (UpdateBindingsNative), mirroring the shared memory table. The Native DXIL
     // places the SPIR-V set 0 bindings 1 and 2 at u1/u2 space0.
-    D3D12_DESCRIPTOR_RANGE mesa_edram_range = {};
+    D3D12_DESCRIPTOR_RANGE native_edram_range = {};
     {
-      mesa_edram_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-      mesa_edram_range.NumDescriptors = 1;
-      mesa_edram_range.BaseShaderRegister = kMesaRegister_Edram;
-      mesa_edram_range.RegisterSpace = 0;
-      mesa_edram_range.OffsetInDescriptorsFromTableStart = 0;
-      auto& parameter = root_parameters_mesa[kRootParameter_Mesa_Edram];
+      native_edram_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+      native_edram_range.NumDescriptors = 1;
+      native_edram_range.BaseShaderRegister = kNativeRegister_Edram;
+      native_edram_range.RegisterSpace = 0;
+      native_edram_range.OffsetInDescriptorsFromTableStart = 0;
+      auto& parameter = root_parameters_native[kRootParameter_Native_Edram];
       parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
       parameter.DescriptorTable.NumDescriptorRanges = 1;
-      parameter.DescriptorTable.pDescriptorRanges = &mesa_edram_range;
+      parameter.DescriptorTable.pDescriptorRanges = &native_edram_range;
       parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
-    D3D12_DESCRIPTOR_RANGE mesa_zpd_counter_range = {};
+    D3D12_DESCRIPTOR_RANGE native_zpd_counter_range = {};
     {
-      mesa_zpd_counter_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-      mesa_zpd_counter_range.NumDescriptors = 1;
-      mesa_zpd_counter_range.BaseShaderRegister = kMesaRegister_ZpdCounter;
-      mesa_zpd_counter_range.RegisterSpace = 0;
-      mesa_zpd_counter_range.OffsetInDescriptorsFromTableStart = 0;
-      auto& parameter = root_parameters_mesa[kRootParameter_Mesa_ZpdCounter];
+      native_zpd_counter_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+      native_zpd_counter_range.NumDescriptors = 1;
+      native_zpd_counter_range.BaseShaderRegister = kNativeRegister_ZpdCounter;
+      native_zpd_counter_range.RegisterSpace = 0;
+      native_zpd_counter_range.OffsetInDescriptorsFromTableStart = 0;
+      auto& parameter = root_parameters_native[kRootParameter_Native_ZpdCounter];
       parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
       parameter.DescriptorTable.NumDescriptorRanges = 1;
-      parameter.DescriptorTable.pDescriptorRanges = &mesa_zpd_counter_range;
+      parameter.DescriptorTable.pDescriptorRanges = &native_zpd_counter_range;
       parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
-    D3D12_ROOT_SIGNATURE_DESC root_signature_mesa_desc = {};
-    root_signature_mesa_desc.NumParameters = kRootParameter_Mesa_Count;
-    root_signature_mesa_desc.pParameters = root_parameters_mesa;
+    D3D12_ROOT_SIGNATURE_DESC root_signature_native_desc = {};
+    root_signature_native_desc.NumParameters = kRootParameter_Native_Count;
+    root_signature_native_desc.pParameters = root_parameters_native;
     // The bindless lowering accesses textures via ResourceDescriptorHeap and
     // samplers via SamplerDescriptorHeap, so both heaps must be directly
     // indexable from the shader.
-    root_signature_mesa_desc.Flags =
+    root_signature_native_desc.Flags =
         D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
         D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
         D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
-    root_signature_mesa_ = ui::d3d12::util::CreateRootSignature(
-        GetD3D12Provider(), root_signature_mesa_desc);
-    if (!root_signature_mesa_) {
-      XELOGE("Failed to create the spirv_to_dxil guest root signature");
+    root_signature_native_ = ui::d3d12::util::CreateRootSignature(
+        GetD3D12Provider(), root_signature_native_desc);
+    if (!root_signature_native_) {
+      XELOGE("Failed to create the native DXIL guest root signature");
       return false;
     }
   }
@@ -1474,7 +1474,7 @@ void D3D12CommandProcessor::ShutdownContext() {
   // the texture cache.
 
   // Root signatures are used by pipelines, thus freed after the pipelines.
-  ui::d3d12::util::ReleaseAndNull(root_signature_mesa_);
+  ui::d3d12::util::ReleaseAndNull(root_signature_native_);
   for (auto it : root_signatures_bindful_) {
     it.second->Release();
   }
@@ -2709,7 +2709,7 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
                           regs.Get<reg::SQ_PROGRAM_CNTL>(),
                           regs.Get<reg::SQ_CONTEXT_MISC>(), ps_param_gen_pos))
                    : 0;
-  // The canonical D3D12 pipeline modification is the SPIR-V (spirv_to_dxil)
+  // The canonical D3D12 pipeline modification is the shared guest encoding
   // modification - it is what the guest shaders are actually translated with.
   SpirvShaderTranslator::Modification vertex_shader_modification(
       pipeline_cache_->GetCurrentSpirvVertexShaderModification(
@@ -3000,9 +3000,9 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
                            normalized_depth_control, normalized_color_mask,
                            bound_depth_and_color_render_target_bits);
 
-  // The spirv_to_dxil guest path fills SPIR-V system constants and binds the
-  // Mesa root signature itself.
-  if (!UpdateBindingsMesa(
+  // The native DXIL guest path fills shared system constants and binds the
+  // native root signature itself.
+  if (!UpdateBindingsNative(
           vertex_shader, pixel_shader, memexport_used, route_to_host,
           primitive_polygonal, primitive_processing_result, viewport_info,
           normalized_depth_control, normalized_color_mask,
@@ -4252,7 +4252,7 @@ void D3D12CommandProcessor::UpdateFixedFunctionState(
     }
   }
 }
-bool D3D12CommandProcessor::UpdateBindingsMesa(
+bool D3D12CommandProcessor::UpdateBindingsNative(
     const SpirvShader* vertex_shader, const SpirvShader* pixel_shader,
     bool memexport_used, bool route_to_host, bool primitive_polygonal,
     const PrimitiveProcessor::ProcessingResult& primitive_processing_result,
@@ -4267,7 +4267,7 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
   const ui::d3d12::D3D12Provider& provider = GetD3D12Provider();
   const RegisterFile& regs = *register_file_;
 
-  ID3D12RootSignature* root_signature = GetMesaRootSignature();
+  ID3D12RootSignature* root_signature = GetNativeRootSignature();
   if (current_graphics_root_signature_ != root_signature) {
     current_graphics_root_signature_ = root_signature;
     current_graphics_root_up_to_date_ = 0;
@@ -4460,7 +4460,7 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
   // render targets), sampling black. The host swizzle is baked into the D3D12
   // SRV (image_view_format_swizzle is set), so texture_swizzles stays zero.
   // The used-texture mask comes from the guest shaders' bindings, gathered
-  // during Mesa SPIR-V translation. Only read once published (bindings_ready).
+  // during Native SPIR-V translation. Only read once published (bindings_ready).
   uint32_t used_texture_mask = 0;
   if (vertex_shader->bindings_ready()) {
     used_texture_mask |= vertex_shader->GetUsedTextureMaskAfterTranslation();
@@ -4532,9 +4532,9 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
 
   // System constants are derived, not raw registers, so there is no per write
   // invalidation. Compare against the last uploaded copy instead.
-  if (mesa_system_constants_shadow_.size() != sizeof(sc) ||
-      std::memcmp(mesa_system_constants_shadow_.data(), &sc, sizeof(sc)) != 0) {
-    mesa_system_constants_shadow_.assign(
+  if (native_system_constants_shadow_.size() != sizeof(sc) ||
+      std::memcmp(native_system_constants_shadow_.data(), &sc, sizeof(sc)) != 0) {
+    native_system_constants_shadow_.assign(
         reinterpret_cast<const uint8_t*>(&sc),
         reinterpret_cast<const uint8_t*>(&sc) + sizeof(sc));
     cbuffer_binding_system_.up_to_date = false;
@@ -4550,7 +4550,7 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
     std::memcpy(mapping, &sc, sizeof(sc));
     cbuffer_binding_system_.up_to_date = true;
     current_graphics_root_up_to_date_ &=
-        ~(uint32_t(1) << kRootParameter_Mesa_SystemConstants);
+        ~(uint32_t(1) << kRootParameter_Native_SystemConstants);
   }
 
   // Invalidate the float constant buffers when the shader's used constant
@@ -4571,8 +4571,8 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
   // The interpreter placeholder needs the full 256 float4 register file (it
   // indexes every constant by raw register index), a different layout than the
   // packed subset, so invalidate the buffer when switching between them.
-  if (interpreter_placeholder != mesa_float_constants_vertex_full_) {
-    mesa_float_constants_vertex_full_ = interpreter_placeholder;
+  if (interpreter_placeholder != native_float_constants_vertex_full_) {
+    native_float_constants_vertex_full_ = interpreter_placeholder;
     cbuffer_binding_float_vertex_.up_to_date = false;
   }
   uint32_t float_count_pixel = 0;
@@ -4625,7 +4625,7 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
     }
     cbuffer_binding_float_vertex_.up_to_date = true;
     current_graphics_root_up_to_date_ &=
-        ~(uint32_t(1) << kRootParameter_Mesa_FloatConstantsVertex);
+        ~(uint32_t(1) << kRootParameter_Native_FloatConstantsVertex);
   }
 
   // Pixel float constants. Depth-only draws have no pixel shader. The bound
@@ -4657,7 +4657,7 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
     }
     cbuffer_binding_float_pixel_.up_to_date = true;
     current_graphics_root_up_to_date_ &=
-        ~(uint32_t(1) << kRootParameter_Mesa_FloatConstantsPixel);
+        ~(uint32_t(1) << kRootParameter_Native_FloatConstantsPixel);
   }
 
   if (!cbuffer_binding_bool_loop_.up_to_date) {
@@ -4673,7 +4673,7 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
                 kBoolLoopConstantsSize);
     cbuffer_binding_bool_loop_.up_to_date = true;
     current_graphics_root_up_to_date_ &=
-        ~(uint32_t(1) << kRootParameter_Mesa_BoolLoopConstants);
+        ~(uint32_t(1) << kRootParameter_Native_BoolLoopConstants);
   }
 
   if (!cbuffer_binding_fetch_.up_to_date) {
@@ -4689,7 +4689,7 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
                 kFetchConstantsSize);
     cbuffer_binding_fetch_.up_to_date = true;
     current_graphics_root_up_to_date_ &=
-        ~(uint32_t(1) << kRootParameter_Mesa_FetchConstants);
+        ~(uint32_t(1) << kRootParameter_Native_FetchConstants);
   }
 
   // A small zeroed buffer for the unused Dozen runtime data CBV (b0, space31),
@@ -4707,7 +4707,7 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
     std::memset(mapping, 0, kRuntimeDataSize);
     cbuffer_binding_runtime_data_.up_to_date = true;
     current_graphics_root_up_to_date_ &=
-        ~(uint32_t(1) << kRootParameter_Mesa_RuntimeData);
+        ~(uint32_t(1) << kRootParameter_Native_RuntimeData);
   }
 
   // Bind the constant buffer views, skipping any already bound with the current
@@ -4722,14 +4722,14 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
       current_graphics_root_up_to_date_ |= bit;
     }
   };
-  bind_cbv(kRootParameter_Mesa_SystemConstants, cbuffer_binding_system_);
-  bind_cbv(kRootParameter_Mesa_FloatConstantsVertex,
+  bind_cbv(kRootParameter_Native_SystemConstants, cbuffer_binding_system_);
+  bind_cbv(kRootParameter_Native_FloatConstantsVertex,
            cbuffer_binding_float_vertex_);
-  bind_cbv(kRootParameter_Mesa_FloatConstantsPixel,
+  bind_cbv(kRootParameter_Native_FloatConstantsPixel,
            cbuffer_binding_float_pixel_);
-  bind_cbv(kRootParameter_Mesa_BoolLoopConstants, cbuffer_binding_bool_loop_);
-  bind_cbv(kRootParameter_Mesa_FetchConstants, cbuffer_binding_fetch_);
-  bind_cbv(kRootParameter_Mesa_RuntimeData, cbuffer_binding_runtime_data_);
+  bind_cbv(kRootParameter_Native_BoolLoopConstants, cbuffer_binding_bool_loop_);
+  bind_cbv(kRootParameter_Native_FetchConstants, cbuffer_binding_fetch_);
+  bind_cbv(kRootParameter_Native_RuntimeData, cbuffer_binding_runtime_data_);
   bind_cbv(kRootParameter_Native_TessellationConstants, cbuffer_binding_system_);
 
   // Shared memory descriptor table (SRV t0 + UAV u0, space0). The bindless
@@ -4755,7 +4755,7 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
       provider.OffsetViewDescriptor(view_bindless_heap_gpu_start_,
                                     uint32_t(shared_memory_view));
   deferred_command_list_.D3DSetGraphicsRootDescriptorTable(
-      kRootParameter_Mesa_SharedMemory, shared_memory_handle);
+      kRootParameter_Native_SharedMemory, shared_memory_handle);
 
   // ZPD counter (u1) and EDRAM (u2) UAVs: the pixel shaders declare them at
   // SPIR-V set 0 bindings 1 and 2. The counter is also used by RTV hybrid
@@ -4763,27 +4763,27 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
   // is always bound. EDRAM only exists in the pixel shader interlock path, and
   // host render target shaders never reference that root parameter.
   deferred_command_list_.D3DSetGraphicsRootDescriptorTable(
-      kRootParameter_Mesa_ZpdCounter,
+      kRootParameter_Native_ZpdCounter,
       provider.OffsetViewDescriptor(
           view_bindless_heap_gpu_start_,
           uint32_t(SystemBindlessView::kZpdCounterRawUAV)));
   if (render_target_cache_->GetPath() ==
       RenderTargetCache::Path::kPixelShaderInterlock) {
     deferred_command_list_.D3DSetGraphicsRootDescriptorTable(
-        kRootParameter_Mesa_Edram,
+        kRootParameter_Native_Edram,
         provider.OffsetViewDescriptor(
             view_bindless_heap_gpu_start_,
             uint32_t(SystemBindlessView::kEdramRawUAV)));
   }
 
   // Per-stage bindless texture/sampler index buffers (raw buffers of
-  // {texture_idx, sampler_idx} entries, one per SPIR-V binding). The Mesa DXIL
+  // {texture_idx, sampler_idx} entries, one per SPIR-V binding). The Native DXIL
   // reads a heap index from these and indexes ResourceDescriptorHeap /
   // SamplerDescriptorHeap. Bound even when empty so the root SRV is valid.
   bool sampler_overflow = false;
   auto bind_index_buffer = [&](const SpirvShader* shader,
                                uint32_t root_parameter) -> bool {
-    // The index buffer follows the SpirvShader's binding order (which the Mesa
+    // The index buffer follows the SpirvShader's binding order (which the Native
     // DXIL was generated from). Each binding's heap index is resolved directly
     // from its fetch constant / dimension / sign via the texture cache (k1D and
     // k2D resolve identically in the cache, so the SPIR-V translator's 1D-as-2D
@@ -4828,7 +4828,7 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
           (*spirv_textures)[i]);
     }
     for (size_t j = 0; j < sampler_count; ++j) {
-      uint32_t sampler_index = GetOrCreateMesaBindlessSamplerIndex(
+      uint32_t sampler_index = GetOrCreateNativeBindlessSamplerIndex(
           texture_cache_->GetSamplerParameters((*spirv_samplers)[j]));
       if (sampler_index == UINT32_MAX) {
         // Heap full. Stop and let the caller switch heaps and rebuild.
@@ -4850,9 +4850,9 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
   for (uint32_t attempt = 0;; ++attempt) {
     sampler_overflow = false;
     if (!bind_index_buffer(vertex_shader,
-                           kRootParameter_Mesa_VertexTextureIndices) ||
+                           kRootParameter_Native_VertexTextureIndices) ||
         !bind_index_buffer(pixel_shader,
-                           kRootParameter_Mesa_PixelTextureIndices)) {
+                           kRootParameter_Native_PixelTextureIndices)) {
       return false;
     }
     if (!sampler_overflow) {
@@ -4866,18 +4866,18 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
   // Satisfy the vestigial texture/sampler declarations left by the bindless
   // lowering: point their (never-dereferenced) ranges at the bindless heaps.
   deferred_command_list_.D3DSetGraphicsRootDescriptorTable(
-      kRootParameter_Mesa_VertexTextureRange, view_bindless_heap_gpu_start_);
+      kRootParameter_Native_VertexTextureRange, view_bindless_heap_gpu_start_);
   deferred_command_list_.D3DSetGraphicsRootDescriptorTable(
-      kRootParameter_Mesa_PixelTextureRange, view_bindless_heap_gpu_start_);
+      kRootParameter_Native_PixelTextureRange, view_bindless_heap_gpu_start_);
   deferred_command_list_.D3DSetGraphicsRootDescriptorTable(
-      kRootParameter_Mesa_VertexSamplerRange, sampler_bindless_heap_gpu_start_);
+      kRootParameter_Native_VertexSamplerRange, sampler_bindless_heap_gpu_start_);
   deferred_command_list_.D3DSetGraphicsRootDescriptorTable(
-      kRootParameter_Mesa_PixelSamplerRange, sampler_bindless_heap_gpu_start_);
+      kRootParameter_Native_PixelSamplerRange, sampler_bindless_heap_gpu_start_);
 
   return true;
 }
 
-uint32_t D3D12CommandProcessor::GetOrCreateMesaBindlessSamplerIndex(
+uint32_t D3D12CommandProcessor::GetOrCreateNativeBindlessSamplerIndex(
     D3D12TextureCache::SamplerParameters parameters) {
   auto it = texture_cache_bindless_sampler_map_.find(parameters.value);
   if (it != texture_cache_bindless_sampler_map_.end()) {

@@ -590,7 +590,7 @@ bool D3D12RenderTargetCache::Initialize() {
 
     // Transfer root signatures - one per mode, since the mode is what decides
     // which of the emitter's descriptor sets the shader declares, and which
-    // register space Mesa gives each of them.
+    // register space Native gives each of them.
     D3D12_ROOT_PARAMETER
     transfer_root_parameters[kTransferUsedRootParameterCount];
     D3D12_DESCRIPTOR_RANGE
@@ -611,7 +611,7 @@ bool D3D12RenderTargetCache::Initialize() {
       // A one-descriptor table per texture: the command processor can't
       // contiguously allocate multiple descriptors with bindless, so the
       // depth source's stencil gets a table of its own rather than sharing
-      // the depth one's, even though Mesa puts them in the same space.
+      // the depth one's, even though Native puts them in the same space.
       auto set_up_transfer_srv = [&](uint32_t parameter_bit,
                                      uint32_t shader_register,
                                      uint32_t register_space) {
@@ -662,7 +662,7 @@ bool D3D12RenderTargetCache::Initialize() {
         D3D12_ROOT_PARAMETER& parameter =
             transfer_root_parameters[transfer_root_index(
                 kTransferUsedRootParameterHostDepthBufferBit)];
-        // A root descriptor is a raw buffer view, which is the kind Mesa
+        // A root descriptor is a raw buffer view, which is the kind Native
         // declares for the storage buffer.
         parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
         parameter.Descriptor.ShaderRegister = 0;

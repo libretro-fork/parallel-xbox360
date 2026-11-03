@@ -23,9 +23,7 @@ namespace gpu {
 
 // Emits the fragment shader that moves ownership of an EDRAM range from one
 // host render target to another, reading the previous owner as a texture and
-// writing the new one as an attachment. Backend-independent: the result is
-// SPIR-V, which Vulkan consumes directly and Metal takes through spirv_to_dxil
-// and Apple's Metal Shader Converter.
+// writing the new one as an attachment. Vulkan consumes the emitted SPIR-V directly.
 //
 // The vertex half is a passthrough over rectangle positions, which the backends
 // supply themselves - it carries no part of the transfer's addressing.

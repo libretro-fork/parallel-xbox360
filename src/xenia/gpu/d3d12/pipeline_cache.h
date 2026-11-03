@@ -106,21 +106,9 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   // Ensures the shader's ucode analysis and a Translation for the modification
   // exist, WITHOUT translating to SPIR-V. Returns the (possibly untranslated)
   // Translation.
-  Shader::Translation* EnsureGuestMesaSpirvTranslation(
+  Shader::Translation* EnsureGuestTranslation(
       SpirvShader& shader, uint64_t spirv_modification);
-  // Translates an already-created Translation to SPIR-V using the given
-  // translator (the main thread's for vertex shaders, a creation thread's for
-  // pixel shaders). use_try_claim coordinates concurrent translation of the
-  // same Translation. Returns the valid Translation or nullptr. Any thread.
-  Shader::Translation* TranslateGuestMesaSpirv(
-      SpirvShaderTranslator& translator, Shader::Translation& translation,
-      bool use_try_claim);
-  // Main-thread convenience: ensure + translate on the shared translator.
-  Shader::Translation* EnsureGuestMesaSpirv(SpirvShader& shader,
-                                            uint64_t spirv_modification);
-  // GuestSpirvShaderCache::Host. CreateTranslator builds the guest Mesa SPIR-V
-  // translator (standard feature set), one per creation thread plus the main
-  // thread (the translator is not thread safe).
+  // Shared guest feature/modification settings only; D3D12 never emits SPIR-V.
   std::unique_ptr<SpirvShaderTranslator> CreateTranslator() const override;
   bool precise_interpolation_supported() const;
   bool IsGuestVertexReady(const Shader::Translation& translation);
@@ -130,39 +118,14 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   bool depth_float24_convert_in_pixel_shader() const override {
     return render_target_cache_.depth_float24_convert_in_pixel_shader();
   }
-  // Converts already-translated SPIR-V to signed Mesa DXIL, caching it by
-  // (ucode hash, modification). Returns nullptr on failure. Thread safe (cache
-  // guarded by mesa_dxil_cache_mutex_, conversion serialized internally), so it
-  // runs on the main thread for vertex shaders and creation threads for pixel
-  // shaders.
-  const std::vector<uint8_t>* ConvertGuestMesaSpirvToDxil(
-      uint64_t ucode_hash, uint64_t spirv_modification,
-      const std::vector<uint8_t>& spirv, xenos::ShaderType shader_type);
   const XeDxilShaderBinary* GetGuestNativeVertexDxil(const Shader& shader,
                                                    uint64_t modification);
   const XeDxilShaderBinary* GetGuestNativePixelDxil(const Shader& shader,
                                                   uint64_t modification);
   // Returns the guest SpirvShader for a ucode hash once its bindings are
   // published (bindings_ready), or nullptr. Its texture/sampler bindings define
-  // the order the Mesa DXIL expects in the bindless index buffers.
-  SpirvShader* GetGuestMesaSpirvShader(uint64_t ucode_hash);
-
-  // Linked tessellation DXIL: the host vertex and hull shaders plus the guest
-  // domain shader, translated together so their inter-stage signatures match.
-  struct MesaTessellationDxil {
-    std::vector<uint8_t> host_vertex;  // host tessellation vertex shader
-    std::vector<uint8_t> host_hull;    // host hull shader
-    std::vector<uint8_t> domain;       // guest domain (tess eval) shader
-  };
-  // Links the host VS + host HS (selected by tessellation mode and domain type)
-  // with the already-translated guest domain SPIR-V, returning the three signed
-  // DXIL blobs, cached by (domain ucode hash, modification). Returns nullptr on
-  // failure. Thread safe (cache guarded by mesa_dxil_cache_mutex_).
-  const MesaTessellationDxil* ConvertGuestMesaTessellationToDxil(
-      uint64_t domain_ucode_hash, uint64_t domain_spirv_modification,
-      const std::vector<uint8_t>& domain_spirv,
-      xenos::TessellationMode tessellation_mode,
-      Shader::HostVertexShaderType host_vertex_shader_type);
+  // the order the Native DXIL expects in the bindless index buffers.
+  SpirvShader* GetGuestShader(uint64_t ucode_hash);
 
   // If draw_util::IsRasterizationPotentiallyDone is false, the pixel shader
   // MUST be made nullptr BEFORE calling this!
@@ -360,13 +323,13 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
 
     inline bool operator==(const PipelineDescription& other) const;
     // Bumped to invalidate caches: vertex/pixel_shader_modification are now
-    // the canonical SPIR-V (spirv_to_dxil) modifications, not DXBC; then
+    // the shared guest modification encoding; then
     // again for the constant-alpha blend state; then again for
     // guest_msaa_samples changing the bitfield layout; then again for
     // zpd_total; then again for it also covering VIZ surveys; then again for
-    // dropping use_mesa_dxil; then again for the line geometry shader
+    // dropping use_native_dxil; then again for the line geometry shader
     // widening geometry_shader.
-    static constexpr uint32_t kVersion = 0x20261107;
+    static constexpr uint32_t kVersion = 0x20261108;
   });
 
   XEPACKEDSTRUCT(PipelineStoredDescription, {
@@ -378,34 +341,26 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
     ID3D12RootSignature* root_signature;
     Shader::Translation* vertex_shader;
     Shader::Translation* pixel_shader;
-    // Native or remaining Mesa bytecode, using the shared root signature.
+    // Native guest bytecode, using the shared root signature.
     // Caches retain stable owned entries. Default initialization also covers
     // storage reloads, before workers compile the guest shaders.
-    const std::vector<uint8_t>* mesa_vertex_dxil = nullptr;
     // Guest vertex or domain bytecode, selected by the host shader type.
     const XeDxilShaderBinary* native_vertex_dxil = nullptr;
     const XeDxilShaderBinary* native_pixel_dxil = nullptr;
     D3D12_SHADER_BYTECODE native_tess_host_vs = {};
     D3D12_SHADER_BYTECODE native_tess_host_hs = {};
-    const std::vector<uint8_t>* mesa_pixel_dxil = nullptr;
     // Guest compilation handles deferred to a creation thread. Native stages
-    // read ucode directly; remaining stages pass through SPIR-V/Mesa. Point
+    // read ucode directly. Point
     // into a SpirvShader's Translation in shaders_ (never erased). The
     // live draw path defers only the pixel shader (the vertex DXIL is built
     // synchronously for the placeholder). The storage warm-up defers both via
-    // mesa_vertex_translation, since there is no placeholder to satisfy.
-    Shader::Translation* mesa_vertex_translation = nullptr;
-    Shader::Translation* mesa_pixel_translation = nullptr;
+    // native_vertex_translation, since there is no placeholder to satisfy.
+    Shader::Translation* native_vertex_translation = nullptr;
+    Shader::Translation* native_pixel_translation = nullptr;
     // Native DXIL for the built-in geometry shader (primitive expansion). When
     // set, the pipeline binds it as the geometry shader. Points into
     // native_geometry_dxil_cache_ (never erased).
-    const std::vector<uint8_t>* native_geometry_dxil = nullptr;
-    // Tessellation: the host vertex and hull shaders, produced together with
-    // the guest domain shader (held in mesa_vertex_dxil, bound as the DS) by
-    // one linked translation so the hull and domain signatures match. Point
-    // into mesa_tess_dxil_cache_ (never erased).
-    const std::vector<uint8_t>* mesa_tess_host_vs_dxil = nullptr;
-    const std::vector<uint8_t>* mesa_tess_host_hs_dxil = nullptr;
+    const XeDxilShaderBinary* native_geometry_dxil = nullptr;
     PipelineDescription description;
   };
 
@@ -440,24 +395,13 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
                           const uint32_t* host_address, uint32_t dword_count,
                           uint64_t data_hash);
 
-  // Analyzes shaders in parallel for storage loading. D3D12 renders only
-  // through spirv_to_dxil, so only the ucode analysis is needed here, ahead of
-  // the translations the creation threads run.
+  // Analyze guest instructions before parallel native shader generation.
   void AnalyzeShadersForStorage(
       const std::set<std::pair<uint64_t, uint64_t>>& translations_needed);
 
-  // Builds the Mesa DXIL (vertex/domain + tessellation host shaders + pixel +
-  // built-in geometry) for a pipeline being rebuilt from storage and fills the
-  // runtime description's mesa_*_dxil pointers + Mesa root signature. The
-  // SpirvShader translation objects must already exist (created on the main
-  // thread via EnsureGuestMesaSpirvTranslation). The ucode->SPIR-V translation
-  // and SPIR-V->DXIL conversion run on the given translator's thread, so this
-  // is called on a creation thread for the warm-up (use_try_claim coordinates
-  // concurrent translation). Returns false on any translation failure.
-  bool BuildMesaPipelineDxil(Shader::Translation* vertex_translation,
+  // Build native stages and the fixed root signature for storage warm-up.
+  bool BuildNativePipelineDxil(Shader::Translation* vertex_translation,
                              Shader::Translation* pixel_translation,
-                             SpirvShaderTranslator& translator,
-                             bool use_try_claim,
                              PipelineRuntimeDescription& runtime_description);
 
   // If draw_util::IsRasterizationPotentiallyDone is false, the pixel shader
@@ -483,9 +427,9 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
 
   // Generates and caches native primitive-expansion DXIL directly.
   // Keyed by GeometryShaderKey. Returns nullptr on failure. Thread safe.
-  const std::vector<uint8_t>* GetGuestNativeGeometryDxil(GeometryShaderKey key);
+  const XeDxilShaderBinary* GetGuestNativeGeometryDxil(GeometryShaderKey key);
 
-  // Hot-swap placeholder PSO variants, built with the fixed (bindless) Mesa
+  // Hot-swap placeholder PSO variants, built with the fixed (bindless) Native
   // root signature so the pixel (and, for the interpreter, vertex) shader need
   // not be translated yet.
   enum class PipelinePlaceholderMode {
@@ -508,34 +452,17 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   // Temporary storage for AnalyzeUcode calls on the processor thread.
   StringBuffer ucode_disasm_buffer_;
 
-  // Guest shader path: SpirvShaderTranslator output fed to Mesa spirv_to_dxil.
-  // The shared cache owns the translator and the modification derivation.
-  // SPIR-V translation (EnsureGuestMesaSpirv) is done on the main/draw thread,
-  // mirroring how Vulkan translates SPIR-V on the main thread before queuing
-  // pipeline work.
+  // Shared guest analysis settings and modification derivation; no IR conversion.
   GuestSpirvShaderCache guest_shader_cache_;
-  // Mesa DXIL by ucode hash then SPIR-V modification.
-  std::unordered_map<uint64_t,
-                     std::unordered_map<uint64_t, std::vector<uint8_t>>>
-      mesa_dxil_cache_;
-  // Native geometry DXIL, keyed by GeometryShaderKey value.
-  std::unordered_map<uint32_t, std::vector<uint8_t>> native_geometry_dxil_cache_;
-  // Linked tessellation DXIL (host VS + host HS + guest domain), by guest
-  // domain ucode hash then SPIR-V modification.
-  std::unordered_map<uint64_t,
-                     std::unordered_map<uint64_t, MesaTessellationDxil>>
-      mesa_tess_dxil_cache_;
-  // Guards the Mesa and native geometry, vertex and pixel bytecode caches and
-  // mesa_tess_dxil_cache_: guest translation and native shader generation
-  // can run on both the processor and pipeline creation threads.
   using OwnedNativeDxil = std::unique_ptr<XeDxilShaderBinary,
                                         void (*)(XeDxilShaderBinary*)>;
+  std::unordered_map<uint32_t, OwnedNativeDxil> native_geometry_dxil_cache_;
   // Stable owned containers: no temporary bytecode vector or buffer copy.
   std::unordered_map<uint64_t, std::unordered_map<uint64_t, OwnedNativeDxil>>
       native_vertex_dxil_cache_;
   std::unordered_map<uint64_t, std::unordered_map<uint64_t, OwnedNativeDxil>>
       native_pixel_dxil_cache_;
-  std::mutex mesa_dxil_cache_mutex_;
+  std::mutex native_dxil_cache_mutex_;
   // Native ROV depth-only shaders: the optional interpreter uses legacy linkage;
   // guest vertex/domain/geometry stages use the fixed shared linkage.
   XeDxilShaderBinary native_rov_depth_pixel_shaders_[3][2] = {};
@@ -589,15 +516,9 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
     }
   };
 
-  // Builds the deferred DXIL for a pipeline on the calling thread (a creation
-  // thread, or the processor thread in blocking mode). Storage warm-up
-  // pipelines defer the whole build. Live async pipelines defer only the pixel
-  // shader. The translation runs on mesa_spirv_translator (one per creation
-  // thread). use_try_claim coordinates concurrent translation of the same
-  // shader.
+  // Generate deferred native stages on the calling creation/processor thread.
   void EnsurePipelineShadersTranslated(
-      Pipeline* pipeline, SpirvShaderTranslator* mesa_spirv_translator,
-      bool use_try_claim);
+      Pipeline* pipeline);
 
   // All previously generated pipelines identified by hash and the description.
   std::unordered_multimap<uint64_t, Pipeline*,
@@ -621,10 +542,10 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   // Builds one queued pipeline, on a creation thread or on the processor thread
   // draining the warm-up queue. Null if it failed.
   ID3D12PipelineState* CreateQueuedPipeline(
-      Pipeline* pipeline, SpirvShaderTranslator* mesa_spirv_translator);
+      Pipeline* pipeline);
   // Swaps a created pipeline (or a failure, |state| null) into its entry.
   void StoreCreatedPipeline(Pipeline* pipeline, ID3D12PipelineState* state);
-  PipelineCreationQueue<Pipeline*, ID3D12PipelineState*, SpirvShaderTranslator>
+  PipelineCreationQueue<Pipeline*, ID3D12PipelineState*, uint8_t>
       creation_queue_;
 
   // Placeholder pipelines replaced by their real counterpart on a creation

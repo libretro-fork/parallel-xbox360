@@ -22,8 +22,8 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <ObjBase.h>
-#include <SDKDDKVer.h>
+#include <objbase.h>
+#include <sdkddkver.h>
 #include <bcrypt.h>
 #include <dwmapi.h>
 #include <shellapi.h>

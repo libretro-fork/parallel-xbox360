@@ -43,7 +43,7 @@ enum class PipelineGeometryShader : uint32_t {
   kLineList,
 };
 
-// Guest shader logic shared by the D3D12 (spirv_to_dxil) and Vulkan backends:
+// Guest shader logic shared by the native D3D12 and Vulkan backends:
 // the SpirvShaderTranslator (built per backend via the Host seam), the
 // SpirvShaderTranslator::Modification derivation, ucode->SPIR-V translation,
 // and the built-in geometry shader key. The shader object cache stays

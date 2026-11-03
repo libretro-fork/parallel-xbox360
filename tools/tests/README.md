@@ -28,9 +28,7 @@ readback buffer and compares all 32 lane results against the expected values.
 The authored test and support code use MSVC-compatible C89. The reused writer
 implementation retains its original C code and license notices.
 
-These checks validate the writer foundation. The guest shader translator and
-the remaining D3D12 rendering paths still need to be connected to it before
-the old conversion backend can be removed.
+These foundation checks complement the integrated guest and helper stage suites below. The live D3D12 renderer uses the owned native DXIL path exclusively.
 
 ## Guest ALU instruction frontend
 
@@ -59,9 +57,7 @@ that inactive predicates suppress it; pixel-stage adapters must flush pending
 exports and emit discard through this hook before destination writes.
 
 The ALU frontend is independent of SPIR-V and shader-language compilers.
-Texture fetches, live resource bindings, stage export handling and D3D12
-pipeline integration remain required before it can replace the core's guest
-shader backend.
+The live stage adapters connect it to texture policy, resource bindings, exports and pipeline creation; their integration suites are described below.
 
 ## Guest control-flow frontend
 
@@ -84,9 +80,7 @@ Nonlocal guest edges use a program-counter dispatcher to keep the generated
 DXIL control flow reducible. ALU and loop/call state survive backedges in
 entry-block storage. Input words are decoded from the caller's span directly.
 Fetch and memory-allocation callbacks are instrumented in these fixtures;
-they do not implement real vertex/texture access. Stage resource bindings,
-fetch conversion, exports and runtime pipeline integration remain unfinished.
-The frontend is not yet used by the live renderer.
+they do not implement real vertex/texture access. The live vertex, pixel and domain adapters provide those callbacks; their suites test the stage bindings.
 ## Guest vertex-fetch frontend
 
 ```sh
@@ -114,9 +108,7 @@ frontend and vertex decoder. Run the Windows fixture with
 output/state words. Clang and MSVC generators pass validation and WARP execution;
 the authored code also passes strict C89 and MSVC `/TC /W4 /WX` checks.
 
-Fixture memory is a shader-local array. Live shared-memory resource binding,
-texture fetches, stage exports and renderer integration are still required.
-No live renderer path uses this frontend yet.
+Fixture memory is a shader-local array. The live vertex/domain adapters use this frontend with shared-memory resources and native stage exports.
 ## Bound GPU resources
 
 ```sh
@@ -146,9 +138,7 @@ dxil_runtime_test.exe build\make\host\dxil-resources-test.dxil build\make\host\d
 The Windows fixture reads input files directly into mapped upload buffers.
 Its original two/three-argument invocations still use the single output UAV.
 Clang and MSVC-generated resource shaders validate unchanged and execute on
-WARP. These are development fixtures; the live core still uses its previous
-shader backend. Texture fetches, stage assembly/exports and live renderer
-integration remain unfinished.
+WARP. The live stage adapters use these resource helpers; the integration suites below exercise complete guest shaders.
 ## Native texture sampling primitives
 
 ```sh
@@ -181,9 +171,7 @@ validator only. Clang and MSVC generators pass both shader validations; the
 2D compute fixture also passes WARP execution.
 
 The primitive accepts 1D, 2D, 3D, cube and 2D-array views; execution coverage in
-this fixture is 2D. Guest coordinate/face conversion, half-texel offsets,
-signed/gamma treatment, sampler policies, texture state and register writes
-remain to be implemented. No live renderer path uses these primitives yet.
+this fixture is 2D. The live texture stage adds guest coordinate/face conversion, half-texel offsets, signed/gamma treatment, sampler policies and register writes.
 ## Windows GNU compiler and ABI checks
 
 The following fixtures are authored in MSVC-compatible C89. They can also be
@@ -340,8 +328,8 @@ fetch constants at 4352 (b4 space1). Both GCC and MSVC harnesses execute the
 programs. The texture fixture instruments the stage-policy callback; it does
 not test native texture policy or replace the existing texture sampling tests.
 The native plain vertex adapter connects this layer to renderer compilation.
-Memory-export allocation, pixel kill handling and texture policy still require
-stage callbacks; their renderer paths continue using Mesa.
+Memory-export allocation, pixel kill handling and texture policy use native
+stage callbacks in the renderer.
 
 `make check-dxil-guest-vertex DXIL_VALIDATOR=/path/to/dxv` validates six complete
 native vertex containers. The C89 adapter uses SV_VertexID, raw shared memory
@@ -372,7 +360,7 @@ companion is a simple varying producer; `.guest.vs` executes real guest vertex
 microcode, including vertex fetch and ALU work. Point-parameter modes 84..111
 use the simple producer; actual primitive-expansion coordinates have their own
 geometry tests. The harness aliases POSITION/TEXCOORD input declarations onto
-the same vertex bytes to accept native and remaining Mesa vertex fixtures.
+the same vertex bytes to accept the native vertex fixtures.
 
 Modes use groups of 28: seven depth modes, with/without pixel parameters and
 with/without explicit depth exports. Groups 0..6 select the base, centroid,
@@ -391,8 +379,7 @@ The 6,608-case matrix covers all base interfaces, native/emulated 2x and 4x MSAA
 conditional exports, representative blend/depth combinations and alpha cases.
 The fixed guest-stage ABI uses TEXCOORD rows 0..16, position row 17, packed
 clip/cull rows 18..19 and generated front-face row 20. Signature tables sort by
-hardware register while preserving metadata name/declaration order. Mixed
-native/Mesa VS/PS and Mesa VS/native GS checks cover independent compilation,
+hardware register while preserving metadata name/declaration order. Native VS/PS and VS/GS checks cover independent compilation,
 including six clip planes plus a cull distance. Native shader model 6.1 adds
 barycentrics and attributeAtVertex without an LLVM compiler dependency.
 
@@ -461,8 +448,7 @@ unused coordinates and the mip-filter weight are zero.
 
 `make check-dxil-guest-texture-query DXIL_VALIDATOR=/path/to/dxv` validates 84
 complete pixel query containers (modes 476..559), two vertex query containers
-(configs 6/7), and verifies unsupported sample/border/LOD queries and vertex
-derivatives fail native generation so the renderer can retain its fallback.
+(configs 6/7), and checks rejection of malformed query encodings and unsupported vertex derivatives. There is no intermediary compiler fallback.
 Pixel groups 17/18/19 select normalized weights, derivatives and unnormalized
 weights; they export results through RT3. The 1,344-case HRT matrix uses real
 guest and synthetic vertex producers, alpha/kill/gamma/bias/coverage cases and
@@ -507,9 +493,7 @@ normalized/unnormalized sampling through stream output, preserving positions
 and the export observer. Both use shader-model 6.6 dynamic resource/sampler
 heaps and the renderer's two-dword descriptor-index entry ABI.
 
-Current renderer sampling integration covers 1D, 2D, 3D/stacked and cube at unit draw resolution.
-Scaled sampling, memory export and tessellation still require
-native implementation; these tests do not establish game compatibility.
+Renderer sampling covers 1D, 2D, 3D/stacked and cube, including scaled draws. Memory-export and tessellation integration have separate suites below. These tests do not establish game compatibility.
 
 `make check-dxil-guest-sampling-rov` validates 144 complete sampled/query ROV shaders.
 ROV reference/runtime harnesses accept sampling modes 560/588/616 at unit
@@ -569,8 +553,7 @@ remain exact zero. Floating stacked outputs allow a 2e-6 relative tolerance for
 interpolator/filter ordering; untouched targets, depth and counters stay exact.
 
 Modes 1036..1063 verify the current zero-result border-fraction policy. This
-instruction remains unimplemented as in the existing Vulkan path; it now bypasses
-Mesa without inventing different output. Explicit-gradient or non-pixel computed
+instruction preserves the existing Vulkan zero-result behavior. Explicit-gradient or non-pixel computed
 LOD queries also preserve the existing zero-result policy and skip source reads.
 Vertex configurations 14/15 execute 3D explicit/gradient fetches through stream
 output; 16/17 execute descriptor-free zero LOD/border results.

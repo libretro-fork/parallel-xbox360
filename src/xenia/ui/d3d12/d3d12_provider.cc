@@ -47,7 +47,7 @@ DEFINE_int32(
     "D3D12");
 
 DEFINE_path(d3d12_runtime_path, "",
-            "Where dxil.dll (and D3D12Core.dll) are; empty: the D3D12 folder "
+            "Where the optional D3D12Core.dll runtime is; empty: the D3D12 folder "
             "next to the executable.",
             "D3D12");
 
@@ -208,9 +208,6 @@ D3D12Provider::~D3D12Provider() {
     }
   }
 
-  if (library_dxil_ != nullptr) {
-    FreeLibrary(library_dxil_);
-  }
   if (library_d3d12_ != nullptr) {
     FreeLibrary(library_d3d12_);
   }
@@ -269,38 +266,11 @@ bool D3D12Provider::Initialize() {
     return false;
   }
 
-  // Load the required DXIL validator (dxil.dll) from the D3D12 folder next to
-  // the executable. It signs every shader Mesa emits, which D3D12 rejects
-  // unsigned, so offer to download it if it's missing.
-  auto d3d12_dir = cvars::d3d12_runtime_path.empty()
-                       ? xe::filesystem::GetExecutablePath().parent_path() /
-                             "D3D12"
-                       : cvars::d3d12_runtime_path;
-  {
 #ifndef XENIA_LIBRETRO
-    // A libretro core does not download anything at run time, nor restart
-    // its host: dxil.dll comes with the core's package.
-    EnsureShaderCompilerRuntime(d3d12_dir);
+  auto d3d12_dir = cvars::d3d12_runtime_path.empty()
+      ? xe::filesystem::GetExecutablePath().parent_path() / "D3D12"
+      : cvars::d3d12_runtime_path;
 #endif
-
-    // Load by full path, since the signer's own plain-name load skips D3D12/.
-    auto dxil_path_utf16 = xe::path_to_utf16(d3d12_dir / "dxil.dll");
-    library_dxil_ =
-        LoadLibraryW(reinterpret_cast<LPCWSTR>(dxil_path_utf16.c_str()));
-    if (library_dxil_) {
-      XELOGI("Loaded dxil.dll from the D3D12 directory");
-    } else {
-      // Fall back to the system search path (system-wide, or next to the exe).
-      library_dxil_ = LoadLibraryW(L"dxil.dll");
-    }
-  }
-  if (!library_dxil_) {
-    XELOGW(
-        "Failed to load dxil.dll (error {}), DXIL shaders will be unavailable "
-        "- download from "
-        "https://github.com/microsoft/DirectXShaderCompiler/releases",
-        GetLastError());
-  }
 
   // The D3D12SDKVersion exports make d3d12.dll load D3D12Core.dll at the first
   // device creation, which fails outright if it's missing, so fetch it first.
@@ -371,7 +341,9 @@ bool D3D12Provider::Initialize() {
     } else {
       // The debug layer (D3D12SDKLayers.dll) isn't redistributable on its own.
       // Offer to fetch it from the Agility SDK and restart.
+#ifndef XENIA_LIBRETRO
       EnsureDebugLayer(d3d12_dir);
+#endif
       XELOGW("Failed to enable the Direct3D 12 debug layer (HRESULT 0x{:08X})",
              uint32_t(debug_interface_hr));
       debug = false;

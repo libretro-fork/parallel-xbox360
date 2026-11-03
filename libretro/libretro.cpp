@@ -1436,35 +1436,6 @@ static xe::X_STATUS xenia_launch_path_seh(const std::filesystem::path &p) {
 }
 #endif
 
-#if defined(_WIN32) && defined(XENIA_LIBRETRO_DXIL)
-// Writes the dxil.dll the core carries (libretro/CMakeLists.txt) to dir,
-// unless the one there is already it
-static void write_embedded_dxil(const std::filesystem::path &dir) {
-    HMODULE module = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            reinterpret_cast<LPCWSTR>(&write_embedded_dxil),
-                            &module))
-        return;
-    HRSRC res = FindResourceW(module, L"XENIA_DXIL", MAKEINTRESOURCEW(10));
-    HGLOBAL data = res ? LoadResource(module, res) : nullptr;
-    const void *bytes = data ? LockResource(data) : nullptr;
-    const DWORD size = res ? SizeofResource(module, res) : 0;
-    if (!bytes || !size)
-        return;
-    const auto path = dir / "dxil.dll";
-    std::error_code ec;
-    if (std::filesystem::file_size(path, ec) == size && !ec)
-        return;
-    std::filesystem::create_directories(dir, ec);
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    out.write(static_cast<const char *>(bytes), size);
-    if (!out)
-        xenia_log(RETRO_LOG_WARN, "Could not write %s\n",
-                  path.string().c_str());
-}
-#endif
-
 // A profile signed in to the first slot, as many titles ask for one before
 // they start: standalone makes them in its UI, the core makes one itself,
 // named after the frontend's username, and signs in the first it has after
@@ -1552,15 +1523,6 @@ static bool xenia_setup_and_launch(const char *path) {
         static bool s_logging_initialized = false;
         if (!s_logging_initialized)
             xe::SetExtraLogSink(std::make_unique<RetroLogSink>());
-#ifdef _WIN32
-        // Direct3D 12's shader validator, dxil.dll, from the core's folder in
-        // the system directory rather than beside the frontend's executable
-        if (cvars::d3d12_runtime_path.empty())
-            cvars::d3d12_runtime_path = root / "D3D12";
-#ifdef XENIA_LIBRETRO_DXIL
-        write_embedded_dxil(cvars::d3d12_runtime_path);
-#endif
-#endif
         if (!s_logging_initialized) {
 #ifdef _WIN32
             xe::InitializeWin32App("xenia_libretro");

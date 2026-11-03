@@ -20,7 +20,6 @@ std::unique_ptr<FilePicker> FilePicker::Create() { return nullptr; }
 #endif
 
 // The standalone app offers to download these; the core uses what is there.
-bool EnsureShaderCompilerRuntime(const std::filesystem::path&) { return false; }
 bool EnsureAgilityRuntime(const std::filesystem::path&) { return false; }
 bool EnsureDebugLayer(const std::filesystem::path&) { return false; }
 bool EnsureVulkanLoader(const std::filesystem::path&) { return false; }

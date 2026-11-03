@@ -12,6 +12,7 @@ typedef struct XeDxilGeometryOptions {
 extern "C" {
 #endif
 int xe_dxil_build_geometry(const XeDxilGeometryOptions *options, XeDxilShaderBinary *binary);
+XeDxilShaderBinary *xe_dxil_build_geometry_owned(const XeDxilGeometryOptions *options);
 #ifdef __cplusplus
 }
 #endif

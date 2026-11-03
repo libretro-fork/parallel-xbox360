@@ -24,7 +24,6 @@ and nested sample dependencies were omitted.
 | `third_party/fmt` | `407c905e45ad75fc29bf0f9bb7c5c2fd3475976f` |
 | `third_party/imgui` | `4806a1924ff6181180bf5e4b8b79ab4394118875` |
 | `third_party/libusb` | `a61afe5f75d969c4561a1d0ad753aa23cee6329a` |
-| `third_party/mesa` | `7a1fc756809f3bdc9771b54e6036b156389dfc85` |
 | `third_party/miniaudio` | `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d` |
 | `third_party/pugixml` | `b2b466403084667c90a0f0cc4e960405cfc8117a` |
 | `third_party/rapidjson` | `7c73dd7de7c4f14379b781418c6e947ad464c818` |

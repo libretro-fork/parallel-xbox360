@@ -185,7 +185,7 @@ dxil_container_add_io_signature(struct dxil_container *c,
                                                  validator_7);
    for (ordered_index = 0; ordered_index < num_records; ++ordered_index)
       ordered[ordered_index] = &io_data[ordered_index];
-   qsort(ordered, num_records, sizeof(*ordered), signature_order);
+   qsort((void *)ordered, num_records, sizeof(*ordered), signature_order);
 
 
 

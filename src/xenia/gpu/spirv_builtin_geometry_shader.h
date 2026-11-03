@@ -30,8 +30,8 @@ enum class BuiltinGeometryShaderType : uint32_t {
 };
 
 // Builds the SPIR-V for a built-in primitive-expansion geometry shader, shared
-// by the Vulkan backend (used directly) and the D3D12 backend (fed through
-// spirv_to_dxil). The shader reads the SpirvShaderTranslator vertex output
+// by the Vulkan backend. D3D12 uses the C89 native DXIL generator. The shader
+// reads the shared vertex output
 // signature and SystemConstants layout, so it pairs with that translator's
 // vertex and pixel shaders on either backend. Returns the SPIR-V words.
 std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(

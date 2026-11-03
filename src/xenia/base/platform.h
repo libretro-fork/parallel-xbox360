@@ -200,7 +200,7 @@ inline void SpinPause() {
 #if XE_COMPILER_MSVC
   __isb(_ARM64_BARRIER_SY);
 #else
-  __isb(15);
+  __asm__ __volatile__("isb" ::: "memory");
 #endif
 #endif
 }

@@ -22,9 +22,7 @@ namespace gpu {
 
 // Emits the compute shader that copies a host render target's samples into the
 // EDRAM buffer in guest tile layout, the first half of a resolve on the host
-// render target path. Backend-independent: the result is SPIR-V, which Vulkan
-// consumes directly and Metal takes through spirv_to_dxil and Apple's Metal
-// Shader Converter.
+// render target path. The Vulkan backend consumes the emitted SPIR-V directly.
 //
 // With EdramDumpShaderKey::direct_resolve, the same shader stores into the
 // resolve destination in the guest texture layout instead, doing in one pass

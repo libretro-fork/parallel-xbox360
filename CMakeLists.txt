@@ -29,6 +29,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+if(MINGW)
+  # Use one D3D12 header version, including libretro's public hardware interface.
+  include_directories(BEFORE "${PROJECT_SOURCE_DIR}/third_party/DirectX-Headers/include/directx")
+  add_compile_definitions(__REQUIRED_RPCNDR_H_VERSION__=475)
+endif()
 # We don't use C++20 modules; skip the per-target dyndep scan Ninja runs by
 # default for CXX_STANDARD>=20.
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
@@ -153,7 +158,8 @@ if(NOT XENIA_HOST_CODEGEN)
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   "${PROJECT_SOURCE_DIR}/tools/build/core_codegen.c"
-  "${PROJECT_SOURCE_DIR}/tools/build/core_deflate.c")
+  "${PROJECT_SOURCE_DIR}/tools/build/core_deflate.c"
+  "${PROJECT_SOURCE_DIR}/third_party/zlib-ng/zlib_name_mangling.h.empty")
 set(_codegen_options)
 if(WIN32)
   list(APPEND _codegen_options windows)
@@ -383,6 +389,9 @@ else()
       -fpermissive  # HACK
     )
     add_link_options(-fpermissive)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      add_compile_options(-fno-semantic-interposition)
+    endif()
   endif()
 
   add_compile_options(

@@ -19,11 +19,6 @@ namespace ui {
 // Windows-only Direct3D 12 DLLs; on other platforms the entry points are
 // no-ops.
 
-// If dxil.dll (the DXIL signer) isn't loadable from d3d12_dir or the system,
-// prompts once and downloads it into d3d12_dir (loaded in-process, no
-// restart). Returns true if present already or after a successful install.
-bool EnsureShaderCompilerRuntime(const std::filesystem::path& d3d12_dir);
-
 // Called when the in-box runtime lacks Shader Model 6.6 and Agility isn't
 // active. Prompts once, downloads D3D12Core.dll into d3d12_dir, and restarts
 // (the opt-in must precede device creation, so it can't apply in-process). On

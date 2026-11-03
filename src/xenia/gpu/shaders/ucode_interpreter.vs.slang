@@ -27,7 +27,7 @@
 //   [0].x flags   [0].w vertex_index_endian   [1].x vertex_base_index
 //   [2].xyz ndc_scale   [3].xyz ndc_offset
 //   [34].x interpreter_ucode_base_dwords   [34].y interpreter_cf_instr_count
-// DXIL registers match the D3D12 Mesa (spirv_to_dxil) root signature: guest
+// DXIL registers match the D3D12 native root signature: guest
 // constant buffers live in space1 (system b0, float-vertex b1, bool/loop b3,
 // fetch b4) and shared memory is the t0 space0 SRV. On Vulkan the register()
 // is ignored, the [[vk::binding]] set/binding from XE_VK_BINDING is used.

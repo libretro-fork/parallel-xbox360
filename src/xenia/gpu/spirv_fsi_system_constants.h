@@ -23,7 +23,7 @@ namespace gpu {
 // constants from the register file: the FSI-specific flag bits, the EDRAM tile
 // pitch / render target / depth base / stencil / blend / polygon offset
 // constants and the ZPD counter index. Shared by the Vulkan and the D3D12
-// (Mesa spirv_to_dxil) command processors so the single EDRAM ROP encoding is
+// (native DXIL) command processors so the single EDRAM ROP encoding is
 // not duplicated. Only call when the render target cache is in its pixel shader
 // interlock path.
 //

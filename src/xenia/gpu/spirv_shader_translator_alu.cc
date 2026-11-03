@@ -1410,9 +1410,8 @@ spv::Id SpirvShaderTranslator::ProcessScalarAluOperation(
       // vertex explosions with the default round-to-nearest behavior.
       // Real hardware rounding behavior needs to be verified.
       if (cvars::mulsc_round_toward_zero) {
-        // Fma isn't guaranteed to be fused (spirv_to_dxil splits 32-bit Fma
-        // into a multiply and an add), so recover the product error with a
-        // Veltkamp split and Dekker error sum instead.
+        // Recover the product error with a Veltkamp split and Dekker error
+        // sum without relying on driver-specific contraction behavior.
         auto mul = [&](spv::Id a, spv::Id b) {
           return builder_->createNoContractionBinOp(spv::OpFMul, type_float_, a,
                                                     b);

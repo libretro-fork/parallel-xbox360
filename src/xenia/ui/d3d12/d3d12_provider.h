@@ -174,10 +174,6 @@ class D3D12Provider : public GraphicsProvider {
   PFN_D3D12_CREATE_DEVICE pfn_d3d12_create_device_;
   PFN_D3D12_SERIALIZE_ROOT_SIGNATURE pfn_d3d12_serialize_root_signature_;
 
-  // The DXIL validator that signs the shaders Mesa emits, loaded by full path
-  // so the copy in the D3D12 folder wins. May be nullptr.
-  HMODULE library_dxil_ = nullptr;
-
   IDXGIFactory2* dxgi_factory_ = nullptr;
   ID3D12Device* device_ = nullptr;
   ID3D12CommandQueue* direct_queue_ = nullptr;
