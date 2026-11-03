@@ -22,6 +22,28 @@ core_content_close_test.exe C:\absolute\parallel_xbox360_libretro.dll C:\absolut
 This exercises failed-load cleanup and DLL thread lifetime, not gameplay or
 frontend-shared-device rendering.
 
+`core_vulkan_lifetime_test.c` accepts Vulkan negotiation, rejects a retained
+core device-destroy callback, and creates actual negotiated devices. One device
+survives context destruction and a second survives content close and verified
+core DLL unload; the frontend waits for and destroys each device afterwards.
+This directly covers a video thread destroying its cached device after unload.
+
+`core_d3d12_lifetime_test.c` opens synthetic invalid content using the D3D12
+backend, exercises repeated context reset/destruction, and checks that no device
+negotiation callbacks were registered. After verified core DLL unload it creates
+a fence on the frontend's device and signals it from the frontend's queue,
+requiring completion within five seconds before releasing frontend COM objects.
+These are lifecycle checks without guest frames; they do not test frame-copy
+synchronization or gameplay.
+
+Build in a Visual Studio developer prompt, then run either executable with the
+same three absolute-path arguments as `core_content_close_test.exe`:
+
+```bat
+cl /TC /W4 /WX /O2 /Ilibretro /Ithird_party\Vulkan-Headers\include tools\tests\core_vulkan_lifetime_test.c
+cl /TC /W4 /WX /external:anglebrackets /external:W0 /O2 /Ilibretro tools\tests\core_d3d12_lifetime_test.c /link d3d12.lib dxguid.lib
+```
+
 `dxil_writer_test.c` emits a compute shader directly from typed operations using
 the owned DXIL/LLVM bitcode writer. It exercises integer and floating-point
 arithmetic, dynamic control flow, phi nodes, casts, thread IDs and raw UAV

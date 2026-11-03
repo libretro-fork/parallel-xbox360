@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan negotiation no longer leaves a core device-destroy callback in RetroArch's cached video context. Non-owning Vulkan wrappers are released during context destruction/content close, while RetroArch retains and destroys its actual device even after the core DLL unloads. Added Vulkan and D3D12 lifecycle regressions that keep frontend devices alive past core unload; D3D12 registers no comparable late negotiation callback.
+
 - Expanded the Windows content-close regression to reject any surviving thread whose entry point belongs to the core DLL, verify that the DLL really unloads, and document how to run the test without a ROM.
 
 - Content close now flushes and joins Xenia's logging writer before the core can unload. Reset/context rebuild retains one logger; reopening content creates a fresh logger and frontend log sink. Repeated shutdown and late log messages safely handle an already stopped logger.

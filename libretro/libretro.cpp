@@ -332,10 +332,6 @@ static bool xenia_vk_create_device(
     return true;
 }
 
-static void xenia_vk_destroy_device(void) {
-    libretro_vk_destroy_shared_device();
-}
-
 #ifdef _WIN32
 /* ================================================================== */
 /*  D3D12 HW render state                                              */
@@ -598,6 +594,9 @@ static void vulkan_context_destroy(void) {
     vk_hw = nullptr;
     vulkan_hw_render_active = false;
     memset(&vk_current_image, 0, sizeof(vk_current_image));
+    // The frontend may keep the actual device after the core DLL unloads.
+    // Retire only our non-owning wrappers while core code is still loaded.
+    libretro_vk_destroy_shared_device();
 }
 
 #ifdef _WIN32
@@ -1762,6 +1761,8 @@ static void xenia_shutdown(void) {
     vk_hw = nullptr;
     vulkan_hw_render_active = false;
     memset(&vk_current_image, 0, sizeof(vk_current_image));
+    libretro_vk_destroy_shared_device();
+    s_launch_on_context_reset = false;
 
     // Clean up D3D12 HW render resources
 #ifdef _WIN32
@@ -1992,7 +1993,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
                 RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION,
                 xenia_vk_application_info,
                 xenia_vk_create_device,
-                xenia_vk_destroy_device,
+                // RetroArch owns vkDestroyDevice and may destroy it after
+                // unloading this DLL. No core callback can survive that point.
+                nullptr,
             };
             core_state.environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE,
                                   (void *)&negotiation);

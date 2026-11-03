@@ -34,8 +34,9 @@ using xe::ui::vulkan::VulkanDevice;
 using xe::ui::vulkan::VulkanInstance;
 using xe::ui::vulkan::VulkanProvider;
 
-// Kept for as long as RetroArch keeps the device - across game loads, as it
-// caches its context - not for one emulator's lifetime.
+// Non-owning wrappers for the frontend's device. Keep them through emulator
+// reset, but retire them at context destruction or content close: the frontend
+// may keep the real device after unloading the core DLL.
 static std::unique_ptr<VulkanInstance> s_shared_instance;
 static std::unique_ptr<VulkanDevice> s_shared_device;
 

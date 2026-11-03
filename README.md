@@ -31,6 +31,8 @@ On Windows, the fiber stack exception callback is removed when the last stack is
 
 Content close also flushes and joins the logging writer before the core DLL can unload. Reset and graphics context rebuild share the existing logger; reopening content starts it again.
 
+RetroArch owns the negotiated Vulkan device. The core releases its non-owning wrappers before unload and supplies no late device-destroy callback, so threaded video can destroy a cached device after the core DLL is gone.
+
 Games that need a signed-in profile get one: the core signs in the first profile under `content/`, or creates one when there is none, named after the first line of `system/Xenia-Edge/xbl_profilename.txt` ("Player" if the file is missing, which the core then writes there).
 
 ## Building
