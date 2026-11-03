@@ -505,9 +505,6 @@ class Emulator {
   }
 
  private:
-  enum : uint64_t { EmulatorFlagDisclaimerAcknowledged = 1ULL << 0 };
-  static uint64_t GetPersistentEmulatorFlags();
-  static void SetPersistentEmulatorFlags(uint64_t new_flags);
   static bool ExceptionCallbackThunk(Exception* ex, void* data);
   bool ExceptionCallback(Exception* ex);
 

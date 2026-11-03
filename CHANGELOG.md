@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed the Windows first-run disclaimer dialog, browser launch and Xenia registry acknowledgement check. Core startup no longer depends on a desktop prompt or the standalone emulator's registry state.
+
 - Content close explicitly detaches the Windows fiber exception callback after stopping the emulator, including when retired guest frames retain fiber owners. This covers the repeated unload crash left by relying only on the last stack destructor; retained stack owners are reported in xenia.log.
 
 - Closing content now unregisters the Windows fiber stack exception callback when the last fiber stack is released. Loading another title registers it again, preventing a stale callback into an unloaded core DLL and recursive access-violation stack dumps.

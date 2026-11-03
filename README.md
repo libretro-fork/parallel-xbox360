@@ -19,6 +19,8 @@ The core option Graphics API picks Xenia's GPU backend: Vulkan, or on Windows Di
 
 ## Content
 
+Startup does not display the standalone Windows disclaimer dialog or read/write its registry acknowledgement.
+
 Xbox 360 games as a disc image (`.iso`), an executable (`.xex`), or a `.zar` / `.xcp` package. No BIOS or firmware is needed.
 
 Original Xbox games run through XeFu, the Xbox 360's own emulator of the original Xbox, which upstream Xenia Edge can run. It needs XeFu's files from a console (`xbox.xex` and the `xefu*.xex` builds of the system partition's `Compatibility` folder) in `<system>/Xenia-Edge/xefu/`; the game is opened as a disc image (`.iso`), a full dump or one rebuilt to the game partition alone. Only the games the console itself could run have a chance.
