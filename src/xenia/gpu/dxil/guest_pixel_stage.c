@@ -7,10 +7,17 @@
 typedef struct Pixel {
   XeDxilShaderModule *shader;
   XeDxilGuestRop *rop;
+  XeDxilTextureStage *textures;
   XeDxilAlu alu;
   XeDxilValue system, killed, written;
   unsigned current_block, saw_kill;
 } Pixel;
+static int texture_fetch(void *context, XeDxilAlu *alu, XeDxilAluIo *io,
+    const XeDxilTextureInstruction *instruction, const XeDxilTextureOperands *operands,
+    unsigned serialized, XeDxilValue result[4]) {
+  Pixel *p = (Pixel *)context; (void)serialized;
+  return xe_dxil_texture_stage_fetch(p->textures,alu,io,instruction,operands,result);
+}
 static XeDxilValue ic(Pixel *p, uint32_t v) { return dxil_module_get_int32_const(p->alu.module,(int32_t)v); }
 static XeDxilValue fc(Pixel *p, float v) { return dxil_module_get_float_const(p->alu.module,v); }
 static XeDxilValue bin(Pixel *p, enum dxil_bin_opcode op, XeDxilValue a, XeDxilValue b) {
@@ -171,11 +178,14 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
       o->system_constants_bytes < 16 || o->system_constants_bytes > 65536 ||
       (o->rop && (o->rop->color_mask != o->color_mask || o->rop->depth.system_constants_bytes != o->system_constants_bytes || o->rop->depth.flags_word != o->flags_word))) return NULL;
   n = o->system_constants_bytes/4;
+  if (o->textures && (o->scale_x != 1 || o->scale_y != 1 || !o->textures->pixel_shader ||
+      o->textures->system_constants_bytes != o->system_constants_bytes)) return NULL;
   if (o->flags_word >= n || o->alpha_reference_word >= n || o->alpha_to_mask_word >= n || o->color_bias_word > n-4 ||
       o->blend_constant_word > n-4 || o->front_scale_word >= n || o->back_scale_word >= n || o->front_offset_word >= n ||
       o->back_offset_word >= n || (o->count_coverage && (o->counter_word >= n || !o->counter_stride_bytes || (o->counter_stride_bytes & 3)))) return NULL;
   memset(&p,0,sizeof(p)); options = o->program; options.context = &p; options.kill = kill; options.export_written = written;
   p.shader = xe_dxil_shader_create(DXIL_PIXEL_SHADER); if (!p.shader) return NULL;
+  if (o->textures && !xe_dxil_shader_bindless(p.shader)) goto done;
   xe_dxil_alu_init(&p.alu,xe_dxil_shader_module(p.shader)); integer_type = dxil_module_get_int_type(p.alu.module,32);
   if (xe_dxil_shader_signature(p.shader,0,"SV_Position",0,DXIL_SEM_POSITION,DXIL_PROG_SEM_POSITION,XE_DXIL_GUEST_POSITION_ROW,0,4,DXIL_INTERP_LINEAR_NOPERSPECTIVE) != 0 ||
       xe_dxil_shader_signature_typed(p.shader,0,"SV_IsFrontFace",0,DXIL_SEM_IS_FRONT_FACE,DXIL_PROG_SEM_IS_FRONTFACE,XE_DXIL_GUEST_FRONT_FACE_ROW,0,1,DXIL_INTERP_CONSTANT,DXIL_COMP_TYPE_U32) != 1) goto done;
@@ -224,6 +234,11 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
       xe_dxil_shader_resource(p.shader,XE_DXIL_RESOURCE_SRV,DXIL_RESOURCE_KIND_RAW_BUFFER,0,0,1,0) != 0) goto done;
   options.fetch_constants = xe_dxil_resource_handle(&p.alu,XE_DXIL_RESOURCE_CBV,cbv,4);
   options.shared_memory = xe_dxil_resource_handle(&p.alu,XE_DXIL_RESOURCE_SRV,0,0);
+  if (o->textures) {
+    p.textures = xe_dxil_texture_stage_create(p.shader,p.system,options.fetch_constants,o->textures);
+    if (!p.textures) goto done;
+    options.texture = texture_fetch;
+  }
   if (o->rop) {
     p.rop = xe_dxil_guest_rop_create(p.shader,p.system,o->rop); if (!p.rop) goto done;
   } else if (o->count_coverage) {
@@ -334,5 +349,5 @@ complete:
   binary = (XeDxilShaderBinary *)calloc(1,sizeof(*binary));
   if (binary && !xe_dxil_shader_finish(p.shader,binary)) { xe_dxil_shader_binary_delete(binary); binary = NULL; }
 done:
-  xe_dxil_guest_rop_destroy(p.rop); xe_dxil_guest_program_destroy(program); xe_dxil_shader_destroy(p.shader); return binary;
+  xe_dxil_texture_stage_destroy(p.textures); xe_dxil_guest_rop_destroy(p.rop); xe_dxil_guest_program_destroy(program); xe_dxil_shader_destroy(p.shader); return binary;
 }

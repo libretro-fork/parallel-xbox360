@@ -14,11 +14,12 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <float.h>
+#include <math.h>
 
 typedef struct TextureFixture {
   ID3D12Resource *texture, *upload;
   ID3D12DescriptorHeap *heap, *sampler_heap;
-  unsigned heap_mode, array_mode;
+  unsigned heap_mode, array_mode, policy_mode;
   D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[2];
 } TextureFixture;
 
@@ -152,6 +153,7 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   void *initial_data;
   size_t i, source_index, allocation_bytes = raw_mode > 2 ? bytes / 8 * raw_mode : bytes;
   int same;
+  float actual_float, expected_float;
   status = buffer(device, D3D12_HEAP_TYPE_DEFAULT,
                    raw_mode == 2 ? D3D12_RESOURCE_STATE_COPY_DEST : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                    allocation_bytes, &output);
@@ -258,6 +260,10 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
         (expected[i] & UINT32_C(0x007fffff)))
       same = (values[i] & UINT32_C(0x7f800000)) == UINT32_C(0x7f800000) &&
         (values[i] & UINT32_C(0x007fffff));
+    if (!same && texture && texture->policy_mode && i%8 < 4) {
+      memcpy(&actual_float,values+source_index,4); memcpy(&expected_float,expected+i,4);
+      same = fabs((double)actual_float-expected_float) <= .000001*(fabs((double)expected_float)+1);
+    }
     if (!same) {
       fprintf(stderr, "word %lu: got %08lX, expected %08lX\n", (unsigned long)i,
         (unsigned long)values[source_index], (unsigned long)expected[i]);
@@ -360,7 +366,8 @@ int main(int argc, char **argv)
   if (argc < 2 || argc > 6) return 2;
   program_mode = argc == 6 && !strcmp(argv[5], "program");
   resource_mode = argc == 6 && !strcmp(argv[5], "resource-raw");
-  texture.array_mode = argc == 6 && !strcmp(argv[5], "heap-array");
+  texture.policy_mode = argc == 6 && !strcmp(argv[5], "heap-policy");
+  texture.array_mode = texture.policy_mode || (argc == 6 && !strcmp(argv[5], "heap-array"));
   texture.heap_mode = texture.array_mode || (argc == 6 && !strcmp(argv[5], "heap"));
   raw_mode = program_mode || resource_mode || texture.heap_mode ? 1 : argc == 6 ? !strcmp(argv[5], "resolve") ? 2 : 80 : argc == 4 && !strcmp(argv[3], "raw") ? 1 : 0;
   if (argc == 6 && !program_mode && !resource_mode && !texture.heap_mode && strcmp(argv[5], "dump") && strcmp(argv[5], "resolve")) return 2;
@@ -401,7 +408,7 @@ int main(int argc, char **argv)
   root_desc.NumParameters = argc == 5 || program_mode || resource_mode ? 3 : 1; root_desc.pParameters = parameter;
   if ((argc == 4 && !raw_mode) || (argc == 6 && !program_mode && !resource_mode)) {
     memset(&texture_range, 0, sizeof(texture_range)); texture_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    texture_range.NumDescriptors = 1;
+    texture_range.NumDescriptors = 1; texture_range.RegisterSpace = texture.policy_mode ? 2 : 0;
     parameter[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     parameter[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     parameter[1].DescriptorTable.NumDescriptorRanges = 1;
@@ -414,7 +421,7 @@ int main(int argc, char **argv)
       samplers[i].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
       samplers[i].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
       samplers[i].MaxAnisotropy = 1; samplers[i].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
-      samplers[i].MaxLOD = FLT_MAX; samplers[i].ShaderRegister = i;
+      samplers[i].MaxLOD = FLT_MAX; samplers[i].ShaderRegister = i; samplers[i].RegisterSpace = texture.policy_mode ? 2 : 0;
       samplers[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
     root_desc.NumStaticSamplers = 2; root_desc.pStaticSamplers = samplers;
@@ -429,7 +436,7 @@ int main(int argc, char **argv)
       if (FAILED(status)) goto done;
       if (texture.heap_mode) {
         parameter[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-        parameter[3].Descriptor.ShaderRegister = 3;
+        parameter[3].Descriptor.ShaderRegister = texture.policy_mode ? 2 : 3;
         parameter[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         root_desc.NumParameters = 4;
       }

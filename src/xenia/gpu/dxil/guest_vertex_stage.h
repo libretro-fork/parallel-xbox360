@@ -2,9 +2,11 @@
 #ifndef XE_GPU_DXIL_GUEST_VERTEX_STAGE_H
 #define XE_GPU_DXIL_GUEST_VERTEX_STAGE_H
 #include "guest_program.h"
+#include "guest_texture_stage.h"
 #include "shader_module.h"
 typedef struct XeDxilGuestVertexOptions {
   XeDxilGuestProgramOptions program;
+  const XeDxilTextureStageOptions *textures;
   unsigned system_constants_bytes, flags_word, index_endian_word, index_base_word;
   unsigned ndc_scale_word, ndc_offset_word, clip_planes_word;
   unsigned interpolator_mask, clip_planes, cull_planes, point_size, vertex_kill, vertex_kill_and;

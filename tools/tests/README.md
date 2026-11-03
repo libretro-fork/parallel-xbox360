@@ -476,9 +476,45 @@ query counters are exact. Changed floating RT3 query outputs allow a small
 interpolation/derivative tolerance; untouched memory still compares exactly.
 Derivative bias cases avoid packed-format quantization ties, since hardware
 interpolation can differ slightly from the analytic CPU gradient.
-Full native guest texture sampling policy is not integrated by these tests.
+The query fixtures above are separate from the native sampling integration below.
 
 The native numeric fixtures split their cases across four small shaders to
 avoid excessive driver JIT latency. The harness allows a bounded 50-second
 GPU wait for loaded build machines. SM 6.6 pixel validation also combines
 direct heaps with barycentrics to check that version selection is preserved.
+
+## Integrated native guest 2D sampling
+
+`make check-dxil-guest-sampling DXIL_VALIDATOR=/path/to/dxv` validates 30
+C89 sampling-policy containers, 84 complete guest pixel shaders (560..643),
+and two textured guest vertex shaders (9 and 10). All containers must validate
+without changes. Shader logic is separately checked as strict C89.
+
+Run each policy container with `dxil_runtime_test.c` using arguments
+`shader.dxil shader.dxil.expected shader.dxil.texture shader.dxil.constants heap-policy`.
+These fixtures check point/linear sampling, mip and register LOD, instruction
+and fetch biases, explicit gradients with independent H/V biases, normalized
+and unnormalized coordinates, locked mip sizes, offsets, sign-view selection,
+integer and gamma conversion, exponent and filter overrides. The policy harness
+allows a 1e-6 relative float tolerance for hardware filter operation ordering;
+other heap tests retain exact comparisons.
+
+The guest pixel runtime accepts modes 560..643 with scenarios 0..7 and the
+`.guest.vs` companion. It checks four targets, depth and coverage after actual
+raw guest texture instructions, including normalized, unnormalized and computed
+LOD with barycentric interpolation. Vertex runtime configurations 9/10 check
+normalized/unnormalized sampling through stream output, preserving positions
+and the export observer. Both use shader-model 6.6 dynamic resource/sampler
+heaps and the renderer's two-dword descriptor-index entry ABI.
+
+Current renderer sampling integration covers 2D at unit draw resolution.
+Other dimensions, scaled sampling, memory export and tessellation still require
+native implementation; these tests do not establish game compatibility.
+
+`make check-dxil-guest-sampling-rov` validates 108 complete sampled ROV shaders.
+ROV reference/runtime harnesses accept sampling modes 560/588/616 at unit
+resolution. Generate with `dxil-guest-pixel-test shader.dxil MODE CONFIG`,
+then `dxil-guest-rop-reference-test shader.dxil MODE CONFIG SCENARIO` and
+`dxil-guest-rop-runtime-test shader.dxil shader.dxil.guest.vs CONFIG`.
+Checks include all twelve formats, 1x/2x/4x coverage, masks, depth tests,
+kills and exponent adjustment. Every EDRAM word and query counter is checked.

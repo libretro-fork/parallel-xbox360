@@ -19,13 +19,14 @@ int main(int argc, char **argv) {
     (50u<<26)|(15u<<16)|(1u<<15)|15,0,0xc2010100
   };
   XeDxilGuestVertexOptions options;
+  XeDxilTextureLayout layout; XeDxilTextureStageOptions textures; XeDxilTextureInstruction instruction;
   XeDxilShaderBinary *binary;
   uint32_t words[21];
   unsigned config, observed = 0;
   FILE *file;
   int result;
   if (argc != 3) return 2;
-  config = (unsigned)strtoul(argv[2],NULL,10); if (config > 8) return 2;
+  config = (unsigned)strtoul(argv[2],NULL,10); if (config > 10) return 2;
   memset(&options,0,sizeof(options)); memcpy(words,code,sizeof(code));
   options.program.context = &observed; options.program.export_written = observed_export;
   options.program.register_count = 2; options.program.float_constant_count = 2;
@@ -41,8 +42,15 @@ int main(int argc, char **argv) {
   if (config == 5) words[0] = 0x16001;
   if (config >= 6) {
     words[0] |= 1u<<20;
-    words[9] = (config == 8 ? 18u : 19u)|(36u<<26)|(config == 7 ? 1u<<25 : 0); words[10] = 1672; words[11] = 1u<<14;
+    words[9] = (config >= 9 ? 1u : config == 8 ? 18u : 19u)|(36u<<26)|(config == 7 || config == 10 ? 1u<<25 : 0); words[10] = 1672; words[11] = 1u<<14;
     words[12] = (50u<<26)|(15u<<16)|(1u<<15); words[13] = 0; words[14] = 0xc2000000;
+  }
+  if (config >= 9) {
+    memset(&layout,0,sizeof(layout)); memset(&textures,0,sizeof(textures)); memset(&instruction,0,sizeof(instruction));
+    instruction.opcode = 1; instruction.dimension = 1;
+    if (!xe_dxil_texture_layout_add(&layout,&instruction,0)) return 1;
+    textures.layout = &layout; textures.system_constants_bytes = 256; textures.signs_word = 40; textures.integer_scale_word = 48;
+    options.textures = &textures;
   }
   binary = xe_dxil_build_guest_vertex_owned(&options,words,sizeof(words)/4,2);
   if (config == 8) { if (!binary) return 0; xe_dxil_shader_binary_delete(binary); return 1; }

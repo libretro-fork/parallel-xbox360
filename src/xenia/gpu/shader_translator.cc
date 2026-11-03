@@ -762,8 +762,8 @@ bool ShaderTranslator::TranslateAnalyzedShader(
     }
   }
 
-  translation.errors_ = std::move(errors_);
   translation.translated_binary_ = CompleteTranslation();
+  translation.errors_ = std::move(errors_);
 
   bool is_valid = true;
   for (const auto& error : translation.errors_) {

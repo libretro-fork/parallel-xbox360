@@ -8,7 +8,19 @@ typedef struct Vertex {
   XeDxilShaderModule *shader;
   XeDxilAlu alu;
   XeDxilValue system;
+  XeDxilTextureStage *textures;
+  XeDxilGuestProgramOptions user;
 } Vertex;
+static int texture_fetch(void *context, XeDxilAlu *alu, XeDxilAluIo *io,
+    const XeDxilTextureInstruction *instruction, const XeDxilTextureOperands *operands,
+    unsigned serialized, XeDxilValue result[4]) {
+  Vertex *v = (Vertex *)context; (void)serialized;
+  return xe_dxil_texture_stage_fetch(v->textures,alu,io,instruction,operands,result);
+}
+static int observed_export(void *context, XeDxilGuestProgram *program, unsigned index, unsigned mask) {
+  Vertex *v = (Vertex *)context;
+  return !v->user.export_written || v->user.export_written(v->user.context,program,index,mask);
+}
 static XeDxilValue ic(Vertex *v, uint32_t i) { return dxil_module_get_int32_const(v->alu.module,(int32_t)i); }
 static XeDxilValue fc(Vertex *v, float f) { return dxil_module_get_float_const(v->alu.module,f); }
 static XeDxilValue bin(Vertex *v, enum dxil_bin_opcode op, XeDxilValue a, XeDxilValue b) {
@@ -79,12 +91,15 @@ int xe_dxil_build_guest_vertex(const XeDxilGuestVertexOptions *o, const uint32_t
       o->interpolator_mask > 65535 || o->clip_planes > 6 || o->cull_planes > 6 || (o->clip_planes && o->cull_planes) ||
       o->system_constants_bytes < 4 || o->system_constants_bytes > 65536) return 0;
   i = o->system_constants_bytes/4;
+  if (o->textures && (o->textures->pixel_shader || o->textures->system_constants_bytes != o->system_constants_bytes ||
+      o->program.texture || o->program.allocation || o->program.kill)) return 0;
   if (o->flags_word >= i || o->index_endian_word >= i || o->index_base_word >= i ||
       i < 3 || o->ndc_scale_word > i-3 || o->ndc_offset_word > i-3 ||
       ((o->clip_planes || o->cull_planes) && (o->clip_planes_word > i || (o->clip_planes+o->cull_planes)*4 > i-o->clip_planes_word))) return 0;
   for (i = 0; i < 16; ++i) if (o->interpolator_mask & (1u<<i)) ++interpolator_count;
   memset(&v,0,sizeof(v)); options = o->program;
   v.shader = xe_dxil_shader_create(DXIL_VERTEX_SHADER); if (!v.shader) return 0;
+  if (o->textures && !xe_dxil_shader_bindless(v.shader)) goto done;
   xe_dxil_alu_init(&v.alu,xe_dxil_shader_module(v.shader));
   if (xe_dxil_shader_signature_typed(v.shader,0,"SV_VertexID",0,DXIL_SEM_VERTEX_ID,DXIL_PROG_SEM_VERTEX_ID,
         0,0,1,0,DXIL_COMP_TYPE_U32) != 0) goto done;
@@ -115,6 +130,11 @@ int xe_dxil_build_guest_vertex(const XeDxilGuestVertexOptions *o, const uint32_t
   if (resource != (int)cbv || xe_dxil_shader_resource(v.shader,XE_DXIL_RESOURCE_SRV,DXIL_RESOURCE_KIND_RAW_BUFFER,0,0,1,0) != 0) goto done;
   options.fetch_constants = xe_dxil_resource_handle(&v.alu,XE_DXIL_RESOURCE_CBV,cbv,4);
   options.shared_memory = xe_dxil_resource_handle(&v.alu,XE_DXIL_RESOURCE_SRV,0,0);
+  if (o->textures) {
+    v.textures = xe_dxil_texture_stage_create(v.shader,v.system,options.fetch_constants,o->textures);
+    if (!v.textures) goto done;
+    v.user = o->program; options.context = &v; options.texture = texture_fetch; options.export_written = observed_export;
+  }
   program = xe_dxil_guest_program_create(v.alu.module,&options); if (!program) goto done;
   load = dxil_get_function(v.alu.module,"dx.op.loadInput",DXIL_I32);
   args[0] = ic(&v,4); args[1] = ic(&v,0); args[2] = args[1]; args[3] = dxil_module_get_int8_const(v.alu.module,0);
@@ -165,7 +185,7 @@ int xe_dxil_build_guest_vertex(const XeDxilGuestVertexOptions *o, const uint32_t
   }
   if (!v.alu.failed && !xe_dxil_guest_program_alu(program)->failed && dxil_emit_ret_void(v.alu.module)) result = xe_dxil_shader_finish(v.shader,binary);
 done:
-  xe_dxil_guest_program_destroy(program); xe_dxil_shader_destroy(v.shader); return result;
+  xe_dxil_texture_stage_destroy(v.textures); xe_dxil_guest_program_destroy(program); xe_dxil_shader_destroy(v.shader); return result;
 }
 XeDxilShaderBinary *xe_dxil_build_guest_vertex_owned(const XeDxilGuestVertexOptions *options,
     const uint32_t *words, size_t word_count, unsigned cf_count) {

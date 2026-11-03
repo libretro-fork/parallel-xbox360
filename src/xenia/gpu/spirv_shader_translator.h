@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1093,6 +1094,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
   bool is_viz_survey_fragment_shader_ = false;
 
   std::unique_ptr<SpirvBuilder> builder_;
+  std::unique_lock<std::mutex> resource_bindings_lock_;
+  bool preloaded_resource_bindings_ = false;
 
   std::vector<spv::Id> id_vector_temp_;
   // For helper functions like operand loading, so they don't conflict with

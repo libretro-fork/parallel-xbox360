@@ -40,10 +40,9 @@ Render-target dumps, direct resolves and EDRAM ownership transfers also emit
 DXIL directly. Host-depth pixel shaders, including float24 conversion and
 occlusion counting, use native DXIL containers without a temporary bytecode
 copy. Depth-only ROV shaders also use native DXIL, with ordered EDRAM access
-and native depth/stencil tests. Plain guest vertex shaders without texture
-fetch results, memory exports or ALU kill instructions also generate native
+and native depth/stencil tests. Guest vertex shaders without memory exports or ALU kill instructions can generate native
 DXIL, including position conversion and clip/cull outputs. Host render-target
-guest pixel shaders without texture results or memory exports also compile
+guest pixel shaders without memory exports can also compile
 directly, including pixel parameters, barycentric interpolation, alpha tests,
 coverage, gamma/exponent adjustment, blend premultiplication and depth modes.
 Guest ROV color shaders also compile directly, including tiled/scaled EDRAM
@@ -56,11 +55,15 @@ Guest filtering-weight queries also compile natively in vertex and pixel
 shaders, and pixel gradient queries use native derivatives. Query-only shaders
 need no texture descriptors. Empty descriptor-index tables reuse the existing
 zero buffer instead of allocating and clearing an upload for every draw.
-Native shader-model 6.6 heap sampling is verified
-for 2D and 2D-array resources with runtime texture/sampler indices; full guest
-sampling policy still requires integration.
-Texture-sampling and memory-export shaders and tessellation
-still use Mesa and its Meson/Python build while their replacements are implemented.
+Native shader-model 6.6 heap sampling now handles guest 2D texture fetches
+in vertex and pixel stages at unit draw resolution. Raw fetch constants drive
+coordinate normalization, offsets, explicit/gradient LOD and bias, point
+snapping, signed/unsigned view selection, integer conversion, gamma and exponent
+adjustment. Resource layouts are published once and retained across native and
+remaining SPIR-V variants. Only required sign views are sampled, and fetch
+metadata is loaded once per used constant. Other dimensions, scaled sampling,
+memory exports and tessellation still use Mesa and its Meson/Python build while
+their replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in
 [`tools/tests/README.md`](tools/tests/README.md); whole-shader integration

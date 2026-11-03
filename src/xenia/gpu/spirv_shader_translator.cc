@@ -309,6 +309,8 @@ std::vector<uint8_t> SpirvShaderTranslator::CreateDepthOnlyFragmentShader(
 }
 
 void SpirvShaderTranslator::Reset() {
+  resource_bindings_lock_ = {};
+  preloaded_resource_bindings_ = false;
   ShaderTranslator::Reset();
 
   builder_.reset();
@@ -481,6 +483,9 @@ void SpirvShaderTranslator::BisectOverrideColorOutput() {
 }
 
 void SpirvShaderTranslator::StartTranslation() {
+  if (auto* shader = dynamic_cast<SpirvShader*>(&current_shader())) {
+    resource_bindings_lock_ = std::unique_lock<std::mutex>(shader->resource_bindings_mutex());
+  }
   // TODO(Triang3l): Logger.
   builder_ = std::make_unique<SpirvBuilder>(
       features_.spirv_version, (kSpirvMagicToolId << 16) | 1, nullptr);
@@ -831,6 +836,15 @@ void SpirvShaderTranslator::StartTranslation() {
     }
   }
 
+  if (auto* shader = dynamic_cast<SpirvShader*>(&current_shader()); shader && shader->bindings_ready()) {
+    preloaded_resource_bindings_ = true;
+    for (const auto& binding : shader->GetTextureBindingsAfterTranslation()) {
+      FindOrAddTextureBinding(binding.fetch_constant,binding.dimension,binding.is_signed);
+    }
+    for (const auto& binding : shader->GetSamplerBindingsAfterTranslation()) {
+      FindOrAddSamplerBinding(binding.fetch_constant,binding.mag_filter,binding.min_filter,binding.mip_filter,binding.aniso_filter);
+    }
+  }
   if (is_vertex_shader()) {
     StartVertexOrTessEvalShaderBeforeMain();
   } else if (is_pixel_shader()) {
@@ -1057,6 +1071,14 @@ void SpirvShaderTranslator::StartTranslation() {
 }
 
 std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
+  if (preloaded_resource_bindings_) {
+    auto* shader = dynamic_cast<SpirvShader*>(&current_shader());
+    if (!shader || texture_bindings_.size() != shader->GetTextureBindingsAfterTranslation().size() ||
+        sampler_bindings_.size() != shader->GetSamplerBindingsAfterTranslation().size()) {
+      EmitTranslationError("Guest resource bindings changed after publication",true);
+      return {};
+    }
+  }
   if (!is_depth_only_fragment_shader_) {
     // Close flow control within the last switch case.
     CloseExecConditionals();
@@ -1338,6 +1360,7 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
 }
 
 void SpirvShaderTranslator::PostTranslation() {
+  auto resource_bindings_lock = std::move(resource_bindings_lock_);
   Shader::Translation& translation = current_translation();
   if (!translation.is_valid()) {
     return;

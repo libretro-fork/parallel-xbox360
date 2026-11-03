@@ -55,6 +55,25 @@ static HRESULT buffer(ID3D12Device *device, D3D12_HEAP_TYPE type, UINT64 size,
   return ID3D12Device_CreateCommittedResource(device, &heap, D3D12_HEAP_FLAG_NONE,
     &desc, state, NULL, &IID_ID3D12Resource, (void **)resource);
 }
+static HRESULT sample_texture(ID3D12Device *device, ID3D12Resource **texture,
+    ID3D12Resource **upload, D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[2]) {
+  D3D12_HEAP_PROPERTIES heap; D3D12_RESOURCE_DESC desc; D3D12_RANGE range;
+  UINT rows[2]; UINT64 row_sizes[2], bytes; void *mapped; unsigned mip, x, y, j; HRESULT status;
+  memset(&heap,0,sizeof(heap)); heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+  memset(&desc,0,sizeof(desc)); desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; desc.Width = 4; desc.Height = 4;
+  desc.DepthOrArraySize = 1; desc.MipLevels = 2; desc.SampleDesc.Count = 1; desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+  status = ID3D12Device_CreateCommittedResource(device,&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_COPY_DEST,NULL,&IID_ID3D12Resource,(void **)texture);
+  if (FAILED(status)) return status;
+  ID3D12Device_GetCopyableFootprints(device,&desc,0,2,0,footprints,rows,row_sizes,&bytes);
+  status = buffer(device,D3D12_HEAP_TYPE_UPLOAD,bytes,D3D12_RESOURCE_STATE_GENERIC_READ,upload); if (FAILED(status)) return status;
+  memset(&range,0,sizeof(range)); status = ID3D12Resource_Map(*upload,0,&range,&mapped); if (FAILED(status)) return status;
+  memset(mapped,0,(size_t)bytes);
+  for (mip = 0; mip < 2; ++mip) for (y = 0; y < (mip ? 2u : 4u); ++y) for (x = 0; x < (mip ? 2u : 4u); ++x) {
+    float *pixel = (float *)((unsigned char *)mapped+(size_t)footprints[mip].Offset+y*footprints[mip].Footprint.RowPitch+x*16);
+    for (j = 0; j < 4; ++j) pixel[j] = mip ? (float)(20+(y*2+x)*4+j) : j == 0 ? (float)(x+1) : j == 1 ? (float)(y+1) : j == 2 ? (float)(y*4+x+1) : 1;
+  }
+  ID3D12Resource_Unmap(*upload,0,NULL); return S_OK;
+}
 static void transition(ID3D12GraphicsCommandList *list, ID3D12Resource *resource,
                           D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
   D3D12_RESOURCE_BARRIER barrier;
@@ -92,11 +111,15 @@ int main(int argc, char **argv) {
   ID3D12RootSignature *root = NULL; ID3D12PipelineState *pipeline = NULL;
   ID3D12CommandQueue *queue = NULL; ID3D12CommandAllocator *allocator = NULL;
   ID3D12GraphicsCommandList *list = NULL; ID3D12CommandList *submitted;
+  ID3D12Resource *sampled_texture = NULL, *sampled_upload = NULL;
+  D3D12_PLACED_SUBRESOURCE_FOOTPRINT sampled_footprints[2];
   ID3D12Resource *upload = NULL, *counter = NULL, *depth = NULL, *colors[4] = {NULL,NULL,NULL,NULL}, *resolves[4] = {NULL,NULL,NULL,NULL}, *readback = NULL;
-  ID3D12DescriptorHeap *uav_heap = NULL, *rtv_heap = NULL, *dsv_heap = NULL;
+  ID3D12DescriptorHeap *sampler_heap = NULL, *uav_heap = NULL, *rtv_heap = NULL, *dsv_heap = NULL;
   ID3D12Fence *fence = NULL; ID3DBlob *serialized = NULL, *errors = NULL;
-  D3D12_ROOT_SIGNATURE_DESC root_desc; D3D12_ROOT_PARAMETER parameters[7]; D3D12_DESCRIPTOR_RANGE uav_range;
+  D3D12_ROOT_SIGNATURE_DESC root_desc; D3D12_ROOT_PARAMETER parameters[10]; D3D12_DESCRIPTOR_RANGE uav_range, texture_range, sampler_range;
   D3D12_DESCRIPTOR_HEAP_DESC heap_desc; D3D12_UNORDERED_ACCESS_VIEW_DESC uav;
+  D3D12_SHADER_RESOURCE_VIEW_DESC sampled_view; D3D12_SAMPLER_DESC sampled_sampler;
+  ID3D12DescriptorHeap *sampled_heaps[2];
   D3D12_CPU_DESCRIPTOR_HANDLE cpu, rtvs[4], dsv; D3D12_GPU_DESCRIPTOR_HANDLE gpu;
   D3D12_GRAPHICS_PIPELINE_STATE_DESC desc; D3D12_INPUT_ELEMENT_DESC input[2];
   D3D12_COMMAND_QUEUE_DESC queue_desc; D3D12_VERTEX_BUFFER_VIEW vertex_view;
@@ -104,12 +127,12 @@ int main(int argc, char **argv) {
   D3D12_VIEWPORT viewport; D3D12_RECT scissor; D3D12_RANGE range;
   HANDLE event = NULL; void *ps = NULL, *vs = NULL, *mapped = NULL;
   uint32_t *data, expected_bits; float expected[4], unmultiplied[4], float_constants[20], clear[4] = {-99,-99,-99,-99};
-  size_t ps_size = 0, vs_size = 0; unsigned query, guest_msaa = 0, native_2x, conditional_color, factor_variant, mode, variant, scenario, i, j, x, y, alpha_function = 7, fail, slot, count = 0;
+  size_t ps_size = 0, vs_size = 0; unsigned sampled, query, guest_msaa = 0, native_2x, conditional_color, factor_variant, mode, variant, scenario, i, j, x, y, alpha_function = 7, fail, slot, count = 0;
   HRESULT status = E_FAIL;
   if (argc != 5 && argc != 6) return 2;
   mode = (unsigned)strtoul(argv[3],NULL,10); scenario = (unsigned)strtoul(argv[4],NULL,10);
-  if (mode > 559 || scenario > 39) return 2;
-  variant = mode/28; query = variant >= 17 ? variant-16 : 0; mode %= 28; native_2x = variant == 5; conditional_color = variant == 6; factor_variant = variant >= 7 && variant <= 16 ? variant-7 : UINT32_MAX; if (variant >= 5) variant = 0;
+  if (mode > 643 || scenario > 39) return 2;
+  variant = mode/28; sampled = variant >= 20 ? variant-19 : 0; query = variant >= 17 ? variant-16 : 0; mode %= 28; native_2x = variant == 5; conditional_color = variant == 6; factor_variant = variant >= 7 && variant <= 16 ? variant-7 : UINT32_MAX; if (variant >= 5) variant = 0;
   if (argc == 6) guest_msaa = (unsigned)strtoul(argv[5],NULL,10);
   if (guest_msaa > 2) return 2;
   sample_count = guest_msaa ? native_2x && guest_msaa == 1 ? 2 : 4 : 1;
@@ -152,6 +175,16 @@ int main(int argc, char **argv) {
   parameters[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; parameters[5].Descriptor.ShaderRegister = 0;
   parameters[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; parameters[6].Descriptor.ShaderRegister = 1; parameters[6].Descriptor.RegisterSpace = 1;
   root_desc.NumParameters = 7; root_desc.pParameters = parameters; root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+  if (sampled) {
+    root_desc.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+    parameters[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; parameters[7].Descriptor.ShaderRegister = 3;
+    memset(&texture_range,0,sizeof(texture_range)); texture_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; texture_range.NumDescriptors = 1; texture_range.RegisterSpace = 3;
+    sampler_range = texture_range; sampler_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+    parameters[8].ParameterType = parameters[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    parameters[8].DescriptorTable.NumDescriptorRanges = parameters[9].DescriptorTable.NumDescriptorRanges = 1;
+    parameters[8].DescriptorTable.pDescriptorRanges = &texture_range; parameters[9].DescriptorTable.pDescriptorRanges = &sampler_range;
+    root_desc.NumParameters = 10;
+  }
   CHECK(D3D12SerializeRootSignature(&root_desc,D3D_ROOT_SIGNATURE_VERSION_1,&serialized,&errors));
   CHECK(ID3D12Device_CreateRootSignature(device,0,ID3D10Blob_GetBufferPointer(serialized),ID3D10Blob_GetBufferSize(serialized),&IID_ID3D12RootSignature,(void **)&root));
   memset(&desc,0,sizeof(desc)); memset(input,0,sizeof(input));
@@ -189,15 +222,34 @@ int main(int argc, char **argv) {
     memcpy((unsigned char *)mapped+2560,vertex_constants,sizeof(vertex_constants));
   }
   if (query) ((uint32_t *)mapped)[768/4+2] = 3u|(3u<<13);
+  if (sampled) {
+    uint32_t *indices = (uint32_t *)((unsigned char *)mapped+2816);
+    indices[0] = 1; indices[2] = 2; ((uint32_t *)mapped)[41] = 1u<<26;
+    ((uint32_t *)mapped)[768/4+8] = 3u|(3u<<13); ((uint32_t *)mapped)[768/4+10] = 1u<<6;
+  }
   ((float *)data)[8] = .0625f; ((float *)data)[9] = .125f; ((float *)data)[10] = .25f; ((float *)data)[11] = .5f;
   ((float *)data)[14] = .125f; ((float *)data)[15] = .25f;
   ID3D12Resource_Unmap(upload,0,NULL); mapped = NULL;
-  memset(&heap_desc,0,sizeof(heap_desc)); heap_desc.NumDescriptors = 1; heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+  memset(&heap_desc,0,sizeof(heap_desc)); heap_desc.NumDescriptors = sampled ? 3 : 1; heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
   CHECK(ID3D12Device_CreateDescriptorHeap(device,&heap_desc,&IID_ID3D12DescriptorHeap,(void **)&uav_heap));
   ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(uav_heap,&cpu);
 
   memset(&uav,0,sizeof(uav)); uav.Format = DXGI_FORMAT_R32_TYPELESS; uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER; uav.Buffer.NumElements = 64; uav.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
   ID3D12Device_CreateUnorderedAccessView(device,counter,NULL,&uav,cpu);
+  if (sampled) {
+    CHECK(sample_texture(device,&sampled_texture,&sampled_upload,sampled_footprints));
+    memset(&sampled_view,0,sizeof(sampled_view)); sampled_view.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    sampled_view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY; sampled_view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sampled_view.Texture2DArray.MipLevels = 2; sampled_view.Texture2DArray.ArraySize = 1;
+    for (i = 0; i < 2; ++i) { cpu.ptr += ID3D12Device_GetDescriptorHandleIncrementSize(device,D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV); ID3D12Device_CreateShaderResourceView(device,sampled_texture,&sampled_view,cpu); }
+    heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER; heap_desc.NumDescriptors = 1;
+    CHECK(ID3D12Device_CreateDescriptorHeap(device,&heap_desc,&IID_ID3D12DescriptorHeap,(void **)&sampler_heap));
+    ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(sampler_heap,&cpu);
+    memset(&sampled_sampler,0,sizeof(sampled_sampler)); sampled_sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+    sampled_sampler.AddressU = sampled_sampler.AddressV = sampled_sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampled_sampler.MaxAnisotropy = 1; sampled_sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER; sampled_sampler.MaxLOD = 1000;
+    ID3D12Device_CreateSampler(device,&sampled_sampler,cpu);
+  }
   heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV; heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE; heap_desc.NumDescriptors = 4;
   CHECK(ID3D12Device_CreateDescriptorHeap(device,&heap_desc,&IID_ID3D12DescriptorHeap,(void **)&rtv_heap));
   ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(rtv_heap,&cpu);
@@ -213,7 +265,15 @@ int main(int argc, char **argv) {
   CHECK(ID3D12Device_CreateCommandAllocator(device,D3D12_COMMAND_LIST_TYPE_DIRECT,&IID_ID3D12CommandAllocator,(void **)&allocator));
   CHECK(ID3D12Device_CreateCommandList(device,0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator,pipeline,&IID_ID3D12GraphicsCommandList,(void **)&list));
   ID3D12GraphicsCommandList_CopyBufferRegion(list,counter,0,upload,123136,256); transition(list,counter,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-  ID3D12GraphicsCommandList_SetGraphicsRootSignature(list,root); ID3D12GraphicsCommandList_SetDescriptorHeaps(list,1,&uav_heap);
+  ID3D12GraphicsCommandList_SetGraphicsRootSignature(list,root);
+  if (sampled) {
+    for (i = 0; i < 2; ++i) { memset(&source,0,sizeof(source)); source.pResource = sampled_upload; source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; source.PlacedFootprint = sampled_footprints[i]; memset(&destination,0,sizeof(destination)); destination.pResource = sampled_texture; destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; destination.SubresourceIndex = i; ID3D12GraphicsCommandList_CopyTextureRegion(list,&destination,0,0,0,&source,NULL); }
+    transition(list,sampled_texture,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    sampled_heaps[0] = uav_heap; sampled_heaps[1] = sampler_heap; ID3D12GraphicsCommandList_SetDescriptorHeaps(list,2,sampled_heaps);
+    ID3D12GraphicsCommandList_SetGraphicsRootShaderResourceView(list,7,ID3D12Resource_GetGPUVirtualAddress(upload)+2816);
+    ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(uav_heap,&gpu); gpu.ptr += ID3D12Device_GetDescriptorHandleIncrementSize(device,D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV); ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(list,8,gpu);
+    ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(sampler_heap,&gpu); ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(list,9,gpu);
+  } else ID3D12GraphicsCommandList_SetDescriptorHeaps(list,1,&uav_heap);
   ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(uav_heap,&gpu);
 
   ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(list,0,gpu);
@@ -262,7 +322,8 @@ int main(int argc, char **argv) {
       }
       if (i == 1 && variant && variant != 3) { expected[0] = ((float)x+.5f)/160; expected[1] = ((float)y+.5f)/48; expected[2] = 3; expected[3] = 4; if (variant == 4) for (j = 0; j < 4; ++j) expected[j] += 4; }
       if (i == 3 && query) {
-        if (query == 2) { expected[0] = 1.0f/160; expected[1] = expected[2] = 0; expected[3] = 1.0f/48; }
+        if (sampled) { unsigned tx = sampled == 2 ? 0 : x/40, ty = sampled == 2 ? 0 : y/12; expected[0] = (float)(tx+1); expected[1] = (float)(ty+1); expected[2] = (float)(ty*4+tx+1); expected[3] = 1; }
+        else if (query == 2) { expected[0] = 1.0f/160; expected[1] = expected[2] = 0; expected[3] = 1.0f/48; }
         else { expected[0] = ((float)x+.5f)/160; expected[1] = ((float)y+.5f)/48;
           for (j = 0; j < 2; ++j) { if (query == 1) expected[j] *= 4; expected[j] += -.5f+1.5f/1024; expected[j] -= (float)floor((double)expected[j]); }
           expected[2] = expected[3] = 0; }
@@ -308,6 +369,9 @@ done:
   if (allocator) ID3D12CommandAllocator_Release(allocator);
   if (queue) ID3D12CommandQueue_Release(queue);
   if (pipeline) ID3D12PipelineState_Release(pipeline);
+  if (sampled_texture) ID3D12Resource_Release(sampled_texture);
+  if (sampled_upload) ID3D12Resource_Release(sampled_upload);
+  if (sampler_heap) ID3D12DescriptorHeap_Release(sampler_heap);
   if (uav_heap) ID3D12DescriptorHeap_Release(uav_heap);
   if (rtv_heap) ID3D12DescriptorHeap_Release(rtv_heap);
   if (dsv_heap) ID3D12DescriptorHeap_Release(dsv_heap);

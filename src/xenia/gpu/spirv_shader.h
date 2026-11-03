@@ -11,6 +11,7 @@
 #define XENIA_GPU_SPIRV_SHADER_H_
 
 #include <atomic>
+#include <mutex>
 #include <vector>
 
 #include "xenia/gpu/shader.h"
@@ -71,6 +72,11 @@ class SpirvShader : public Shader {
   bool bindings_ready() const {
     return bindings_ready_.load(std::memory_order_acquire);
   }
+  std::mutex& resource_bindings_mutex() { return resource_bindings_mutex_; }
+  // The caller holds resource_bindings_mutex through generation/publication.
+  bool PublishNativeBindings(std::vector<TextureBinding>&& textures,
+                             std::vector<SamplerBinding>&& samplers,
+                             uint32_t used_texture_mask);
 
  protected:
   Translation* CreateTranslationInstance(uint64_t modification) override;
@@ -79,6 +85,7 @@ class SpirvShader : public Shader {
   friend class SpirvShaderTranslator;
 
   std::atomic_flag bindings_setup_entered_ = ATOMIC_FLAG_INIT;
+  std::mutex resource_bindings_mutex_;
   std::atomic<bool> bindings_ready_{false};
   std::vector<TextureBinding> texture_bindings_;
   std::vector<SamplerBinding> sampler_bindings_;

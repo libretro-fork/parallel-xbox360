@@ -4,10 +4,12 @@
 #include "guest_program.h"
 #include "guest_blend.h"
 #include "guest_rop.h"
+#include "guest_texture_stage.h"
 #include "shader_module.h"
 typedef struct XeDxilGuestPixelOptions {
   XeDxilGuestProgramOptions program;
   const XeDxilGuestRopOptions *rop;
+  const XeDxilTextureStageOptions *textures;
   unsigned interpolator_mask, centroid_mask, color_mask, writes_depth;
   unsigned system_constants_bytes, flags_word, alpha_reference_word;
   unsigned alpha_to_mask_word, color_bias_word, blend_constant_word;

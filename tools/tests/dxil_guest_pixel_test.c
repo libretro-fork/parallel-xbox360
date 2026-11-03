@@ -79,13 +79,16 @@ int main(int argc, char **argv) {
   uint32_t words[21] = {0x6001,0,0};
   XeDxilGuestRopOptions rop;
   XeDxilGuestPixelOptions o;
+  XeDxilTextureLayout texture_layout;
+  XeDxilTextureStageOptions texture_options;
+  XeDxilTextureInstruction texture_instruction;
   XeDxilShaderBinary *binary;
   FILE *file;
   static const unsigned factors[10] = {0,1,4,5,6,7,12,13,14,15};
   unsigned mode, variant, i, reg, rop_config = 0;
   int result;
   if (argc != 3 && argc != 4) return 2;
-  mode = (unsigned)strtoul(argv[2],NULL,10); if (mode > 562) return 2;
+  mode = (unsigned)strtoul(argv[2],NULL,10); if (mode > 646) return 2;
   variant = mode/28; mode %= 28;
   memset(&o,0,sizeof(o)); o.program.register_count = 16; o.program.float_constant_count = 5;
   o.system_constants_bytes = 256; o.flags_word = 0; o.alpha_reference_word = 1; o.alpha_to_mask_word = 2;
@@ -105,11 +108,20 @@ int main(int argc, char **argv) {
   if (variant == 5) o.native_2x = 1;
   if (variant >= 7 && variant <= 16) { o.blend_rgb_factor = factors[variant-7]; o.blend_alpha_factor = factors[16-variant]; }
   if (variant >= 17) { o.param_gen = 0; o.interpolator_mask = 1; o.writes_depth = 0; }
+  if (variant >= 20 && variant <= 22) {
+    memset(&texture_layout,0,sizeof(texture_layout)); memset(&texture_options,0,sizeof(texture_options)); memset(&texture_instruction,0,sizeof(texture_instruction));
+    texture_instruction.opcode = 1; texture_instruction.dimension = 1; texture_instruction.constant_index = 1; texture_instruction.computed_lod = variant == 22;
+    if (!xe_dxil_texture_layout_add(&texture_layout,&texture_instruction,1)) return 1;
+    texture_options.layout = &texture_layout; texture_options.pixel_shader = 1; texture_options.system_constants_bytes = 256;
+    texture_options.signs_word = 32; texture_options.integer_scale_word = 40; o.textures = &texture_options;
+    if (variant == 22) o.precise_interpolation = 1;
+  }
   if (argc == 4) {
     static const unsigned formats[12] = {0,1,2,3,4,5,6,7,10,12,14,15};
     rop_config = (unsigned)strtoul(argv[3],NULL,10); if ((rop_config&3) > 2) return 2;
     memset(&rop,0,sizeof(rop)); o.rop = &rop; o.system_constants_bytes = 512;
     o.depth_mode = 0; o.count_coverage = 0; o.native_2x = 0;
+    if (o.textures) { texture_options.system_constants_bytes = 512; texture_options.signs_word = 80; texture_options.integer_scale_word = 88; }
     o.blend_rgb_factor = o.blend_alpha_factor = 1;
     rop.depth.msaa = rop_config&3;
     rop.depth.scale_x = rop_config&4 ? 2 : 1; rop.depth.scale_y = rop_config&4 ? 3 : 1;
@@ -138,12 +150,13 @@ int main(int argc, char **argv) {
   words[18] = 50u<<26; words[19] = 0; words[20] = (24u<<24)|(4u<<8);
   if (variant >= 17) {
     words[0] |= 1u<<22;
-    words[12] = (variant == 20 ? (mode == 0 ? 1u : mode == 1 ? 16u : 17u) : variant == 18 ? 18u : 19u) | (15u<<12) | (36u<<26) | (variant == 19 ? 1u<<25 : 0);
-    words[13] = 1672; words[14] = 1u<<14;
+    words[12] = (variant == 23 ? (mode == 0 ? 1u : mode == 1 ? 16u : 17u) : variant >= 20 ? 1u : variant == 18 ? 18u : 19u) | (15u<<12) | (36u<<26) | (variant == 19 || variant == 21 ? 1u<<25 : 0);
+    words[13] = 1672|(variant == 22 ? 1u<<28 : 0); words[14] = (variant == 23 && mode == 0 ? 3u : 1u)<<14;
+    if (variant >= 20 && variant <= 22) words[12] |= 1u<<20;
     words[15] = (50u<<26)|(15u<<16)|(1u<<15)|3; words[16] = 0; words[17] = 0xc20f0f00;
   }
   binary = xe_dxil_build_guest_pixel_owned(&o,words,sizeof(words)/4,2);
-  if (variant == 20) { if (!binary) return 0; xe_dxil_shader_binary_delete(binary); return 1; }
+  if (variant == 23) { if (!binary) return 0; xe_dxil_shader_binary_delete(binary); return 1; }
   if (!binary) return 1;
   file = fopen(argv[1],"wb"); if (!file) { xe_dxil_shader_binary_delete(binary); return 1; }
   result = fwrite(binary->data,1,binary->size,file) != binary->size;
