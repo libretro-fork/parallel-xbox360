@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Linux builds expose the POSIX/GNU declarations needed by the selected libretro-common sources when compiling strict C. The definition is limited to that dependency target in both Make and CMake.
+
 - Removed the standalone UI toolkit, widgets, bundled fonts and trace-viewer/dump executables. Guest UI requests retain headless answers and completion through the kernel dispatcher. A bounded C89 libretro-common queue delivers UI notifications from frontend progress, replacing detached UI threads and their sleeps. Guest tile/profile decoding and trace screenshots retain their independent image codecs. Other timing and threading migrations remain in progress.
 
 - Replaced the remaining Zstandard library with owned libretro-common rzstd. ZArchive reads existing Zstandard-compressed blocks directly into its cache and lazily retains one decoder workspace per reader, avoiding per-block workspace allocation. Terminal matches use bounded word copies instead of copying their entire length byte by byte. Writing retains standard frames and the raw-block fallback; compressed sizes may differ. Removed the old source tree and unused standalone ZArchive build/packaging paths.

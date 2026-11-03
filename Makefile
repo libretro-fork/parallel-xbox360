@@ -242,6 +242,9 @@ $(BUILD_DIR)/obj/%.S.o: %.S
 	$(CC) $(BASE_FLAGS) $(CPPFLAGS) -DBOOST_CONTEXT_EXPORT= -c "$<" -o "$@"
 
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/%,$(SOURCES_C) $(SOURCES_CXX)))): CPPFLAGS += -w
+ifeq ($(OS),linux)
+$(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/libretro-common/%,$(SOURCES_C)))): CPPFLAGS += -D_GNU_SOURCE
+endif
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/capstone/%,$(SOURCES_C)))): CPPFLAGS += $(CAPSTONE_DEFS) -DCAPSTONE_USE_SYS_DYN_MEM -Ithird_party/capstone
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter src/xenia/cpu/backend/%,$(SOURCES_CXX)))): CPPFLAGS += $(CAPSTONE_DEFS) -DCAPSTONE_USE_SYS_DYN_MEM
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/mspack/% third_party/snappy/%,$(SOURCES_C) $(SOURCES_CXX)))): CPPFLAGS += -DHAVE_CONFIG_H
