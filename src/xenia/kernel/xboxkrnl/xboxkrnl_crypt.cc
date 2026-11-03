@@ -16,7 +16,6 @@
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 
-#include "third_party/crypto/TinySHA1.hpp"
 #include "third_party/crypto/des/des.cpp"
 #include "third_party/crypto/des/des.h"
 #include "third_party/crypto/des/des3.h"
@@ -45,12 +44,13 @@ struct XECRYPT_SHA_STATE {
   xe::be<uint32_t> state[5];  // 0x4
   uint8_t buffer[64];         // 0x18
 };
-static_assert_size(XECRYPT_SHA_STATE, 0x58);
+static_assert_size(XECRYPT_SHA_STATE, XE_GUEST_SHA1_SIZE);
+static_assert(offsetof(XECRYPT_SHA_STATE, buffer) == 24);
 
 struct XECRYPT_HMACSHA_STATE {
   XECRYPT_SHA_STATE sha_state[2];
 };
-static_assert_size(XECRYPT_HMACSHA_STATE, 0xB0);
+static_assert_size(XECRYPT_HMACSHA_STATE, XE_GUEST_HMAC_SHA1_SIZE);
 
 // TODO: Size of this struct hasn't been confirmed yet.
 struct XECRYPT_SHA256_STATE {
@@ -417,59 +417,24 @@ void XeCryptRc4_entry(lpvoid_t key, dword_t key_size, lpvoid_t data,
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptRc4, kNone, kImplemented);
 
-void InitSha1(sha1::SHA1* sha, const XECRYPT_SHA_STATE* state) {
-  uint32_t digest[5];
-  std::ranges::copy(state->state, digest);
-
-  sha->init(digest, state->buffer, state->count);
-}
-
-void StoreSha1(const sha1::SHA1* sha, XECRYPT_SHA_STATE* state) {
-  std::copy_n(sha->getDigest(), xe::countof(state->state), state->state);
-
-  state->count = static_cast<uint32_t>(sha->getByteCount());
-  std::copy_n(sha->getBlock(), sha->getBlockByteIndex(), state->buffer);
-}
-
 void XeCryptShaInit_entry(pointer_t<XECRYPT_SHA_STATE> sha_state) {
-  sha_state.Zero();
-
-  sha_state->state[0] = 0x67452301;
-  sha_state->state[1] = 0xEFCDAB89;
-  sha_state->state[2] = 0x98BADCFE;
-  sha_state->state[3] = 0x10325476;
-  sha_state->state[4] = 0xC3D2E1F0;
+  XECRYPT_SHA_STATE* state = sha_state;
+  xe_guest_sha1_init(reinterpret_cast<uint8_t*>(state));
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptShaInit, kNone, kImplemented);
 
 void XeCryptShaUpdate_entry(pointer_t<XECRYPT_SHA_STATE> sha_state,
                             lpvoid_t input, dword_t input_size) {
-  sha1::SHA1 sha;
-  InitSha1(&sha, sha_state);
-
-  sha.processBytes(input, input_size);
-
-  StoreSha1(&sha, sha_state);
+  XECRYPT_SHA_STATE* state = sha_state;
+  xe_guest_sha1_update(reinterpret_cast<uint8_t*>(state),
+                       input.as<const uint8_t*>(), input_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptShaUpdate, kNone, kImplemented);
 
 void XeCryptShaFinal_entry(pointer_t<XECRYPT_SHA_STATE> sha_state,
                            pointer_t<uint8_t> out, dword_t out_size) {
-  sha1::SHA1 sha;
-  InitSha1(&sha, sha_state);
-
-  uint8_t digest[0x14];
-  sha.finalize(digest);
-
-  std::copy_n(digest, std::min<size_t>(xe::countof(digest), out_size),
-              static_cast<uint8_t*>(out));
-  std::copy_n(sha.getDigest(), xe::countof(sha_state->state), sha_state->state);
-  // The console pads in place, so the last block it compressed is left in the
-  // context buffer, not the message tail. Only shows up when a title finalizes
-  // the same context twice and the padding needed a second block, where the
-  // tail no longer survives the first call.
-  std::copy_n(sha.getBlock(), xe::countof(sha_state->buffer),
-              sha_state->buffer);
+  XECRYPT_SHA_STATE* state = sha_state;
+  xe_guest_sha1_final(reinterpret_cast<uint8_t*>(state), out, out_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptShaFinal, kNone, kImplemented);
 
@@ -477,64 +442,31 @@ void XeCryptSha_entry(lpvoid_t input_1, dword_t input_1_size, lpvoid_t input_2,
                       dword_t input_2_size, lpvoid_t input_3,
                       dword_t input_3_size, lpvoid_t output,
                       dword_t output_size) {
-  sha1::SHA1 sha;
-
-  if (input_1 && input_1_size) {
-    sha.processBytes(input_1, input_1_size);
-  }
-  if (input_2 && input_2_size) {
-    sha.processBytes(input_2, input_2_size);
-  }
-  if (input_3 && input_3_size) {
-    sha.processBytes(input_3, input_3_size);
-  }
-
-  uint8_t digest[0x14];
-  sha.finalize(digest);
-  std::copy_n(digest, std::min<size_t>(xe::countof(digest), output_size),
-              output.as<uint8_t*>());
+  xe_sha1_3(input_1.as<const uint8_t*>(), input_1 ? input_1_size.value() : 0,
+            input_2.as<const uint8_t*>(), input_2 ? input_2_size.value() : 0,
+            input_3.as<const uint8_t*>(), input_3 ? input_3_size.value() : 0,
+            output.as<uint8_t*>(), output_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptSha, kNone, kImplemented);
 
-void XeCryptHmacShaInit_entry(pointer_t<XECRYPT_HMACSHA_STATE> sha_state_ptr,
-                              lpvoid_t key_ptr, dword_t key_size) {
-  sha_state_ptr.Zero();
-
-  const uint8_t* key_data_ptr = key_ptr.as<uint8_t*>();
-  const uint32_t key_size_ = key_size > 64 ? 64 : key_size.value();
-
-  XeCryptShaInit_entry(sha_state_ptr->sha_state);
-  XeCryptShaInit_entry(&sha_state_ptr->sha_state[1]);
-
-  std::array<uint8_t, 64> key_1 = {};
-  std::array<uint8_t, 64> key_2 = {};
-
-  std::copy_n(key_data_ptr, key_size_, key_1.begin());
-  std::copy_n(key_data_ptr, key_size_, key_2.begin());
-
-  for (uint8_t i = 0; i < key_size_; i += 1) {
-    key_1[i] ^= 0x5C5C5C5Cu;
-    key_2[i] ^= 0x36363636u;
-  }
-
-  XeCryptShaUpdate_entry(sha_state_ptr->sha_state, key_2.data(), key_size_);
-  XeCryptShaUpdate_entry(&sha_state_ptr->sha_state[1], key_1.data(), key_size_);
+void XeCryptHmacShaInit_entry(pointer_t<XECRYPT_HMACSHA_STATE> sha_state,
+                              lpvoid_t key, dword_t key_size) {
+  XECRYPT_HMACSHA_STATE* state = sha_state;
+  xe_guest_hmac_sha1_init(reinterpret_cast<uint8_t*>(state),
+                          key.as<const uint8_t*>(), key_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptHmacShaInit, kNone, kImplemented);
 
-void XeCryptHmacShaUpdate_entry(pointer_t<XECRYPT_HMACSHA_STATE> sha_state_ptr,
+void XeCryptHmacShaUpdate_entry(pointer_t<XECRYPT_HMACSHA_STATE> sha_state,
                                 lpvoid_t input, dword_t input_size) {
-  XeCryptShaUpdate_entry(sha_state_ptr->sha_state, input, input_size);
+  XeCryptShaUpdate_entry(sha_state->sha_state, input, input_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptHmacShaUpdate, kNone, kImplemented);
 
-void XeCryptHmacShaFinal_entry(pointer_t<XECRYPT_HMACSHA_STATE> sha_state_ptr,
+void XeCryptHmacShaFinal_entry(pointer_t<XECRYPT_HMACSHA_STATE> sha_state,
                                pointer_t<uint8_t> out, dword_t out_size) {
-  XeCryptShaFinal_entry(sha_state_ptr->sha_state, 0, 0);
-  XeCryptShaUpdate_entry(&sha_state_ptr->sha_state[1],
-                         sha_state_ptr->sha_state->state,
-                         sizeof(XECRYPT_SHA_STATE::state));
-  XeCryptShaFinal_entry(&sha_state_ptr->sha_state[1], out, out_size);
+  XECRYPT_HMACSHA_STATE* state = sha_state;
+  xe_guest_hmac_sha1_final(reinterpret_cast<uint8_t*>(state), out, out_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptHmacShaFinal, kNone, kImplemented);
 

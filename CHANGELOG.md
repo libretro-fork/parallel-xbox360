@@ -4,6 +4,10 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Replaced remaining TinySHA1 guest callers with C89 common SHA-1 adapters and removed its private header. Preserved guest state, alias ordering and final padded blocks; corrected the bit length above 512 MiB. Streamed HMAC now pads the whole block for short keys, retaining its 64-byte key cap. Added exact-state/RFC/513 MiB tests and measured hardware-dispatch/scalar benchmarks.
+
+- Removed unused RapidJSON sources. XLast still uses pugixml while a common XML replacement is evaluated.
+
 - Removed leaked FFmpeg contexts from streamed guest MD5/SHA-512 update and finalization. C89 adapters preserve guest count, word ordering, retained buffers and output aliases while borrowing bulk input. SHA-512 finalization now reads the correct 200-byte SHA-512 layout. Differential tests include retained-buffer behavior across 256 MiB MD5 update chunks.
 
 - Guest SHA-256 now uses an allocation-free C89 adapter over common streaming primitives, preserving exact guest state, counter wrapping and aliasing behavior. Removed the private C++ SHA-256 implementation. One-shot guest MD5 no longer leaks an allocated context, and one-shot guest HMAC-SHA-1 shares the common span adapter. Fixed unaligned word loads in common MD5; streamed guest MD5/SHA-512 migration remains pending.

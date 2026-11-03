@@ -963,8 +963,8 @@ private verification buffer so failed authentication cannot publish partial data
 `core_sha1_test.c` with the minimal `core_sha1_bridge.cc` compares the previous
 TinySHA1 implementation with the production common one-shot and streamed hashes.
 It tests all lengths below 1024, unaligned input and additional lengths through
-1 MiB. The reference header remains needed by guest-state crypto during migration;
-the bridge is transitional test infrastructure. These are byte-compatibility
+1 MiB. The historical header is extracted by `run_guest_sha1_test.sh` from
+Git into the test output directory and is absent from production. These are byte-compatibility
 checks, not gameplay or throughput measurements.
 
 
@@ -1014,3 +1014,20 @@ dialect. `LARGE_GUEST_HASH=1` adds a greater-than-256 MiB MD5 update with a part
 initial block, checking both digest and retained buffer across length chunks.
 Linux ASan/UBSan and MSVC runs pass including this large case; MinGW runs pass
 the ordinary suite. These are compatibility/safety checks, not speed benchmarks.
+
+`run_guest_sha1_test.sh` checks the C89 guest SHA-1, HMAC and three-span SHA-1
+adapters. The old TinySHA1 class is used only through a minimal historical C++
+bridge; FFmpeg's independent SHA-1 source checks all guest-state bytes, guards,
+partial blocks, aliases, repeated finalization, count wrapping and padding.
+The adapter and driver compile as C89; existing reference code uses its original
+C/C++ dialect. RFC 2202 HMAC vectors include a short key, and all key lengths
+0 through 160 exercise the streamed API's preserved 64-byte key limit. Short-key
+pads now cover the full block, matching the upstream Canary correction.
+
+The common implementation intentionally fixes TinySHA1's truncated bit length
+at 512 MiB and above. After building, run the generated `test --large` to stream
+513 MiB using only a 1 MiB input allocation: independent SHA-1 agrees, while the
+historical finalization yields a different digest. Normal runs also check a
+synthetic boundary counter. Host benchmarks and raw measurements are in
+`results/sha1-9950x3d/README.md`; `run_sha1_benchmark.sh` reproduces them. Timers
+are confined to developer benchmarks.

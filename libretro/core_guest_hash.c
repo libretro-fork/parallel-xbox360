@@ -1,6 +1,8 @@
 #include "core_guest_hash.h"
 #include <string.h>
 #include <lrc_hash.h>
+#include <crypto/crypto.h>
+#include <crypto/kdf.h>
 
 static uint32_t guest_be32(const uint8_t *p) {
   return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
@@ -177,4 +179,76 @@ int xe_guest_sha512_final(uint8_t *guest, uint8_t *out, size_t out_size) {
   if (size) memcpy(out, digest, size);
   memcpy(guest + 72, digest, sizeof(digest));
   return 1;
+}
+
+static void sha1_words(uint8_t *guest, const struct sha1_state *p) {
+  unsigned i;
+  for (i = 0; i < 5; ++i) guest_put32(guest + 4 + i * 4, p->digest[i]);
+}
+static void sha1_import(struct sha1_state *p, const uint8_t *guest) {
+  unsigned i;
+  uint32_t count = guest_be32(guest);
+  p->length_low = count << 3; p->length_high = count >> 29;
+  p->block_index = (int)(count & 63); p->computed = 0; p->corrupted = 0;
+  for (i = 0; i < 5; ++i) p->digest[i] = guest_be32(guest + 4 + i * 4);
+  if (p->block_index) memcpy(p->block, guest + 24, (size_t)p->block_index);
+}
+int xe_guest_sha1_init(uint8_t *guest) {
+  struct sha1_state p;
+  if (!guest) return 0;
+  sha1_stream_init(&p);
+  memset(guest, 0, XE_GUEST_SHA1_SIZE); sha1_words(guest, &p);
+  return 1;
+}
+int xe_guest_sha1_update(uint8_t *guest, const uint8_t *input, size_t size) {
+  struct sha1_state p;
+  uint32_t count;
+  unsigned within;
+  if (!guest || (!input && size)) return 0;
+  if (!size) return 1;
+  count = guest_be32(guest); within = count & 63;
+  if (size < 64 - within) {
+    memmove(guest + 24 + within, input, size);
+    guest_put32(guest, count + (uint32_t)size);
+    return 1;
+  }
+  sha1_import(&p, guest); sha1_stream_update(&p, input, size);
+  sha1_words(guest, &p);
+  /* Only the uncompressed tail is published by the guest update API. */
+  if (p.block_index) memcpy(guest + 24, p.block, (size_t)p.block_index);
+  guest_put32(guest, count + (uint32_t)size);
+  return 1;
+}
+int xe_guest_sha1_final(uint8_t *guest, uint8_t *out, size_t out_size) {
+  struct sha1_state p;
+  size_t i, size = out_size < 20 ? out_size : 20;
+  if (!guest || (!out && size)) return 0;
+  sha1_import(&p, guest);
+  if (!sha1_stream_final(&p, NULL)) return 0;
+  for (i = 0; i < size; ++i)
+    out[i] = (uint8_t)(p.digest[i >> 2] >> (24 - 8 * (i & 3)));
+  sha1_words(guest, &p);
+  memcpy(guest + 24, p.block, 64);
+  return 1;
+}
+int xe_guest_hmac_sha1_init(uint8_t *guest, const uint8_t *key, size_t key_size) {
+  struct hmac_sha1_ctx p;
+  uint8_t empty = 0;
+  if (!guest || (!key && key_size)) return 0;
+  /* The streamed guest API retains its 64-byte key limit. */
+  if (key_size > 64) key_size = 64;
+  /* Consume an aliased key before clearing/publishing guest state. */
+  hmac_sha1_init(&p, key_size ? key : &empty, key_size);
+  memset(guest, 0, XE_GUEST_HMAC_SHA1_SIZE);
+  guest_put32(guest, 64); sha1_words(guest, &p.inner);
+  guest_put32(guest + 88, 64); sha1_words(guest + 88, &p.outer);
+  crypto_memzero(&p, sizeof(p));
+  return 1;
+}
+int xe_guest_hmac_sha1_final(uint8_t *guest, uint8_t *out, size_t out_size) {
+  if (!guest || (!out && out_size)) return 0;
+  /* Preserve the guest API's observable finalized inner and outer states. */
+  if (!xe_guest_sha1_final(guest, NULL, 0)) return 0;
+  if (!xe_guest_sha1_update(guest + 88, guest + 4, 20)) return 0;
+  return xe_guest_sha1_final(guest + 88, out, out_size);
 }

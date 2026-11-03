@@ -14,7 +14,7 @@ for source in libretro/core_guest_hash.c tools/tests/core_guest_hash_stream_test
   "$cc" -std=c89 -pedantic-errors -Wall -Wextra -Werror "${flags[@]}" "${san[@]}" \
     -c "$source" -o "$out/$(basename "$source" .c).o"
 done
-sources=(hash/lrc_hash.c features/features_cpu.c utils/md5.c)
+sources=(hash/lrc_hash.c features/features_cpu.c utils/md5.c crypto/crypto.c crypto/kdf.c)
 windows=0
 case $(uname -s) in MINGW*|MSYS*) windows=1 ;; esac
 if (( windows )); then

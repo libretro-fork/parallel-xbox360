@@ -73,3 +73,19 @@ int xe_md5_3(const uint8_t *a, size_t a_size, const uint8_t *b, size_t b_size,
   }
   return 1;
 }
+
+int xe_sha1_3(const uint8_t *a, size_t a_size, const uint8_t *b, size_t b_size,
+    const uint8_t *c, size_t c_size, uint8_t *out, size_t out_size) {
+  struct sha1_state p;
+  uint8_t digest[20];
+  if (!out_size) return 1;
+  if (!out || (!a && a_size) || (!b && b_size) || (!c && c_size)) return 0;
+  sha1_stream_init(&p);
+  sha1_stream_update(&p, a, a_size); sha1_stream_update(&p, b, b_size);
+  sha1_stream_update(&p, c, c_size);
+  if (!sha1_stream_final(&p, out_size >= 20 ? out : digest)) return 0;
+  if (out_size < 20) {
+    memcpy(out, digest, out_size); crypto_memzero(digest, sizeof(digest));
+  }
+  return 1;
+}

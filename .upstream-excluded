@@ -151,3 +151,7 @@ third_party/zarchive/src/sha_256.h
 
 third_party/crypto/sha256.cpp
 third_party/crypto/sha256.h
+
+third_party/crypto/TinySHA1.hpp
+
+third_party/rapidjson
