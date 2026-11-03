@@ -188,14 +188,29 @@ compiled with MinGW-w64 GCC using `-std=c89 -Wall -Wextra -Werror`.
   `-Isrc -isystem . -isystem third_party/DirectX-Headers/include`, and link
   `-ld3d12 -ldxgi -ldxguid -lole32 -luuid`. The C adapter object can also be
   linked to the fixture compiled as C++ to check calls from the renderer.
-- `core_load_test.c` loads a DLL, checks the 25 required libretro exports,
+- `core_load_test.c` loads a native core, checks the 25 required libretro exports,
   API version and core name, then unloads it. Compile with `-isystem libretro`.
   Run `core_load_test.exe ./parallel_xbox360_libretro.dll`, then repeat with
   `lifecycle` as the second argument for two init/deinit cycles before unload.
+  On Linux, compile with `cc -std=c89 -isystem libretro tools/tests/core_load_test.c -ldl -o core_load_test`
+  and run `./core_load_test ./parallel_xbox360_libretro.so lifecycle`.
 
 The Windows GCC build passed all these checks, including the context-switch
 and D3D12 adapter tests compiled with MSVC. These are ABI and lifecycle smoke
 checks; they do not exercise game execution or an actual title exit.
+
+## ARM64 system-register checks
+
+`arm64_sysreg_test.c` checks the owned C89 register-read helpers: counter
+frequency is nonzero, consecutive counter values do not decrease, and reading
+DCZID does not fault. The helpers use MSVC intrinsics, Clang ACLE intrinsics,
+or GCC assembly for the same architectural registers.
+
+For a Linux cross-build, compile with
+`aarch64-linux-gnu-gcc -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -Isrc tools/tests/arm64_sysreg_test.c -o arm64_sysreg_test`
+and run `qemu-aarch64 -L /usr/aarch64-linux-gnu ./arm64_sysreg_test`.
+The test also compiles as strict C89 with the Android NDK compiler. QEMU is
+only a development test dependency, not part of the core build.
 
 ## Native geometry stages
 
@@ -645,8 +660,8 @@ containers and optimized C89 compilation. Modes 0..3 select triangle CP/patch
 and quad CP/patch layouts. Add 4 for continuous tessellation or 8 for adaptive
 (patch modes 9 and 11 only). Flags 16/32 add an actual texture fetch or memory
 export, 64 adds six clip planes, and 128 adds cull planes, point size and vertex
-kill output. Flag 240 combines all those interfaces. Texture-bearing variants
-are container checks; the domain GPU runs do not claim textured gameplay.
+kill output. Flag 240 combines all those interfaces. Texture variants execute
+a raw fetch followed by a raw guest ALU export of the sampled register.
 
 The `dxil-guest-domain-test prefix config` fixture writes `.ds`, `.system`,
 `.constants`, `.expected` and `.hosts`. The latter contains two 32-bit asset
@@ -656,7 +671,8 @@ continuous equivalents, and adaptive triangle/quad HS, all under
 `src/xenia/gpu/shaders/bytecode/d3d12_dxil/`. Copy the selected raw assets to
 `prefix.host.vs` and `prefix.hs`.
 
-Run `dxil-memexport-runtime prefix prefix mode` on Windows to capture domain
+Run `dxil-memexport-runtime prefix prefix mode` on Windows (add 16 to `mode`
+for texture-bearing variants) to capture domain
 output through stream output. The fixture writes guest r0/r1 and a separate
 hardware domain-location probe. Every captured vertex must match the exact
 triangle ZYX or quad/patch register layout and the processed control-point or
@@ -664,10 +680,13 @@ patch indices. All corners must appear, and vertex counts must match the chosen
 tessellator partition. Factor-2 fractional-even triangle patches form six
 triangles around a center; factor-2 quads form an eight-triangle grid. The GPU
 matrix covers ten supported mode/layout combinations, each with ordinary,
-clip-plane and cull/kill/point-size interfaces, with and without memory exports
-(60 executions). Exports write a known float4 into a separate UAV; all 32 words
+clip-plane and cull/kill/point-size interfaces, with texture and memory-export
+combinations (90 executions). Textures use the native resource/sampler heaps
+and raw index-buffer binding, with all four sampled values checked per vertex.
+Uploads go directly into a mapped GPU texture footprint. Memory exports write
+a known float4 into a separate UAV; all 32 words
 are checked, including untouched sentinels. Stream output has its own buffer
-and resource state.
+and resource state. These synthetic checks do not establish game compatibility.
 The raw host helpers use b0/space0 with pinned system offsets; guest stages use
 b0/space1, so both root bindings alias the same existing constant upload.
 There is no intermediate SPIR-V conversion or owned copy of the static helpers.

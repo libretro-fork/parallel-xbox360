@@ -754,8 +754,8 @@ EMITTER_OPCODE_TABLE(OPCODE_STORE_OFFSET, STORE_OFFSET_I8, STORE_OFFSET_I16,
 // ============================================================================
 // OPCODE_MEMSET
 // ============================================================================
-static const bool zva_enable = (xe_cpu_mrs(DCZID_EL0) & 0b1'0000) == 0;
-static const uint64_t zva_length = (4ULL << (xe_cpu_mrs(DCZID_EL0) & 0b0'1111));
+static const bool zva_enable = (xe_arm64_read_dczid_el0() & 0b1'0000) == 0;
+static const uint64_t zva_length = (4ULL << (xe_arm64_read_dczid_el0() & 0b0'1111));
 
 struct MEMSET_I64
     : Sequence<MEMSET_I64, I<OPCODE_MEMSET, VoidOp, I64Op, I8Op, I64Op>> {

@@ -2,11 +2,11 @@
 
 A [libretro](https://www.libretro.com/) core of [Xenia Edge](https://github.com/has207/xenia-edge), the Xbox 360 emulator, for RetroArch and other libretro frontends.
 
-The emulator is upstream's: this repository follows xenia-edge and adds the libretro frontend in `libretro/`. It holds the core only; upstream's standalone UI, packaging and CI are not part of it (the paths are listed in `.upstream-excluded`). The version the core reports is upstream's, with the upstream commit it is merged to (`upstream.version`). The core is currently on xenia-edge commit 8dc77b0 of 7 October 2026.
+This repository follows xenia-edge and adds the libretro frontend in `libretro/` plus owned shader and build paths. It holds the core only; upstream's standalone UI, packaging and CI are not part of it (the paths are listed in `.upstream-excluded`). The version the core reports is upstream's, with the upstream commit it is merged to (`upstream.version`). The core is currently on xenia-edge commit 8dc77b0 of 7 October 2026.
 
 ## Downloads
 
-The core is built by libretro's buildbot for Windows, Linux (x86_64, arm64) and Android (arm64-v8a, x86_64), and is installed from RetroArch: Online Updater > Core Downloader. Every push to the `libretro` branch is also built in [Actions](https://github.com/libretro-fork/parallel-xbox360/actions/workflows/libretro.yml), macOS (Apple Silicon) included; the builds are the artifacts of a run, and downloading them needs a GitHub login.
+The buildbot configuration covers Windows, Linux (x86_64, arm64) and Android (arm64-v8a, x86_64). The [Actions workflow](https://github.com/libretro-fork/parallel-xbox360/actions/workflows/libretro.yml) also includes macOS on Apple Silicon. Successful runs publish build artifacts when Actions is enabled.
 
 - **Windows:** `parallel_xbox360_libretro.dll`, whose MSVC builds need the Visual C++ 2015-2022 runtime (GNU Make/MinGW builds link their compiler runtimes statically).
 - **Linux:** `parallel_xbox360_libretro.so`, glibc 2.35 or newer; uses fontconfig and the C/C++ runtime, with no X11 or Wayland libraries (the CMake build also links lz4 where available). ARM64 uses the a64 CPU backend.
@@ -15,7 +15,7 @@ The core is built by libretro's buildbot for Windows, Linux (x86_64, arm64) and 
 
 ## Video
 
-The core option Graphics API picks Xenia's GPU backend: Vulkan, or on Windows Direct3D 12. The core asks RetroArch for that kind of context, and RetroArch switches its video driver to match when it is allowed to (Settings > Video > Output). Direct3D 12 runs on the system's Direct3D 12 runtime: the Agility SDK runtime that standalone Xenia uses can only be loaded by an executable that exports it, which RetroArch does not.
+The core option Graphics API picks Xenia's GPU backend: Vulkan, or on Windows Direct3D 12. The core asks RetroArch for that kind of context, and RetroArch switches its video driver to match when it is allowed to (Settings > Video > Output). Direct3D 12 runs on the system's Direct3D 12 runtime: the Agility SDK runtime that standalone Xenia uses can only be loaded by an executable that exports it, which RetroArch does not. D3D12 requires Shader Model 6.6 support from the active runtime and graphics driver for native descriptor-heap indexing.
 
 ## Content
 
@@ -60,8 +60,7 @@ in vertex and pixel stages at native or scaled draw resolution. Raw fetch consta
 coordinate normalization, offsets, explicit/gradient LOD and bias, point
 snapping, signed/unsigned view selection, integer conversion, gamma and exponent
 adjustment. Wide 1D textures map directly to the cache's bounded row layout;
-cube coordinates convert directly to native directions. Resource layouts are published once and retained across native and
-remaining SPIR-V variants. Only required sign views are sampled, and fetch
+cube coordinates convert directly to native directions. Resource layouts are published once and retained across native variants. Only required sign views are sampled, and fetch
 metadata is loaded once per used constant. Volume filtering selects runtime 3D or
 array views, handles layer edges and skips zero-weight second-layer fetches.
 Computed-LOD queries use native unclamped DXIL operations and select the signed
@@ -86,8 +85,8 @@ D3D12 uses owned DXIL generation exclusively; Vulkan uses raw SPIR-V.
 The build and runtime need no Mesa, Meson, Python, GLSL frontend, SPIRV-Cross,
 glslang, shader compiler executable or separate DXIL validator DLL.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in
-[`tools/tests/README.md`](tools/tests/README.md); whole-shader integration
-is still in progress. The native program layer joins raw control flow, ALU and
+[`tools/tests/README.md`](tools/tests/README.md). The native program layer joins
+raw control flow, ALU and
 fetch emitters with bounded register/constant storage. The vertex and host-target
 pixel adapters connect to live draws and shader-cache warm-up, retaining generated
 containers directly without a temporary bytecode-vector copy.

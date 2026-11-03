@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed unused FFmpeg glslang/shaderc adapters and excluded them from upstream imports. Expanded native domain GPU checks to all 90 texture/export combinations. Fixed GCC ARM64 save/restore offsets and system-register reads, added POSIX core ABI/lifecycle checks, and clarified the D3D12 Shader Model 6.6 device requirement.
+
 - Expanded native tessellation checks to execute memory exports alongside stream output, covering 60 GPU cases and 90 validated containers. Fixed shared host-tool signature checks during simultaneous builds. Android info-cache flag updates use the existing portable atomics, supporting libc++ releases without `atomic_ref`.
 
 - Removed Mesa and its SPIR-V-to-DXIL fallback, source tree, build archives, Meson/Python setup and runtime DXIL validator DLL. D3D12 now generates guest and helper DXIL directly; Vulkan retains raw SPIR-V and macOS keeps its external driver. Windows and Linux CI use GCC with the static Makefiles. Sampler layouts now cover the renderer's 2,000-entry heap, and geometry cache publication keeps native bytecode without a copy. Added GCC cross-build portability fixes.

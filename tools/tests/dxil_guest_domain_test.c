@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
     (50u<<26)|(15u<<16)|(1u<<15),0,0xc2000000,
     (50u<<26)|(15u<<16)|(1u<<15)|1,0,0xc2010100
   };
-  XeDxilGuestVertexOptions o; XeDxilShaderBinary *binary; uint32_t words[24], system[192], constants[64], expected[32];
+  XeDxilGuestVertexOptions o; XeDxilShaderBinary *binary; uint32_t words[30], system[192], constants[64], expected[32];
   XeDxilTextureLayout layout; XeDxilTextureStageOptions textures; XeDxilTextureInstruction instruction;
   unsigned config, mode, flags, i, slots = 4, slot, hosts[2]; int result;
   if (argc != 3) return 2;
@@ -54,6 +54,8 @@ int main(int argc, char **argv) {
     o.program.register_count = 16;
     slot = 3+slots*3; words[0] |= 1u<<(16+slots*2); ++slots;
     words[slot] = 1|(15u<<12)|(36u<<26); words[slot+1] = 1672; words[slot+2] = 1u<<14;
+    o.interpolator_mask = 15; slot = 3+(slots++)*3;
+    words[slot] = (50u<<26)|(15u<<16)|(1u<<15)|3; words[slot+2] = 0xc20f0f00;
   }
   if (flags&32) {
     o.program.memexport_mask = 1; o.program.float_constant_count = 2;
@@ -62,7 +64,10 @@ int main(int argc, char **argv) {
   }
   if (flags&64) { o.clip_planes = 6; o.clip_planes_word = 16; }
   if (flags&128) { o.clip_planes = 0; o.cull_planes = 6; o.clip_planes_word = 16; o.point_size = o.vertex_kill = o.vertex_kill_and = 1; }
-  words[0] = (words[0]&~0x7000u)|(slots<<12);
+  words[0] = (words[0]&~0x7000u)|((slots > 6 ? 6 : slots)<<12);
+  if (slots > 6) {
+    words[1] = 0x1000|(((slots-6)<<12|7u)<<16); words[2] = 0x20000000;
+  }
   system[0] = 32; system[4] = system[5] = system[6] = bits(1);
   system[128] = system[129] = bits(mode ? 2.0f : 1.0f); system[133] = 17; system[135] = 0xffffff;
   constants[2] = bits(.5f); constants[3] = bits(1);

@@ -12,25 +12,13 @@
 
 #if XE_ARCH_ARM64 && XE_CLOCK_RAW_AVAILABLE
 
-// Wrap all these different cpu compiler intrinsics.
-// So no inline assembler here and the compiler will remove the clutter.
-#if XE_COMPILER_MSVC
-#include <intrin.h>
-constexpr uint32_t CNTFRQ_EL0 = ARM64_SYSREG(3, 3, 14, 0, 0);
-constexpr uint32_t CNTVCT_EL0 = ARM64_SYSREG(3, 3, 14, 0, 2);
-#define xe_cpu_mrs(reg) _ReadStatusReg(reg)
-#elif XE_COMPILER_CLANG || XE_COMPILER_GNUC
-#include <arm_acle.h>
-#define xe_cpu_mrs(reg) __arm_rsr64(#reg)
-#else
-#error "No cpu instruction wrappers for current compiler implemented."
-#endif
+#include "xenia/base/arm64_sysreg.h"
 
 namespace xe {
 XE_NOINLINE
-uint64_t Clock::host_tick_frequency_raw() { return xe_cpu_mrs(CNTFRQ_EL0); }
+uint64_t Clock::host_tick_frequency_raw() { return xe_arm64_read_cntfrq_el0(); }
 XE_NOINLINE
-uint64_t Clock::host_tick_count_raw() { return xe_cpu_mrs(CNTVCT_EL0); }
+uint64_t Clock::host_tick_count_raw() { return xe_arm64_read_cntvct_el0(); }
 
 }  // namespace xe
 

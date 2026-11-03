@@ -443,7 +443,7 @@ bool D3D12Provider::Initialize() {
   }
   adapter->Release();
 
-  // Safety net: the Agility runtime should provide Shader Model 6.6 for DXIL.
+  // Native descriptor-heap indexing requires Shader Model 6.6 support.
   {
     D3D12_FEATURE_DATA_SHADER_MODEL shader_model;
     shader_model.HighestShaderModel = D3D_SHADER_MODEL_6_6;
@@ -455,8 +455,8 @@ bool D3D12Provider::Initialize() {
       device->Release();
       dxgi_factory->Release();
       XELOGE(
-          "The Direct3D 12 runtime lacks Shader Model 6.6 required for DXIL "
-          "shaders");
+          "The Direct3D 12 device lacks Shader Model 6.6 required for native "
+          "descriptor heaps");
       return false;
     }
   }

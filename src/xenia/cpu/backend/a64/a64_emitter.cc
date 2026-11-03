@@ -879,7 +879,8 @@ bool A64Emitter::TryInlinePPCGprLrSaveRestore(const hir::Instr* instr,
   if (function->IsSave()) {
     for (unsigned guest_reg = first_gpr; guest_reg <= 31; ++guest_reg) {
       ldr(x15, ptr(x20, static_cast<int32_t>(
-                            offsetof(ppc::PPCContext, r[guest_reg]))));
+                            offsetof(ppc::PPCContext, r) +
+                            guest_reg * sizeof(uint64_t))));
       rev(x15, x15);
       str(x15, ptr(x14, static_cast<uint32_t>((guest_reg - first_gpr) * 8)));
     }
@@ -894,7 +895,8 @@ bool A64Emitter::TryInlinePPCGprLrSaveRestore(const hir::Instr* instr,
     ldr(x15, ptr(x14, static_cast<uint32_t>((guest_reg - first_gpr) * 8)));
     rev(x15, x15);
     str(x15, ptr(x20, static_cast<int32_t>(
-                          offsetof(ppc::PPCContext, r[guest_reg]))));
+                          offsetof(ppc::PPCContext, r) +
+                            guest_reg * sizeof(uint64_t))));
   }
 
   ldr(w16, ptr(x14, lr_slot_offset));

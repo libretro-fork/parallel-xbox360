@@ -86,6 +86,12 @@ src/xenia/vfs/testing
 third_party/catch
 third_party/cpplint
 third_party/discord-rpc
+third_party/FFmpeg/libavfilter/vulkan_glslang.c
+third_party/FFmpeg/libavfilter/vulkan_shaderc.c
+third_party/FFmpeg/libavutil/vulkan_glslang.c
+third_party/FFmpeg/libavutil/vulkan_shaderc.c
+third_party/FFmpeg/libswscale/vulkan/vulkan_glslang.c
+third_party/FFmpeg/libswscale/vulkan/vulkan_shaderc.c
 third_party/mesa
 third_party/metal-cpp
 third_party/metal-shader-converter
