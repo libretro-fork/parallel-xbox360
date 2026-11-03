@@ -748,14 +748,17 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
     const Shader& shader, uint64_t modification) {
   SpirvShaderTranslator::Modification mod(modification);
   if (!shader.is_ucode_analyzed() || shader.memexport_eM_written() ||
-      shader.uses_texture_fetch_instruction_results() ||
-      render_target_cache_.GetPath() == RenderTargetCache::Path::kPixelShaderInterlock) return nullptr;
+      shader.uses_texture_fetch_instruction_results()) return nullptr;
+  bool edram_rov_used = render_target_cache_.GetPath() == RenderTargetCache::Path::kPixelShaderInterlock;
   {
     std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
     auto& cache = native_pixel_dxil_cache_[shader.ucode_data_hash()];
     auto found = cache.find(modification);
     if (found != cache.end()) return found->second.get();
   }
+  static_assert(XE_DXIL_BLEND_SOURCE_COLOR == uint32_t(xenos::BlendFactor::kSrcColor));
+  static_assert(XE_DXIL_BLEND_INVERSE_SOURCE_COLOR == uint32_t(xenos::BlendFactor::kOneMinusSrcColor));
+  XeDxilGuestRopOptions rop_options = {};
   XeDxilGuestPixelOptions options = {};
   const auto& constants = shader.constant_register_map();
   options.program.register_count = std::max(shader.register_static_address_bound(),
@@ -776,15 +779,15 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
   options.alpha_function_shift = SpirvShaderTranslator::kSysFlag_AlphaPassIfLess_Shift;
   options.gamma_mask = SpirvShaderTranslator::kSysFlag_ConvertColor0ToGamma;
   options.msaa_shift = SpirvShaderTranslator::kSysFlag_MsaaSamples_Shift;
-  options.depth_mode = uint32_t(mod.pixel.depth_stencil_mode);
-  options.blend_rgb_factor = uint32_t(mod.pixel.rt0_blend_rgb_factor_for_premult);
-  options.blend_alpha_factor = uint32_t(mod.pixel.rt0_blend_a_factor_for_premult);
+  options.depth_mode = edram_rov_used ? 0 : uint32_t(mod.pixel.depth_stencil_mode);
+  options.blend_rgb_factor = edram_rov_used ? XE_DXIL_BLEND_ONE : uint32_t(mod.pixel.rt0_blend_rgb_factor_for_premult);
+  options.blend_alpha_factor = edram_rov_used ? XE_DXIL_BLEND_ONE : uint32_t(mod.pixel.rt0_blend_a_factor_for_premult);
   options.param_gen = mod.pixel.param_gen_enable;
   options.param_register = mod.pixel.param_gen_interpolator;
   options.param_point = mod.pixel.param_gen_point;
-  options.scale_x = mod.pixel.resolution_scale_native ? 1 : render_target_cache_.draw_resolution_scale_x();
-  options.scale_y = mod.pixel.resolution_scale_native ? 1 : render_target_cache_.draw_resolution_scale_y();
-  options.native_2x = render_target_cache_.msaa_2x_supported();
+  options.scale_x = !edram_rov_used && mod.pixel.resolution_scale_native ? 1 : render_target_cache_.draw_resolution_scale_x();
+  options.scale_y = !edram_rov_used && mod.pixel.resolution_scale_native ? 1 : render_target_cache_.draw_resolution_scale_y();
+  options.native_2x = !edram_rov_used && render_target_cache_.msaa_2x_supported();
   options.precise_interpolation = precise_interpolation_supported() && !mod.pixel.param_gen_point;
   options.polygon_mask = SpirvShaderTranslator::kSysFlag_PrimitivePolygonal;
   options.line_mask = SpirvShaderTranslator::kSysFlag_PrimitiveLine;
@@ -792,9 +795,40 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
   options.back_scale_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_poly_offset_back_scale) / 4;
   options.front_offset_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_poly_offset_front_offset) / 4;
   options.back_offset_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_poly_offset_back_offset) / 4;
-  options.count_coverage = zpd_hybrid_supported_ && mod.pixel.zpd_total();
+  options.count_coverage = !edram_rov_used && zpd_hybrid_supported_ && mod.pixel.zpd_total();
   options.counter_word = offsetof(SpirvShaderTranslator::SystemConstants, zpd_fsi_counter_index) / 4;
   options.counter_stride_bytes = XenosZPDReport::kCounterSizeBytes;
+  if (edram_rov_used) {
+    options.rop = &rop_options;
+    rop_options.color_mask = options.color_mask;
+      rop_options.early_depth = !options.writes_depth;
+    rop_options.no_blending = mod.pixel.fsi_no_blending();
+    for (uint32_t rt = 0; rt < 4; ++rt) rop_options.formats[rt] = uint32_t(mod.pixel.fsi_rt_format(rt));
+    rop_options.base_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_rt_base_dwords_scaled) / 4;
+    rop_options.blend_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_rt_blend_factors_ops) / 4;
+    rop_options.keep_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_rt_keep_mask) / 4;
+    rop_options.clamp_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_rt_clamp) / 4;
+    rop_options.blend_constant_word = options.blend_constant_word;
+    rop_options.depth.msaa = uint32_t(mod.pixel.fsi_msaa_samples());
+    rop_options.depth.scale_x = options.scale_x; rop_options.depth.scale_y = options.scale_y;
+    rop_options.depth.full_counters = cvars::occlusion_query_full_counters;
+    rop_options.depth.system_constants_bytes = options.system_constants_bytes;
+    rop_options.depth.flags_word = options.flags_word;
+    rop_options.depth.pitch_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_32bpp_tile_pitch_dwords_scaled) / 4;
+    rop_options.depth.depth_base_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_depth_base_dwords_scaled) / 4;
+    rop_options.depth.counter_word = options.counter_word;
+    rop_options.depth.front_scale_word = options.front_scale_word; rop_options.depth.back_scale_word = options.back_scale_word;
+    rop_options.depth.front_offset_word = options.front_offset_word; rop_options.depth.back_offset_word = options.back_offset_word;
+    rop_options.depth.front_masks_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_stencil_front_reference_masks) / 4;
+    rop_options.depth.back_masks_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_stencil_back_reference_masks) / 4;
+    rop_options.depth.front_ops_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_stencil_front_func_ops) / 4;
+    rop_options.depth.back_ops_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_stencil_back_func_ops) / 4;
+    rop_options.depth.depth_stencil_mask = SpirvShaderTranslator::kSysFlag_FSIDepthStencil;
+    rop_options.depth.float24_mask = SpirvShaderTranslator::kSysFlag_DepthFloat24;
+    rop_options.depth.depth_write_mask = SpirvShaderTranslator::kSysFlag_FSIDepthWrite;
+    rop_options.depth.stencil_mask = SpirvShaderTranslator::kSysFlag_FSIStencilTest;
+    rop_options.depth.depth_function_shift = SpirvShaderTranslator::kSysFlag_FSIDepthPassIfLess_Shift;
+  }
   OwnedNativeDxil binary(xe_dxil_build_guest_pixel_owned(&options,
       shader.ucode_dwords(), shader.ucode_dword_count(), shader.cf_pair_index_bound()*2),
       &xe_dxil_shader_binary_delete);

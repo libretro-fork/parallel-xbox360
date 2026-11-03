@@ -189,3 +189,75 @@ int xe_dxil_unpack_edram_color(XeDxilAlu *s, unsigned format, int destination_ui
 fail:
   s->failed = 1; return 0;
 }
+
+static XeDxilValue render_clamp(XeDxilAlu *s, XeDxilValue v, float low, float high) {
+  v = choose(s,cmp(s,DXIL_FCMP_UNO,v,v),fc(s,0),v);
+  v = choose(s,cmp(s,DXIL_FCMP_OLT,v,fc(s,low)),fc(s,low),v);
+  return choose(s,cmp(s,DXIL_FCMP_OGT,v,fc(s,high)),fc(s,high),v);
+}
+static XeDxilValue half_convert(XeDxilAlu *s, XeDxilValue value, int packing) {
+  XeDxilValue args[2];
+  const struct dxil_func *function = dxil_get_function(s->module,
+    packing ? "dx.op.legacyF32ToF16" : "dx.op.legacyF16ToF32",DXIL_NONE);
+  args[0] = ic(s,packing ? 130 : 131); args[1] = value;
+  value = function && value ? dxil_emit_call(s->module,function,args,2) : NULL;
+  if (!value) s->failed = 1;
+  return value;
+}
+int xe_dxil_pack_render_color(XeDxilAlu *s, unsigned format, XeDxilValue source[4], XeDxilValue packed[2]) {
+  XeDxilValue converted[4], value, offset, bits, magnitude, normal, denormal, shift, mantissa, rounding;
+  unsigned i, components;
+  if (!s || !source || !packed || !word_count(format)) return 0;
+  components = format == 4 || format == 6 ? 2 : 4;
+  for (i = 0; i < 4; ++i) {
+    value = source[i]; if (!ready(s,value)) return 0;
+    if (format == 4 || format == 5) {
+      value = bin(s,DXIL_BINOP_MUL,render_clamp(s,value,-32,32),fc(s,32767.0f/32.0f));
+      offset = choose(s,cmp(s,DXIL_FCMP_OLT,value,fc(s,0)),fc(s,-.5f),fc(s,.5f));
+      converted[i] = cast(s,DXIL_CAST_FPTOSI,0,bin(s,DXIL_BINOP_ADD,value,offset));
+    } else if (format == 6 || format == 7) {
+      if (i >= components) { converted[i] = ic(s,0); continue; }
+      value = render_clamp(s,value,-131008,131008);
+      /* Round to even explicitly. LegacyF32ToF16 truncates and saturates,
+       * whereas EDRAM retains finite values throughout exponent 31. */
+      bits = cast(s,DXIL_CAST_BITCAST,0,value); magnitude = field(s,bits,0,0x7fffffff);
+      rounding = bin(s,DXIL_BINOP_ADD,ic(s,4095),field(s,magnitude,13,1));
+      normal = bin(s,DXIL_BINOP_LSHR,bin(s,DXIL_BINOP_ADD,
+        bin(s,DXIL_BINOP_SUB,magnitude,ic(s,0x38000000)),rounding),ic(s,13));
+      shift = bin(s,DXIL_BINOP_SUB,ic(s,126),field(s,magnitude,23,255));
+      shift = choose(s,cmp(s,DXIL_ICMP_UGT,shift,ic(s,24)),ic(s,24),shift);
+      shift = choose(s,cmp(s,DXIL_ICMP_EQ,shift,ic(s,0)),ic(s,1),shift);
+      mantissa = bin(s,DXIL_BINOP_OR,field(s,magnitude,0,0x7fffff),ic(s,0x800000));
+      rounding = bin(s,DXIL_BINOP_SUB,bin(s,DXIL_BINOP_SHL,ic(s,1),bin(s,DXIL_BINOP_SUB,shift,ic(s,1))),ic(s,1));
+      rounding = bin(s,DXIL_BINOP_ADD,rounding,bin(s,DXIL_BINOP_AND,bin(s,DXIL_BINOP_LSHR,mantissa,shift),ic(s,1)));
+      denormal = bin(s,DXIL_BINOP_LSHR,bin(s,DXIL_BINOP_ADD,mantissa,rounding),shift);
+      denormal = choose(s,cmp(s,DXIL_ICMP_ULT,magnitude,ic(s,0x33000000)),ic(s,0),denormal);
+      value = choose(s,cmp(s,DXIL_ICMP_UGE,magnitude,ic(s,0x38800000)),normal,denormal);
+      converted[i] = bin(s,DXIL_BINOP_OR,value,field(s,bits,16,0x8000));
+    } else if (format >= 14) converted[i] = value;
+    else converted[i] = render_clamp(s,value,0,(format == 3 || format == 12) && i < 3 ? 31.875f : 1);
+  }
+  return xe_dxil_pack_edram_color(s,format,format >= 4 && format <= 7,converted,packed);
+}
+int xe_dxil_unpack_render_color(XeDxilAlu *s, unsigned format, XeDxilValue packed[2], XeDxilValue destination[4]) {
+  XeDxilValue raw[4], value, extended;
+  unsigned i, components;
+  if (!s || !packed || !destination || !xe_dxil_unpack_edram_color(s,format == 1 ? 0 : format,format >= 4 && format <= 7,packed,raw)) return 0;
+  components = format == 14 ? 1 : format == 4 || format == 6 || format == 15 ? 2 : 4;
+  for (i = 0; i < 4; ++i) {
+    if (i >= components) { destination[i] = fc(s,i == 3 ? 1.0f : 0.0f); continue; }
+    value = raw[i];
+    if (format == 4 || format == 5) {
+      value = bin(s,DXIL_BINOP_ASHR,bin(s,DXIL_BINOP_SHL,value,ic(s,16)),ic(s,16));
+      value = bin(s,DXIL_BINOP_MUL,cast(s,DXIL_CAST_SITOFP,1,value),fc(s,32.0f/32767.0f));
+      value = choose(s,cmp(s,DXIL_FCMP_OLT,value,fc(s,-32)),fc(s,-32),value);
+    } else if (format == 6 || format == 7) {
+      extended = bin(s,DXIL_BINOP_MUL,half_convert(s,bin(s,DXIL_BINOP_SUB,value,ic(s,0x400)),0),fc(s,2));
+      value = choose(s,cmp(s,DXIL_ICMP_EQ,field(s,raw[i],10,31),ic(s,31)),extended,half_convert(s,value,0));
+    } else if (format == 1 && i < 3) {
+      value = xe_dxil_gamma_decode(s,value);
+    }
+    destination[i] = value;
+  }
+  return !s->failed;
+}

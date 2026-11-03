@@ -46,7 +46,13 @@ DXIL, including position conversion and clip/cull outputs. Host render-target
 guest pixel shaders without texture results or memory exports also compile
 directly, including pixel parameters, barycentric interpolation, alpha tests,
 coverage, gamma/exponent adjustment, blend premultiplication and depth modes.
-Textured and memory-export shaders, ROV guest color shaders and tessellation
+Guest ROV color shaders also compile directly, including tiled/scaled EDRAM
+addressing, per-sample depth/stencil, conditional outputs, all blend factors
+and equations, color formats and write masks. Full overwrites avoid EDRAM
+reads; merged/blended outputs skip unchanged stores. Native format conversion
+retains signed fixed-point [-32,32] and finite extended-half values through
+131008. Failure counters retain early-test semantics across later pixel kills.
+Textured and memory-export shaders and tessellation
 still use Mesa and its Meson/Python build while their replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in

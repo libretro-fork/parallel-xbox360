@@ -325,12 +325,13 @@ int main(int argc, char **argv)
   uint32_t *expected = default_expected;
   size_t expected_bytes = sizeof(default_expected);
   float expected_float;
-  unsigned i, raw_mode, program_mode;
+  unsigned i, raw_mode, program_mode, resource_mode;
   memset(&texture, 0, sizeof(texture));
   if (argc < 2 || argc > 6) return 2;
   program_mode = argc == 6 && !strcmp(argv[5], "program");
-  raw_mode = program_mode ? 1 : argc == 6 ? !strcmp(argv[5], "resolve") ? 2 : 80 : argc == 4 && !strcmp(argv[3], "raw") ? 1 : 0;
-  if (argc == 6 && !program_mode && strcmp(argv[5], "dump") && strcmp(argv[5], "resolve")) return 2;
+  resource_mode = argc == 6 && !strcmp(argv[5], "resource-raw");
+  raw_mode = program_mode || resource_mode ? 1 : argc == 6 ? !strcmp(argv[5], "resolve") ? 2 : 80 : argc == 4 && !strcmp(argv[3], "raw") ? 1 : 0;
+  if (argc == 6 && !program_mode && !resource_mode && strcmp(argv[5], "dump") && strcmp(argv[5], "resolve")) return 2;
   file = fopen(argv[1], "rb");
   if (!file) return 1;
   if (fseek(file, 0, SEEK_END) || (size = ftell(file)) < 32 || fseek(file, 0, SEEK_SET)) {
@@ -361,8 +362,8 @@ int main(int argc, char **argv)
   memset(&parameter, 0, sizeof(parameter));
   parameter[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
   parameter[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-  root_desc.NumParameters = argc == 5 || program_mode ? 3 : 1; root_desc.pParameters = parameter;
-  if ((argc == 4 && !raw_mode) || (argc == 6 && !program_mode)) {
+  root_desc.NumParameters = argc == 5 || program_mode || resource_mode ? 3 : 1; root_desc.pParameters = parameter;
+  if ((argc == 4 && !raw_mode) || (argc == 6 && !program_mode && !resource_mode)) {
     memset(&texture_range, 0, sizeof(texture_range)); texture_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     texture_range.NumDescriptors = 1;
     parameter[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
@@ -392,7 +393,7 @@ int main(int argc, char **argv)
       if (FAILED(status)) goto done;
     }
   }
-  if (argc == 5 || program_mode) {
+  if (argc == 5 || program_mode || resource_mode) {
     parameter[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     parameter[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     parameter[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -423,7 +424,7 @@ int main(int argc, char **argv)
       &IID_ID3D12PipelineState, (void **)&pipeline);
   if (SUCCEEDED(status)) status = execute(device, root, pipeline,
       expected, expected_bytes, argc >= 3, input, constants,
-      (argc == 4 && !raw_mode) || (argc == 6 && !program_mode) ? &texture : NULL, raw_mode, program_mode);
+      (argc == 4 && !raw_mode) || (argc == 6 && !program_mode && !resource_mode) ? &texture : NULL, raw_mode, program_mode);
 done:
   printf("D3D12 WARP pipeline and execution: 0x%08lX\n", (unsigned long)status);
   if (pipeline) ID3D12PipelineState_Release(pipeline);

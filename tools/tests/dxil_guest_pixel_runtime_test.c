@@ -76,7 +76,7 @@ static float blend_factor(unsigned factor, unsigned component, const float color
   static const float blend[4] = {.0625f,.125f,.25f,.5f};
   switch (factor) {
   case 0: return 0; case 1: return 1;
-  case 2: return color[component]; case 3: return 1-color[component];
+  case 4: return color[component]; case 5: return 1-color[component];
   case 6: return color[3]; case 7: return 1-color[3];
   case 12: return blend[component]; case 13: return 1-blend[component];
   case 14: return blend[3]; default: return 1-blend[3];
@@ -266,7 +266,7 @@ int main(int argc, char **argv) {
   if (mode < 14 && mode%7 >= 4) expected[0] += .125f;
   if (mode%7 == 2 || mode%7 == 3 || mode%7 == 5 || mode%7 == 6) { if (mode < 14) expected[0] = expected[0]*2 > 1 ? 1 : expected[0]*2; expected[0] *= .5f; } }
       if (!i && factor_variant != UINT32_MAX) {
-        static const unsigned factors[10] = {0,1,2,3,6,7,12,13,14,15};
+        static const unsigned factors[10] = {0,1,4,5,6,7,12,13,14,15};
         memcpy(unmultiplied,expected,sizeof(expected));
         for (j = 0; j < 4; ++j) expected[j] *= blend_factor(factors[j == 3 ? 9-factor_variant : factor_variant],j,unmultiplied);
       }

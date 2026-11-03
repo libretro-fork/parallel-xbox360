@@ -3259,7 +3259,7 @@ std::array<spv::Id, 4> SpirvShaderTranslator::FSI_UnpackColor(
       unpacked_16[0][3] = const_float_1_;
       spv::Id component_width = builder_->makeUintConstant(16);
       spv::Id component_scale = builder_->makeFloatConstant(32.0f / 32767.0f);
-      spv::Id component_min = builder_->makeFloatConstant(-1.0f);
+      spv::Id component_min = builder_->makeFloatConstant(-32.0f);
       std::array<spv::Id, 2> color_packed_signed;
       for (uint32_t j = 0; j <= i; ++j) {
         color_packed_signed[j] =

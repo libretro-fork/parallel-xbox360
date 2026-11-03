@@ -77,13 +77,14 @@ static int guest_vertex(const char *path, const XeDxilGuestPixelOptions *pixel) 
 }
 int main(int argc, char **argv) {
   uint32_t words[21] = {0x6001,0,0};
+  XeDxilGuestRopOptions rop;
   XeDxilGuestPixelOptions o;
   XeDxilShaderBinary *binary;
   FILE *file;
-  static const unsigned factors[10] = {0,1,2,3,6,7,12,13,14,15};
-  unsigned mode, variant, i, reg;
+  static const unsigned factors[10] = {0,1,4,5,6,7,12,13,14,15};
+  unsigned mode, variant, i, reg, rop_config = 0;
   int result;
-  if (argc != 3) return 2;
+  if (argc != 3 && argc != 4) return 2;
   mode = (unsigned)strtoul(argv[2],NULL,10); if (mode > 475) return 2;
   variant = mode/28; mode %= 28;
   memset(&o,0,sizeof(o)); o.program.register_count = 16; o.program.float_constant_count = 5;
@@ -103,11 +104,31 @@ int main(int argc, char **argv) {
   if (variant == 3) { o.param_gen = 1; o.param_point = 1; }
   if (variant == 5) o.native_2x = 1;
   if (variant >= 7) { o.blend_rgb_factor = factors[variant-7]; o.blend_alpha_factor = factors[16-variant]; }
-  /* Five exports, plus an ALU instruction whose kill condition is c4 == 0. */
+  if (argc == 4) {
+    static const unsigned formats[12] = {0,1,2,3,4,5,6,7,10,12,14,15};
+    rop_config = (unsigned)strtoul(argv[3],NULL,10); if ((rop_config&3) > 2) return 2;
+    memset(&rop,0,sizeof(rop)); o.rop = &rop; o.system_constants_bytes = 512;
+    o.depth_mode = 0; o.count_coverage = 0; o.native_2x = 0;
+    o.blend_rgb_factor = o.blend_alpha_factor = 1;
+    rop.depth.msaa = rop_config&3;
+    rop.depth.scale_x = rop_config&4 ? 2 : 1; rop.depth.scale_y = rop_config&4 ? 3 : 1;
+    o.scale_x = rop.depth.scale_x; o.scale_y = rop.depth.scale_y;
+    rop.depth.full_counters = !(rop_config&256); rop.depth.system_constants_bytes = 512;
+    rop.depth.flags_word = 0; rop.depth.pitch_word = 32; rop.depth.depth_base_word = 33; rop.depth.counter_word = 3;
+    rop.depth.front_scale_word = 12; rop.depth.back_scale_word = 13; rop.depth.front_offset_word = 14; rop.depth.back_offset_word = 15;
+    rop.depth.front_masks_word = 34; rop.depth.back_masks_word = 35; rop.depth.front_ops_word = 36; rop.depth.back_ops_word = 37;
+    rop.depth.depth_stencil_mask = 1u<<17; rop.depth.float24_mask = 1u<<10;
+    rop.depth.depth_write_mask = 1u<<21; rop.depth.stencil_mask = 1u<<22; rop.depth.depth_function_shift = 18;
+    rop.color_mask = o.color_mask; rop.early_depth = !o.writes_depth; rop.no_blending = (rop_config&128) != 0;
+    for (i = 0; i < 4; ++i) rop.formats[i] = formats[(((rop_config>>3)&15)%12+i)%12];
+    rop.base_word = 40; rop.blend_word = 44; rop.keep_word = 48; rop.clamp_word = 56; rop.blend_constant_word = 8;
+  }
+  /* Five exports and an ALU kill comparing c0 with c4. The non-depth
+   * fixtures use a scratch register instead of exporting oDepth. */
   words[1] = 0x2000;
   for (i = 0; i < 5; ++i) {
-    reg = i == 4 ? 61 : i;
-    words[3+i*3] = (50u<<26)|(15u<<16)|(1u<<15)|reg;
+    reg = i == 4 ? (o.writes_depth ? 61 : 15) : i;
+    words[3+i*3] = (50u<<26)|((i == 4 ? 1u : 15u)<<16)|((i == 4 && !o.writes_depth) ? 0 : 1u<<15)|reg;
     words[5+i*3] = (i<<16)|(i<<8)|0x02000000;
   }
   /* Export param_gen or a varying as color 1 in the parameter variants. */

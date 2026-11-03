@@ -1,4 +1,4 @@
-/* Native host-target guest pixel stage. MSVC C89; BSD license. */
+/* Native guest pixel stage. MSVC C89; BSD license. */
 #include "stage_layout.h"
 #include "guest_pixel_stage.h"
 #include "edram_format.h"
@@ -6,6 +6,7 @@
 #include <dxil_function.h>
 typedef struct Pixel {
   XeDxilShaderModule *shader;
+  XeDxilGuestRop *rop;
   XeDxilAlu alu;
   XeDxilValue system, killed, written;
   unsigned current_block, saw_kill;
@@ -73,7 +74,15 @@ static int output(Pixel *p, unsigned id, unsigned component, unsigned integer, X
 }
 static int discard(Pixel *p, XeDxilValue condition) {
   XeDxilValue args[2];
-  const struct dxil_func *f = dxil_get_function(p->alu.module,"dx.op.discard",DXIL_NONE);
+  const struct dxil_func *f;
+  /* Ordered EDRAM must retain early depth/stencil failure counts even when
+   * the guest later kills a pixel. Defer the kill to the commit mask. */
+  if (p->rop) {
+    args[0] = dxil_emit_load(p->alu.module,p->killed,4,0);
+    args[1] = bin(p,DXIL_BINOP_OR,args[0],cast(p,DXIL_CAST_ZEXT,0,condition));
+    return args[1] && dxil_emit_store(p->alu.module,args[1],p->killed,4,0);
+  }
+  f = dxil_get_function(p->alu.module,"dx.op.discard",DXIL_NONE);
   args[0] = ic(p,82); args[1] = condition;
   return f && condition && dxil_emit_call_void(p->alu.module,f,args,2);
 }
@@ -87,14 +96,16 @@ static int kill(void *context, XeDxilAlu *alu, XeDxilAluIo *io, XeDxilValue cond
 static int written(void *context, XeDxilGuestProgram *program, unsigned index, unsigned mask) {
   Pixel *p = (Pixel *)context;
   (void)program;
-  if (index || !mask) return 1;
-  return dxil_emit_store(p->alu.module,ic(p,1),p->written,4,0);
+  if (index >= 4 || !mask) return 1;
+  if (p->rop) return dxil_emit_store(p->alu.module,
+    bin(p,DXIL_BINOP_OR,dxil_emit_load(p->alu.module,p->written,4,0),ic(p,1u<<index)),p->written,4,0);
+  return index ? 1 : dxil_emit_store(p->alu.module,ic(p,1),p->written,4,0);
 }
-static int factor_valid(unsigned factor) { return factor <= 3 || factor == 6 || factor == 7 || (factor >= 12 && factor <= 15); }
+static int factor_valid(unsigned factor) { return factor <= XE_DXIL_BLEND_ONE || (factor >= XE_DXIL_BLEND_SOURCE_COLOR && factor <= XE_DXIL_BLEND_INVERSE_SOURCE_ALPHA) || (factor >= XE_DXIL_BLEND_CONSTANT_COLOR && factor <= XE_DXIL_BLEND_INVERSE_CONSTANT_ALPHA); }
 static XeDxilValue factor(Pixel *p, const XeDxilGuestPixelOptions *o, unsigned f, unsigned component, XeDxilValue color[4]) {
   XeDxilValue value;
   if (f < 2) return fc(p,(float)f);
-  if (f == 2 || f == 3) value = color[component];
+  if (f == XE_DXIL_BLEND_SOURCE_COLOR || f == XE_DXIL_BLEND_INVERSE_SOURCE_COLOR) value = color[component];
   else if (f == 6 || f == 7) value = color[3];
   else value = fw(p,o->blend_constant_word+((f == 14 || f == 15) ? 3 : component));
   return (f & 1) ? bin(p,DXIL_BINOP_SUB,fc(p,1),value) : value;
@@ -149,7 +160,7 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
   XeDxilGuestProgramOptions options;
   XeDxilGuestProgram *program = NULL;
   XeDxilShaderBinary *binary = NULL;
-  XeDxilValue values[4], color[4], position[3], flags, front, value, slope, dx, dy;
+  XeDxilValue rop_colors[4][4], values[4], color[4], position[3], flags, front, value, slope, dx, dy;
   XeDxilValue bary_y = NULL, bary_z = NULL, a, b, c, mask, live, alpha, coverage, args[7], counters = NULL, index;
   int bary_id = -1, colors[4], depth_id = -1, mask_id = -1, point_id = -1, input_id;
   unsigned i, j, packed = 0, cbv = 1, n, float24, truncate, alpha_blocks;
@@ -157,7 +168,8 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
   if (!o || !words || o->interpolator_mask > 65535 || o->color_mask > 15 || o->depth_mode > 6 ||
       !o->scale_x || !o->scale_y || o->scale_x > 16 || o->scale_y > 16 || o->alpha_function_shift > 29 || o->msaa_shift > 30 ||
       !factor_valid(o->blend_rgb_factor) || !factor_valid(o->blend_alpha_factor) || o->program.texture || o->program.allocation ||
-      o->system_constants_bytes < 16 || o->system_constants_bytes > 65536) return NULL;
+      o->system_constants_bytes < 16 || o->system_constants_bytes > 65536 ||
+      (o->rop && (o->rop->color_mask != o->color_mask || o->rop->depth.system_constants_bytes != o->system_constants_bytes || o->rop->depth.flags_word != o->flags_word))) return NULL;
   n = o->system_constants_bytes/4;
   if (o->flags_word >= n || o->alpha_reference_word >= n || o->alpha_to_mask_word >= n || o->color_bias_word > n-4 ||
       o->blend_constant_word > n-4 || o->front_scale_word >= n || o->back_scale_word >= n || o->front_offset_word >= n ||
@@ -182,20 +194,20 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
   }
   for (i = 0; i < 4; ++i) {
     colors[i] = -1;
-    if (o->color_mask & (1u<<i)) {
+    if (!o->rop && (o->color_mask & (1u<<i))) {
       colors[i] = xe_dxil_shader_signature(p.shader,1,"SV_Target",i,DXIL_SEM_TARGET,DXIL_PROG_SEM_TARGET,i,0,4,0);
       if (colors[i] < 0) goto done;
     }
   }
   float24 = o->depth_mode == 2 || o->depth_mode == 3 || o->depth_mode == 5 || o->depth_mode == 6;
   truncate = o->depth_mode == 2 || o->depth_mode == 5;
-  if (o->writes_depth || o->depth_mode >= 2) {
+  if (!o->rop && (o->writes_depth || o->depth_mode >= 2)) {
     depth_id = xe_dxil_shader_signature(p.shader,1,o->depth_mode == 2 && !o->writes_depth ? "SV_DepthLessEqual" : "SV_Depth",0,
       o->depth_mode == 2 && !o->writes_depth ? DXIL_SEM_DEPTH_LE : DXIL_SEM_DEPTH,
       o->depth_mode == 2 && !o->writes_depth ? DXIL_PROG_SEM_DEPTH_LE : DXIL_PROG_SEM_DEPTH,UINT32_MAX,0,1,0);
     if (depth_id < 0 || (!o->writes_depth && !xe_dxil_shader_sample_frequency(p.shader))) goto done;
   }
-  if (o->color_mask & 1) {
+  if (!o->rop && (o->color_mask & 1)) {
     mask_id = xe_dxil_shader_signature_typed(p.shader,1,"SV_Coverage",0,DXIL_SEM_COVERAGE,DXIL_PROG_SEM_COVERAGE,UINT32_MAX,0,1,0,DXIL_COMP_TYPE_U32);
     if (mask_id < 0) goto done;
   }
@@ -212,7 +224,9 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
       xe_dxil_shader_resource(p.shader,XE_DXIL_RESOURCE_SRV,DXIL_RESOURCE_KIND_RAW_BUFFER,0,0,1,0) != 0) goto done;
   options.fetch_constants = xe_dxil_resource_handle(&p.alu,XE_DXIL_RESOURCE_CBV,cbv,4);
   options.shared_memory = xe_dxil_resource_handle(&p.alu,XE_DXIL_RESOURCE_SRV,0,0);
-  if (o->count_coverage) {
+  if (o->rop) {
+    p.rop = xe_dxil_guest_rop_create(p.shader,p.system,o->rop); if (!p.rop) goto done;
+  } else if (o->count_coverage) {
     if (xe_dxil_shader_resource(p.shader,XE_DXIL_RESOURCE_UAV,DXIL_RESOURCE_KIND_RAW_BUFFER,0,1,1,0) != 0) goto done;
     counters = xe_dxil_resource_handle(&p.alu,XE_DXIL_RESOURCE_UAV,0,1);
   }
@@ -223,7 +237,7 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
   flags = word(&p,o->flags_word); front = cmp(&p,DXIL_ICMP_NE,input(&p,1,0,1),ic(&p,0));
   for (i = 0; i < 3; ++i) position[i] = input(&p,0,i,0);
   dx = dy = NULL;
-  if (!o->writes_depth && o->depth_mode >= 4) { dx = unary(&p,83,position[2]); dy = unary(&p,84,position[2]); }
+  if (!o->writes_depth && (o->rop || o->depth_mode >= 4)) { dx = unary(&p,83,position[2]); dy = unary(&p,84,position[2]); }
   if (bary_id >= 0) { bary_y = input(&p,(unsigned)bary_id,1,0); bary_z = input(&p,(unsigned)bary_id,2,0); }
   packed = 0;
   for (i = 0; i < 16; ++i) if (o->interpolator_mask & (1u<<i)) {
@@ -264,7 +278,19 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
         !dxil_emit_branch(p.alu.module,NULL,alpha_blocks+1,0)) goto done;
     begin(&p,alpha_blocks+1);
     mask = sample_mask(&p,o,flags,alpha,position,live);
-    if (!output(&p,(unsigned)mask_id,0,1,mask) || !discard(&p,cmp(&p,DXIL_ICMP_EQ,mask,ic(&p,0)))) goto done;
+    if ((!o->rop && !output(&p,(unsigned)mask_id,0,1,mask)) || !discard(&p,cmp(&p,DXIL_ICMP_EQ,mask,ic(&p,0)))) goto done;
+  }
+  if (p.rop) {
+    for (i = 0; i < 4; ++i) for (j = 0; j < 4; ++j)
+      rop_colors[i][j] = o->color_mask & (1u<<i) ?
+        bin(&p,DXIL_BINOP_MUL,xe_dxil_guest_program_export(program,i,j),fw(&p,o->color_bias_word+i)) : fc(&p,0);
+    value = o->writes_depth ? xe_dxil_alu_saturate(&p.alu,xe_dxil_guest_program_export(program,61,0)) : NULL;
+    args[0] = ic(&p,91); coverage = call(&p,"dx.op.coverage",DXIL_I32,args,1);
+    mask = pick(&p,cmp(&p,DXIL_ICMP_EQ,dxil_emit_load(p.alu.module,p.killed,4,0),ic(&p,0)),
+      bin(&p,DXIL_BINOP_AND,coverage,mask),ic(&p,0));
+    if (!xe_dxil_guest_rop_emit(p.rop,position,front,flags,coverage,mask,value,dx,dy,
+          dxil_emit_load(p.alu.module,p.written,4,0),rop_colors,&p.current_block)) goto done;
+    goto complete;
   }
   for (i = 0; i < 4; ++i) if (colors[i] >= 0) {
     for (j = 0; j < 4; ++j) {
@@ -303,9 +329,10 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
     if (!call(&p,"dx.op.atomicBinOp",DXIL_I32,args,7) || !dxil_emit_branch(p.alu.module,NULL,n+1,0)) goto done;
     p.alu.module->cur_emitting_func->basic_block_ids[n+1] = (int)p.alu.module->cur_emitting_func->curr_block;
   }
+complete:
   if (p.alu.failed || xe_dxil_guest_program_alu(program)->failed || !dxil_emit_ret_void(p.alu.module)) goto done;
   binary = (XeDxilShaderBinary *)calloc(1,sizeof(*binary));
   if (binary && !xe_dxil_shader_finish(p.shader,binary)) { xe_dxil_shader_binary_delete(binary); binary = NULL; }
 done:
-  xe_dxil_guest_program_destroy(program); xe_dxil_shader_destroy(p.shader); return binary;
+  xe_dxil_guest_rop_destroy(p.rop); xe_dxil_guest_program_destroy(program); xe_dxil_shader_destroy(p.shader); return binary;
 }

@@ -330,13 +330,13 @@ check-dxil-writer: $(HOST_DIR)/dxil-writer-test$(HOST_EXEEXT)
 	cmp "$(HOST_DIR)/dxil-writer-test-ps.dxil" "$(HOST_DIR)/dxil-writer-test-ps-validated.dxil"
 
 DXIL_ALU_DIR := src/xenia/gpu/dxil
-DXIL_ALU_SOURCES := $(DXIL_ALU_DIR)/guest_alu.c $(DXIL_ALU_DIR)/guest_alu_instruction.c $(DXIL_ALU_DIR)/guest_flow.c $(DXIL_ALU_DIR)/guest_vertex.c $(DXIL_ALU_DIR)/guest_resources.c $(DXIL_ALU_DIR)/guest_texture.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_ALU_DIR)/guest_geometry.c $(DXIL_ALU_DIR)/edram_format.c $(DXIL_ALU_DIR)/edram_dump.c $(DXIL_ALU_DIR)/edram_transfer.c $(DXIL_ALU_DIR)/depth_only.c $(DXIL_ALU_DIR)/edram_depth_stencil.c $(DXIL_ALU_DIR)/rov_depth.c $(DXIL_ALU_DIR)/guest_program.c $(DXIL_ALU_DIR)/guest_vertex_stage.c $(DXIL_ALU_DIR)/guest_pixel_stage.c
+DXIL_ALU_SOURCES := $(DXIL_ALU_DIR)/guest_alu.c $(DXIL_ALU_DIR)/guest_alu_instruction.c $(DXIL_ALU_DIR)/guest_flow.c $(DXIL_ALU_DIR)/guest_vertex.c $(DXIL_ALU_DIR)/guest_resources.c $(DXIL_ALU_DIR)/guest_texture.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_ALU_DIR)/guest_geometry.c $(DXIL_ALU_DIR)/edram_format.c $(DXIL_ALU_DIR)/edram_dump.c $(DXIL_ALU_DIR)/edram_transfer.c $(DXIL_ALU_DIR)/depth_only.c $(DXIL_ALU_DIR)/edram_depth_stencil.c $(DXIL_ALU_DIR)/rov_depth.c $(DXIL_ALU_DIR)/guest_program.c $(DXIL_ALU_DIR)/guest_vertex_stage.c $(DXIL_ALU_DIR)/guest_pixel_stage.c $(DXIL_ALU_DIR)/guest_rop.c
 $(HOST_DIR)/dxil-alu-test$(HOST_EXEEXT): tools/tests/dxil_writer_test.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c tools/tests/dxil_test_storage.h $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -DXE_DXIL_ALU_TEST -DXE_DXIL_FLOW_TEST -DXE_DXIL_VERTEX_TEST -DXE_DXIL_RESOURCES_TEST -DXE_DXIL_TEXTURE_TEST -DXE_DXIL_EDRAM_TEST -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_writer_test.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 .PHONY: check-dxil-alu check-dxil-alu-c89
 check-dxil-alu-c89:
-	$(HOST_CC) $(HOST_CFLAGS) -std=c89 -pedantic-errors -Wall -Wextra -Werror -DXE_DXIL_ALU_TEST -DXE_DXIL_FLOW_TEST -DXE_DXIL_VERTEX_TEST -DXE_DXIL_RESOURCES_TEST -DXE_DXIL_TEXTURE_TEST -DXE_DXIL_EDRAM_TEST -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -fsyntax-only $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_DIR)/dxil_blocks.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c tools/tests/dxil_geometry_test.c tools/tests/dxil_edram_dump_test.c tools/tests/dxil_pixel_interface_test.c tools/tests/dxil_edram_transfer_test.c tools/tests/dxil_depth_only_test.c tools/tests/dxil_rov_test.c tools/tests/dxil_rov_depth_test.c tools/tests/dxil_program_test.c tools/tests/dxil_guest_vertex_test.c tools/tests/dxil_guest_pixel_test.c tools/tests/dxil_writer_test.c
+	$(HOST_CC) $(HOST_CFLAGS) -std=c89 -pedantic-errors -Wall -Wextra -Werror -DXE_DXIL_ALU_TEST -DXE_DXIL_FLOW_TEST -DXE_DXIL_VERTEX_TEST -DXE_DXIL_RESOURCES_TEST -DXE_DXIL_TEXTURE_TEST -DXE_DXIL_EDRAM_TEST -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -fsyntax-only $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_DIR)/dxil_blocks.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c tools/tests/dxil_geometry_test.c tools/tests/dxil_edram_dump_test.c tools/tests/dxil_pixel_interface_test.c tools/tests/dxil_edram_transfer_test.c tools/tests/dxil_depth_only_test.c tools/tests/dxil_rov_test.c tools/tests/dxil_rov_depth_test.c tools/tests/dxil_program_test.c tools/tests/dxil_guest_vertex_test.c tools/tests/dxil_guest_pixel_test.c tools/tests/dxil_render_color_test.c tools/tests/dxil_guest_rop_reference_test.c tools/tests/dxil_writer_test.c
 check-dxil-alu: $(HOST_DIR)/dxil-alu-test$(HOST_EXEEXT) check-dxil-alu-c89
 	$< "$(HOST_DIR)/dxil-alu-test.dxil" alu
 	$(DXIL_VALIDATOR) "$(HOST_DIR)/dxil-alu-test.dxil" -o="$(HOST_DIR)/dxil-alu-test-validated.dxil"
@@ -594,3 +594,34 @@ check-dxil-guest-pixel: $(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT) check-dx
 	    cmp "$$path$$suffix" "$$path$$suffix.validated"; \
 	  done; \
 	done; done
+
+$(HOST_DIR)/dxil-render-color-test$(HOST_EXEEXT): tools/tests/dxil_render_color_test.c tools/tests/dxil_render_color_reference.h $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h) $(HOST_DIR)/config
+	@mkdir -p "$(@D)"
+	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_render_color_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -lm -o "$@"
+.PHONY: check-dxil-render-color
+check-dxil-render-color: $(HOST_DIR)/dxil-render-color-test$(HOST_EXEEXT) check-dxil-alu-c89
+	@set -e; for format in 0 1 2 3 4 5 6 7 10 12 14 15; do \
+	  path="$(HOST_DIR)/dxil-render-color-$$format.dxil"; \
+	  $< "$$path" $$format; \
+	  $(DXIL_VALIDATOR) "$$path" -o="$$path.validated"; \
+	  cmp "$$path" "$$path.validated"; \
+	done
+
+
+
+$(HOST_DIR)/dxil-guest-rop-reference-test$(HOST_EXEEXT): tools/tests/dxil_guest_rop_reference_test.c tools/tests/dxil_render_color_reference.h $(HOST_DIR)/config
+	@mkdir -p "$(@D)"
+	$(HOST_CC) $(HOST_CFLAGS) -std=c89 -pedantic-errors -Wall -Wextra -Werror tools/tests/dxil_guest_rop_reference_test.c -lm -o "$@"
+.PHONY: check-dxil-guest-rop
+check-dxil-guest-rop: $(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT) $(HOST_DIR)/dxil-guest-rop-reference-test$(HOST_EXEEXT) check-dxil-alu-c89
+	@set -e; for base in 0 4 8; do for msaa in 0 1 2; do for scale in 0 4; do \
+	  for no_blend in 0 128; do for counters in 0 256; do \
+	    config=$$((base*8+msaa+scale+no_blend+counters)); \
+	    for mode in 0 14 28 56 112 168 182; do \
+	      path="$(HOST_DIR)/dxil-guest-rop-$$config-$$mode.dxil"; \
+	      $< "$$path" $$mode $$config; \
+	      $(DXIL_VALIDATOR) "$$path" -o="$$path.validated"; \
+	      cmp "$$path" "$$path.validated"; \
+	    done; \
+	  done; done; \
+	done; done; done

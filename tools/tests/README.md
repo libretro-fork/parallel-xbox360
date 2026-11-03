@@ -395,3 +395,46 @@ hardware register while preserving metadata name/declaration order. Mixed
 native/Mesa VS/PS and Mesa VS/native GS checks cover independent compilation,
 including six clip planes plus a cull distance. Native shader model 6.1 adds
 barycentrics and attributeAtVertex without an LLVM compiler dependency.
+
+`make check-dxil-render-color DXIL_VALIDATOR=/path/to/dxv` validates all twelve
+numeric render-color codecs. The fixtures compare 2,359,296 exact GPU output
+words with `dxil_render_color_reference.h`, an independent C89 CPU reference.
+They exhaust the signed fixed-point and extended-half input encodings, plus
+half conversion midpoints, both signs, saturation, infinities and NaNs. The
+extended half exponent 31 represents finite values, not IEEE infinity.
+Run the Windows `dxil_runtime_test.c` harness as `<exe> <shader> <shader.expected>
+<shader.memory> <shader.constants> resource-raw` for exact resource comparisons.
+
+`make check-dxil-guest-rop DXIL_VALIDATOR=/path/to/dxv` validates 504 complete
+ROV pixel containers across twelve color formats, 1x/2x/4x samples, native and
+2x3 resolution, blending specialization, full/partial query counters, explicit
+depth, centroid/barycentric/sparse inputs and conditional outputs. Shader
+creation, async compilation and cache warm-up all use the native adapter.
+
+Build the C89 `dxil_guest_rop_runtime_test.c` Windows harness with D3D12/DXGI
+(and dxguid with GCC). Build `dxil_guest_rop_reference_test.c` with a host C
+compiler (and libm on Unix). Generate a pixel fixture using
+`dxil-guest-pixel-test <shader> <mode> <config>`, then its CPU data using
+`dxil-guest-rop-reference-test <shader> <mode> <config> <scenario>`.
+Run `<runtime> <shader> <shader.vs or shader.guest.vs> <config>`.
+The reference accepts modes 0/14/168/182 (plain/explicit-depth, each with or
+without conditional RT0). Config bits 0..1 select MSAA, bit 2 selects 2x3
+scaling, bits 3..6 rotate the format list, bit 7 disables blending, bit 8
+omits failure counters, and bit 10 adds partial write masks.
+
+Scenarios 0..12 cover overwrite, partial/all masks, full EDRAM wrap, passing
+and failing depth/stencil, kills, alpha rejection, exponent bias, alpha-to-mask
+and disabled queries. Scenarios 13..15 combine rejection with failed tests to
+check early query accounting. Scenarios 16..1140 enumerate all 15x15 factor
+pairs and five equations, using reversed RGB/alpha factor pairs. Scenarios
+1141..1144 check float24, constant offset and front/back slope offset. Every
+EDRAM word and all 64 query-counter words are compared exactly, including
+untouched memory. These fixtures exercise guest ALU/control flow and the
+native render backend; they do not establish game-title compatibility.
+
+The verification batch also passed 3,375 blend-factor/equation executions,
+1,152 real guest-vertex/ROV executions, 900 masked MSAA blend executions,
+288 no-blending/partial-counter executions, 48 float24/polygon-offset cases,
+18 MSVC ROV executions and 368 host-render-target regression executions.
+GCC and MSVC C89 checks pass; the Windows GCC core builds and passes ABI
+load/unload and two initialization/deinitialization cycles.

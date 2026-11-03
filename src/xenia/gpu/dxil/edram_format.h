@@ -21,6 +21,10 @@ int xe_dxil_pack_edram_color(XeDxilAlu *alu, unsigned format, int source_uint,
                                XeDxilValue source[4], XeDxilValue packed[2]);
 int xe_dxil_unpack_edram_color(XeDxilAlu *alu, unsigned format, int destination_uint,
                                  XeDxilValue packed[2], XeDxilValue destination[4]);
+/* Numeric render-backend views, including signed fixed-point and extended
+ * exponent-31 finite half values. Missing destination alpha is one. */
+int xe_dxil_pack_render_color(XeDxilAlu *alu, unsigned format, XeDxilValue source[4], XeDxilValue packed[2]);
+int xe_dxil_unpack_render_color(XeDxilAlu *alu, unsigned format, XeDxilValue packed[2], XeDxilValue destination[4]);
 #ifdef __cplusplus
 }
 #endif
