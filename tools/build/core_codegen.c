@@ -379,10 +379,12 @@ static void bundle(const char *out) {
   compressed = core_deflate_compress((unsigned char *)raw.data, (int)raw.size,
                                  &compressed_size, 9);
   if (!compressed) fail("cannot compress patch bundle", root);
-  text(&header, "#pragma once\n#include <cstddef>\nnamespace xe::embedded_bundle_patches {\nextern const unsigned char kBundleData[];\nextern const size_t kBundleSize;\n}\n");
+  text(&header, "#pragma once\n#include <cstddef>\nnamespace xe::embedded_bundle_patches {\nextern const unsigned char kBundleData[];\nextern const size_t kBundleSize;\nextern const size_t kBundleRawSize;\n}\n");
   text(&source, "#include \"embedded_bundle_patches.h\"\nnamespace xe::embedded_bundle_patches {\nconst unsigned char kBundleData[] = {");
   bytes(&source, compressed, (size_t)compressed_size, 0);
-  text(&source, "};\nconst size_t kBundleSize = sizeof(kBundleData);\n}\n");
+  text(&source, "};\nconst size_t kBundleSize = sizeof(kBundleData);\nconst size_t kBundleRawSize = ");
+  number(&source, raw.size);
+  text(&source, ";\n}\n");
   output(out, "embedded_bundle_patches.h", &header);
   output(out, "embedded_bundle_patches.cc", &source);
   free(compressed);
@@ -452,11 +454,8 @@ static int enabled(const char *name, int windows, int arm64, int msvc) {
 }
 
 static void configs(const char *out, int windows, int arm64, int msvc) {
-  const char *zlib_names[] = {"zlib-ng.h", "zconf-ng.h", "zlib_name_mangling-ng.h", "gzread.c", NULL};
   Buffer file;
   Buffer result = {0, 0, 0};
-  char *path;
-  char *name;
   char digits[32];
   char token[128];
   const char *cursor;
@@ -466,17 +465,6 @@ static void configs(const char *out, int windows, int arm64, int msvc) {
   unsigned int minor = 0;
   unsigned int patch = 0;
   int i;
-  for (i = 0; zlib_names[i]; ++i) {
-    name = (char *)allocate(strlen(zlib_names[i]) + 4);
-    strcpy(name, zlib_names[i]); strcat(name, ".in");
-    path = join("third_party/zlib-ng",
-                !strcmp(zlib_names[i], "zlib_name_mangling-ng.h")
-                    ? "zlib_name_mangling.h.empty" : name);
-    file = read_file(path, 1); free(name); free(path);
-    replace(&file, "@ZLIB_SYMBOL_PREFIX@", "");
-    path = join(out, "third_party/zlib-ng");
-    output(path, zlib_names[i], &file); free(path);
-  }
   file = read_file("third_party/snappy/CMakeLists.txt", 1);
   match = strstr(file.data, "project(Snappy VERSION ");
   if (!match || sscanf(match, "project(Snappy VERSION %u.%u.%u", &major, &minor, &patch) != 3)

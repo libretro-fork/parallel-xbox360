@@ -163,7 +163,7 @@ target_include_directories(pugixml PUBLIC pugixml/src)
 # ==============================================================================
 # snappy
 # ==============================================================================
-# snappy and zlib-ng generate their config headers into their source trees
+# Snappy configuration is generated into the build directory
 # with a configure of their own. A cross build configures them for the
 # target, not for the build machine (Release: the debug CRT is not part of a
 # cross toolchain's runtime).
@@ -187,12 +187,36 @@ target_include_directories(snappy PUBLIC snappy ${XENIA_GENERATED_DIR})
 target_compile_definitions(snappy PRIVATE HAVE_CONFIG_H)
 
 # ==============================================================================
-# xxhash
+# Selected owned RetroArch libretro-common primitives
 # ==============================================================================
-add_library(xxhash STATIC
-  xxhash/xxhash.c
+add_library(retro-common STATIC
+  libretro-common/encodings/encoding_xxh3.c
+  libretro-common/encodings/encoding_xxh64.c
+  libretro-common/encodings/encoding_crc32.c
+  libretro-common/encodings/encoding_deflate.c
+  libretro-common/features/features_cpu.c
+  libretro-common/compat/compat_strl.c
+  libretro-common/time/rtime.c
+  libretro-common/queues/retro_spsc.c
+  libretro-common/rthreads/rthreads.c
+  libretro-common/rthreads/retro_eventcount.c
+  libretro-common/rthreads/retro_asym_eventcount.c
+  libretro-common/rthreads/retro_procbarrier.c
 )
-target_include_directories(xxhash PUBLIC xxhash)
+target_include_directories(retro-common PUBLIC libretro-common/include)
+target_compile_definitions(retro-common PUBLIC HAVE_THREADS HAVE_THREAD_STORAGE)
+if(MSVC)
+  target_compile_definitions(retro-common PUBLIC RETRO_ATOMIC_FORCE_MSVC)
+else()
+  target_compile_definitions(retro-common PUBLIC RETRO_ATOMIC_FORCE_GCC_NEW)
+endif()
+if(WIN32)
+  target_link_libraries(retro-common PUBLIC winmm)
+else()
+  find_package(Threads REQUIRED)
+  target_link_libraries(retro-common PUBLIC Threads::Threads)
+endif()
+
 
 # ==============================================================================
 # zstd
@@ -208,6 +232,7 @@ add_library(zstd STATIC
   ${_zstd_decompress}
 )
 target_include_directories(zstd PUBLIC zstd/lib PRIVATE zstd/lib/common)
+target_link_libraries(zstd PUBLIC retro-common)
 target_compile_definitions(zstd PRIVATE
   XXH_NAMESPACE=ZSTD_
   ZSTD_LEGACY_SUPPORT=0
@@ -233,25 +258,6 @@ add_library(zarchive STATIC
 )
 target_include_directories(zarchive PUBLIC zarchive/include PRIVATE zstd/lib)
 target_link_libraries(zarchive PUBLIC zstd)
-
-# ==============================================================================
-# zlib-ng
-# ==============================================================================
-# Portable zlib-ng configuration, shared with the direct Make build.
-file(GLOB _zlibng_c "zlib-ng/*.c" "zlib-ng/arch/generic/*.c")
-list(FILTER _zlibng_c EXCLUDE REGEX "/gzread\\.c$")
-add_library(zlib-ng STATIC ${_zlibng_c}
-  "${XENIA_GENERATED_DIR}/third_party/zlib-ng/gzread.c")
-target_include_directories(zlib-ng BEFORE PUBLIC
-  "${XENIA_GENERATED_DIR}/third_party/zlib-ng" zlib-ng)
-target_compile_definitions(zlib-ng PRIVATE WITH_GZFILEOP)
-if(NOT WIN32)
-  target_compile_definitions(zlib-ng PRIVATE HAVE_UNISTD_H)
-endif()
-if(NOT MSVC OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
-  target_compile_definitions(zlib-ng PRIVATE
-    HAVE_BUILTIN_CTZ HAVE_BUILTIN_CTZLL HAVE_ATTRIBUTE_ALIGNED)
-endif()
 
 # ==============================================================================
 # libusb (Windows only)

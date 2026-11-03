@@ -32,9 +32,9 @@ and nested sample dependencies were omitted.
 | `third_party/utfcpp` | `65701fe00700577f9f4e9b96d682bd7cfcc0b76e` |
 | `third_party/xbyak` | `9d8ff37306f39c6a71cf998078cbe880ce5dc224` |
 | `third_party/xbyak_aarch64` | `59c6a7e7368cd2dbb07c46abe83239ace4d58849` |
-| `third_party/xxhash` | `e626a72bc2321cd320e953a0ccf1584cad60f363` |
+| `third_party/xxhash` | `e626a72bc2321cd320e953a0ccf1584cad60f363` (removed; replaced by libretro-common) |
 | `third_party/zarchive` | `b467f7aa342895e66a1a003377ed63b3c1be3de3` |
-| `third_party/zlib-ng` | `860e4cff7917d93f54f5d7f0bc1d0e8b1a3cb988` |
+| `third_party/zlib-ng` | `860e4cff7917d93f54f5d7f0bc1d0e8b1a3cb988` (removed; replaced by libretro-common) |
 | `third_party/zstd` | `20707e3718ee14250fb8a44b3bf023ea36bd88df` |
 | `third_party/DirectXShaderCompiler` (Windows API header only) | `69e54e29086b7035acffb304cec57a350225f8b0` |
 
@@ -45,3 +45,5 @@ preserved. No glslang language frontend or compiler library is retained.
 The patch data in `libretro/data/patches` comes from
 https://github.com/xenia-canary/game-patches at
 `fe957a050e37f5a1e3f485ca43c2e37ee2a9c92d`.
+
+Selected libretro-common sources come from RetroArch commit `c358071531a568859654f46a0826f409495c08be`; see `third_party/libretro-common/SOURCE.txt` for the import manifest and local changes. Zstandard's checksum adapter now calls this XXH64 implementation.

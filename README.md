@@ -39,6 +39,8 @@ Vulkan context negotiation v2 routes device creation through the frontend wrappe
 
 Guest audio uses libretro; miniaudio and the standalone achievement sound helper have been removed.
 
+Selected RetroArch libretro-common sources now provide XXH3/XXH64 hashing and DEFLATE decompression. Persistent hash values remain compatible. Embedded patch data decodes directly into its final allocation, using its generated raw size; XLast requires complete, checksum-valid gzip data with the declared output size. Threading and file-I/O migration to libretro-common is still in progress. Source provenance and local changes are recorded in `third_party/libretro-common/SOURCE.txt`.
+
 Games that need a signed-in profile get one: the core signs in the first profile under `content/`, or creates one when there is none, named after the first line of `system/Xenia-Edge/xbl_profilename.txt` ("Player" if the file is missing, which the core then writes there).
 
 ## Building

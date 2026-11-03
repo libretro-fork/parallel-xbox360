@@ -14,26 +14,29 @@
 #include <cstdint>
 #include <functional>
 #include <string_view>
-#include <vector>
+#include <memory>
+#include <cstdlib>
 
 namespace xe {
 
 // Decompresses a zlib-compressed concat blob produced by tools/build/
-// embed_bundle.py and exposes a callback iteration over (name, data) entries.
+// core_codegen.c and exposes a callback iteration over (name, data) entries.
 // Holds the inflated bytes; emitted string_views point into it, so the
 // EmbeddedBundle must outlive any view captured during ForEach.
 class EmbeddedBundle {
  public:
-  EmbeddedBundle(const unsigned char* compressed_data, size_t compressed_size);
+  EmbeddedBundle(const unsigned char* compressed_data, size_t compressed_size,
+                 size_t raw_size);
 
-  bool ok() const { return !raw_.empty(); }
+  bool ok() const { return raw_ != nullptr; }
 
   using VisitFn =
       std::function<void(std::string_view name, std::string_view data)>;
   void ForEach(const VisitFn& visit) const;
 
  private:
-  std::vector<uint8_t> raw_;
+  std::unique_ptr<uint8_t, decltype(&std::free)> raw_{nullptr, &std::free};
+  size_t raw_size_ = 0;
 };
 
 }  // namespace xe

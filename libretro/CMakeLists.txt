@@ -115,7 +115,7 @@ set(_xe_libretro_libs
   libavutil
   mspack
   snappy
-  xxhash
+  retro-common
 )
 if(XE_TARGET_X86_64)
   list(APPEND _xe_libretro_libs xenia-cpu-backend-x64)

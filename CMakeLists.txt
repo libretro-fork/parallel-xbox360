@@ -158,8 +158,7 @@ if(NOT XENIA_HOST_CODEGEN)
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   "${PROJECT_SOURCE_DIR}/tools/build/core_codegen.c"
-  "${PROJECT_SOURCE_DIR}/tools/build/core_deflate.c"
-  "${PROJECT_SOURCE_DIR}/third_party/zlib-ng/zlib_name_mangling.h.empty")
+  "${PROJECT_SOURCE_DIR}/tools/build/core_deflate.c")
 set(_codegen_options)
 if(WIN32)
   list(APPEND _codegen_options windows)
@@ -496,8 +495,8 @@ else()
     endif()
   endif()
 
-  # Silence Apple ar/ranlib's "has no symbols" warnings (e.g. zlib-ng's
-  # CRC32 SIMD TUs that compile empty when the CPU-feature guard is
+  # Silence Apple ar/ranlib's "has no symbols" warnings for optional
+  # SIMD translation units that compile empty when the CPU-feature guard is
   # inactive). ar warns at archive-create time and ranlib warns again at
   # finish; ar's `S` flag skips the symtab so only ranlib writes it, and
   # ranlib's -no_warning_for_no_symbols silences that pass.

@@ -319,7 +319,8 @@ const BundledIndex& GetBundledIndex() {
   static const BundledIndex index = []() {
     BundledIndex idx;
     EmbeddedBundle bundle(xe::embedded_bundle_patches::kBundleData,
-                          xe::embedded_bundle_patches::kBundleSize);
+                          xe::embedded_bundle_patches::kBundleSize,
+                          xe::embedded_bundle_patches::kBundleRawSize);
     if (!bundle.ok()) {
       XELOGE("BundledIndex: bundle decompress failed");
       return idx;

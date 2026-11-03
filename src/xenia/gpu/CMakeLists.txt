@@ -11,7 +11,7 @@ xe_platform_sources(xenia-gpu ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(xenia-gpu PRIVATE
   ${PROJECT_SOURCE_DIR}/third_party/Vulkan-Headers/include
 )
-target_link_libraries(xenia-gpu PUBLIC fmt snappy xxhash xenia-base xenia-ui)
+target_link_libraries(xenia-gpu PUBLIC fmt snappy retro-common xenia-base xenia-ui)
 target_link_libraries(xenia-gpu PRIVATE xenia-spirv-writer)
 if(WIN32)
   file(GLOB _native_dxil_sources CONFIGURE_DEPENDS
@@ -46,7 +46,7 @@ if(XENIA_BUILD_MISC)
     xenia-gpu xenia-hid xenia-hid-nop xenia-hid-portal
     xenia-kernel xenia-patcher xenia-ui xenia-ui-vulkan xenia-vfs
     aes_128 capstone fmt xenia-spirv-writer imgui libavcodec libavutil mspack
-    snappy xxhash
+    snappy retro-common
   )
   if(XE_TARGET_X86_64)
     target_link_libraries(xenia-gpu-shader-compiler PRIVATE xenia-cpu-backend-x64)

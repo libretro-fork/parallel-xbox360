@@ -117,3 +117,6 @@ xenia.entitlements
 src/xenia/ui/audio_helper.cc
 src/xenia/ui/audio_helper.h
 third_party/miniaudio
+
+third_party/xxhash
+third_party/zlib-ng

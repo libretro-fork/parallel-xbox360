@@ -11,85 +11,60 @@
 
 #include <cstring>
 
-#include "third_party/zlib-ng/zlib-ng.h"
+#include "libretro/core_decompress.h"
 #include "xenia/base/logging.h"
 
 namespace xe {
 
 EmbeddedBundle::EmbeddedBundle(const unsigned char* compressed_data,
-                               size_t compressed_size) {
-  if (!compressed_data || compressed_size == 0) {
+                               size_t compressed_size, size_t raw_size) {
+  uint8_t* bytes = nullptr;
+  size_t decoded_size = 0;
+  if (!raw_size || !xe_decompress_alloc(&bytes, &decoded_size,
+          compressed_data, compressed_size, 15, raw_size, raw_size)) {
+    XELOGE("EmbeddedBundle: complete-stream decompression failed");
     return;
   }
-  // Text patches compress ~5x; start at 4x and grow on demand.
-  raw_.resize(compressed_size * 4);
-
-  zng_stream stream{};
-  stream.next_in = const_cast<unsigned char*>(compressed_data);
-  stream.avail_in = static_cast<unsigned int>(compressed_size);
-  stream.next_out = raw_.data();
-  stream.avail_out = static_cast<unsigned int>(raw_.size());
-
-  if (zng_inflateInit(&stream) != Z_OK) {
-    raw_.clear();
+  if (decoded_size != raw_size) {
+    std::free(bytes);
+    XELOGE("EmbeddedBundle: decompressed size mismatch");
     return;
   }
-
-  while (true) {
-    int ret = zng_inflate(&stream, Z_NO_FLUSH);
-    if (ret == Z_STREAM_END) {
-      break;
-    }
-    if (ret == Z_OK && stream.avail_out == 0) {
-      size_t old_size = raw_.size();
-      raw_.resize(old_size * 2);
-      stream.next_out = raw_.data() + old_size;
-      stream.avail_out = static_cast<unsigned int>(raw_.size() - old_size);
-      continue;
-    }
-    if (ret != Z_OK) {
-      XELOGE("EmbeddedBundle: inflate failed ({})", ret);
-      zng_inflateEnd(&stream);
-      raw_.clear();
-      return;
-    }
-  }
-
-  raw_.resize(stream.total_out);
-  zng_inflateEnd(&stream);
+  raw_.reset(bytes);
+  raw_size_ = decoded_size;
 }
 
 void EmbeddedBundle::ForEach(const VisitFn& visit) const {
-  if (raw_.size() < sizeof(uint32_t)) {
+  if (raw_size_ < sizeof(uint32_t)) {
     return;
   }
-  const uint8_t* p = raw_.data();
-  const uint8_t* end = p + raw_.size();
+  const uint8_t* p = raw_.get();
+  const uint8_t* end = p + raw_size_;
 
   uint32_t count;
   std::memcpy(&count, p, sizeof(count));
   p += sizeof(count);
 
   for (uint32_t i = 0; i < count; ++i) {
-    if (p + sizeof(uint32_t) > end) {
+    if (size_t(end - p) < sizeof(uint32_t)) {
       return;
     }
     uint32_t name_len;
     std::memcpy(&name_len, p, sizeof(name_len));
     p += sizeof(name_len);
-    if (p + name_len > end) {
+    if (size_t(end - p) < name_len) {
       return;
     }
     std::string_view name(reinterpret_cast<const char*>(p), name_len);
     p += name_len;
 
-    if (p + sizeof(uint32_t) > end) {
+    if (size_t(end - p) < sizeof(uint32_t)) {
       return;
     }
     uint32_t data_len;
     std::memcpy(&data_len, p, sizeof(data_len));
     p += sizeof(data_len);
-    if (p + data_len > end) {
+    if (size_t(end - p) < data_len) {
       return;
     }
     std::string_view data(reinterpret_cast<const char*>(p), data_len);

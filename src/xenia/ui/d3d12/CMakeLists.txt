@@ -14,7 +14,7 @@ if(XENIA_BUILD_MISC)
     xenia-apu xenia-base xenia-core xenia-cpu
     xenia-gpu xenia-hid xenia-hid-portal
     xenia-kernel xenia-patcher xenia-ui xenia-ui-d3d12 xenia-vfs
-    aes_128 capstone fmt xenia-spirv-writer imgui mspack snappy xxhash
+    aes_128 capstone fmt xenia-spirv-writer imgui mspack snappy retro-common
   )
   if(XE_TARGET_X86_64)
     target_link_libraries(xenia-ui-window-d3d12-demo PRIVATE xenia-cpu-backend-x64)

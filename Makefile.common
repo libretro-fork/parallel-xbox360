@@ -1,6 +1,6 @@
 # Shared, hand-maintained source selection for the GNU Make build.
 # Keep in sync with the libretro target when importing upstream changes.
-SOURCES_C += libretro/core_events.c libretro/core_audio_cadence.c
+SOURCES_C += libretro/core_events.c libretro/core_audio_cadence.c libretro/core_decompress.c
 CORE_DIRS := src/xenia src/xenia/base src/xenia/apu src/xenia/apu/nop \
  src/xenia/cpu src/xenia/cpu/backend src/xenia/cpu/compiler \
  src/xenia/cpu/compiler/passes src/xenia/cpu/hir src/xenia/cpu/ppc \
@@ -61,15 +61,15 @@ SOURCES_C += third_party/libusb/libusb/core.c third_party/libusb/libusb/descript
  third_party/libusb/libusb/os/windows_winusb.c
 endif
 
-INCLUDE_DIRS := $(GEN) $(GEN)/generated $(GEN)/third_party/zlib-ng third_party/ffmpeg-xenia \
+INCLUDE_DIRS := $(GEN) $(GEN)/generated third_party/ffmpeg-xenia \
  . src libretro third_party third_party/capstone/include third_party/fmt/include \
  third_party/imgui third_party/stb third_party/snappy \
- third_party/xxhash third_party/mspack third_party/pugixml/src \
+ third_party/libretro-common/include third_party/mspack third_party/pugixml/src \
  third_party/asio/include third_party/tomlplusplus/include third_party/llvm/include \
  third_party/Vulkan-Headers/include third_party/ffmpeg-xenia third_party/FFmpeg third_party/aes_128 \
- third_party/zstd/lib third_party/zarchive/include third_party/zlib-ng
+ third_party/zstd/lib third_party/zarchive/include
 
-SOURCES_C += third_party/aes_128/unroll/aes.c third_party/xxhash/xxhash.c \
+SOURCES_C += third_party/aes_128/unroll/aes.c \
  third_party/mspack/lzxd.c third_party/mspack/system.c \
  third_party/capstone/cs.c third_party/capstone/MCInst.c \
  third_party/capstone/MCInstPrinter.c third_party/capstone/MCInstrDesc.c \
@@ -89,11 +89,6 @@ ZSTD_SOURCES := $(filter-out %/threading.c,$(wildcard third_party/zstd/lib/commo
  $(wildcard third_party/zstd/lib/compress/*.c third_party/zstd/lib/decompress/*.c)
 SOURCES_C += $(ZSTD_SOURCES)
 
-# A fixed generic zlib-ng configuration, shared by every target. Only the
-# emulator's archive/patch decompression uses it; no ISA dispatch is needed.
-ZLIB_SOURCES := $(filter-out %/gzread.c,$(wildcard third_party/zlib-ng/*.c)) \
- $(wildcard third_party/zlib-ng/arch/generic/*.c)
-SOURCES_C += $(ZLIB_SOURCES) $(GEN)/third_party/zlib-ng/gzread.c
 SOURCES_ASM := $(addprefix third_party/boost_context/context/src/asm/,$(addsuffix _$(BOOST_VARIANT),make jump ontop))
 ifeq ($(ARCH),aarch64)
 SOURCES_CXX += third_party/xbyak_aarch64/src/xbyak_aarch64_impl.cpp \
@@ -329,3 +324,9 @@ SOURCES_ASM += third_party/FFmpeg/libavutil/aarch64/float_dsp_neon.S \
  third_party/FFmpeg/libavcodec/aarch64/simple_idct_neon.S
 endif
 SOURCES_C += $(FFMPEG_SOURCES)
+
+SOURCES_C += $(addprefix third_party/libretro-common/,encodings/encoding_xxh3.c \
+ encodings/encoding_xxh64.c encodings/encoding_crc32.c encodings/encoding_deflate.c \
+ features/features_cpu.c compat/compat_strl.c time/rtime.c queues/retro_spsc.c \
+ rthreads/rthreads.c rthreads/retro_eventcount.c rthreads/retro_asym_eventcount.c \
+ rthreads/retro_procbarrier.c)

@@ -106,6 +106,12 @@ DEFINES := -DXENIA_LIBRETRO=1 -DVULKAN_HPP_NO_TO_STRING -DIMGUI_DISABLE_OBSOLETE
  -DIMGUI_DISABLE_DEFAULT_FONT -DIMGUI_USE_STB_SPRINTF -DUSE_CPP17 -D_LIB \
  -DASIO_STANDALONE -DASIO_NO_DEPRECATED -DXBYAK_NO_OP_NAMES -DXBYAK_ENABLE_OMITTED_OPERAND
 VERSION := $(shell head -1 upstream.version)
+DEFINES += -DHAVE_THREADS -DHAVE_THREAD_STORAGE
+ifeq ($(WINDOWS_ABI),msvc)
+DEFINES += -DRETRO_ATOMIC_FORCE_MSVC
+else
+DEFINES += -DRETRO_ATOMIC_FORCE_GCC_NEW
+endif
 COMMIT := $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
 DEFINES += -DXENIA_LIBRETRO_VERSION='"$(VERSION)"' -DXENIA_LIBRETRO_COMMIT='"$(COMMIT)"'
 WARNINGS := -Wno-switch -Wno-attributes -Wno-deprecated-register -Wno-deprecated-volatile \
@@ -195,9 +201,7 @@ CORE_OBJECTS := $(filter-out $(FRONTEND_OBJECTS),$(OBJECTS))
 CORE_ARCHIVE := $(BUILD_DIR)/core.a
 CONFIG_INPUTS := tools/build/core_codegen.c tools/build/core_deflate.c \
  upstream.version $(wildcard assets/font/* libretro/data/*) \
- third_party/snappy/snappy-stubs-public.h.in third_party/snappy/cmake/config.h.in \
- $(wildcard third_party/zlib-ng/*-ng.h.in) third_party/zlib-ng/gzread.c.in \
- third_party/zlib-ng/zlib_name_mangling.h.empty
+ third_party/snappy/snappy-stubs-public.h.in third_party/snappy/cmake/config.h.in
 
 .PHONY: all clean generated shaders host-tools help print-config FORCE $(TARGET)
 all: $(TARGET)
@@ -210,7 +214,7 @@ generated: $(CONFIG_INPUTS) $(CODEGEN) | check-target-tools
 	@mkdir -p "$(GEN)"
 	$(CODEGEN) inputs "$(GEN)" $(if $(filter windows,$(OS)),windows) $(if $(filter aarch64,$(ARCH)),aarch64)
 
-$(GEN)/embedded_font.cc $(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc $(GEN)/third_party/zlib-ng/gzread.c: | generated
+$(GEN)/embedded_font.cc $(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc: | generated
 	@test -f "$@"
 
 export MAKE_BUILD_SIGNATURE := $(CC)|$(CXX)|$(BASE_FLAGS)|$(CPPFLAGS)|$(CFLAGS)|$(CXXFLAGS)|$(LDFLAGS)|$(LDLIBS)
@@ -244,10 +248,6 @@ $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/mspack/% third
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/snappy/%,$(SOURCES_CXX)))): CPPFLAGS := -I$(GEN)/snappy $(CPPFLAGS) -w -DHAVE_CONFIG_H
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/libusb/%,$(SOURCES_C)))): CPPFLAGS := -Ithird_party/libusb/$(if $(filter msvc,$(WINDOWS_ABI)),msvc,mingw) $(CPPFLAGS) -w
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(ZSTD_SOURCES))): CPPFLAGS += -DXXH_NAMESPACE=ZSTD_ -DZSTD_LEGACY_SUPPORT=0 -DZSTD_DISABLE_ASM
-$(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(ZLIB_SOURCES) $(GEN)/third_party/zlib-ng/gzread.c)): CPPFLAGS += -DHAVE_BUILTIN_CTZ -DHAVE_BUILTIN_CTZLL -DHAVE_ATTRIBUTE_ALIGNED -DWITH_GZFILEOP
-ifneq ($(OS),windows)
-$(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(ZLIB_SOURCES) $(GEN)/third_party/zlib-ng/gzread.c)): CPPFLAGS += -DHAVE_UNISTD_H
-endif
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(FFMPEG_SOURCES))): CPPFLAGS += -DHAVE_AV_CONFIG_H -D_USE_MATH_DEFINES -Ithird_party/FFmpeg/libavcodec
 ifneq ($(OS),windows)
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(FFMPEG_SOURCES))): CPPFLAGS += -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 -Ithird_party/FFmpeg/compat/atomics/gcc

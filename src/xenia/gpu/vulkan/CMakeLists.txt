@@ -8,7 +8,7 @@ if(WIN32 AND DEFINED ENV{VULKAN_SDK})
   target_include_directories(xenia-gpu-vulkan PRIVATE "$ENV{VULKAN_SDK}/Include")
 endif()
 target_link_libraries(xenia-gpu-vulkan PUBLIC
-  fmt xenia-spirv-writer xxhash xenia-base xenia-gpu xenia-ui xenia-ui-vulkan
+  fmt xenia-spirv-writer retro-common xenia-base xenia-gpu xenia-ui xenia-ui-vulkan
 )
 xe_target_defaults(xenia-gpu-vulkan)
 
@@ -24,7 +24,7 @@ if(XENIA_BUILD_MISC)
     xenia-apu xenia-apu-nop xenia-base xenia-core xenia-cpu
     xenia-gpu xenia-gpu-vulkan xenia-hid xenia-hid-nop xenia-hid-portal
     xenia-kernel xenia-patcher xenia-ui xenia-ui-vulkan xenia-vfs
-    aes_128 capstone fmt xenia-spirv-writer imgui libavcodec libavutil mspack snappy xxhash
+    aes_128 capstone fmt xenia-spirv-writer imgui libavcodec libavutil mspack snappy retro-common
   )
   if(XE_TARGET_X86_64)
     target_link_libraries(xenia-gpu-vulkan-trace-viewer PRIVATE xenia-cpu-backend-x64)
@@ -55,7 +55,7 @@ if(XENIA_BUILD_MISC)
     xenia-apu xenia-apu-nop xenia-base xenia-core xenia-cpu
     xenia-gpu xenia-gpu-vulkan xenia-hid xenia-hid-nop xenia-hid-portal
     xenia-kernel xenia-patcher xenia-ui xenia-ui-vulkan xenia-vfs
-    aes_128 capstone fmt xenia-spirv-writer imgui libavcodec libavutil mspack snappy xxhash
+    aes_128 capstone fmt xenia-spirv-writer imgui libavcodec libavutil mspack snappy retro-common
   )
   if(XE_TARGET_X86_64)
     target_link_libraries(xenia-gpu-vulkan-trace-dump PRIVATE xenia-cpu-backend-x64)

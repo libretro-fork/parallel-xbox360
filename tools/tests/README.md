@@ -1,5 +1,29 @@
 # Raw DXIL writer checks
 
+## Owned libretro-common primitives and codecs
+
+`core_hash_test.c` checks legacy XXH3/XXH64 golden folds over three seeds,
+unaligned input and lengths spanning short-input, stripe and block boundaries
+through roughly 1 MiB. Segmented streaming and intermediate digest calls must
+match complete-input hashes. The folds were generated with the former xxHash
+implementation, rather than comparing only two paths in the replacement.
+
+`core_decompress_test.c` checks independent raw/zlib/gzip fixtures, empty output,
+exact output sizes, capped growing output, history across reallocations,
+truncation and corrupt trailers. Generated streams cover compression levels
+0, 3, 6 and 9. Both tests compile as MSVC C89.
+
+`libretro_common_test.c` covers native atomic publication, 100,000 SPSC/eventcount
+handoffs, MPSC nodes, hash vectors and a DEFLATE round trip. Define
+`RETRO_ATOMIC_FORCE_MSVC` or `RETRO_ATOMIC_FORCE_GCC_NEW` consistently with the
+compiler, plus `HAVE_THREADS` and `HAVE_THREAD_STORAGE`, and link the selected
+library sources listed in `third_party/CMakeLists.txt` (Windows also needs winmm).
+`core_zstd_test.c` checks checksum-bearing frames through the Zstandard adapter,
+the XXH64 trailer and corrupt-checksum rejection. Hash timings and limits are
+recorded in `optimization_measurements.md`.
+These tests do not establish that the core's remaining C++ threading has been
+migrated, or measure gameplay performance.
+
 ## Frame and audio cadence
 
 `core_audio_cadence_test.c` checks 800,000 consecutive fractional-clock steps at
@@ -584,7 +608,10 @@ normalized/unnormalized sampling through stream output, preserving positions
 and the export observer. Both use shader-model 6.6 dynamic resource/sampler
 heaps and the renderer's two-dword descriptor-index entry ABI.
 
-Renderer sampling covers 1D, 2D, 3D/stacked and cube, including scaled draws. Memory-export and tessellation integration have separate suites below. These tests do not establish game compatibility.
+Renderer sampling covers 1D, 2D, 3D/stacked and cube, including scaled draws. Memory-export and tessellation integration have separate suites below. `core_zstd_test.c` checks checksum-bearing frames through the Zstandard adapter,
+the XXH64 trailer and corrupt-checksum rejection. Hash timings and limits are
+recorded in `optimization_measurements.md`.
+These tests do not establish game compatibility.
 
 `make check-dxil-guest-sampling-rov` validates 144 complete sampled/query ROV shaders.
 ROV reference/runtime harnesses accept sampling modes 560/588/616 at unit

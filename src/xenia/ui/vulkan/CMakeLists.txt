@@ -25,7 +25,7 @@ if(XENIA_BUILD_MISC)
     xenia-gpu xenia-hid xenia-hid-nop xenia-hid-portal
     xenia-kernel xenia-patcher xenia-ui xenia-ui-vulkan xenia-vfs
     aes_128 capstone fmt xenia-spirv-writer imgui libavcodec libavutil mspack
-    snappy xxhash
+    snappy retro-common
   )
   if(XE_TARGET_X86_64)
     target_link_libraries(xenia-ui-window-vulkan-demo PRIVATE xenia-cpu-backend-x64)

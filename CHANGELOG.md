@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Replaced the standalone xxHash and zlib-ng dependencies with selected owned RetroArch libretro-common sources. Existing XXH3 cache keys and Zstandard XXH64 checksums retain their values. Embedded patches decode into one allocation of their generated raw size; XLast rejects incomplete, corrupt or incorrectly sized gzip output. Native libretro-common atomic backends are selected explicitly; the wider threading and file-I/O migration remains in progress.
+
 - Vulkan now negotiates context v2 and creates the shared device through the frontend's wrapper, retaining v1 fallback when support is absent or rejected. D3D12 negotiates the newer render interface, uses fenced sync-index handoff where available, and retains the legacy interface. New C89 D3D12 frame handling caches upload footprints and bounds teardown waits while retaining resources still in GPU use. Negotiation enables frontend device customization; it does not implement Reflex or DLSS.
 
 - Removed miniaudio and the standalone achievement notification sound helper. Guest audio continues through libretro.
