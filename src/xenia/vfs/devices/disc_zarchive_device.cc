@@ -15,6 +15,7 @@
 #include "xenia/vfs/devices/disc_zarchive_entry.h"
 
 #include "third_party/zarchive/include/zarchive/zarchivereader.h"
+#include "xenia/base/filesystem.h"
 
 namespace xe {
 namespace vfs {
@@ -27,7 +28,7 @@ DiscZarchiveDevice::~DiscZarchiveDevice() {};
 
 bool DiscZarchiveDevice::Initialize() {
   reader_ =
-      std::unique_ptr<ZArchiveReader>(ZArchiveReader::OpenFromFile(host_path_));
+      std::unique_ptr<ZArchiveReader>(ZArchiveReader::OpenFromFile(xe::path_to_utf8(host_path_).c_str()));
 
   if (!reader_) {
     XELOGE("Disc ZArchive could not be opened");

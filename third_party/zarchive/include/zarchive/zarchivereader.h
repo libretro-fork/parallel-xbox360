@@ -4,12 +4,12 @@
 #include <vector>
 #include <string_view>
 #include <unordered_map>
-#include <mutex>
+#include <rthreads/rthreads.h>
 #include <memory>
 #include <encodings/rzstd.h>
 
-#include <filesystem>
-#include <fstream>
+#include "libretro/core_file.h"
+
 
 #include "zarchivecommon.h"
 
@@ -28,7 +28,7 @@ public:
 		uint64_t size; // only valid for directories
 	};
 
-	static ZArchiveReader* OpenFromFile(const std::filesystem::path& path);
+    static ZArchiveReader* OpenFromFile(const char* path);
 
 	~ZArchiveReader();
 
@@ -54,7 +54,7 @@ private:
 		CacheBlock* next;
 	};
 
-	std::mutex m_accessMutex;
+    std::unique_ptr<slock_t, decltype(&slock_free)> m_accessMutex{slock_new(), &slock_free};
     std::unique_ptr<rzstd_decoder_t, decltype(&rzstd_decoder_free)> m_decoder{nullptr, &rzstd_decoder_free};
 
 	std::vector<uint8_t> m_cacheDataBuffer;
@@ -63,7 +63,7 @@ private:
 	CacheBlock* m_lruChainLast;
 	std::unordered_map<uint64_t, CacheBlock*> m_blockLookup;
 
-	ZArchiveReader(std::ifstream&& file, std::vector<_ZARCHIVE::CompressionOffsetRecord>&& offsetRecords, std::vector<uint8_t>&& nameTable, std::vector<_ZARCHIVE::FileDirectoryEntry>&& fileTree, uint64_t compressedDataOffset, uint64_t compressedDataSize);
+    ZArchiveReader(std::unique_ptr<xe_file, decltype(&xe_file_close)>&& file, std::vector<_ZARCHIVE::CompressionOffsetRecord>&& offsetRecords, std::vector<uint8_t>&& nameTable, std::vector<_ZARCHIVE::FileDirectoryEntry>&& fileTree, uint64_t compressedDataOffset, uint64_t compressedDataSize);
 
 	CacheBlock* GetCachedBlock(uint64_t blockIndex);
 	CacheBlock* RecycleLRUBlock(uint64_t newBlockIndex);
@@ -75,7 +75,7 @@ private:
 
 	static std::string_view GetName(const std::vector<uint8_t>& nameTable, uint32_t nameOffset);
 
-	std::ifstream m_file;
+    std::unique_ptr<xe_file, decltype(&xe_file_close)> m_file;
 	std::vector<_ZARCHIVE::CompressionOffsetRecord> m_offsetRecords;
 	std::vector<uint8_t> m_nameTable;
 	std::vector<_ZARCHIVE::FileDirectoryEntry> m_fileTree;

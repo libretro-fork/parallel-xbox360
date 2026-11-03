@@ -187,6 +187,16 @@ add_library(retro-common STATIC
   libretro-common/encodings/encoding_deflate.c
   libretro-common/features/features_cpu.c
   libretro-common/compat/compat_strl.c
+  libretro-common/streams/file_stream.c
+  libretro-common/vfs/vfs_implementation.c
+  libretro-common/file/file_path.c
+  libretro-common/file/file_path_io.c
+  libretro-common/string/stdstring.c
+  libretro-common/string/rstrtod.c
+  libretro-common/encodings/encoding_utf.c
+  libretro-common/compat/compat_posix_string.c
+  libretro-common/compat/compat_strcasestr.c
+  libretro-common/compat/fopen_utf8.c
   libretro-common/time/rtime.c
   libretro-common/queues/retro_spsc.c
   libretro-common/rthreads/rthreads.c
@@ -198,6 +208,9 @@ target_include_directories(retro-common PUBLIC libretro-common/include)
 target_compile_definitions(retro-common PUBLIC HAVE_THREADS HAVE_THREAD_STORAGE)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(retro-common PRIVATE _GNU_SOURCE)
+endif()
+if(NOT WIN32)
+  target_compile_definitions(retro-common PRIVATE HAVE_MMAP)
 endif()
 if(MSVC)
   target_compile_definitions(retro-common PUBLIC RETRO_ATOMIC_FORCE_MSVC)
@@ -216,6 +229,7 @@ endif()
 # zarchive
 # ==============================================================================
 add_library(zarchive STATIC
+  ../libretro/core_file.c
   zarchive/include/zarchive/zarchivecommon.h
   zarchive/include/zarchive/zarchivereader.h
   zarchive/include/zarchive/zarchivewriter.h
@@ -224,7 +238,7 @@ add_library(zarchive STATIC
   zarchive/src/sha_256.c
   zarchive/src/sha_256.h
 )
-target_include_directories(zarchive PUBLIC zarchive/include)
+target_include_directories(zarchive PUBLIC zarchive/include ../libretro)
 target_link_libraries(zarchive PUBLIC retro-common)
 
 # ==============================================================================

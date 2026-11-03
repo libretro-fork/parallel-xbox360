@@ -37,6 +37,7 @@
 #include "core_audio_cadence.h"
 #include "core_audio_samples.h"
 #include "core_audio_queue.h"
+#include <streams/file_stream.h>
 #include "core_audio_callbacks.h"
 #include "libretro_vulkan.h"
 #ifdef _WIN32
@@ -1708,6 +1709,12 @@ RETRO_API void retro_set_input_poll(retro_input_poll_t cb)            { core_sta
 RETRO_API void retro_set_input_state(retro_input_state_t cb)          { core_state.input_state_cb = cb; }
 
 RETRO_API void retro_init(void) {
+    struct retro_vfs_interface_info vfs = {};
+    vfs.required_interface_version = FILESTREAM_REQUIRED_VFS_VERSION;
+    if (!core_state.environ_cb ||
+        !core_state.environ_cb(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs))
+        vfs.iface = nullptr;
+    filestream_vfs_init(&vfs);
     xe_audio_cadence_reset(&s_audio_cadence);
     xenia_log(RETRO_LOG_INFO, "ParaLLEl Xbox360 libretro core %s, built from commit %s\n",
               XENIA_LIBRETRO_VERSION, XENIA_LIBRETRO_COMMIT);

@@ -13,6 +13,10 @@ class ZArchiveWriter
 	{
 		PathNode() : isFile(false), nameIndex(0xFFFFFFFF) {};
 		PathNode(bool isFile, uint32_t nameIndex) : isFile(isFile), nameIndex(nameIndex) {};
+        ~PathNode() {
+            size_t i;
+            for (i = 0; i < subnodes.size(); ++i) delete subnodes[i];
+        }
 
 		bool isFile;
 		uint32_t nameIndex; // index in m_nodeNames

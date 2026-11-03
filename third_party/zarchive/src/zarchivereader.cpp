@@ -1,23 +1,10 @@
 #include "zarchive/zarchivereader.h"
 #include "zarchive/zarchivecommon.h"
 
-#include <fstream>
+
 
 #include <encodings/rzstd.h>
 #include <cassert>
-
-static uint64_t _ifstream_getFileSize(std::ifstream& file)
-{
-	file.seekg(0, std::ios_base::end);
-	return (uint64_t)file.tellg();
-}
-
-static bool _ifstream_readBytes(std::ifstream& file, uint64_t offset, void* buffer, uint32_t size)
-{
-	file.seekg(offset, std::ios_base::beg);
-	file.read((char*)buffer, size);
-	return file.gcount() == size;
-}
 
 static uint64_t _getValidElementCount(uint64_t size, uint64_t elementSize)
 {
@@ -26,18 +13,17 @@ static uint64_t _getValidElementCount(uint64_t size, uint64_t elementSize)
 	return size / elementSize;
 }
 
-ZArchiveReader* ZArchiveReader::OpenFromFile(const std::filesystem::path& path)
+ZArchiveReader* ZArchiveReader::OpenFromFile(const char* path)
 {
-	std::ifstream file;
-	file.open(path, std::ios_base::in | std::ios_base::binary);
-	if (!file.is_open())
+    std::unique_ptr<xe_file, decltype(&xe_file_close)> file(xe_file_open(path), &xe_file_close);
+    if (!file)
 		return nullptr;
-	uint64_t fileSize = _ifstream_getFileSize(file);
+    uint64_t fileSize = xe_file_size(file.get());
 	if (fileSize <= sizeof(_ZARCHIVE::Footer))
 		return nullptr;
 	// read footer
 	_ZARCHIVE::Footer footer;
-	if (!_ifstream_readBytes(file, fileSize - sizeof(_ZARCHIVE::Footer), &footer, sizeof(_ZARCHIVE::Footer)))
+    if (!xe_file_read(file.get(), fileSize - sizeof(_ZARCHIVE::Footer), &footer, sizeof(_ZARCHIVE::Footer)))
 		return nullptr;
 	_ZARCHIVE::Footer::Deserialize(&footer, &footer);
 	// validate footer
@@ -63,18 +49,18 @@ ZArchiveReader* ZArchiveReader::OpenFromFile(const std::filesystem::path& path)
 	// read offset records
 	std::vector<_ZARCHIVE::CompressionOffsetRecord> offsetRecords;
 	offsetRecords.resize(_getValidElementCount(footer.sectionOffsetRecords.size, sizeof(_ZARCHIVE::CompressionOffsetRecord)));
-	if (offsetRecords.empty() || !_ifstream_readBytes(file, footer.sectionOffsetRecords.offset, offsetRecords.data(), (uint32_t)(offsetRecords.size() * sizeof(_ZARCHIVE::CompressionOffsetRecord))))
+    if (offsetRecords.empty() || !xe_file_read(file.get(), footer.sectionOffsetRecords.offset, offsetRecords.data(), (uint32_t)(offsetRecords.size() * sizeof(_ZARCHIVE::CompressionOffsetRecord))))
 		return nullptr;
 	_ZARCHIVE::CompressionOffsetRecord::Deserialize(offsetRecords.data(), offsetRecords.size(), offsetRecords.data());
 	// read name table
 	std::vector<uint8_t> nameTable;
 	nameTable.resize(footer.sectionNames.size);
-	if (!_ifstream_readBytes(file, footer.sectionNames.offset, nameTable.data(), (uint32_t)(nameTable.size() * sizeof(uint8_t))))
+    if (!xe_file_read(file.get(), footer.sectionNames.offset, nameTable.data(), (uint32_t)(nameTable.size() * sizeof(uint8_t))))
 		return nullptr;
 	// read file tree
 	std::vector<_ZARCHIVE::FileDirectoryEntry> fileTree;
 	fileTree.resize(_getValidElementCount(footer.sectionFileTree.size, sizeof(_ZARCHIVE::FileDirectoryEntry)));
-	if (fileTree.empty() || !_ifstream_readBytes(file, footer.sectionFileTree.offset, fileTree.data(), (uint32_t)(fileTree.size() * sizeof(_ZARCHIVE::FileDirectoryEntry))))
+    if (fileTree.empty() || !xe_file_read(file.get(), footer.sectionFileTree.offset, fileTree.data(), (uint32_t)(fileTree.size() * sizeof(_ZARCHIVE::FileDirectoryEntry))))
 		return nullptr;
 	_ZARCHIVE::FileDirectoryEntry::Deserialize(fileTree.data(), fileTree.size(), fileTree.data());
 	// verify file tree
@@ -87,15 +73,16 @@ ZArchiveReader* ZArchiveReader::OpenFromFile(const std::filesystem::path& path)
 	// todo
 
 	ZArchiveReader* cfs = new ZArchiveReader(std::move(file), std::move(offsetRecords), std::move(nameTable), std::move(fileTree), footer.sectionCompressedData.offset, footer.sectionCompressedData.size);
+    if (!cfs->m_accessMutex) { delete cfs; return nullptr; }
 	return cfs;
 }
 
-ZArchiveReader::ZArchiveReader(std::ifstream&& file, std::vector<_ZARCHIVE::CompressionOffsetRecord>&& offsetRecords, std::vector<uint8_t>&& nameTable, std::vector<_ZARCHIVE::FileDirectoryEntry>&& fileTree, uint64_t compressedDataOffset, uint64_t compressedDataSize) :
+ZArchiveReader::ZArchiveReader(std::unique_ptr<xe_file, decltype(&xe_file_close)>&& file, std::vector<_ZARCHIVE::CompressionOffsetRecord>&& offsetRecords, std::vector<uint8_t>&& nameTable, std::vector<_ZARCHIVE::FileDirectoryEntry>&& fileTree, uint64_t compressedDataOffset, uint64_t compressedDataSize) :
 	m_file(std::move(file)), m_offsetRecords(std::move(offsetRecords)), m_nameTable(std::move(nameTable)), m_fileTree(std::move(fileTree)),
 	m_compressedDataOffset(compressedDataOffset), m_compressedDataSize(compressedDataSize)
 {
 	m_blockCount = (uint64_t)m_offsetRecords.size() * _ZARCHIVE::ENTRIES_PER_OFFSETRECORD;
-	m_blockDecompressionBuffer.resize(_ZARCHIVE::COMPRESSED_BLOCK_SIZE);
+
 	// init cache
 	uint64_t cacheSize = 1024 * 1024 * 4; // 4MiB
 	if ((cacheSize % _ZARCHIVE::COMPRESSED_BLOCK_SIZE) != 0)
@@ -218,7 +205,8 @@ uint64_t ZArchiveReader::ReadFromFile(ZArchiveNodeHandle nodeHandle, uint64_t of
 {
 	if (nodeHandle >= m_fileTree.size())
 		return 0;
-	std::unique_lock<std::mutex> _lock(m_accessMutex);
+    slock_lock(m_accessMutex.get());
+    std::unique_ptr<slock_t, decltype(&slock_unlock)> _lock(m_accessMutex.get(), &slock_unlock);
 	auto& file = m_fileTree.at(nodeHandle);
 	if (!file.IsFile())
 		return 0;
@@ -338,23 +326,29 @@ bool ZArchiveReader::LoadBlock(CacheBlock* block)
 	if (compressedSize == _ZARCHIVE::COMPRESSED_BLOCK_SIZE)
 	{
 		// uncompressed block, read directly into cached block
-		return _ifstream_readBytes(m_file, offset, block->data, compressedSize);
+        return xe_file_read(m_file.get(), offset, block->data, compressedSize);
+    }
+    const uint8_t* compressed = xe_file_view(m_file.get(), offset, compressedSize);
+    if (!compressed) {
+        if (m_blockDecompressionBuffer.empty())
+            m_blockDecompressionBuffer.resize(_ZARCHIVE::COMPRESSED_BLOCK_SIZE);
+        if (!xe_file_read(m_file.get(), offset, m_blockDecompressionBuffer.data(), compressedSize))
+            return false;
+        compressed = m_blockDecompressionBuffer.data();
 	}
-	if (!_ifstream_readBytes(m_file, offset, m_blockDecompressionBuffer.data(), compressedSize))
-		return false;
     // Retain scratch only after the first compressed block; raw archives need none.
     if (!m_decoder) m_decoder.reset(rzstd_decoder_new());
     if (!m_decoder) return false;
 	// decompress
     size_t outputSize = 0;
-    int status = rzstd_decode_reuse(m_decoder.get(), block->data, _ZARCHIVE::COMPRESSED_BLOCK_SIZE, m_blockDecompressionBuffer.data(), compressedSize, &outputSize);
+    int status = rzstd_decode_reuse(m_decoder.get(), block->data, _ZARCHIVE::COMPRESSED_BLOCK_SIZE, compressed, compressedSize, &outputSize);
     return status == RZSTD_PROCESS_END && outputSize == _ZARCHIVE::COMPRESSED_BLOCK_SIZE;
 }
 
 // returns empty view on failure
 std::string_view ZArchiveReader::GetName(const std::vector<uint8_t>& nameTable, uint32_t nameOffset)
 {
-	if (nameOffset == 0x7FFFFFFF || nameOffset > nameTable.size())
+    if (nameOffset == 0x7FFFFFFF || nameOffset >= nameTable.size())
 		return "";
 	// parse header
 	uint16_t nameLength = nameTable[nameOffset] & 0x7F;
@@ -363,7 +357,7 @@ std::string_view ZArchiveReader::GetName(const std::vector<uint8_t>& nameTable, 
 		// extended 2-byte length
 		if (nameOffset + 1 >= nameTable.size())
 			return "";
-		nameLength |= ((uint16_t)nameTable[nameOffset] << 7);
+        nameLength |= ((uint16_t)nameTable[nameOffset + 1] << 7);
 		nameOffset += 2;
 	}
 	else

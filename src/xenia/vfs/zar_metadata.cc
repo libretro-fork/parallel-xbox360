@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "third_party/zarchive/include/zarchive/zarchivereader.h"
+#include "xenia/base/filesystem.h"
 
 namespace xe {
 namespace vfs {
@@ -85,7 +86,7 @@ ZArchiveNodeHandle FindDefaultXex(ZArchiveReader* reader,
 
 std::optional<XexMetadata> ExtractZarMetadata(
     const std::filesystem::path& path) {
-  std::unique_ptr<ZArchiveReader> reader(ZArchiveReader::OpenFromFile(path));
+  std::unique_ptr<ZArchiveReader> reader(ZArchiveReader::OpenFromFile(xe::path_to_utf8(path).c_str()));
   if (!reader) {
     return std::nullopt;
   }

@@ -1,4 +1,5 @@
 #include "sha_256.h"
+#include <retro_inline.h>
 
 #define TOTAL_LEN_LEN 8
 
@@ -16,7 +17,7 @@
  * @param count The number of bits to rotate by.
  * @return The rotated value.
  */
-static inline uint32_t right_rot(uint32_t value, unsigned int count)
+static INLINE uint32_t right_rot(uint32_t value, unsigned int count)
 {
 	/*
 	 * Defined behaviour in standard C for all count where 0 < count < 32, which is what we need here.
@@ -43,7 +44,7 @@ static const uint32_t _sha256_k[] = {
  *
  * @note This is the SHA-256 work horse.
  */
-static inline void consume_chunk(uint32_t *h, const uint8_t *p)
+static INLINE void consume_chunk(uint32_t *h, const uint8_t *p)
 {
 	unsigned i, j;
 	uint32_t ah[8];

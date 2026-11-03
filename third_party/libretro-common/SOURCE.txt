@@ -55,3 +55,28 @@ Local rzstd change: explicitly mask frame-magic bytes before uint8_t conversion,
 Local rzstd change: replace the volatile BMI2 dispatch flag and constructor with native retro_atomic acquire/release publication, including concurrent lazy initialization.
 Local rzstd extension: reusable single-owner decoder scratch API; ZArchive retains one per reader to eliminate per-block scratch allocation/free without clearing the full decode workspace.
 Local rzstd optimization: terminal matches use bounded 16-byte copies after safely growing short periods, retaining a narrow tail and exact output bounds.
+
+Additional owned file-I/O sources from RetroArch da0d927cf2690790da8a52eb6aafcd0532a3790e (libretro-common). Original source SHA256:
+6579372c174522c175954416778fae4c72cd6d35ab00de24bac46ee90fc44c90  compat/compat_posix_string.c
+56105b2af4720bf6ada0b156f9446b5b757b466618ed488fb13c5cb062ad2beb  compat/compat_strcasestr.c
+2fccf065f0f32f3132e39af6ad39bbeec5e59694c47ac2ceed780469a9575780  compat/fopen_utf8.c
+9198b5ceeed2d9e55d39a010213bb1fe54bfdc38596f2cf3c6672c8439473d41  encodings/encoding_utf.c
+484f5f6d7ac41ac12d6393418d357d70a13d5e37edaa4ad1497680b0928c684c  file/file_path.c
+ad78a5990b3669bc16596f26a09fd9bcf84b81f6475744e25e5fc5ff2dd3e25c  file/file_path_io.c
+bb5e386a5bff34c79e048ced6a5851f2a66363211fec443c02a980a4cf4e8b98  include/compat/fopen_utf8.h
+a88797b181aa2862fd204d37a208cd116036d7865c8bc416050927dc7d3918b6  include/compat/posix_string.h
+01dfb15ac4ebcc5885e330cd0aebb892781cf0e7a3a1bc1cdaa1d2100b38c9e3  include/compat/strcasestr.h
+7f2492f008910d062d48fac6e5e890915f5a759953c43bf4d051484553d08ee1  include/encodings/utf.h
+090b12ca29956a6e8c652637d5d832af56e632f6aae17a6bd8b37c6b8f3a8599  include/file/file_path.h
+4a90214a4124117cf1b23384c19d245b789cdbdd158c4f5369374fd969de3db7  include/memmap.h
+0ba2133170da3969fba4efa99ed756fade22c5e73b6f600f8e0178979c2b8271  include/streams/file_stream.h
+0e446f20841a450482ae31423a250651e3352f369c6dde24cdd41a661b60f955  include/string/rstrtod.h
+235a5851c9031df6a8b55748f1b49e747b9cc724c12efaee68131feb0a453f7d  include/string/stdstring.h
+138f871a05df3a5c95aa58fab23ee9ae28d83e6c127a50969b144bb002f8e264  include/vfs/vfs.h
+ae3c29c8c8630518654366201f1bf53f1989546603a95c52b132af55ad3d8d0d  include/vfs/vfs_implementation.h
+08b34af053dda5b7538e8727cca1705e1cae710de8eaf26e6acfaf55a82faef5  streams/file_stream.c
+2e28fd401d5a3199121b457b87a36945dc16216ed39e780152c90955a2a58304  string/rstrtod.c
+c85e80448aa7138adef29c27e3f7882e5e3b2485c6ac5a63acbceca3cb41f923  string/rstrtod_pow5.inc
+89a3b54752e1b24a5ddc81cc1f33b622643ed001987988d6487c7b80b3341edf  string/stdstring.c
+c50bdb625dbf93a44ae852c5e5b4c03577cedec98fedc13397dd8815dae8fd41  vfs/vfs_implementation.c
+Additional I/O import whitespace normalization: trailing whitespace removed and leading tabs expanded; hashes above refer to original RetroArch source.

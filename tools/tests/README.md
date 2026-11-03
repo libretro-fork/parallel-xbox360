@@ -855,3 +855,14 @@ The raw host helpers use b0/space0 with pinned system offsets; guest stages use
 b0/space1, so both root bindings alias the same existing constant upload.
 There is no intermediate SPIR-V conversion or owned copy of the static helpers.
 Line-domain tessellation remains unimplemented as in the existing Vulkan path.
+
+`core_file_test.c` exercises the production C89 stream owner through a simulated
+frontend VFS: seven-byte short reads, adjacent-request seek elision, failed seeks,
+read errors, zero progress, interrupted-read retry, invalid/overflow ranges,
+empty/null spans and recovery after failure. Native tests verify mapped views
+where available and random reads through the compiled no-mapping fallback.
+`core_zarchive_test.c` additionally runs the real writer/reader/cache against
+both native input and a frontend VFS that forces short reads and disables
+borrowed mappings. Compare exact source bytes through compressed/raw blocks,
+cross-block random reads, cache eviction and empty files. New I/O algorithms
+are C89; the existing archive classes retain minimal C++ ownership adapters.
