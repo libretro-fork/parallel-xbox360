@@ -137,6 +137,12 @@ fail:
   return -1;
 }
 
+int xe_dxil_shader_barycentrics(XeDxilShaderModule *s) {
+  if (!s || s->failed || s->finished || s->module.shader_kind != DXIL_PIXEL_SHADER) return -1;
+  s->module.minor_version = 1; s->module.feats.barycentrics = 1; s->shader_flags |= 1u<<22;
+  return xe_dxil_shader_signature(s,0,"SV_Barycentrics",0,DXIL_SEM_BARYCENTRICS,
+    DXIL_PROG_SEM_BARYCENTRICS,UINT32_MAX,0,3,DXIL_INTERP_LINEAR);
+}
 int xe_dxil_shader_sample_frequency(XeDxilShaderModule *s) {
   if (!s || s->failed || s->finished || s->module.shader_kind != DXIL_PIXEL_SHADER) return 0;
   if (s->sample_shadow) return 1;
@@ -281,9 +287,9 @@ int xe_dxil_shader_finish(XeDxilShaderModule *s, XeDxilShaderBinary *binary) {
   if (!s || !binary || s->failed || s->finished || binary->data || binary->size) return 0;
   m = &s->module; s->finished = 1;
   dxil_container_init(&container); blob_init(&output);
-  if (!named_version(s, "dx.version", 1, 0) || !named_version(s, "dx.valver", 1, 6)) goto done;
+  if (!named_version(s, "dx.version", 1, m->minor_version) || !named_version(s, "dx.valver", 1, 6)) goto done;
   values[0] = dxil_get_metadata_string(m, models[m->shader_kind]);
-  values[1] = metadata_int(s, 6); values[2] = metadata_int(s, 0);
+  values[1] = metadata_int(s, 6); values[2] = metadata_int(s, m->minor_version);
   node = dxil_get_metadata_node(m, values, 3);
   if (!node || !dxil_add_metadata_named_node(m, "dx.shaderModel", &node, 1)) goto done;
   for (i = 0; i < 4; ++i) {

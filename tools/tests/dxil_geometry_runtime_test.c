@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
   D3D12_ROOT_SIGNATURE_DESC root_desc;
   D3D12_ROOT_PARAMETER parameter;
   D3D12_GRAPHICS_PIPELINE_STATE_DESC desc;
-  D3D12_INPUT_ELEMENT_DESC input;
+  D3D12_INPUT_ELEMENT_DESC input[2];
   D3D12_SO_DECLARATION_ENTRY declarations[2];
   D3D12_COMMAND_QUEUE_DESC queue_desc;
   D3D12_VERTEX_BUFFER_VIEW vertex_view;
@@ -100,12 +100,12 @@ int main(int argc, char **argv) {
   status = ID3D12Device_CreateRootSignature(device, 0, ID3D10Blob_GetBufferPointer(serialized),
     ID3D10Blob_GetBufferSize(serialized), &IID_ID3D12RootSignature, (void **)&root);
   if (FAILED(status)) goto done;
-  memset(&desc, 0, sizeof(desc)); memset(&input, 0, sizeof(input)); memset(declarations, 0, sizeof(declarations));
+  memset(&desc, 0, sizeof(desc)); memset(input, 0, sizeof(input)); memset(declarations, 0, sizeof(declarations));
   desc.pRootSignature = root; desc.VS.pShaderBytecode = vs; desc.VS.BytecodeLength = vs_size;
   if (pixel_interface) { desc.PS.pShaderBytecode = gs; desc.PS.BytecodeLength = gs_size; }
   else { desc.GS.pShaderBytecode = gs; desc.GS.BytecodeLength = gs_size; }
-  input.SemanticName = "POSITION"; input.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-  desc.InputLayout.pInputElementDescs = &input; desc.InputLayout.NumElements = 1;
+  input[0].SemanticName = "POSITION"; input[0].Format = DXGI_FORMAT_R32G32B32A32_FLOAT; input[1] = input[0]; input[1].SemanticName = "TEXCOORD";
+  desc.InputLayout.pInputElementDescs = input; desc.InputLayout.NumElements = 2;
   declarations[0].SemanticName = "SV_Position"; declarations[0].ComponentCount = 4;
   declarations[1].SemanticName = "TEXCOORD"; declarations[1].ComponentCount = 4;
   desc.StreamOutput.pSODeclaration = declarations; desc.StreamOutput.NumEntries = 2;

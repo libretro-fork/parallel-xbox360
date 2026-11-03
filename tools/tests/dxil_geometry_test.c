@@ -1,5 +1,6 @@
 /* Native geometry stage generator fixture. MSVC C89; BSD license. */
 #include "guest_geometry.h"
+#include "stage_layout.h"
 #include "guest_alu.h"
 #include <dxil_module.h>
 #include <dxil_function.h>
@@ -13,7 +14,7 @@ static int vertex_shader(const XeDxilGeometryOptions *o, XeDxilShaderBinary *bin
   struct dxil_module *m;
   const struct dxil_func *load, *store;
   XeDxilValue args[5], position[4], value;
-  unsigned i, j, row = 0, culls = o->cull_planes + !!o->vertex_kill_and;
+  unsigned i, j, row = XE_DXIL_GUEST_POSITION_ROW, culls = o->cull_planes + !!o->vertex_kill_and;
   int id, result = 0;
   if (!shader) return 0;
   m = xe_dxil_shader_module(shader);
@@ -44,9 +45,9 @@ static int vertex_shader(const XeDxilGeometryOptions *o, XeDxilShaderBinary *bin
   for (i = 0; i < culls; i += 4) {
     j = culls - i; if (j > 4) j = 4;
     if (xe_dxil_shader_signature(shader, 1, "SV_CullDistance", i / 4, DXIL_SEM_CULL_DISTANCE,
-        DXIL_PROG_SEM_CULL_DISTANCE, 1 + (o->clip_planes + i) / 4, (o->clip_planes + i) & 3, j, 0) < 0) goto done;
+        DXIL_PROG_SEM_CULL_DISTANCE, XE_DXIL_GUEST_DISTANCE_ROW + (o->clip_planes + i) / 4, (o->clip_planes + i) & 3, j, 0) < 0) goto done;
   }
-  row = m->num_psv_outputs[0];
+  row = 0;
   for (i = 0; i < o->interpolators; ++i) if (xe_dxil_shader_signature(shader, 1, "TEXCOORD", i,
       DXIL_SEM_ARBITRARY, 0, row++, 0, 4, 0) < 0) goto done;
   if (o->point_size && xe_dxil_shader_signature(shader, 1, "TEXCOORD", o->interpolators,

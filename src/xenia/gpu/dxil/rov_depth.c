@@ -1,5 +1,6 @@
 /* Native depth-only EDRAM pixel shaders. MSVC C89; BSD license.
  * Layout, sample locations and depth/stencil rules follow Xenia's FSI path. */
+#include "stage_layout.h"
 #include "rov_depth.h"
 #include "edram_depth_stencil.h"
 #include "edram_format.h"
@@ -138,9 +139,9 @@ int xe_dxil_build_rov_depth(const XeDxilRovDepthOptions *o, XeDxilShaderBinary *
   r.shader = xe_dxil_shader_create(DXIL_PIXEL_SHADER); if (!r.shader) return 0;
   xe_dxil_alu_init(&r.alu, xe_dxil_shader_module(r.shader)); integer_type = dxil_module_get_int_type(r.alu.module, 32);
   if (xe_dxil_shader_signature(r.shader, 0, "SV_Position", 0, DXIL_SEM_POSITION, DXIL_PROG_SEM_POSITION,
-        0, 0, 4, DXIL_INTERP_LINEAR_NOPERSPECTIVE) != 0 ||
+        o->guest_linkage ? XE_DXIL_GUEST_POSITION_ROW : 0, 0, 4, DXIL_INTERP_LINEAR_NOPERSPECTIVE) != 0 ||
       xe_dxil_shader_signature_typed(r.shader, 0, "SV_IsFrontFace", 0, DXIL_SEM_IS_FRONT_FACE,
-        DXIL_PROG_SEM_IS_FRONTFACE, 1, 0, 1, DXIL_INTERP_CONSTANT, DXIL_COMP_TYPE_U32) != 1 ||
+        DXIL_PROG_SEM_IS_FRONTFACE, o->guest_linkage ? XE_DXIL_GUEST_FRONT_FACE_ROW : 1, 0, 1, DXIL_INTERP_CONSTANT, DXIL_COMP_TYPE_U32) != 1 ||
       xe_dxil_shader_ordered_buffer(r.shader, 0, 2) != 0 ||
       xe_dxil_shader_resource(r.shader, XE_DXIL_RESOURCE_UAV, DXIL_RESOURCE_KIND_RAW_BUFFER, 0, 1, 1, 0) != 1 ||
       xe_dxil_shader_resource(r.shader, XE_DXIL_RESOURCE_CBV, DXIL_RESOURCE_KIND_CBUFFER, 1, 0, 1, o->system_constants_bytes) != 0) goto done;

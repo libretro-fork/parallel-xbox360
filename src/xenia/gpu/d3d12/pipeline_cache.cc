@@ -127,6 +127,7 @@ bool PipelineCache::Initialize() {
   if (render_target_cache_.GetPath() !=
       RenderTargetCache::Path::kPixelShaderInterlock) {
     XeDxilDepthOnlyOptions options = {};
+    options.guest_linkage = 1;
     options.system_constants_bytes = sizeof(SpirvShaderTranslator::SystemConstants);
     options.counter_index_word = offsetof(SpirvShaderTranslator::SystemConstants,
                                           zpd_fsi_counter_index) / sizeof(uint32_t);
@@ -165,6 +166,10 @@ bool PipelineCache::Initialize() {
     options.depth_function_shift = SpirvShaderTranslator::kSysFlag_FSIDepthPassIfLess_Shift;
     if (!xe_dxil_build_rov_depth_set(&options, native_rov_depth_pixel_shaders_)) {
       XELOGE("Failed to generate native ROV depth-only pixel shaders");
+      return false;
+    }
+    options.guest_linkage = 1;
+    if (!xe_dxil_build_rov_depth_set(&options, native_guest_rov_depth_pixel_shaders_)) {
       return false;
     }
   }
@@ -212,6 +217,7 @@ void PipelineCache::Shutdown() {
 
   xe_dxil_depth_only_set_free(native_depth_only_pixel_shaders_);
   xe_dxil_rov_depth_set_free(native_rov_depth_pixel_shaders_);
+  xe_dxil_rov_depth_set_free(native_guest_rov_depth_pixel_shaders_);
 
   // Shut down the persistent shader / pipeline storage.
   ShutdownShaderStorage();
@@ -682,6 +688,16 @@ Shader::Translation* PipelineCache::EnsureGuestMesaSpirv(
                                  /*use_try_claim=*/false);
 }
 
+// Native compilation does not mark the SPIR-V translation as complete. Consult
+// its own cache before choosing an interpreter or dropping a cached VS draw.
+bool PipelineCache::IsGuestVertexReady(const Shader::Translation& translation) {
+  if (translation.is_translated()) return true;
+  std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
+  auto shader = native_vertex_dxil_cache_.find(translation.shader().ucode_data_hash());
+  if (shader == native_vertex_dxil_cache_.end()) return false;
+  auto binary = shader->second.find(translation.modification());
+  return binary != shader->second.end() && binary->second != nullptr;
+}
 const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
     const Shader& shader, uint64_t modification) {
   SpirvShaderTranslator::Modification mod(modification);
@@ -726,6 +742,64 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
       shader.cf_pair_index_bound() * 2), &xe_dxil_shader_binary_delete);
   std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
   auto& cache = native_vertex_dxil_cache_[shader.ucode_data_hash()];
+  return cache.try_emplace(modification, std::move(binary)).first->second.get();
+}
+const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
+    const Shader& shader, uint64_t modification) {
+  SpirvShaderTranslator::Modification mod(modification);
+  if (!shader.is_ucode_analyzed() || shader.memexport_eM_written() ||
+      shader.uses_texture_fetch_instruction_results() ||
+      render_target_cache_.GetPath() == RenderTargetCache::Path::kPixelShaderInterlock) return nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
+    auto& cache = native_pixel_dxil_cache_[shader.ucode_data_hash()];
+    auto found = cache.find(modification);
+    if (found != cache.end()) return found->second.get();
+  }
+  XeDxilGuestPixelOptions options = {};
+  const auto& constants = shader.constant_register_map();
+  options.program.register_count = std::max(shader.register_static_address_bound(),
+      uint32_t(mod.pixel.dynamic_addressable_register_count));
+  options.program.float_constant_count = constants.float_count;
+  options.program.float_dynamic_addressing = constants.float_dynamic_addressing;
+  options.program.float_bitmap = constants.float_bitmap;
+  options.interpolator_mask = mod.pixel.interpolator_mask;
+  options.centroid_mask = mod.pixel.interpolators_centroid;
+  options.color_mask = shader.writes_color_targets();
+  options.writes_depth = shader.writes_depth();
+  options.system_constants_bytes = sizeof(SpirvShaderTranslator::SystemConstants);
+  options.flags_word = offsetof(SpirvShaderTranslator::SystemConstants, flags) / 4;
+  options.alpha_reference_word = offsetof(SpirvShaderTranslator::SystemConstants, alpha_test_reference) / 4;
+  options.alpha_to_mask_word = offsetof(SpirvShaderTranslator::SystemConstants, alpha_to_mask) / 4;
+  options.color_bias_word = offsetof(SpirvShaderTranslator::SystemConstants, color_exp_bias) / 4;
+  options.blend_constant_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_blend_constant) / 4;
+  options.alpha_function_shift = SpirvShaderTranslator::kSysFlag_AlphaPassIfLess_Shift;
+  options.gamma_mask = SpirvShaderTranslator::kSysFlag_ConvertColor0ToGamma;
+  options.msaa_shift = SpirvShaderTranslator::kSysFlag_MsaaSamples_Shift;
+  options.depth_mode = uint32_t(mod.pixel.depth_stencil_mode);
+  options.blend_rgb_factor = uint32_t(mod.pixel.rt0_blend_rgb_factor_for_premult);
+  options.blend_alpha_factor = uint32_t(mod.pixel.rt0_blend_a_factor_for_premult);
+  options.param_gen = mod.pixel.param_gen_enable;
+  options.param_register = mod.pixel.param_gen_interpolator;
+  options.param_point = mod.pixel.param_gen_point;
+  options.scale_x = mod.pixel.resolution_scale_native ? 1 : render_target_cache_.draw_resolution_scale_x();
+  options.scale_y = mod.pixel.resolution_scale_native ? 1 : render_target_cache_.draw_resolution_scale_y();
+  options.native_2x = render_target_cache_.msaa_2x_supported();
+  options.precise_interpolation = precise_interpolation_supported() && !mod.pixel.param_gen_point;
+  options.polygon_mask = SpirvShaderTranslator::kSysFlag_PrimitivePolygonal;
+  options.line_mask = SpirvShaderTranslator::kSysFlag_PrimitiveLine;
+  options.front_scale_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_poly_offset_front_scale) / 4;
+  options.back_scale_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_poly_offset_back_scale) / 4;
+  options.front_offset_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_poly_offset_front_offset) / 4;
+  options.back_offset_word = offsetof(SpirvShaderTranslator::SystemConstants, edram_poly_offset_back_offset) / 4;
+  options.count_coverage = zpd_hybrid_supported_ && mod.pixel.zpd_total();
+  options.counter_word = offsetof(SpirvShaderTranslator::SystemConstants, zpd_fsi_counter_index) / 4;
+  options.counter_stride_bytes = XenosZPDReport::kCounterSizeBytes;
+  OwnedNativeDxil binary(xe_dxil_build_guest_pixel_owned(&options,
+      shader.ucode_dwords(), shader.ucode_dword_count(), shader.cf_pair_index_bound()*2),
+      &xe_dxil_shader_binary_delete);
+  std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
+  auto& cache = native_pixel_dxil_cache_[shader.ucode_data_hash()];
   return cache.try_emplace(modification, std::move(binary)).first->second.get();
 }
 const std::vector<uint8_t>* PipelineCache::ConvertGuestMesaSpirvToDxil(
@@ -1099,7 +1173,9 @@ bool PipelineCache::BuildMesaPipelineDxil(
       command_processor_.GetMesaRootSignature();
 
   if (pixel_translation != nullptr) {
-    Shader::Translation* pixel_spirv =
+    runtime_description.native_pixel_dxil = GetGuestNativePixelDxil(
+        pixel_translation->shader(), pixel_translation->modification());
+    Shader::Translation* pixel_spirv = runtime_description.native_pixel_dxil ? nullptr :
         TranslateGuestMesaSpirv(translator, *pixel_translation, use_try_claim);
     if (pixel_spirv) {
       runtime_description.mesa_pixel_dxil = ConvertGuestMesaSpirvToDxil(
@@ -1107,7 +1183,7 @@ bool PipelineCache::BuildMesaPipelineDxil(
           pixel_translation->modification(), pixel_spirv->translated_binary(),
           xenos::ShaderType::kPixel);
     }
-    if (!runtime_description.mesa_pixel_dxil) {
+    if (!runtime_description.mesa_pixel_dxil && !runtime_description.native_pixel_dxil) {
       return false;
     }
   }
@@ -1170,22 +1246,6 @@ bool PipelineCache::ConfigurePipeline(
   Shader::HostVertexShaderType host_vs_type =
       SpirvShaderTranslator::Modification(vertex_shader->modification())
           .vertex.host_vertex_shader_type;
-  // The ucode interpreter placeholder additionally defers the vertex shader:
-  // instead of translating it here it rasterizes with the interpreter VS while
-  // the creation thread builds both real shaders. Plain vertex shaders only
-  // (the interpreter does not tessellate).
-  bool make_interpreter = use_interpreter && use_placeholder &&
-                          host_vs_type == Shader::HostVertexShaderType::kVertex;
-  // A draw the interpreter can't stand in for whose VS isn't translated yet has
-  // no placeholder. With async_shader_skip_draws, defer both shaders to the
-  // creation thread and skip the draw until the real pipeline is ready, instead
-  // of translating the VS inline on the draw thread.
-  bool defer_without_placeholder = use_placeholder && !make_interpreter &&
-                                   !vertex_shader->is_translated() &&
-                                   cvars::async_shader_skip_draws;
-  // Both cases build both shaders on the creation thread (the interpreter
-  // behind a placeholder, the skip case behind nothing).
-  bool defer_both = make_interpreter || defer_without_placeholder;
   if (host_vs_type != Shader::HostVertexShaderType::kVertex &&
       !Shader::IsHostVertexShaderTypeDomain(host_vs_type)) {
     XELOGE(
@@ -1216,12 +1276,30 @@ bool PipelineCache::ConfigurePipeline(
   }
   PipelineDescription& description = runtime_description.description;
 
+  // The ucode interpreter placeholder additionally defers the vertex shader:
+  // instead of translating it here it rasterizes with the interpreter VS while
+  // the creation thread builds both real shaders. Plain vertex shaders only
+  // (the interpreter does not tessellate).
+  bool make_interpreter = use_interpreter && use_placeholder &&
+                          host_vs_type == Shader::HostVertexShaderType::kVertex &&
+                          description.geometry_shader == PipelineGeometryShader::kNone;
+  // A draw the interpreter can't stand in for whose VS isn't translated yet has
+  // no placeholder. With async_shader_skip_draws, defer both shaders to the
+  // creation thread and skip the draw until the real pipeline is ready, instead
+  // of translating the VS inline on the draw thread.
+  bool defer_without_placeholder = use_placeholder && !make_interpreter &&
+                                   cvars::async_shader_skip_draws &&
+                                   !IsGuestVertexReady(*vertex_shader);
+  // Both cases build both shaders on the creation thread (the interpreter
+  // behind a placeholder, the skip case behind nothing).
+  bool defer_both = make_interpreter || defer_without_placeholder;
+
   // The canonical SPIR-V modifications, also used to key the SpirvShader DXIL.
   uint64_t vertex_spirv_modification = 0;
   uint64_t pixel_spirv_modification = 0;
 
-  // Plain vertex shaders use native DXIL when supported; remaining vertex,
-  // domain and pixel paths use Mesa. Geometry is generated directly as DXIL.
+  // Native vertex and host-target pixel compilation is attempted first.
+  // Remaining paths use Mesa; geometry is generated directly as DXIL.
   // modification() is the canonical SPIR-V modification (computed by the
   // command processor). The guest shaders are translated with it directly.
   SpirvShaderTranslator::Modification vs_modification(
@@ -1329,7 +1407,7 @@ bool PipelineCache::ConfigurePipeline(
       runtime_description.mesa_vertex_dxil = vertex_dxil;
     }
     if (pixel_shader == nullptr) {
-      // Depth-only: CreateD3D12Pipeline supplies the Mesa FSI depth-only DXIL
+      // Depth-only: CreateD3D12Pipeline supplies native depth-only DXIL
       // (ROV path) or no pixel shader (host render target path). No pixel DXIL
       // translated here.
     } else if (use_async) {
@@ -1337,8 +1415,9 @@ bool PipelineCache::ConfigurePipeline(
       // a creation thread.
       runtime_description.mesa_pixel_translation = pixel_ps_translation;
     } else {
-      // Sync mode (no creation threads): translate the pixel SPIR-V here.
-      Shader::Translation* pixel_spirv = TranslateGuestMesaSpirv(
+      runtime_description.native_pixel_dxil = GetGuestNativePixelDxil(
+          pixel_shader->shader(), pixel_spirv_modification);
+      Shader::Translation* pixel_spirv = runtime_description.native_pixel_dxil ? nullptr : TranslateGuestMesaSpirv(
           guest_shader_cache_.translator(), *pixel_ps_translation,
           /*use_try_claim=*/false);
       if (pixel_spirv) {
@@ -1346,7 +1425,7 @@ bool PipelineCache::ConfigurePipeline(
             pixel_shader->shader().ucode_data_hash(), pixel_spirv_modification,
             pixel_spirv->translated_binary(), xenos::ShaderType::kPixel);
       }
-      if (!runtime_description.mesa_pixel_dxil) {
+      if (!runtime_description.mesa_pixel_dxil && !runtime_description.native_pixel_dxil) {
         XELOGE(
             "spirv_to_dxil: guest pixel shader {:016X} translation failed; "
             "skipping draw",
@@ -1986,8 +2065,7 @@ void PipelineCache::EnsurePipelineShadersTranslated(
 
   // Storage warm-up pipelines defer the entire DXIL build to here, off the main
   // thread: the SpirvShader translation objects were created on the main
-  // thread, and the ucode->SPIR-V->DXIL build + signing run on this creation
-  // thread. Identified by mesa_vertex_translation - the live draw path builds
+  // thread, and native generation or remaining Mesa compilation runs here. Identified by mesa_vertex_translation - the live draw path builds
   // the vertex DXIL synchronously (for the placeholder) and never sets it.
   if (desc.mesa_vertex_translation && !desc.mesa_vertex_dxil && !desc.native_vertex_dxil &&
       mesa_spirv_translator) {
@@ -1998,13 +2076,15 @@ void PipelineCache::EnsurePipelineShadersTranslated(
   }
 
   // Live async pipelines defer only the pixel shader (the vertex DXIL is built
-  // synchronously for the placeholder). Translate the guest pixel SPIR-V and
-  // convert it to DXIL here, off the main thread. The Mesa root signature set
+  // synchronously for the placeholder). Compile native pixel DXIL, or use the
+  // remaining SPIR-V/Mesa path here. The shared root signature set
   // in ConfigurePipeline is kept.
   if (pipeline->pending_pixel_shader != nullptr) {
-    if (desc.mesa_pixel_translation && !desc.mesa_pixel_dxil &&
+    if (desc.mesa_pixel_translation && !desc.mesa_pixel_dxil && !desc.native_pixel_dxil &&
         mesa_spirv_translator) {
-      Shader::Translation* pixel_spirv = TranslateGuestMesaSpirv(
+      desc.native_pixel_dxil = GetGuestNativePixelDxil(
+          desc.mesa_pixel_translation->shader(), desc.mesa_pixel_translation->modification());
+      Shader::Translation* pixel_spirv = desc.native_pixel_dxil ? nullptr : TranslateGuestMesaSpirv(
           *mesa_spirv_translator, *desc.mesa_pixel_translation, use_try_claim);
       if (pixel_spirv) {
         desc.mesa_pixel_dxil = ConvertGuestMesaSpirvToDxil(
@@ -2141,7 +2221,7 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
   // Pixel shader.
   auto use_rov_depth_only_pixel_shader = [&]() {
     const XeDxilShaderBinary& bytecode =
-        native_rov_depth_pixel_shaders_[size_t(description.guest_msaa_samples)]
+        (as_interpreter ? native_rov_depth_pixel_shaders_ : native_guest_rov_depth_pixel_shaders_)[size_t(description.guest_msaa_samples)]
                                       [description.counting_depth_only ? 1 : 0];
     if (!bytecode.data) {
       XELOGE("Native ROV depth-only shader is unavailable");
@@ -2168,8 +2248,10 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
       state_desc.PS.BytecodeLength = sizeof(shaders::placeholder_ps);
     }
   } else if (runtime_description.pixel_shader != nullptr) {
-    if (runtime_description.mesa_pixel_dxil) {
-      // Mesa pipeline: use the Mesa DXIL.
+    if (runtime_description.native_pixel_dxil) {
+      state_desc.PS.pShaderBytecode = runtime_description.native_pixel_dxil->data;
+      state_desc.PS.BytecodeLength = runtime_description.native_pixel_dxil->size;
+    } else if (runtime_description.mesa_pixel_dxil) {
       state_desc.PS.pShaderBytecode =
           runtime_description.mesa_pixel_dxil->data();
       state_desc.PS.BytecodeLength =

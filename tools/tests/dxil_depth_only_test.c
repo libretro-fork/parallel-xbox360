@@ -9,8 +9,10 @@ int main(int argc, char **argv) {
   FILE *file;
   int result;
   unsigned mode, count;
-  if (argc != 4) return 2;
+  if (argc != 4 && argc != 5) return 2;
   memset(&options, 0, sizeof(options)); memset(binaries, 0, sizeof(binaries));
+  options.guest_linkage = argc == 5 ? (unsigned)strtoul(argv[4],NULL,10) : 0;
+  if (options.guest_linkage > 1) return 2;
   options.depth_mode = (unsigned)strtoul(argv[2], NULL, 10);
   options.count_coverage = (unsigned)strtoul(argv[3], NULL, 10);
   if (options.depth_mode > 2 || options.count_coverage > 1) return 2;

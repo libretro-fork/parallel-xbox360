@@ -1,5 +1,6 @@
 /* Native host-depth pixel shaders. MSVC C89; BSD license.
  * Float24 conversion and counter layout follow Xenia's render-backend path. */
+#include "stage_layout.h"
 #include "depth_only.h"
 #include "edram_format.h"
 #include "guest_resources.h"
@@ -33,7 +34,7 @@ int xe_dxil_build_depth_only(const XeDxilDepthOnlyOptions *o, XeDxilShaderBinary
   m = xe_dxil_shader_module(shader); xe_dxil_alu_init(&alu, m);
   if (o->depth_mode) {
     if (xe_dxil_shader_signature(shader, 0, "SV_Position", 0, DXIL_SEM_POSITION,
-        DXIL_PROG_SEM_POSITION, 0, 0, 4, DXIL_INTERP_LINEAR_NOPERSPECTIVE) < 0 ||
+        DXIL_PROG_SEM_POSITION, o->guest_linkage ? XE_DXIL_GUEST_POSITION_ROW : 0, 0, 4, DXIL_INTERP_LINEAR_NOPERSPECTIVE) < 0 ||
         !xe_dxil_shader_sample_frequency(shader)) goto finish;
     output = xe_dxil_shader_signature(shader, 1, o->depth_mode == 1 ? "SV_DepthLessEqual" : "SV_Depth", 0,
       o->depth_mode == 1 ? DXIL_SEM_DEPTH_LE : DXIL_SEM_DEPTH,

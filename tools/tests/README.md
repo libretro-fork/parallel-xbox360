@@ -358,3 +358,40 @@ kill-enabled configurations. Stream output is compared against independent CPU
 position, clip/cull and attribute calculations, including sparse raw exports
 0/3/15 densely packed into TEXCOORD0/1/2. Six runs also pass through the MSVC
 harness. These are GPU execution fixtures, not game-title compatibility tests.
+
+`make check-dxil-guest-pixel DXIL_VALIDATOR=/path/to/dxv` builds 476 complete
+pixel fixtures and their vertex companions. All seven host depth modes are
+combined with explicit depth exports, generated parameters, centroid/precise
+interpolation, sparse interpolators, native 2x sample mapping, conditional RT0
+exports and all supported source blend-premultiplication factors.
+
+Build the C89 `dxil_guest_pixel_runtime_test.c` harness with the Windows settings
+above, linking D3D12 and DXGI (plus dxguid with GCC). Run `<exe> <pixel.dxil>
+<vertex.dxil> <mode 0..475> <scenario 0..39> [guest-msaa 0..2]`. A fixture's `.vs`
+companion is a simple varying producer; `.guest.vs` executes real guest vertex
+microcode, including vertex fetch and ALU work. Point-parameter modes 84..111
+use the simple producer; actual primitive-expansion coordinates have their own
+geometry tests. The harness aliases POSITION/TEXCOORD input declarations onto
+the same vertex bytes to accept native and remaining Mesa vertex fixtures.
+
+Modes use groups of 28: seven depth modes, with/without pixel parameters and
+with/without explicit depth exports. Groups 0..6 select the base, centroid,
+barycentric, point-coordinate, sparse-interpolator, native-2x and conditional-RT0
+interfaces. Groups 7..16 pair the ten supported RGB/alpha premultiplication
+factors. Scenarios 0..7 select normal, failed-alpha, ALU-kill, gamma, exponent
+bias, alpha-to-mask, disabled-counter and nonzero-counter-slot execution.
+Scenarios 8..39 check every alpha comparison function with equal, NaN, greater
+and less inputs. NaN not-equal and always pass; skipped RT0 exports bypass its
+alpha tests. Resolved MSAA colors use a small floating tolerance; the NaN alpha
+resolve lane is unspecified and excluded, while other colors and exact query
+counts still verify the comparison result. Single-sample depth words and query
+counters are checked exactly.
+
+The 6,608-case matrix covers all base interfaces, native/emulated 2x and 4x MSAA,
+conditional exports, representative blend/depth combinations and alpha cases.
+The fixed guest-stage ABI uses TEXCOORD rows 0..16, position row 17, packed
+clip/cull rows 18..19 and generated front-face row 20. Signature tables sort by
+hardware register while preserving metadata name/declaration order. Mixed
+native/Mesa VS/PS and Mesa VS/native GS checks cover independent compilation,
+including six clip planes plus a cull distance. Native shader model 6.1 adds
+barycentrics and attributeAtVertex without an LLVM compiler dependency.

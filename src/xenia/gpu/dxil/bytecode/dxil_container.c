@@ -137,6 +137,17 @@ collect_semantic_names(unsigned num_records,
    return buf_offset + buf->length;
 }
 
+static int signature_order(const void *left, const void *right) {
+   const struct dxil_signature_record *a = *(const struct dxil_signature_record *const *)left;
+   const struct dxil_signature_record *b = *(const struct dxil_signature_record *const *)right;
+   if (a->elements[0].stream != b->elements[0].stream)
+      return a->elements[0].stream < b->elements[0].stream ? -1 : 1;
+   if (a->elements[0].reg != b->elements[0].reg)
+      return a->elements[0].reg < b->elements[0].reg ? -1 : 1;
+   /* Preserve declaration order for packed components and special registers. */
+   if (a != b) return a < b ? -1 : 1;
+   return 0;
+}
 bool
 dxil_container_add_io_signature(struct dxil_container *c,
                                 enum dxil_part_fourcc part,
@@ -144,6 +155,10 @@ dxil_container_add_io_signature(struct dxil_container *c,
                                 struct dxil_signature_record *io_data,
                                 bool validator_7)
 {
+   const struct dxil_signature_record *ordered[32];
+   unsigned ordered_index;
+   if (num_records > 32) return false;
+
    struct {
       uint32_t param_count;
       uint32_t param_offset;
@@ -168,6 +183,10 @@ dxil_container_add_io_signature(struct dxil_container *c,
    uint32_t last_offset = collect_semantic_names(num_records, io_data,
                                                  names, fixed_size,
                                                  validator_7);
+   for (ordered_index = 0; ordered_index < num_records; ++ordered_index)
+      ordered[ordered_index] = &io_data[ordered_index];
+   qsort(ordered, num_records, sizeof(*ordered), signature_order);
+
 
 
    if (!add_part_header(c, part, last_offset) ||
@@ -178,9 +197,9 @@ dxil_container_add_io_signature(struct dxil_container *c,
 
    /* write all parts */
    for (unsigned i = 0; i < num_records; ++i)
-      for (unsigned j = 0; j < io_data[i].num_elements; ++j) {
-         if (!blob_write_bytes(&c->parts, &io_data[i].elements[j],
-                              sizeof(io_data[i].elements[j]))) {
+      for (unsigned j = 0; j < ordered[i]->num_elements; ++j) {
+         if (!blob_write_bytes(&c->parts, &ordered[i]->elements[j],
+                              sizeof(ordered[i]->elements[j]))) {
             retval = false;
             goto cleanup;
          }
@@ -342,7 +361,7 @@ dxil_container_add_module(struct dxil_container *c,
    assert(size % sizeof(uint32_t) == 0);
    uint32_t uint32_size = size / sizeof(uint32_t);
    uint32_t magic = 0x4C495844;
-   uint32_t dxil_version = 1 << 8; // I have no idea...
+   uint32_t dxil_version = (1u << 8) | m->minor_version;
    uint32_t bitcode_offset = 16;
    uint32_t bitcode_size = m->buf.blob.size;
 

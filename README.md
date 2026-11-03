@@ -42,15 +42,18 @@ occlusion counting, use native DXIL containers without a temporary bytecode
 copy. Depth-only ROV shaders also use native DXIL, with ordered EDRAM access
 and native depth/stencil tests. Plain guest vertex shaders without texture
 fetch results, memory exports or ALU kill instructions also generate native
-DXIL, including position conversion and clip/cull outputs. Textured and
-memory-export vertex shaders, pixel shaders and tessellation still use Mesa
-and its Meson/Python build while their native replacements are implemented.
+DXIL, including position conversion and clip/cull outputs. Host render-target
+guest pixel shaders without texture results or memory exports also compile
+directly, including pixel parameters, barycentric interpolation, alpha tests,
+coverage, gamma/exponent adjustment, blend premultiplication and depth modes.
+Textured and memory-export shaders, ROV guest color shaders and tessellation
+still use Mesa and its Meson/Python build while their replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in
 [`tools/tests/README.md`](tools/tests/README.md); whole-shader integration
 is still in progress. The native program layer joins raw control flow, ALU and
-fetch emitters with bounded register/constant storage. The plain vertex adapter
-is connected to live draws and shader-cache warm-up, retaining generated
+fetch emitters with bounded register/constant storage. The vertex and host-target
+pixel adapters connect to live draws and shader-cache warm-up, retaining generated
 containers directly without a temporary bytecode-vector copy.
 
 ```sh

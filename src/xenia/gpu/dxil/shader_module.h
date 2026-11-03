@@ -34,6 +34,8 @@ int xe_dxil_shader_signature_typed(XeDxilShaderModule *shader, unsigned directio
                                      unsigned row, unsigned column, unsigned columns,
                                      unsigned interpolation, unsigned component_type);
 int xe_dxil_shader_sample_frequency(XeDxilShaderModule *shader);
+/* Perspective barycentrics and attributeAtVertex require shader model 6.1. */
+int xe_dxil_shader_barycentrics(XeDxilShaderModule *shader);
 /* Resource class: SRV=0, UAV=1, CBV=2, sampler=3. Kind values follow DXIL.
  * Returns a class-local resource ID, or -1. count must be nonzero; UINT32_MAX
  * declares an unbounded array. CBVs additionally specify their byte size. */

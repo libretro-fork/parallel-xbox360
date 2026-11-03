@@ -1,6 +1,7 @@
 /* Direct DXIL point, rectangle, quad and line expansion. MSVC C89.
  * Guest primitive rules follow Xenia's SPIR-V geometry generator.
  * Copyright 2026 Ben Vanik and contributors. BSD license, see LICENSE. */
+#include "stage_layout.h"
 #include "guest_geometry.h"
 #include "guest_resources.h"
 #include <dxil_module.h>
@@ -70,7 +71,7 @@ static int return_if(Geometry *g, XeDxilValue condition) {
 }
 static int signature(Geometry *g, unsigned direction, const char *name, unsigned index,
                         unsigned kind, unsigned system, unsigned columns, unsigned *id) {
-  unsigned row = direction ? g->alu.module->num_psv_outputs[0] : g->alu.module->num_psv_inputs;
+  unsigned row = kind == DXIL_SEM_POSITION ? XE_DXIL_GUEST_POSITION_ROW : kind == DXIL_SEM_CLIP_DISTANCE ? XE_DXIL_GUEST_DISTANCE_ROW+index : index;
   int result = xe_dxil_shader_signature(g->shader, direction, name, index, kind, system, row, 0, columns, 0);
   if (result < 0) return 0;
   *id = (unsigned)result;
@@ -118,7 +119,7 @@ int xe_dxil_build_geometry(const XeDxilGeometryOptions *o, XeDxilShaderBinary *b
   for (i = 0; i < culls; i += 4) {
     k = culls - i; if (k > 4) k = 4;
     id = xe_dxil_shader_signature(g.shader, 0, "SV_CullDistance", i / 4, DXIL_SEM_CULL_DISTANCE,
-      DXIL_PROG_SEM_CULL_DISTANCE, 1 + (o->clip_planes + i) / 4, (o->clip_planes + i) & 3, k, 0);
+      DXIL_PROG_SEM_CULL_DISTANCE, XE_DXIL_GUEST_DISTANCE_ROW + (o->clip_planes + i) / 4, (o->clip_planes + i) & 3, k, 0);
     if (id < 0) goto done;
     g.input_cull[i / 4] = (unsigned)id;
   }

@@ -3,7 +3,7 @@
 #define XE_GPU_DXIL_DEPTH_ONLY_H
 #include "shader_module.h"
 typedef struct XeDxilDepthOnlyOptions {
-  unsigned depth_mode; /* 0: unchanged, 1: float24 truncation, 2: rounding. */
+  unsigned depth_mode, guest_linkage; /* 0: unchanged, 1: float24 truncation, 2: rounding. */
   unsigned count_coverage;
   unsigned system_constants_bytes, counter_index_word, counter_stride_bytes;
 } XeDxilDepthOnlyOptions;

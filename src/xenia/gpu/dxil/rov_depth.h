@@ -4,7 +4,7 @@
 #include "shader_module.h"
 typedef struct XeDxilRovDepthOptions {
   unsigned msaa, scale_x, scale_y, full_counters, survey;
-  unsigned system_constants_bytes;
+  unsigned system_constants_bytes, guest_linkage;
   unsigned flags_word, pitch_word, depth_base_word, counter_word;
   unsigned front_scale_word, back_scale_word, front_offset_word, back_offset_word;
   unsigned front_masks_word, back_masks_word, front_ops_word, back_ops_word;

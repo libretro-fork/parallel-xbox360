@@ -2785,7 +2785,7 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
   // subroutines / memexport / loops, which the interpreter core handles.
   bool use_interpreter =
       cvars::async_shader_vs_interpreter &&
-      !vertex_shader_translation->is_translated() &&
+      !pipeline_cache_->IsGuestVertexReady(*vertex_shader_translation) &&
       active_vertex_shader_ucode_address() != 0 &&
       primitive_processing_result.host_vertex_shader_type ==
           Shader::HostVertexShaderType::kVertex &&

@@ -21,6 +21,7 @@
  * IN THE SOFTWARE.
  */
 
+#include "../../../../../src/xenia/gpu/dxil/stage_layout.h"
 #include "dxil_signature.h"
 #include "dxil_enums.h"
 #include "dxil_module.h"
@@ -183,6 +184,26 @@ get_additional_semantic_info(nir_shader *s, nir_variable *var, struct semantic_i
       info->cols = MIN2(glsl_get_component_slots(type), 4);
    }
 
+   /* Guest stages compile independently during native DXIL migration. Keep
+    * semantic identities and hardware rows stable when NIR removes varyings.
+    * Vertex attributes and tessellation patch constants use their own ABI. */
+   if (!(s->info.stage == MESA_SHADER_VERTEX &&
+         (var->data.mode & nir_var_shader_in)) && !var->data.patch) {
+      if (info->kind == DXIL_SEM_ARBITRARY && var->data.location >= VARYING_SLOT_VAR0) {
+         info->index = var->data.location - VARYING_SLOT_VAR0;
+         info->start_row = info->index;
+      } else if (info->kind == DXIL_SEM_POSITION) {
+         info->start_row = XE_DXIL_GUEST_POSITION_ROW;
+      } else if (info->kind == DXIL_SEM_IS_FRONT_FACE) {
+         info->start_row = XE_DXIL_GUEST_FRONT_FACE_ROW;
+      } else if (info->kind == DXIL_SEM_CLIP_DISTANCE || info->kind == DXIL_SEM_CULL_DISTANCE) {
+         info->start_row = XE_DXIL_GUEST_DISTANCE_ROW +
+            (var->data.location - VARYING_SLOT_CLIP_DIST0);
+         if (info->kind == DXIL_SEM_CULL_DISTANCE)
+            info->index = ((var->data.location - VARYING_SLOT_CLIP_DIST0)*4 +
+                           var->data.location_frac - clip_size)/4;
+      }
+   }
    return next_row;
 }
 

@@ -1,5 +1,6 @@
 /* Native guest vertex stage. MSVC C89; BSD license.
  * Guest index, viewport, clip and kill rules follow Xenia's vertex epilogue. */
+#include "stage_layout.h"
 #include "guest_vertex_stage.h"
 #include <dxil_module.h>
 #include <dxil_function.h>
@@ -60,7 +61,7 @@ static int distance_signature(Vertex *v, unsigned kind, unsigned system, const c
   for (i = 0; i < count; i += 4) {
     n = count-i; if (n > 4) n = 4;
     ids[i/4] = xe_dxil_shader_signature(v->shader,1,name,i/4,kind,system,
-      1+(offset+i)/4,(offset+i)%4,n,0);
+      XE_DXIL_GUEST_DISTANCE_ROW+(offset+i)/4,(offset+i)%4,n,0);
     if (ids[i/4] < 0) return 0;
   }
   return 1;
@@ -87,11 +88,11 @@ int xe_dxil_build_guest_vertex(const XeDxilGuestVertexOptions *o, const uint32_t
   xe_dxil_alu_init(&v.alu,xe_dxil_shader_module(v.shader));
   if (xe_dxil_shader_signature_typed(v.shader,0,"SV_VertexID",0,DXIL_SEM_VERTEX_ID,DXIL_PROG_SEM_VERTEX_ID,
         0,0,1,0,DXIL_COMP_TYPE_U32) != 0) goto done;
-  position_id = xe_dxil_shader_signature(v.shader,1,"SV_Position",0,DXIL_SEM_POSITION,DXIL_PROG_SEM_POSITION,0,0,4,0);
+  position_id = xe_dxil_shader_signature(v.shader,1,"SV_Position",0,DXIL_SEM_POSITION,DXIL_PROG_SEM_POSITION,XE_DXIL_GUEST_POSITION_ROW,0,4,0);
   culls = o->cull_planes+(o->vertex_kill && o->vertex_kill_and ? 1 : 0);
   if (position_id < 0 || !distance_signature(&v,DXIL_SEM_CLIP_DISTANCE,DXIL_PROG_SEM_CLIP_DISTANCE,"SV_ClipDistance",o->clip_planes,0,clip_ids) ||
       !distance_signature(&v,DXIL_SEM_CULL_DISTANCE,DXIL_PROG_SEM_CULL_DISTANCE,"SV_CullDistance",culls,o->clip_planes,cull_ids)) goto done;
-  row = 1+(o->clip_planes+culls+3)/4;
+  row = 0;
   for (i = 0; i < interpolator_count; ++i) {
     interpolators[i] = xe_dxil_shader_signature(v.shader,1,"TEXCOORD",i,DXIL_SEM_ARBITRARY,0,row++,0,4,0);
     if (interpolators[i] < 0) goto done;
