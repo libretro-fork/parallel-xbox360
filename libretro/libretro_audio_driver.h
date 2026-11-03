@@ -10,10 +10,10 @@
 #ifndef LIBRETRO_AUDIO_DRIVER_H
 #define LIBRETRO_AUDIO_DRIVER_H
 
-#include <atomic>
+#include "core_audio_queue.h"
+#include <memory>
+#include <rthreads/rthreads.h>
 #include <cstring>
-#include <mutex>
-#include <vector>
 
 #include "xenia/apu/audio_driver.h"
 #include "xenia/apu/audio_system.h"
@@ -21,22 +21,6 @@
 namespace xe {
 namespace apu {
 namespace libretro {
-
-// Ring buffer: Xenia float samples, interleaved in the output's channels.
-class LibretroAudioRingBuffer {
- public:
-  static constexpr size_t kCapacity = 48000 * 6;  // ~1 s stereo, ~170 ms 5.1
-
-  void Push(const float* data, size_t count);
-  size_t Pop(float* out, size_t max_samples);
-  size_t Available() const;
-  void Clear();
-
- private:
-  float buffer_[kCapacity] = {};
-  std::atomic<size_t> write_pos_{0};
-  std::atomic<size_t> read_pos_{0};
-};
 
 class LibretroAudioSystem;
 
@@ -68,7 +52,7 @@ class LibretroAudioDriver : public AudioDriver {
   size_t MixInto(float* mix, size_t samples);
 
   // The audio system is going away before this driver.
-  void Detach() { system_ = nullptr; }
+  void Detach() { Shutdown(); system_ = nullptr; }
 
  private:
   void Resample(const float* in, size_t frames);
@@ -81,9 +65,8 @@ class LibretroAudioDriver : public AudioDriver {
   uint32_t out_channels_ = 2;
   uint32_t channel_samples_ = kChannelSamplesDefault;
   bool need_format_conversion_ = true;
-  LibretroAudioRingBuffer ring_;
-  std::atomic<float> volume_{1.0f};
-  std::atomic<bool> paused_{false};
+  std::unique_ptr<xe_audio_queue, decltype(&xe_audio_queue_free)> ring_{
+      nullptr, &xe_audio_queue_free};
   // Linear resampling to 48 kHz: position between the last two input frames.
   double resample_pos_ = 0.0;
   float last_[6] = {};
@@ -115,7 +98,9 @@ class LibretroAudioSystem : public AudioSystem {
   // at most `max_samples` samples; returns how many it wrote.
   size_t Mix(float* out, size_t max_samples);
 
-  void Register(LibretroAudioDriver* driver);
+  bool Register(LibretroAudioDriver* driver);
+  void StopWorker() override;
+  void CancelPendingOutput() override;
   void Unregister(LibretroAudioDriver* driver);
 
  protected:
@@ -123,9 +108,12 @@ class LibretroAudioSystem : public AudioSystem {
                          AudioDriver** out_driver) override;
 
  private:
-  std::mutex drivers_mutex_;
-  std::vector<LibretroAudioDriver*> drivers_;
-  static inline std::atomic<uint32_t> output_channels_{2};
+  slock_t* drivers_lock_ = nullptr;
+  bool output_stopping_ = false;  // Protected by drivers_lock_.
+  LibretroAudioDriver* drivers_[16] = {};
+  size_t driver_count_ = 0;
+  // Configured before creating audio workers; immutable during their lifetime.
+  static inline uint32_t output_channels_ = 2;
 };
 
 }  // namespace libretro

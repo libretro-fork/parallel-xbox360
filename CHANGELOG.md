@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Replaced the audio driver's overwrite-prone C++ ring with a C89 libretro-common SPSC queue. Unread samples remain consumer-owned, complete channel frames survive plain-ring wraps, and a logical 64 ms bound replaces the oversized buffer. Consumption notifications replace the 1 ms sleep loop; teardown cancels pending writes before existing joins. Mixing uses borrowed queue spans, compatible float submissions skip staging, and native-rate audio avoids the resampler call. Driver controls use common atomics; the bounded common-lock registry and remaining host-deadline/resampling paths still need further work. Media-player ownership is released before its audio system during shutdown.
+
 - Fixed avoidable precision loss in legacy int16 audio output: use the frontend's 32768 normalization scale and nearest-even rounding instead of 32767 scaling with truncation. All 65,536 int16 values now survive a normalized-float round trip exactly; float-capable frontends retain native float output. Guest-visible XMA formats are unchanged.
 
 - Audio now negotiates native float stereo or multichannel output at load, retaining classic int16 and per-sample fallback. The mixer writes into the final float buffer instead of its own intermediate vector; float-capable frontends avoid int16 quantization and widening. Float-only 5.1 interfaces are accepted, the output format stays fixed until unload, and negotiated callbacks are retired there. C89 boundary conversion handles nonfinite guest samples explicitly. Producer scheduling, resampling and queue ownership changes remain in progress.

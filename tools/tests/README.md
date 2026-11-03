@@ -2,6 +2,15 @@
 
 ## Owned libretro-common primitives and codecs
 
+`core_audio_queue_test.c` checks 200,000 frames each of stereo and 5.1 concurrent
+production/consumption, exact additive sample order, whole-frame publication,
+physical wraps, destination bounds, the 64 ms limit, readiness wakeup and stop
+while full. Build it with `core_audio_queue.c` and the common SPSC, eventcount,
+thread, feature and time sources. Test both normal and `XE_AUDIO_QUEUE_PLAIN`
+builds to force the non-mirrored wrap path. These are C89 component tests;
+failed-content core lifecycle tests do not substitute for a loaded-game audio
+or media-player teardown test.
+
 `core_audio_samples_test.c` checks final float normalization and legacy integer
 conversion, including nonfinite inputs and destination bounds. The test exhausts
 all 65,536 int16 round trips and checks low-amplitude nearest-even ties,

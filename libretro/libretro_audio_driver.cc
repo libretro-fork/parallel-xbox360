@@ -6,58 +6,12 @@
 
 #include "libretro_audio_driver.h"
 
-#include <algorithm>
-#include <chrono>
-#include <cmath>
-#include <thread>
 
 #include "xenia/apu/conversion.h"
 
 namespace xe {
 namespace apu {
 namespace libretro {
-
-// ---- Ring buffer ----------------------------------------------------------
-
-void LibretroAudioRingBuffer::Push(const float* data, size_t count) {
-  size_t wp = write_pos_.load(std::memory_order_relaxed);
-  size_t rp = read_pos_.load(std::memory_order_acquire);
-
-  // Drop oldest samples if buffer would overflow.
-  size_t used = wp - rp;
-  if (used + count > kCapacity) {
-    read_pos_.store(wp + count - kCapacity, std::memory_order_release);
-  }
-
-  for (size_t i = 0; i < count; ++i) {
-    buffer_[(wp + i) % kCapacity] = data[i];
-  }
-  write_pos_.store(wp + count, std::memory_order_release);
-}
-
-size_t LibretroAudioRingBuffer::Pop(float* out, size_t max_samples) {
-  size_t rp = read_pos_.load(std::memory_order_relaxed);
-  size_t wp = write_pos_.load(std::memory_order_acquire);
-  size_t avail = std::min(wp - rp, kCapacity);
-  size_t to_read = std::min(avail, max_samples);
-
-  for (size_t i = 0; i < to_read; ++i) {
-    out[i] = buffer_[(rp + i) % kCapacity];
-  }
-  read_pos_.store(rp + to_read, std::memory_order_release);
-  return to_read;
-}
-
-size_t LibretroAudioRingBuffer::Available() const {
-  size_t wp = write_pos_.load(std::memory_order_acquire);
-  size_t rp = read_pos_.load(std::memory_order_relaxed);
-  return wp - rp;
-}
-
-void LibretroAudioRingBuffer::Clear() {
-  read_pos_.store(0, std::memory_order_relaxed);
-  write_pos_.store(0, std::memory_order_relaxed);
-}
 
 // ---- LibretroAudioDriver --------------------------------------------------
 
@@ -73,24 +27,26 @@ LibretroAudioDriver::LibretroAudioDriver(LibretroAudioSystem* system,
       // 768 of 2, the same 1536 floats either way.
       channel_samples_(channels == 2 ? 768 : kChannelSamplesDefault),
       out_channels_(LibretroAudioSystem::output_channels()),
-      need_format_conversion_(need_format_conversion) {
-  if (system_) system_->Register(this);
-}
+      need_format_conversion_(need_format_conversion) {}
 
 LibretroAudioDriver::~LibretroAudioDriver() {
   if (system_) system_->Unregister(this);
 }
 
-bool LibretroAudioDriver::Initialize() { return true; }
+bool LibretroAudioDriver::Initialize() {
+  if (ring_) return true;
+  ring_.reset(xe_audio_queue_new(out_channels_));
+  if (!ring_ || (system_ && !system_->Register(this))) {
+    ring_.reset();
+    return false;
+  }
+  return true;
+}
 
-void LibretroAudioDriver::Shutdown() {}
+void LibretroAudioDriver::Shutdown() { xe_audio_queue_stop(ring_.get()); }
 
 void LibretroAudioDriver::Resample(const float* in, size_t frames) {
   const size_t ch = out_channels_;
-  if (frequency_ == 48000) {
-    ring_.Push(in, frames * ch);
-    return;
-  }
   // Linear interpolation between consecutive input frames; last_ carries the
   // previous frame over from the last call so frames join without a click.
   const double step = double(frequency_) / 48000.0;
@@ -105,23 +61,24 @@ void LibretroAudioDriver::Resample(const float* in, size_t frames) {
       out[n++] = a[c] + (b[c] - a[c]) * t;
     }
     if (n == sizeof(out) / sizeof(out[0])) {
-      ring_.Push(out, n);
+      xe_audio_queue_write(ring_.get(), out, n);
       n = 0;
     }
     resample_pos_ += step;
   }
   resample_pos_ -= double(frames);
   std::memcpy(last_, &in[(frames - 1) * ch], ch * sizeof(float));
-  if (n) ring_.Push(out, n);
+  if (n) xe_audio_queue_write(ring_.get(), out, n);
 }
 
 void LibretroAudioDriver::SubmitFrame(float* samples) {
-  if (!paused_) {
+  if (!xe_audio_queue_paused(ring_.get())) {
     // Up to 768 frames (the media player's stereo) in up to 6 channels.
     float out[768 * 6];
     const size_t frames = channel_samples_;
     const size_t out_ch = out_channels_;
     float* stereo = out;
+    const float* prepared = out;
     if (out_ch == 6) {
       // 5.1 as the frontend takes it, FL FR C LFE SL SR interleaved - the
       // order the console's channels already are in.
@@ -129,7 +86,7 @@ void LibretroAudioDriver::SubmitFrame(float* samples) {
         conversion::sequential_6_BE_to_interleaved_6_LE(out, samples,
                                                         kChannelSamplesDefault);
       } else if (channels_ == 6) {
-        std::memcpy(out, samples, frames * 6 * sizeof(float));
+        prepared = samples;
       } else {
         // Stereo music on the front pair.
         for (size_t i = 0; i < frames; ++i) {
@@ -151,28 +108,21 @@ void LibretroAudioDriver::SubmitFrame(float* samples) {
         stereo[i * 2 + 1] = f[1] + c + f[5] * 0.7071f;
       }
     } else {
-      std::memcpy(stereo, samples, frames * 2 * sizeof(float));
+      prepared = samples;
     }
 
-    const float volume = volume_.load(std::memory_order_relaxed);
+    const float volume = xe_audio_queue_get_volume(ring_.get());
     if (volume != 1.0f) {
       for (size_t i = 0; i < frames * out_ch; ++i) {
-        out[i] *= volume;
+        out[i] = prepared[i] * volume;
       }
+      prepared = out;
     }
 
-    // Wait while about 64 ms is queued: what is queued is latency, and the
-    // frontend takes one frame's worth a call, so this is what paces the
-    // game's audio. A second is only a safety net for a frontend that stops
-    // calling.
-    const size_t kThreshold = 48000 * out_ch * 64 / 1000;
-    int wait_loops = 0;
-    while (ring_.Available() > kThreshold) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-      if (++wait_loops > 1000) break;
-    }
-
-    Resample(out, frames);
+    if (frequency_ == 48000)
+      xe_audio_queue_write(ring_.get(), prepared, frames * out_ch);
+    else
+      Resample(prepared, frames);
   }
 
   // Release the semaphore so Xenia's audio worker can continue
@@ -182,59 +132,85 @@ void LibretroAudioDriver::SubmitFrame(float* samples) {
 }
 
 size_t LibretroAudioDriver::MixInto(float* mix, size_t samples) {
-  float buffer[2048];
-  size_t total = 0;
-  while (total < samples) {
-    const size_t want = std::min(samples - total, sizeof(buffer) / sizeof(buffer[0]));
-    const size_t got = ring_.Pop(buffer, want);
-    for (size_t i = 0; i < got; ++i) {
-      mix[total + i] += buffer[i];
-    }
-    total += got;
-    if (got < want) break;
-  }
-  return total;
+  return xe_audio_queue_mix(ring_.get(), mix, samples);
 }
 
-void LibretroAudioDriver::Pause() { paused_ = true; }
-void LibretroAudioDriver::Resume() { paused_ = false; }
-void LibretroAudioDriver::SetVolume(float volume) { volume_ = volume; }
+void LibretroAudioDriver::Pause() { xe_audio_queue_pause(ring_.get(), 1); }
+void LibretroAudioDriver::Resume() { xe_audio_queue_pause(ring_.get(), 0); }
+void LibretroAudioDriver::SetVolume(float volume) { xe_audio_queue_volume(ring_.get(), volume); }
 
 // ---- LibretroAudioSystem --------------------------------------------------
 
 LibretroAudioSystem::LibretroAudioSystem(cpu::Processor* processor)
-    : AudioSystem(processor) {}
+    : AudioSystem(processor), drivers_lock_(slock_new()) {}
 
-// Emulator::Shutdown frees the audio system before the media player, whose
-// driver would then unregister from a freed system: drivers still registered
-// are let go of here.
+// Normal shutdown releases the media player first. Detach independent drivers
+// retained by a partial setup before releasing their registry.
 LibretroAudioSystem::~LibretroAudioSystem() {
-  std::lock_guard<std::mutex> lock(drivers_mutex_);
-  for (LibretroAudioDriver* driver : drivers_) {
-    driver->Detach();
-  }
-  drivers_.clear();
+  size_t i;
+  if (!drivers_lock_) return;
+  slock_lock(drivers_lock_);
+  for (i = 0; i < driver_count_; ++i) drivers_[i]->Detach();
+  driver_count_ = 0;
+  slock_unlock(drivers_lock_);
+  slock_free(drivers_lock_);
 }
 
-void LibretroAudioSystem::Register(LibretroAudioDriver* driver) {
-  std::lock_guard<std::mutex> lock(drivers_mutex_);
-  drivers_.push_back(driver);
+bool LibretroAudioSystem::Register(LibretroAudioDriver* driver) {
+  if (!drivers_lock_) return false;
+  slock_lock(drivers_lock_);
+  if (output_stopping_ || driver_count_ == sizeof(drivers_) / sizeof(drivers_[0])) {
+    slock_unlock(drivers_lock_);
+    return false;
+  }
+  drivers_[driver_count_++] = driver;
+  slock_unlock(drivers_lock_);
+  return true;
 }
 
 void LibretroAudioSystem::Unregister(LibretroAudioDriver* driver) {
-  std::lock_guard<std::mutex> lock(drivers_mutex_);
-  drivers_.erase(std::remove(drivers_.begin(), drivers_.end(), driver),
-                 drivers_.end());
+  size_t i, j;
+  if (!drivers_lock_) return;
+  slock_lock(drivers_lock_);
+  for (i = 0; i < driver_count_; ++i) {
+    if (drivers_[i] != driver) continue;
+    for (j = i + 1; j < driver_count_; ++j) drivers_[j - 1] = drivers_[j];
+    --driver_count_;
+    break;
+  }
+  slock_unlock(drivers_lock_);
 }
 
 size_t LibretroAudioSystem::Mix(float* out, size_t max_samples) {
-  std::lock_guard<std::mutex> lock(drivers_mutex_);
-  std::memset(out, 0, max_samples * sizeof(*out));
-  size_t longest = 0;
-  for (LibretroAudioDriver* driver : drivers_) {
-    longest = std::max(longest, driver->MixInto(out, max_samples));
+  size_t longest = 0, i, count;
+  if (!drivers_lock_) {
+    std::memset(out, 0, max_samples * sizeof(*out));
+    return 0;
   }
+  slock_lock(drivers_lock_);
+  std::memset(out, 0, max_samples * sizeof(*out));
+  for (i = 0; i < driver_count_; ++i) {
+    count = drivers_[i]->MixInto(out, max_samples);
+    if (count > longest) longest = count;
+  }
+  slock_unlock(drivers_lock_);
   return longest;
+}
+
+void LibretroAudioSystem::StopWorker() {
+  // Cancel frontend-dependent writes before upstream joins the audio worker.
+  CancelPendingOutput();
+  AudioSystem::StopWorker();
+}
+
+void LibretroAudioSystem::CancelPendingOutput() {
+  size_t i;
+  if (drivers_lock_) {
+    slock_lock(drivers_lock_);
+    output_stopping_ = true;
+    for (i = 0; i < driver_count_; ++i) drivers_[i]->Shutdown();
+    slock_unlock(drivers_lock_);
+  }
 }
 
 X_STATUS LibretroAudioSystem::CreateDriver(size_t index,

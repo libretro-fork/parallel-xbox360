@@ -49,7 +49,9 @@ class AudioSystem {
   virtual void Shutdown();
   // Stops the worker that runs the guest audio callbacks. Idempotent, and
   // Shutdown does it too.
-  void StopWorker();
+  virtual void StopWorker();
+  // Wake output submissions before dependent workers are joined.
+  virtual void CancelPendingOutput() {}
 
   X_STATUS RegisterClient(uint32_t callback, uint32_t callback_arg,
                           size_t* out_index);

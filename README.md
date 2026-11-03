@@ -45,6 +45,8 @@ At content load, the core negotiates native float audio when the frontend suppor
 
 Legacy audio conversion uses 32768 scaling, saturation and nearest-even rounding, preserving every int16 value through a normalized-float round trip. This output-boundary conversion does not change the console's guest-visible XMA integer format.
 
+Audio queues use owned libretro-common SPSC spans with a logical 64 ms bound per driver. The producer waits for consumption notifications when full and never overwrites unread samples. Mixing reads queue spans directly, avoiding a pop-to-scratch copy; compatible unity-volume float submissions also avoid conversion staging. Teardown cancels pending writes before existing worker joins, including subsystem rebuilds. Driver controls use native common atomics and the bounded registry uses an rthreads lock. Host-deadline pumping, resampling and a lock-free registry remain unfinished.
+
 Selected RetroArch libretro-common sources now provide XXH3/XXH64 hashing and DEFLATE decompression. Persistent hash values remain compatible. Embedded patch data decodes directly into its final allocation, using its generated raw size; XLast requires complete, checksum-valid gzip data with the declared output size. Threading and file-I/O migration to libretro-common is still in progress. Source provenance and local changes are recorded in `third_party/libretro-common/SOURCE.txt`.
 
 ZArchive uses libretro-common rzstd for its complete 64 KiB blocks. Existing standard frames remain readable; newly compressed output may have a different size. Each reader allocates decoder scratch on its first compressed block and reuses it, writing output into the archive cache. Raw blocks need no decoder scratch. The old Zstandard dependency is removed.

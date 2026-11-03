@@ -259,8 +259,8 @@ void Emulator::Shutdown() {
   }
   step("freeing graphics and audio");
   graphics_system_.reset();
-  audio_system_.reset();
   audio_media_player_.reset();
+  audio_system_.reset();
 
   step("kernel");
   kernel_state_.reset();
@@ -476,6 +476,7 @@ X_STATUS Emulator::SetupSubsystems() {
 void Emulator::ShutdownSubsystems() {
   // Dependents first: media player holds audio_system_, presenter holds the
   // graphics_system_ provider.
+  if (audio_system_) audio_system_->CancelPendingOutput();
   audio_media_player_.reset();
   if (audio_system_) {
     audio_system_->Shutdown();
