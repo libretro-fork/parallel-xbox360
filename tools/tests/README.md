@@ -609,3 +609,48 @@ Run each generated shader through the ROV runtime/reference with scenarios
 Policy cases 45..61 cover scaled sizes, resolved masks, disabled scaling,
 normalized/unnormalized coordinates, locked mips, gradients, half/whole offsets,
 point-footprint clamping, invalid provenance and linear-filter bypass.
+
+### Native guest memory exports
+
+`make check-dxil-memexport DXIL_VALIDATOR=/path/to/dxv` checks direct C89
+packing/storage, complete guest programs and vertex/pixel adapters. The target
+also performs optimized strict-C89 compilation. Export format numbers follow
+`xenos::ColorFormat`, distinct from EDRAM render-target formats. All 26 existing
+formats and aliases are covered, with signed/unsigned normalized or integer
+conversion, extended finite half exponents, NaN flushing, raw float32 payloads,
+red/blue swapping and all six guest endian modes. Integer test values stay within
+the defined conversion range. Equivalent formats share generated shader bodies.
+
+The fixture accepts `dxil-memexport-test output config [reference|program|vertex|pixel] [variant]`.
+A config packs format in bits 0..5, signed in bit 6, integer in bit 7,
+endianness in bits 8..10 and red/blue swap in bit 11. Policy bits 12+ select:
+0 full writes, 1 sparse dirty mask, 2 shortened stream, 3 exhausted stream,
+4..7 invalid address components, 8 disabled invocation, 9 invalid format,
+10 mirrored physical address, 11 zero stream length, 12 tail element,
+13 no dirty elements, and 14 only eM0/eM1 dirty.
+`reference` writes independent CPU output/constants without regenerating DXIL,
+allowing all 1,248 format/numeric/endian combinations to execute one dynamic
+shader. Policies 0..14 add 390 bounds/dirty/address cases over the 26 formats.
+
+Program/stage variants cover ordinary exports (0), skipped predicated eM writes
+(1), a true kill after eM0/eM1 (2), a false kill (3), ALLOC reset with no new eA
+(4), and ALLOC reset followed by a new eA (5). Program variant 8 verifies an
+empty memory ALLOC with no export state. Pixel variants 6/7 use 2x3 draw scaling
+and place the invocation at an allowed/disallowed host pixel respectively.
+Pixel variants 9/10 combine exports with ROV EDRAM or HRT counter resource
+declarations, checking class-local UAV IDs without modifying those auxiliary
+buffers. The program commits pending elements before true kills, then suppresses later
+writes; false kills retain them. Runtime dirty masks reflect actual predicates.
+Untouched eM elements skip initialization and loads, with no staging copies.
+
+On Windows, build `dxil_memexport_runtime_test.c` as C89 with D3D12, DXGI and
+DXGUID libraries. Run `dxil-memexport-runtime output` to execute the generated
+`.vs`/`.ps`, `.constants` and `.system` companions and compare all 128 shared-memory
+bytes to `.expected`, including untouched sentinel bytes. An optional second
+argument selects another shader/system prefix, so many independent references
+can share one pipeline variant. D3D12 debug errors fail the run. This fixture
+covers vertex and pixel UAV writes directly; it is not gameplay verification.
+Direct compute/program containers use the existing `dxil-runtime` helper with
+`shader expected input constants resource-raw`. The graphics stage deliberately
+uses UAV loads for shared-memory reads during export draws, avoiding SRV access
+while the backing resource is in its write state.

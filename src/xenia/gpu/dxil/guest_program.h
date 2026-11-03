@@ -8,6 +8,8 @@ typedef struct XeDxilGuestProgram XeDxilGuestProgram;
 typedef struct XeDxilGuestProgramOptions {
   unsigned register_count, float_constant_count, float_dynamic_addressing;
   unsigned guest_center_mask; /* Optional initial interpolator provenance. */
+  unsigned memexport_mask; /* Potentially written eM0..4; zero omits all state. */
+  XeDxilValue memexport_uav, memexport_allowed;
   /* Optional borrowed four-word bitmap for tightly packed static constants.
    * NULL selects dense constants. Dynamic constants must use all 256 entries. */
   const uint64_t *float_bitmap;

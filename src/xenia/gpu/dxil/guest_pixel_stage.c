@@ -169,7 +169,7 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
   XeDxilShaderBinary *binary = NULL;
   XeDxilValue center_offsets[2], center_values[4], rop_colors[4][4], values[4], color[4], position[3], flags, front, value, slope, dx, dy;
   XeDxilValue bary_y = NULL, bary_z = NULL, a, b, c, mask, live, alpha, coverage, args[7], counters = NULL, index;
-  int bary_id = -1, colors[4], depth_id = -1, mask_id = -1, point_id = -1, input_id;
+  int bary_id = -1, colors[4], depth_id = -1, mask_id = -1, point_id = -1, input_id, resource;
   unsigned i, j, packed = 0, cbv = 1, n, float24, truncate, alpha_blocks;
   const struct dxil_type *integer_type;
   if (!o || !words || o->interpolator_mask > 65535 || o->color_mask > 15 || o->depth_mode > 6 ||
@@ -245,13 +245,28 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
     if (xe_dxil_shader_resource(p.shader,XE_DXIL_RESOURCE_UAV,DXIL_RESOURCE_KIND_RAW_BUFFER,0,1,1,0) != 0) goto done;
     counters = xe_dxil_resource_handle(&p.alu,XE_DXIL_RESOURCE_UAV,0,1);
   }
+  if (options.memexport_mask) {
+    resource = xe_dxil_shader_resource(p.shader,XE_DXIL_RESOURCE_UAV,DXIL_RESOURCE_KIND_RAW_BUFFER,0,0,1,0);
+    if (resource < 0) goto done;
+    options.memexport_uav = xe_dxil_resource_handle(&p.alu,XE_DXIL_RESOURCE_UAV,(unsigned)resource,0);
+    options.shared_memory = options.memexport_uav;
+  }
   p.killed = dxil_emit_alloca(p.alu.module,integer_type,ic(&p,1),4);
   p.written = dxil_emit_alloca(p.alu.module,integer_type,ic(&p,1),4);
   if (!p.killed || !p.written || !dxil_emit_store(p.alu.module,ic(&p,0),p.killed,4,0) || !dxil_emit_store(p.alu.module,ic(&p,0),p.written,4,0)) goto done;
   options.guest_center_mask = o->scale_x > 1 || o->scale_y > 1 ? o->point_coordinate_mask&o->interpolator_mask : 0;
+  for (i = 0; i < 3; ++i) position[i] = input(&p,0,i,0);
+  if (options.memexport_mask && (o->scale_x > 1 || o->scale_y > 1)) {
+    value = dxil_module_get_int1_const(p.alu.module,1);
+    for (i = 0; i < 2; ++i) if ((i ? o->scale_y : o->scale_x) > 1) {
+      unsigned scale = i ? o->scale_y : o->scale_x;
+      value = bin(&p,DXIL_BINOP_AND,value,cmp(&p,DXIL_ICMP_EQ,
+        bin(&p,DXIL_BINOP_UREM,cast(&p,DXIL_CAST_FPTOUI,0,position[i]),ic(&p,scale)),ic(&p,scale/2)));
+    }
+    options.memexport_allowed = options.memexport_allowed ? bin(&p,DXIL_BINOP_AND,options.memexport_allowed,value) : value;
+  }
   program = xe_dxil_guest_program_create(p.alu.module,&options); if (!program) goto done;
   flags = word(&p,o->flags_word); front = cmp(&p,DXIL_ICMP_NE,input(&p,1,0,1),ic(&p,0));
-  for (i = 0; i < 3; ++i) position[i] = input(&p,0,i,0);
   dx = dy = NULL;
   if (!o->writes_depth && (o->rop || o->depth_mode >= 4)) { dx = unary(&p,83,position[2]); dy = unary(&p,84,position[2]); }
   if (bary_id >= 0) { bary_y = input(&p,(unsigned)bary_id,1,0); bary_z = input(&p,(unsigned)bary_id,2,0); }

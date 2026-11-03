@@ -40,9 +40,9 @@ Render-target dumps, direct resolves and EDRAM ownership transfers also emit
 DXIL directly. Host-depth pixel shaders, including float24 conversion and
 occlusion counting, use native DXIL containers without a temporary bytecode
 copy. Depth-only ROV shaders also use native DXIL, with ordered EDRAM access
-and native depth/stencil tests. Guest vertex shaders without memory exports or ALU kill instructions can generate native
+and native depth/stencil tests. Guest vertex shaders without ALU kill instructions can generate native
 DXIL, including position conversion and clip/cull outputs. Host render-target
-guest pixel shaders without memory exports can also compile
+guest pixel shaders can also compile
 directly, including pixel parameters, barycentric interpolation, alpha tests,
 coverage, gamma/exponent adjustment, blend premultiplication and depth modes.
 Guest ROV color shaders also compile directly, including tiled/scaled EDRAM
@@ -71,8 +71,15 @@ the core's existing unimplemented zero result. Scaled sampling uses resolved-res
 sizes and tracks untouched point-fetch coordinates through conditional register
 writes to retain the guest texel footprint. Tracking uses two 32-bit validity
 masks and immutable derivative values, avoiding duplicate register buffers.
-Memory exports and tessellation still use Mesa and its Meson/Python build while
-their replacements are implemented.
+Memory exports also generate DXIL directly, with guest format packing, endian
+swizzles, stream bounds, atomic subword writes and dirty-element tracking.
+ALLOC and killed invocations commit outstanding exports in guest order, and
+scaled pixel exports run only at the permitted host pixel. Shared-memory reads
+during export draws use the UAV without an intermediate copy. Unused export
+elements skip initialization and loads; format aliases share conversion/store
+bodies.
+Tessellation still uses Mesa and its Meson/Python build while
+its replacement is implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in
 [`tools/tests/README.md`](tools/tests/README.md); whole-shader integration

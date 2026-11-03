@@ -24,7 +24,7 @@ typedef struct XeDxilGuestPixelOptions {
 extern "C" {
 #endif
 /* Host render targets or ROV; textures use the built-in native policy stage.
- * Memory-export callbacks are not supported yet.
+ * Memory exports use the program's native format/store policy.
  * Export 61.x is guest depth; exports 0..3 are guest colors. */
 XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOptions *options,
   const uint32_t *words, size_t word_count, unsigned control_flow_count);

@@ -330,7 +330,7 @@ check-dxil-writer: $(HOST_DIR)/dxil-writer-test$(HOST_EXEEXT)
 	cmp "$(HOST_DIR)/dxil-writer-test-ps.dxil" "$(HOST_DIR)/dxil-writer-test-ps-validated.dxil"
 
 DXIL_ALU_DIR := src/xenia/gpu/dxil
-DXIL_ALU_SOURCES := $(DXIL_ALU_DIR)/guest_alu.c $(DXIL_ALU_DIR)/guest_alu_instruction.c $(DXIL_ALU_DIR)/guest_flow.c $(DXIL_ALU_DIR)/guest_vertex.c $(DXIL_ALU_DIR)/guest_resources.c $(DXIL_ALU_DIR)/guest_texture.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_ALU_DIR)/guest_geometry.c $(DXIL_ALU_DIR)/edram_format.c $(DXIL_ALU_DIR)/edram_dump.c $(DXIL_ALU_DIR)/edram_transfer.c $(DXIL_ALU_DIR)/depth_only.c $(DXIL_ALU_DIR)/edram_depth_stencil.c $(DXIL_ALU_DIR)/rov_depth.c $(DXIL_ALU_DIR)/guest_program.c $(DXIL_ALU_DIR)/guest_vertex_stage.c $(DXIL_ALU_DIR)/guest_pixel_stage.c $(DXIL_ALU_DIR)/guest_rop.c $(DXIL_ALU_DIR)/guest_texture_stage.c
+DXIL_ALU_SOURCES := $(DXIL_ALU_DIR)/guest_alu.c $(DXIL_ALU_DIR)/guest_alu_instruction.c $(DXIL_ALU_DIR)/guest_flow.c $(DXIL_ALU_DIR)/guest_vertex.c $(DXIL_ALU_DIR)/guest_resources.c $(DXIL_ALU_DIR)/guest_texture.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_ALU_DIR)/guest_geometry.c $(DXIL_ALU_DIR)/edram_format.c $(DXIL_ALU_DIR)/edram_dump.c $(DXIL_ALU_DIR)/edram_transfer.c $(DXIL_ALU_DIR)/depth_only.c $(DXIL_ALU_DIR)/edram_depth_stencil.c $(DXIL_ALU_DIR)/rov_depth.c $(DXIL_ALU_DIR)/guest_program.c $(DXIL_ALU_DIR)/guest_vertex_stage.c $(DXIL_ALU_DIR)/guest_pixel_stage.c $(DXIL_ALU_DIR)/guest_rop.c $(DXIL_ALU_DIR)/guest_texture_stage.c $(DXIL_ALU_DIR)/guest_memexport.c
 $(HOST_DIR)/dxil-alu-test$(HOST_EXEEXT): tools/tests/dxil_writer_test.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c tools/tests/dxil_test_storage.h $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -DXE_DXIL_ALU_TEST -DXE_DXIL_FLOW_TEST -DXE_DXIL_VERTEX_TEST -DXE_DXIL_RESOURCES_TEST -DXE_DXIL_TEXTURE_TEST -DXE_DXIL_EDRAM_TEST -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_writer_test.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
@@ -753,3 +753,30 @@ check-dxil-scaled-sampling: $(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT) chec
 	    done; done; \
 	  done; \
 	done
+
+$(HOST_DIR)/dxil-memexport-test$(HOST_EXEEXT): tools/tests/dxil_memexport_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h) $(HOST_DIR)/config
+	@mkdir -p "$(@D)"
+	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) $< $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -lm -o "$@"
+
+.PHONY: check-dxil-memexport
+check-dxil-memexport: $(HOST_DIR)/dxil-memexport-test$(HOST_EXEEXT) check-dxil-memexport-c89 check-dxil-alu-c89
+	$< "$(HOST_DIR)/dxil-memexport.dxil" 6
+	$(DXIL_VALIDATOR) "$(HOST_DIR)/dxil-memexport.dxil" -o="$(HOST_DIR)/dxil-memexport.dxil.validated"
+	cmp "$(HOST_DIR)/dxil-memexport.dxil" "$(HOST_DIR)/dxil-memexport.dxil.validated"
+	@set -e; for variant in 0 1 2 3 4 5 8; do \
+	  path="$(HOST_DIR)/dxil-memexport-program-$$variant.dxil"; $< "$$path" 6 program $$variant; \
+	  $(DXIL_VALIDATOR) "$$path" -o="$$path.validated"; cmp "$$path" "$$path.validated"; \
+	done
+	@set -e; for stage in vertex pixel; do for variant in 0 1 2 3 4 5 6 7 9 10; do \
+	  path="$(HOST_DIR)/dxil-memexport-$$stage-$$variant"; $< "$$path" 6 $$stage $$variant; \
+	  for suffix in vs ps; do \
+	    $(DXIL_VALIDATOR) "$$path.$$suffix" -o="$$path.$$suffix.validated"; cmp "$$path.$$suffix" "$$path.$$suffix.validated"; \
+	  done; \
+	done; done
+
+.PHONY: check-dxil-memexport-c89
+check-dxil-memexport-c89:
+	@mkdir -p "$(HOST_DIR)"
+	$(HOST_CC) $(HOST_CFLAGS) -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -c $(DXIL_ALU_DIR)/guest_memexport.c -o "$(HOST_DIR)/dxil-memexport-c89.o"
+	$(HOST_CC) $(HOST_CFLAGS) -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -c $(DXIL_ALU_DIR)/guest_program.c -o "$(HOST_DIR)/dxil-memexport-program-c89.o"
+	$(HOST_CC) $(HOST_CFLAGS) -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -c tools/tests/dxil_memexport_test.c -o "$(HOST_DIR)/dxil-memexport-fixture-c89.o"

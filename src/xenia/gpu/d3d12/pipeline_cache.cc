@@ -763,7 +763,6 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
   SpirvShaderTranslator::Modification mod(modification);
   if (!shader.is_ucode_analyzed() ||
       mod.vertex.host_vertex_shader_type != Shader::HostVertexShaderType::kVertex ||
-      shader.memexport_eM_written() ||
       shader.kills_pixels()) {
     return nullptr;
   }
@@ -780,6 +779,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
   if (!BuildNativeTextureLayout(*binding_shader,texture_layout,0)) return nullptr;
   auto texture_options = NativeTextureOptions(texture_layout,0,render_target_cache_.draw_resolution_scale_x(),render_target_cache_.draw_resolution_scale_y());
   XeDxilGuestVertexOptions options = {};
+  options.program.memexport_mask = shader.memexport_eM_written();
   if (texture_layout.texture_count) options.textures = &texture_options;
   const auto& constants = shader.constant_register_map();
   options.program.register_count = std::max(
@@ -816,7 +816,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
 const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
     const Shader& shader, uint64_t modification) {
   SpirvShaderTranslator::Modification mod(modification);
-  if (!shader.is_ucode_analyzed() || shader.memexport_eM_written()) return nullptr;
+  if (!shader.is_ucode_analyzed()) return nullptr;
   bool edram_rov_used = render_target_cache_.GetPath() == RenderTargetCache::Path::kPixelShaderInterlock;
   {
     std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
@@ -834,6 +834,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
   auto texture_options = NativeTextureOptions(texture_layout,1,render_target_cache_.draw_resolution_scale_x(),render_target_cache_.draw_resolution_scale_y());
   XeDxilGuestRopOptions rop_options = {};
   XeDxilGuestPixelOptions options = {};
+  options.program.memexport_mask = shader.memexport_eM_written();
   if (texture_layout.texture_count) options.textures = &texture_options;
   const auto& constants = shader.constant_register_map();
   options.program.register_count = std::max(shader.register_static_address_bound(),

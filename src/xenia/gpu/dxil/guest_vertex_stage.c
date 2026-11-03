@@ -130,6 +130,13 @@ int xe_dxil_build_guest_vertex(const XeDxilGuestVertexOptions *o, const uint32_t
   if (resource != (int)cbv || xe_dxil_shader_resource(v.shader,XE_DXIL_RESOURCE_SRV,DXIL_RESOURCE_KIND_RAW_BUFFER,0,0,1,0) != 0) goto done;
   options.fetch_constants = xe_dxil_resource_handle(&v.alu,XE_DXIL_RESOURCE_CBV,cbv,4);
   options.shared_memory = xe_dxil_resource_handle(&v.alu,XE_DXIL_RESOURCE_SRV,0,0);
+  if (options.memexport_mask) {
+    resource = xe_dxil_shader_resource(v.shader,XE_DXIL_RESOURCE_UAV,DXIL_RESOURCE_KIND_RAW_BUFFER,0,0,1,0);
+    if (resource < 0) goto done;
+    options.memexport_uav = xe_dxil_resource_handle(&v.alu,XE_DXIL_RESOURCE_UAV,(unsigned)resource,0);
+    /* Shared-memory reads during a write draw use its UAV resource state. */
+    options.shared_memory = options.memexport_uav;
+  }
   if (o->textures) {
     v.textures = xe_dxil_texture_stage_create(v.shader,v.system,options.fetch_constants,o->textures);
     if (!v.textures) goto done;

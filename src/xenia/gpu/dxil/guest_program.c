@@ -1,6 +1,7 @@
 /* Direct guest program assembly. MSVC C89; BSD license.
  * Register addressing and constant packing follow Xenia's guest translator. */
 #include "guest_program.h"
+#include "guest_memexport.h"
 #include <dxil_module.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,7 @@ struct XeDxilGuestProgram {
   XeDxilVertexFetch vertex;
   XeDxilTextureFetch texture;
   XeDxilValue registers, exports, center_valid[2], center_deltas[16][4];
+  XeDxilValue memexport_written, memexport_active;
   uint64_t initialized_exports;
   unsigned current_block, serialized, emitted;
 };
@@ -113,6 +115,11 @@ static int write_storage(XeDxilGuestProgram *p, unsigned exporting, unsigned ind
       if (!valid || !dxil_emit_store(p->alu.module,valid,p->center_valid[index/8],4,0)) goto fail;
     }
   }
+  if (notify && exporting && mask && index >= 33 && index <= 37 && p->memexport_written) {
+    valid = dxil_emit_load(p->alu.module,p->memexport_written,4,0);
+    valid = bin(p,DXIL_BINOP_OR,valid,ic(p,1u<<(index-33)));
+    if (!valid || !dxil_emit_store(p->alu.module,valid,p->memexport_written,4,0)) goto fail;
+  }
   if (notify && exporting && mask && p->options.export_written &&
       !p->options.export_written(p->options.context, p, index, mask)) goto fail;
   return 1;
@@ -123,8 +130,28 @@ static int write_value(void *context, unsigned exporting, unsigned index,
     unsigned mask, XeDxilValue values[4], XeDxilValue offset) {
   return write_storage((XeDxilGuestProgram *)context, exporting, index, mask, values, offset, 1);
 }
+static int flush_memexport(XeDxilGuestProgram *p, XeDxilValue condition) {
+  XeDxilValue address[4], data[5][4], allowed, written; unsigned i, j;
+  if (!p->memexport_written) return 1;
+  for (j = 0; j < 4; ++j) address[j] = xe_dxil_guest_program_export(p,32,j);
+  for (i = 0; i < 5; ++i) for (j = 0; j < 4; ++j)
+    data[i][j] = p->options.memexport_mask&(1u<<i) ? xe_dxil_guest_program_export(p,33+i,j) : dxil_module_get_float_const(p->alu.module,0);
+  allowed = dxil_emit_load(p->alu.module,p->memexport_active,4,0);
+  if (p->options.memexport_allowed) allowed = bin(p,DXIL_BINOP_AND,allowed,p->options.memexport_allowed);
+  if (condition) allowed = bin(p,DXIL_BINOP_AND,allowed,condition);
+  written = dxil_emit_load(p->alu.module,p->memexport_written,4,0);
+  return xe_dxil_memexport_store(&p->alu,&p->io,p->options.memexport_uav,address,data,p->options.memexport_mask,written,allowed);
+}
 static int kill_value(void *context, XeDxilValue condition) {
   XeDxilGuestProgram *p = (XeDxilGuestProgram *)context;
+  XeDxilValue active, inverse;
+  if (p->memexport_written) {
+    if (!flush_memexport(p,condition)) return 0;
+    active = dxil_emit_load(p->alu.module,p->memexport_active,4,0);
+    inverse = condition ? dxil_emit_cmp(p->alu.module,DXIL_ICMP_EQ,condition,dxil_module_get_int1_const(p->alu.module,0)) : NULL;
+    active = bin(p,DXIL_BINOP_AND,active,inverse);
+    if (!active || !dxil_emit_store(p->alu.module,active,p->memexport_active,4,0)) return 0;
+  }
   return p->options.kill && p->options.kill(p->options.context, &p->alu, &p->io, condition);
 }
 static XeDxilValue boolean_constant(void *context, unsigned index) {
@@ -171,8 +198,16 @@ static int fetch(void *context, const uint32_t *words, unsigned serialized, XeDx
 }
 static int allocation(void *context, unsigned type, unsigned size, unsigned cf_index, XeDxilAlu *alu, XeDxilAluIo *io) {
   XeDxilGuestProgram *p = (XeDxilGuestProgram *)context;
+  XeDxilValue zero[4]; unsigned i;
   (void)alu; (void)io;
-  return p->options.allocation ? p->options.allocation(p->options.context, p, type, size, cf_index) : type != 3;
+  if (p->memexport_written) {
+    if (!flush_memexport(p,NULL) || !dxil_emit_store(p->alu.module,ic(p,0),p->memexport_written,4,0)) return 0;
+    for (i = 0; i < 4; ++i) zero[i] = dxil_module_get_float_const(p->alu.module,0);
+    for (i = 0; i < 5; ++i) if ((p->options.memexport_mask&(1u<<i)) && !write_storage(p,1,33+i,15,zero,NULL,0)) return 0;
+    if (type == 3 && !write_storage(p,1,32,15,zero,NULL,0)) return 0;
+    if (!p->options.allocation) return 1;
+  }
+  return p->options.allocation ? p->options.allocation(p->options.context, p, type, size, cf_index) : 1;
 }
 XeDxilGuestProgram *xe_dxil_guest_program_create(struct dxil_module *module, const XeDxilGuestProgramOptions *options) {
   XeDxilGuestProgram *p;
@@ -181,6 +216,7 @@ XeDxilGuestProgram *xe_dxil_guest_program_create(struct dxil_module *module, con
   unsigned i;
   if (!module || !module->cur_emitting_func || module->cur_emitting_func->curr_block ||
       !options || options->register_count > 256 || options->float_constant_count > 256 ||
+      options->memexport_mask > 31 || (options->memexport_mask && !options->memexport_uav) ||
       (options->float_dynamic_addressing && options->float_constant_count != 256)) return NULL;
   p = (XeDxilGuestProgram *)calloc(1, sizeof(*p)); if (!p) return NULL;
   p->options = *options; xe_dxil_alu_init(&p->alu, module);
@@ -194,6 +230,15 @@ XeDxilGuestProgram *xe_dxil_guest_program_create(struct dxil_module *module, con
   type = dxil_module_get_array_type(module, dxil_module_get_float_type(module, 32), 64*4);
   p->exports = type ? dxil_emit_alloca(module, type, ic(p, 1), 4) : NULL;
   if (!p->exports) goto fail;
+  if (options->memexport_mask) {
+    if (!initialize_export(p,32)) goto fail;
+    for (i = 0; i < 5; ++i) if ((options->memexport_mask&(1u<<i)) && !initialize_export(p,33+i)) goto fail;
+    p->memexport_written = dxil_emit_alloca(module,dxil_module_get_int_type(module,32),ic(p,1),4);
+    p->memexport_active = dxil_emit_alloca(module,dxil_module_get_int_type(module,1),ic(p,1),4);
+    if (!p->memexport_written || !p->memexport_active ||
+        !dxil_emit_store(module,ic(p,0),p->memexport_written,4,0) ||
+        !dxil_emit_store(module,dxil_module_get_int1_const(module,1),p->memexport_active,4,0)) goto fail;
+  }
   for (i = 0; i < 4; ++i) zero[i] = dxil_module_get_float_const(module, 0.0f);
   for (i = 0; i < options->register_count; ++i) if (!write_value(p, 0, i, 15, zero, NULL)) goto fail;
   if (options->guest_center_mask) for (i = 0; i < 2; ++i) {
@@ -243,5 +288,5 @@ int xe_dxil_guest_program_emit(XeDxilGuestProgram *p, const uint32_t *words, siz
   flow.context = p; flow.boolean_constant = boolean_constant; flow.loop_constant = loop_constant;
   flow.fetch = fetch; flow.allocation = allocation;
   flow.prepare_export = prepare_export;
-  return xe_dxil_emit_guest_flow(&flow) && !p->alu.failed;
+  return xe_dxil_emit_guest_flow(&flow) && flush_memexport(p,NULL) && !p->alu.failed;
 }

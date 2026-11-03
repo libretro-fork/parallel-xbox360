@@ -227,6 +227,9 @@ static int resource_impl(XeDxilShaderModule *s, unsigned resource_class, unsigne
   resource->resource_kind = kind;
   if (kind == DXIL_RESOURCE_KIND_RAW_BUFFER) s->raw_buffers = 1;
   if (ordered) { m->feats.rovs = 1; s->shader_flags |= 262144; }
+  if (resource_class == 1 && m->shader_kind != DXIL_PIXEL_SHADER && m->shader_kind != DXIL_COMPUTE_SHADER) {
+    m->feats.uavs_at_every_stage = 1; s->shader_flags |= 65536;
+  }
   resource->v0.resource_type = resource_class == 2 ? DXIL_RES_CBV : resource_class == 3 ? DXIL_RES_SAMPLER :
     resource_class ? kind == DXIL_RESOURCE_KIND_RAW_BUFFER ? DXIL_RES_UAV_RAW : DXIL_RES_UAV_TYPED :
     kind == DXIL_RESOURCE_KIND_RAW_BUFFER ? DXIL_RES_SRV_RAW : DXIL_RES_SRV_TYPED;

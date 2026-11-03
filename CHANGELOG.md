@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Guest vertex and pixel memory exports now compile directly to DXIL, including all existing export formats, extended half floats, endian modes, stream bounds and atomic subword writes. Executed writes mark only their eM elements dirty; ALLOC and true kills commit pending exports before resetting or suppressing later writes. Shared-memory reads during export draws use the UAV. Scaled pixel exports retain the center-host-pixel rule. Tessellation remains before Mesa removal.
+
 - Scaled guest texture sampling now compiles directly to DXIL. Resolved textures use host-scaled sizes and offsets; point sampling preserves guest texel footprints until a coordinate write executes. Conditional and component writes update two compact validity masks instead of copying register buffers. Added 17 policy cases and 144 full ROV shader configurations, exercised in 864 GPU runs. Memory exports and tessellation remain before Mesa removal.
 
 - Native DXIL now handles 3D and stacked-array guest sampling, runtime view selection, volume-filter overrides, mip/gradient policies and layer boundaries. Absolute layer gradients select minification correctly; zero-weight second-layer fetches are skipped. Computed-LOD queries use native unclamped DXIL operations across texture types and preserve signed-view selection, including query-only scaled draws. Vertex/explicit-gradient LOD queries and the unimplemented border-fraction query retain the core's zero-result policy without texture descriptors. Scaled sampling, memory exports and tessellation still require migration before Mesa removal.
