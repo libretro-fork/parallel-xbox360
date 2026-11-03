@@ -1169,7 +1169,11 @@ static void vk_hand_over(VulkanFrameResources &f, uint32_t w, uint32_t h) {
     core_state.video_cb(RETRO_HW_FRAME_BUFFER_VALID, w, h, 0);
 }
 
-static void update_video_vulkan(void) {
+static void update_video_vulkan(void)
+{
+    VkCommandBufferBeginInfo fe_begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    VkImageMemoryBarrier fe_barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    VkBufferImageCopy fe_region = {};
     if (!vulkan_hw_render_active || !vk_hw) {
         update_video();
         return;
@@ -1244,11 +1248,9 @@ static void update_video_vulkan(void) {
     VkCommandBuffer cmd = f.cmd;
     vkResetCommandBuffer(cmd, 0);
 
-    VkCommandBufferBeginInfo fe_begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     fe_begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &fe_begin);
 
-    VkImageMemoryBarrier fe_barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     fe_barrier.srcAccessMask = 0;
     fe_barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     fe_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1262,7 +1264,6 @@ static void update_video_vulkan(void) {
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &fe_barrier);
 
-    VkBufferImageCopy fe_region = {};
     fe_region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     fe_region.imageExtent = {w, h, 1};
     vkCmdCopyBufferToImage(cmd, f.staging_buffer, f.image,
@@ -1290,7 +1291,10 @@ static void update_video_vulkan(void) {
 }
 
 #ifdef _WIN32
-static void update_video_d3d12(void) {
+static void update_video_d3d12(void)
+{
+    D3D12_TEXTURE_COPY_LOCATION dst_loc = {};
+    D3D12_TEXTURE_COPY_LOCATION src_loc = {};
     if (!d3d12_hw_render_active || !d3d12_hw) {
         update_video();
         return;
@@ -1370,12 +1374,10 @@ static void update_video_d3d12(void) {
     }
 
     // Copy upload buffer ??? texture
-    D3D12_TEXTURE_COPY_LOCATION dst_loc = {};
     dst_loc.pResource = f.texture;
     dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     dst_loc.SubresourceIndex = 0;
 
-    D3D12_TEXTURE_COPY_LOCATION src_loc = {};
     src_loc.pResource = f.upload_buffer;
     src_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
     src_loc.PlacedFootprint = layout;
@@ -1530,7 +1532,7 @@ static bool xenia_setup_and_launch(const char *path) {
 #endif
             s_logging_initialized = true;
         }
-        XELOGI("parallel_xbox360 libretro core {}, built from commit {}",
+        XELOGI("ParaLLEl Xbox360 libretro core {}, built from commit {}",
                XENIA_LIBRETRO_VERSION, XENIA_LIBRETRO_COMMIT);
 
         xenia_emulator = std::make_unique<xe::Emulator>(
@@ -1550,18 +1552,15 @@ static bool xenia_setup_and_launch(const char *path) {
             /*graphics_system_factory=*/
             []() -> std::unique_ptr<xe::gpu::GraphicsSystem> {
                 std::unique_ptr<xe::gpu::GraphicsSystem> gs;
-                if (strcmp(core_state.graphics_backend, "vulkan") == 0) {
+                if (strcmp(core_state.graphics_backend, "vulkan") == 0)
                     gs = std::make_unique<xe::gpu::vulkan::VulkanGraphicsSystem>();
-                }
 #ifdef _WIN32
-                else {
+                else
                     gs = std::make_unique<xe::gpu::d3d12::D3D12GraphicsSystem>();
-                }
 #endif
-                if (!gs) {
+                if (!gs)
                     // Fallback to Vulkan if D3D12 unavailable
                     gs = std::make_unique<xe::gpu::vulkan::VulkanGraphicsSystem>();
-                }
                 lr_graphics = gs.get();
                 return gs;
             },
@@ -1858,7 +1857,7 @@ RETRO_API void retro_set_input_poll(retro_input_poll_t cb)            { core_sta
 RETRO_API void retro_set_input_state(retro_input_state_t cb)          { core_state.input_state_cb = cb; }
 
 RETRO_API void retro_init(void) {
-    xenia_log(RETRO_LOG_INFO, "parallel_xbox360 libretro core %s, built from commit %s\n",
+    xenia_log(RETRO_LOG_INFO, "ParaLLEl Xbox360 libretro core %s, built from commit %s\n",
               XENIA_LIBRETRO_VERSION, XENIA_LIBRETRO_COMMIT);
     core_state.audio_sample_rate  = 48000.0;
     core_state.audio_buffer_size  = 6 * 4096;   // int16 values (4096 frames of 5.1)
@@ -1885,7 +1884,7 @@ RETRO_API void retro_deinit(void) {
 
 RETRO_API void retro_get_system_info(struct retro_system_info *info) {
     memset(info, 0, sizeof(*info));
-    info->library_name     = "parallel_xbox360";
+    info->library_name     = "ParaLLEl Xbox360";
     // Upstream's version and this core's commit, as rpcs3-libretro's: which
     // build a tester runs shows in RetroArch itself (NNshi)
     info->library_version  = XENIA_LIBRETRO_VERSION " (libretro core " XENIA_LIBRETRO_COMMIT ")";
