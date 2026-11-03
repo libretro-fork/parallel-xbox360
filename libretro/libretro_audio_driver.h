@@ -12,7 +12,6 @@
 
 #include "core_audio_queue.h"
 #include <memory>
-#include <rthreads/rthreads.h>
 #include <cstring>
 
 #include "xenia/apu/audio_driver.h"
@@ -25,7 +24,7 @@ namespace libretro {
 class LibretroAudioSystem;
 
 // AudioDriver: one per audio client (and one for the media player), each with
-// a ring of its own. The frontend side mixes the rings (MixInto), as a sound
+// a ring of its own. The C registry mixes the rings, as a sound
 // device mixes its streams - pushing every driver into one shared ring played
 // the clients one after another instead of together.
 class LibretroAudioDriver : public AudioDriver {
@@ -47,17 +46,11 @@ class LibretroAudioDriver : public AudioDriver {
   void Resume() override;
   void SetVolume(float volume) override;
 
-  // Adds up to `samples` interleaved output samples of this driver's ring to
-  // `mix`; returns how many it had.
-  size_t MixInto(float* mix, size_t samples);
-
-  // The audio system is going away before this driver.
-  void Detach() { Shutdown(); system_ = nullptr; }
-
  private:
   void Resample(const float* in, size_t frames);
 
-  LibretroAudioSystem* system_ = nullptr;
+  xe_audio_group* group_ = nullptr;
+  bool registry_required_ = false;
   xe::threading::Semaphore* semaphore_ = nullptr;
   uint32_t frequency_ = 48000;
   uint32_t channels_ = 6;
@@ -75,7 +68,7 @@ class LibretroAudioDriver : public AudioDriver {
 // AudioSystem that creates LibretroAudioDriver instances.
 class LibretroAudioSystem : public AudioSystem {
  public:
-  explicit LibretroAudioSystem(cpu::Processor* processor);
+  LibretroAudioSystem(cpu::Processor* processor, xe_audio_registry* registry);
   ~LibretroAudioSystem() override;
 
   static bool IsAvailable() { return true; }
@@ -94,24 +87,17 @@ class LibretroAudioSystem : public AudioSystem {
                              bool need_format_conversion) override;
   void DestroyDriver(AudioDriver* driver) override;
 
-  // Mixes directly into the caller's final interleaved float buffer,
-  // at most `max_samples` samples; returns how many it wrote.
-  size_t Mix(float* out, size_t max_samples);
-
-  bool Register(LibretroAudioDriver* driver);
   void StopWorker() override;
   void CancelPendingOutput() override;
-  void Unregister(LibretroAudioDriver* driver);
+  xe_audio_group* group() const { return group_.get(); }
 
  protected:
   X_STATUS CreateDriver(size_t index, xe::threading::Semaphore* semaphore,
                          AudioDriver** out_driver) override;
 
  private:
-  slock_t* drivers_lock_ = nullptr;
-  bool output_stopping_ = false;  // Protected by drivers_lock_.
-  LibretroAudioDriver* drivers_[16] = {};
-  size_t driver_count_ = 0;
+  std::unique_ptr<xe_audio_group, decltype(&xe_audio_group_free)> group_{
+      nullptr, &xe_audio_group_free};
   // Configured before creating audio workers; immutable during their lifetime.
   static inline uint32_t output_channels_ = 2;
 };

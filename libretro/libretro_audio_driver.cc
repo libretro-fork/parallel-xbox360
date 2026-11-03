@@ -6,7 +6,6 @@
 
 #include "libretro_audio_driver.h"
 
-
 #include "xenia/apu/conversion.h"
 
 namespace xe {
@@ -19,7 +18,8 @@ LibretroAudioDriver::LibretroAudioDriver(LibretroAudioSystem* system,
                                          xe::threading::Semaphore* semaphore,
                                          uint32_t frequency, uint32_t channels,
                                          bool need_format_conversion)
-    : system_(system),
+    : group_(system ? system->group() : nullptr),
+      registry_required_(system != nullptr),
       semaphore_(semaphore),
       frequency_(frequency ? frequency : 48000),
       channels_(channels == 2 ? 2 : 6),
@@ -30,16 +30,18 @@ LibretroAudioDriver::LibretroAudioDriver(LibretroAudioSystem* system,
       need_format_conversion_(need_format_conversion) {}
 
 LibretroAudioDriver::~LibretroAudioDriver() {
-  if (system_) system_->Unregister(this);
+  Shutdown();
 }
 
 bool LibretroAudioDriver::Initialize() {
   if (ring_) return true;
-  ring_.reset(xe_audio_queue_new(out_channels_));
-  if (!ring_ || (system_ && !system_->Register(this))) {
+  ring_.reset(registry_required_ ? xe_audio_group_queue_new(group_)
+                                : xe_audio_queue_new(out_channels_));
+  if (!ring_) {
     ring_.reset();
     return false;
   }
+  group_ = nullptr;
   return true;
 }
 
@@ -131,71 +133,18 @@ void LibretroAudioDriver::SubmitFrame(float* samples) {
   }
 }
 
-size_t LibretroAudioDriver::MixInto(float* mix, size_t samples) {
-  return xe_audio_queue_mix(ring_.get(), mix, samples);
-}
-
 void LibretroAudioDriver::Pause() { xe_audio_queue_pause(ring_.get(), 1); }
 void LibretroAudioDriver::Resume() { xe_audio_queue_pause(ring_.get(), 0); }
 void LibretroAudioDriver::SetVolume(float volume) { xe_audio_queue_volume(ring_.get(), volume); }
 
 // ---- LibretroAudioSystem --------------------------------------------------
 
-LibretroAudioSystem::LibretroAudioSystem(cpu::Processor* processor)
-    : AudioSystem(processor), drivers_lock_(slock_new()) {}
-
-// Normal shutdown releases the media player first. Detach independent drivers
-// retained by a partial setup before releasing their registry.
-LibretroAudioSystem::~LibretroAudioSystem() {
-  size_t i;
-  if (!drivers_lock_) return;
-  slock_lock(drivers_lock_);
-  for (i = 0; i < driver_count_; ++i) drivers_[i]->Detach();
-  driver_count_ = 0;
-  slock_unlock(drivers_lock_);
-  slock_free(drivers_lock_);
+LibretroAudioSystem::LibretroAudioSystem(cpu::Processor* processor, xe_audio_registry* registry)
+    : AudioSystem(processor) {
+  group_.reset(xe_audio_group_new(registry));
 }
 
-bool LibretroAudioSystem::Register(LibretroAudioDriver* driver) {
-  if (!drivers_lock_) return false;
-  slock_lock(drivers_lock_);
-  if (output_stopping_ || driver_count_ == sizeof(drivers_) / sizeof(drivers_[0])) {
-    slock_unlock(drivers_lock_);
-    return false;
-  }
-  drivers_[driver_count_++] = driver;
-  slock_unlock(drivers_lock_);
-  return true;
-}
-
-void LibretroAudioSystem::Unregister(LibretroAudioDriver* driver) {
-  size_t i, j;
-  if (!drivers_lock_) return;
-  slock_lock(drivers_lock_);
-  for (i = 0; i < driver_count_; ++i) {
-    if (drivers_[i] != driver) continue;
-    for (j = i + 1; j < driver_count_; ++j) drivers_[j - 1] = drivers_[j];
-    --driver_count_;
-    break;
-  }
-  slock_unlock(drivers_lock_);
-}
-
-size_t LibretroAudioSystem::Mix(float* out, size_t max_samples) {
-  size_t longest = 0, i, count;
-  if (!drivers_lock_) {
-    std::memset(out, 0, max_samples * sizeof(*out));
-    return 0;
-  }
-  slock_lock(drivers_lock_);
-  std::memset(out, 0, max_samples * sizeof(*out));
-  for (i = 0; i < driver_count_; ++i) {
-    count = drivers_[i]->MixInto(out, max_samples);
-    if (count > longest) longest = count;
-  }
-  slock_unlock(drivers_lock_);
-  return longest;
-}
+LibretroAudioSystem::~LibretroAudioSystem() = default;
 
 void LibretroAudioSystem::StopWorker() {
   // Cancel frontend-dependent writes before upstream joins the audio worker.
@@ -204,15 +153,8 @@ void LibretroAudioSystem::StopWorker() {
 }
 
 void LibretroAudioSystem::CancelPendingOutput() {
-  size_t i;
-  if (drivers_lock_) {
-    slock_lock(drivers_lock_);
-    output_stopping_ = true;
-    for (i = 0; i < driver_count_; ++i) drivers_[i]->Shutdown();
-    slock_unlock(drivers_lock_);
-  }
+  xe_audio_group_stop(group_.get());
 }
-
 X_STATUS LibretroAudioSystem::CreateDriver(size_t index,
                                             xe::threading::Semaphore* semaphore,
                                             AudioDriver** out_driver) {

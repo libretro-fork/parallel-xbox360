@@ -2,6 +2,18 @@
 
 ## Owned libretro-common primitives and codecs
 
+`core_audio_registry_test.c` checks a reader deliberately paused with a lease,
+nonblocking retirement, a slot bound that includes undrained retirement, exact
+multi-stream mixing, 4,000 concurrent stream lifetimes and root-owner release
+with eight full-queue writers. It also replaces a subsystem group during a
+deliberately held frontend lease and cancels one full group while another keeps
+playing. Compile the queue with `XE_AUDIO_REGISTRY_TEST`
+to enable its test-only lease checkpoint, and test both mirrored and forced
+plain rings. The checkpoint is absent from production builds. A host-monotonic
+deadline bounds fixture synchronization; it never drives emulated timing.
+MSVC/MinGW C89 and Linux ASan/UBSan cover both backends. Linux ThreadSanitizer
+also covers the plain backend (`-no-pie` is needed by the local TSan runtime).
+
 `core_input_analog_test.c` exhausts all 65,536 input values for raw sticks,
 saturating Y inversion, trigger monotonicity and nearest-quantization error.
 It also recovers all 256 physical trigger levels after truncated or rounded

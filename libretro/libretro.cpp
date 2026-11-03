@@ -36,6 +36,7 @@
 #include "core_events.h"
 #include "core_audio_cadence.h"
 #include "core_audio_samples.h"
+#include "core_audio_queue.h"
 #include "core_audio_callbacks.h"
 #include "libretro_vulkan.h"
 #ifdef _WIN32
@@ -244,7 +245,8 @@ struct xenia_core_state {
 static struct xenia_core_state core_state;
 static std::unique_ptr<xe::Emulator> xenia_emulator;
 static bool s_logging_initialized = false;
-static xe::apu::libretro::LibretroAudioSystem *audio_mixer = nullptr;
+// Frontend-owned for the loaded content, including subsystem rebuilds.
+static xe_audio_registry *s_audio_registry = nullptr;
 
 // RetroArch's multi-channel output, for 5.1 (NNshi). Once the frontend gives
 // it, all of the game's audio goes through it.
@@ -1047,8 +1049,8 @@ static void update_audio(void) {
     if (!core_state.audio_float_buffer) return;
     /* The mixer writes into the final float output buffer. Muting still drains
      * guest audio; it cannot leave queued samples to play after unmuting. */
-    if (audio_mixer) audio_mixer->Mix(core_state.audio_float_buffer, frame_samples);
-    if (!audio_mixer || !core_state.audio_enabled)
+    xe_audio_registry_mix(s_audio_registry, core_state.audio_float_buffer, frame_samples);
+    if (!core_state.audio_enabled)
         memset(core_state.audio_float_buffer, 0, frame_samples * sizeof(float));
     if ((s_audio_channels == 6 && s_audio_multi.batch_float) || s_audio_float.batch) {
         xe_audio_samples_clamp(core_state.audio_float_buffer, frame_samples);
@@ -1397,9 +1399,8 @@ static bool xenia_setup_and_launch(const char *path) {
             /*audio_system_factory=*/
             [](xe::cpu::Processor *processor)
                 -> std::unique_ptr<xe::apu::AudioSystem> {
-                auto sys = std::make_unique<xe::apu::libretro::LibretroAudioSystem>(processor);
-                audio_mixer = sys.get();
-                return sys;
+                return std::make_unique<xe::apu::libretro::LibretroAudioSystem>(
+                    processor, s_audio_registry);
             },
             /*graphics_system_factory=*/
             []() -> std::unique_ptr<xe::gpu::GraphicsSystem> {
@@ -1594,7 +1595,6 @@ static void xenia_stop_emulator(void) {
     // teardown. No guest can execute now, but a process-wide exception callback
     // must be detached before the frontend can unload this DLL.
     xe::threading::Fiber::ShutdownStackHandling();
-    audio_mixer = nullptr;
     lr_input_driver = nullptr;
     lr_graphics = nullptr;
     game_loaded = false;
@@ -1730,6 +1730,8 @@ RETRO_API void retro_init(void) {
 
 RETRO_API void retro_deinit(void) {
     xenia_shutdown();
+    xe_audio_registry_free(s_audio_registry);
+    s_audio_registry = nullptr;
     xe::threading::ShutdownTimerQueue();
 
     free(core_state.audio_buffer);
@@ -1777,6 +1779,12 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
     if (!info || !info->path) {
         xenia_log(RETRO_LOG_ERROR, "No game path supplied\n");
         return false;
+    }
+    // A failed load may be retried without an intervening unload.
+    if (s_audio_registry) {
+        xenia_shutdown();
+        xe_audio_registry_free(s_audio_registry);
+        s_audio_registry = nullptr;
     }
     // An .m3u is the game's discs; the game starts from its first (or the
     // one Disc Control had in last time), and asks for the others itself
@@ -1829,6 +1837,35 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
     cvars::gpu = core_state.graphics_backend;
     xenia_log(RETRO_LOG_INFO, "Graphics API: %s\n", core_state.graphics_backend);
 
+    // Audio must be ready if hardware setup invokes context_reset immediately.
+    // 5.1 when asked for and the frontend has multi-channel output; asked
+    // once, at load, as the frontend wants it
+    {
+        const char *ch = opt_get(XENIA_OPT_AUDIO_CHANNELS);
+        s_audio_multi = {};
+        s_audio_float = {};
+        s_audio_channels = 2;
+        if (ch && strcmp(ch, "5.1") == 0) {
+            if (core_state.environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI, &s_audio_multi) &&
+                (s_audio_multi.batch_int16 || s_audio_multi.batch_float))
+                s_audio_channels = 6;
+            else
+                xenia_log(RETRO_LOG_WARN, "audio: the frontend has no multi-channel output, staying stereo\n");
+        }
+    }
+    if (s_audio_channels == 2) {
+        retro_audio_sample_float_callback candidate = {};
+        if (core_state.environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT, &candidate))
+            s_audio_float = candidate;
+    }
+    xe::apu::libretro::LibretroAudioSystem::set_output_channels(s_audio_channels);
+    xenia_log(RETRO_LOG_INFO, "audio: %u channels\n", s_audio_channels);
+
+    s_audio_registry = xe_audio_registry_new(s_audio_channels);
+    if (!s_audio_registry) {
+        xenia_log(RETRO_LOG_ERROR, "Failed to create content audio registry\n");
+        return false;
+    }
     // Request HW render from the frontend.
     memset(&hw_render_cb, 0, sizeof(hw_render_cb));
     hw_render_cb.depth = false;
@@ -1879,29 +1916,6 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
     s_rumble = {};
     core_state.environ_cb(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE, &s_rumble);
 
-    // 5.1 when asked for and the frontend has multi-channel output; asked
-    // once, at load, as the frontend wants it
-    {
-        const char *ch = opt_get(XENIA_OPT_AUDIO_CHANNELS);
-        s_audio_multi = {};
-        s_audio_float = {};
-        s_audio_channels = 2;
-        if (ch && strcmp(ch, "5.1") == 0) {
-            if (core_state.environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI, &s_audio_multi) &&
-                (s_audio_multi.batch_int16 || s_audio_multi.batch_float))
-                s_audio_channels = 6;
-            else
-                xenia_log(RETRO_LOG_WARN, "audio: the frontend has no multi-channel output, staying stereo\n");
-        }
-    }
-    if (s_audio_channels == 2) {
-        retro_audio_sample_float_callback candidate = {};
-        if (core_state.environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT, &candidate))
-            s_audio_float = candidate;
-    }
-    xe::apu::libretro::LibretroAudioSystem::set_output_channels(s_audio_channels);
-    xenia_log(RETRO_LOG_INFO, "audio: %u channels\n", s_audio_channels);
-
     // With Vulkan the game starts in context_reset, on RetroArch's device
     if (s_launch_on_context_reset)
         return true;
@@ -1930,6 +1944,8 @@ RETRO_API void retro_unload_game(void) {
     disc::release();
     xenia_shutdown();
     disc::unload();
+    xe_audio_registry_free(s_audio_registry);
+    s_audio_registry = nullptr;
     s_audio_channels = 2;
     s_audio_float = {};
     s_audio_multi = {};

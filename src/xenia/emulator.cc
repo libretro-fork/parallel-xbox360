@@ -221,6 +221,8 @@ Emulator::~Emulator() { Shutdown(); }
 
 void Emulator::Shutdown() {
   XELOGI("Emulator::Shutdown: starting teardown");
+  // Output waits must be cancellable before any dependent worker is joined.
+  if (audio_system_) audio_system_->CancelPendingOutput();
 
   // During relaunch, notify listeners before teardown so they can disconnect
   // UI resources while subsystems are still alive. Skip during normal
@@ -1440,6 +1442,7 @@ void Emulator::RelaunchTitle(const std::string& host_path,
 
   // Tell WaitUntilExit not to fire on_exit when main thread dies.
   relaunching_ = true;
+  if (audio_system_) audio_system_->CancelPendingOutput();
   on_title_closing();
 
   // Stop the dispatch thread gracefully before force-terminating threads,
@@ -1532,6 +1535,7 @@ void Emulator::RelaunchTitle(const std::string& host_path,
 }
 
 void Emulator::StopTitleThreads() {
+  if (audio_system_) audio_system_->CancelPendingOutput();
   // Each step logged and flushed, as in Shutdown: a teardown that hangs
   // leaves nothing else to tell which step it hung in (NNshi's Vulkan unload).
   const auto step = [](const char* what) {

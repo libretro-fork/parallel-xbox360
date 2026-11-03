@@ -110,7 +110,14 @@ int main(int argc, char **argv) {
     run();
     if (calls[0] != 1 || calls[1] || calls[2] || calls[3] || bad) return 17;
   }
+  /* Retry while a previous load is still waiting for context reset. */
+  mode = 1; float_queries = pictures = bad = 0; memset(calls, 0, sizeof(calls));
+  if (!load(&game) || !load(&game)) return 19;
+  run();
+  if (float_queries != 2 || pictures != 1 || bad || calls[0] ||
+      calls[1] != 1 || calls[2] || calls[3]) return 20;
+  unload();
   deinit(); if (!CORE_CLOSE(module)) return 18;
-  puts("PASS: eight audio format modes, exact cadence, single-format handoff and callback retirement");
+  puts("PASS: eight audio formats, exact cadence, callback retirement and pending-context load retry");
   return 0;
 }
