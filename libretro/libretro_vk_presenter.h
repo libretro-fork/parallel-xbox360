@@ -39,10 +39,13 @@ bool libretro_vk_create_shared_device(
     const char** required_extensions, unsigned required_extension_count,
     const VkPhysicalDeviceFeatures* required_features,
     VkPhysicalDevice& gpu_out, VkDevice& device_out, VkQueue& queue_out,
-    uint32_t& queue_family_out);
+    uint32_t& queue_family_out,
+    VkDevice (*create_device_wrapper)(VkPhysicalDevice, void*,
+                                      const VkDeviceCreateInfo*) = nullptr,
+    void* create_device_userdata = nullptr);
 
-// From the negotiation's destroy_device, before RetroArch destroys it: the
-// emulator is gone by then (unloaded).
+// Retire non-owning wrappers while the core is loaded, at context destruction
+// or content close. The frontend destroys the actual Vulkan device later.
 void libretro_vk_destroy_shared_device();
 
 bool libretro_vk_shared_device_active();

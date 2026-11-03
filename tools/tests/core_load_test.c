@@ -59,7 +59,7 @@ int main(int argc, char **argv) {
   symbol = CORE_FIND(module, "retro_get_system_info"); memcpy(&get_info, &symbol, sizeof(get_info));
   if (version() != RETRO_API_VERSION) goto done;
   memset(&info, 0, sizeof(info)); get_info(&info);
-  if (!info.library_name || strcmp(info.library_name, "parallel_xbox360")) goto done;
+  if (!info.library_name || strcmp(info.library_name, "ParaLLEl Xbox360")) goto done;
   if (argc == 3) {
     symbol = CORE_FIND(module, "retro_init"); memcpy(&init, &symbol, sizeof(init));
     symbol = CORE_FIND(module, "retro_deinit"); memcpy(&deinit, &symbol, sizeof(deinit));

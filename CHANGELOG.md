@@ -4,6 +4,12 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan now negotiates context v2 and creates the shared device through the frontend's wrapper, retaining v1 fallback when support is absent or rejected. D3D12 negotiates the newer render interface, uses fenced sync-index handoff where available, and retains the legacy interface. New C89 D3D12 frame handling caches upload footprints and bounds teardown waits while retaining resources still in GPU use. Negotiation enables frontend device customization; it does not implement Reflex or DLSS.
+
+- Removed miniaudio and the standalone achievement notification sound helper. Guest audio continues through libretro.
+
+- Every frontend run now submits its full frame-rate-proportional audio duration, padding underruns or a missing mixer with silence. Muting still consumes queued audio to avoid accumulating latency, fractional sample counts reset with core initialization, and frontends with only the per-sample audio callback are supported.
+
 - Vulkan negotiation no longer leaves a core device-destroy callback in RetroArch's cached video context. Non-owning Vulkan wrappers are released during context destruction/content close, while RetroArch retains and destroys its actual device even after the core DLL unloads. Added Vulkan and D3D12 lifecycle regressions that keep frontend devices alive past core unload; D3D12 registers no comparable late negotiation callback.
 
 - Expanded the Windows content-close regression to reject any surviving thread whose entry point belongs to the core DLL, verify that the DLL really unloads, and document how to run the test without a ROM.

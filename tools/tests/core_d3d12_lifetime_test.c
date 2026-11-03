@@ -4,6 +4,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <libretro.h>
 #include <libretro_d3d12.h>
@@ -14,8 +15,16 @@ static const char *system_dir;
 static struct retro_hw_render_callback hardware;
 static struct retro_hw_render_interface_d3d12 frontend;
 static unsigned context_requests, negotiation_requests;
+static unsigned negotiation_mode;
 static void set_texture(void *handle, ID3D12Resource *texture, DXGI_FORMAT format) {
   (void)handle; (void)texture; (void)format;
+}
+static unsigned sync_index(void *handle) { (void)handle; return 0; }
+static unsigned sync_mask(void *handle) { (void)handle; return 1; }
+static void wait_sync(void *handle) { (void)handle; }
+static void texture_fenced(void *handle, ID3D12Resource *texture,
+    DXGI_FORMAT format, ID3D12Fence *fence, UINT64 value) {
+  (void)handle; (void)texture; (void)format; (void)fence; (void)value;
 }
 static bool RETRO_CALLCONV environment(unsigned command, void *data) {
   if (command == RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY ||
@@ -28,13 +37,29 @@ static bool RETRO_CALLCONV environment(unsigned command, void *data) {
     return variable->value != NULL;
   }
   if (command == RETRO_ENVIRONMENT_SET_PIXEL_FORMAT) return true;
+  if (command == RETRO_ENVIRONMENT_GET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_SUPPORT) {
+    struct retro_hw_render_context_negotiation_interface *probe =
+        (struct retro_hw_render_context_negotiation_interface *)data;
+    if (!negotiation_mode || probe->interface_type != RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_D3D12)
+      return false;
+    probe->interface_version = 1;
+    return true;
+  }
   if (command == RETRO_ENVIRONMENT_SET_HW_RENDER) {
     hardware = *(struct retro_hw_render_callback *)data;
     ++context_requests;
     return hardware.context_type == RETRO_HW_CONTEXT_D3D12;
   }
   if (command == RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE) {
-    ++negotiation_requests; return false;
+    const struct retro_hw_render_context_negotiation_interface_d3d12 *request =
+        (const struct retro_hw_render_context_negotiation_interface_d3d12 *)data;
+    ++negotiation_requests;
+    if (request->interface_type != RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_D3D12 ||
+        request->interface_version != 1 || request->max_render_interface_version != 2)
+      return false;
+    if (negotiation_mode == 2) return false;
+    frontend.interface_version = negotiation_mode == 1 ? 2 : 1;
+    return true;
   }
   if (command == RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE) {
     *(const struct retro_hw_render_interface_d3d12 **)data = &frontend;
@@ -54,13 +79,19 @@ int main(int argc, char **argv) {
   HANDLE event;
   unsigned cycle;
   HRESULT hr;
-  if (argc != 4) return 2;
+  if (argc != 4 && argc != 5) return 2;
+  if (argc == 5) negotiation_mode = (unsigned)atoi(argv[4]);
+  if (negotiation_mode > 3) return 2;
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
   system_dir = argv[2];
   memset(&frontend, 0, sizeof(frontend));
   frontend.interface_type = RETRO_HW_RENDER_INTERFACE_D3D12;
   frontend.interface_version = RETRO_HW_RENDER_INTERFACE_D3D12_VERSION;
   frontend.set_texture = set_texture;
+  frontend.get_sync_index = sync_index;
+  frontend.get_sync_index_mask = sync_mask;
+  frontend.wait_sync_index = wait_sync;
+  frontend.set_texture_fenced = texture_fenced;
   hr = D3D12CreateDevice(NULL, D3D_FEATURE_LEVEL_11_0, &IID_ID3D12Device, (void **)&frontend.device);
   if (FAILED(hr)) return 3;
   memset(&queue_info, 0, sizeof(queue_info)); queue_info.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -75,7 +106,8 @@ int main(int argc, char **argv) {
     init(); memset(&game, 0, sizeof(game)); game.path = argv[3];
     if (load(&game)) return 7;
     if (hardware.context_type != RETRO_HW_CONTEXT_D3D12 || !hardware.context_reset || !hardware.context_destroy) return 8;
-    if (negotiation_requests || context_requests != cycle + 1) return 9;
+    if (negotiation_requests != (negotiation_mode ? cycle + 1 : 0) ||
+        context_requests != cycle + 1) return 9;
     hardware.context_reset(); hardware.context_destroy(); hardware.context_destroy();
     hardware.context_reset();
     unload(); deinit();
@@ -93,6 +125,6 @@ int main(int argc, char **argv) {
       WaitForSingleObject(event, 5000) != WAIT_OBJECT_0) return 15;
   CloseHandle(event); ID3D12Fence_Release(fence);
   ID3D12CommandQueue_Release(frontend.queue); ID3D12Device_Release(frontend.device);
-  puts("PASS: D3D12 context cycles, no retained negotiation callbacks, verified core unload and post-unload frontend queue execution");
+  printf("PASS: D3D12 negotiation mode %u, context cycles, core unload and frontend queue lifetime\n", negotiation_mode);
   return 0;
 }

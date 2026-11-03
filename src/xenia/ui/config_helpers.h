@@ -45,7 +45,6 @@ inline const std::vector<CvarAlias>& GetCvarAliases() {
        "submit_on_primary_buffer_end", "true"},
       {"d3d12_submit_on_primary_buffer_end", "false",
        "submit_on_primary_buffer_end", "false"},
-      {"notification_sound_path", "*", "achievement_sound_path", "*"},
       {"vsync", "true", "guest_display_refresh_cap", "true"},
       {"vsync", "false", "guest_display_refresh_cap", "false"},
 #if XE_PLATFORM_WIN32
@@ -374,11 +373,6 @@ struct CvarPathInfo {
 
 inline const CvarPathInfo* GetCvarPathInfo(const std::string& name) {
   static const std::map<std::string, CvarPathInfo> kInfo = {
-      {"achievement_sound_path",
-       {CvarPathKind::kFileOpen,
-        "Audio Files (*.wav;*.mp3;*.ogg;*.flac;*.m4a;*.aac;*.wma;*.opus)"
-        "|*.wav;*.mp3;*.ogg;*.flac;*.m4a;*.aac;*.wma;*.opus"
-        "|All Files (*.*)|*.*"}},
       {"custom_font_path",
        {CvarPathKind::kFileOpen,
         "Font Files (*.ttf;*.otf;*.ttc)|*.ttf;*.otf;*.ttc"

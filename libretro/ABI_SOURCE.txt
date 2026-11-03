@@ -1,0 +1,9 @@
+Public libretro ABI headers
+
+libretro.h, libretro_vulkan.h and libretro_d3d12.h were copied from
+RetroArch/libretro-common/include at commit
+c358071531a568859654f46a0826f409495c08be.
+Original license notices are retained. Local whitespace normalization only.
+
+The core supports Vulkan context negotiation v1/v2 and D3D12 render v1/v2.
+Returned interface versions gate access to newer struct fields.

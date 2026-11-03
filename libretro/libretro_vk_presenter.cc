@@ -46,7 +46,10 @@ bool libretro_vk_create_shared_device(
     const char** required_extensions, unsigned required_extension_count,
     const VkPhysicalDeviceFeatures* required_features,
     VkPhysicalDevice& gpu_out, VkDevice& device_out, VkQueue& queue_out,
-    uint32_t& queue_family_out) {
+    uint32_t& queue_family_out,
+    VkDevice (*create_device_wrapper)(VkPhysicalDevice, void*,
+                                      const VkDeviceCreateInfo*),
+    void* create_device_userdata) {
     libretro_vk_destroy_shared_device();
 
     // The instance's version: the one asked for in the application info,
@@ -74,6 +77,8 @@ bool libretro_vk_create_shared_device(
     request.extensions = required_extensions;
     request.extension_count = required_extension_count;
     request.features = required_features;
+    request.create_device = create_device_wrapper;
+    request.create_device_userdata = create_device_userdata;
     auto get_surface_support = PFN_vkGetPhysicalDeviceSurfaceSupportKHR(
         get_instance_proc_addr(instance,
                                "vkGetPhysicalDeviceSurfaceSupportKHR"));
@@ -99,6 +104,9 @@ bool libretro_vk_create_shared_device(
         device_out = device->device();
         queue_out = queue;
         queue_family_out = family;
+        // Failed candidates remain owned here and are destroyed normally.
+        // Transfer only the device actually returned to the frontend.
+        device->SetFrontendOwned();
         XELOGI("Vulkan: device shared with RetroArch, RetroArch on queue {} "
                "of family {}{}",
                device->frontend_queue_index(), family,

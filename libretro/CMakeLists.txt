@@ -4,6 +4,7 @@
 add_library(xenia-libretro SHARED
   libretro.cpp
   core_events.c
+  core_audio_cadence.c
   libretro_audio_driver.cc
   libretro_graphics_system.cc
   libretro_headless_stubs.cc
@@ -34,7 +35,8 @@ file(WRITE "${_xe_data_cc}.tmp" "${_xe_data_text}")
 file(COPY_FILE "${_xe_data_cc}.tmp" "${_xe_data_cc}" ONLY_IF_DIFFERENT)
 target_sources(xenia-libretro PRIVATE "${_xe_data_cc}")
 if(WIN32)
-  target_sources(xenia-libretro PRIVATE libretro_d3d12_presenter.cc)
+  target_sources(xenia-libretro PRIVATE libretro_d3d12_presenter.cc
+    core_d3d12_fence.c core_d3d12_video.c)
 
 endif()
 

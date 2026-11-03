@@ -1067,15 +1067,24 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       }
     }
   }
-  if (frontend_request) {
-    device->owns_device_ = false;
-  }
 #endif
 
   // Create the device.
 
-  const VkResult device_create_result = ifn.vkCreateDevice(
-      physical_device, &device_create_info, nullptr, &device->device_);
+  VkResult device_create_result;
+#ifdef XENIA_LIBRETRO
+  if (frontend_request && frontend_request->create_device) {
+    device->device_ = frontend_request->create_device(
+        physical_device, frontend_request->create_device_userdata,
+        &device_create_info);
+    device_create_result = device->device_ != VK_NULL_HANDLE
+                               ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
+  } else
+#endif
+  {
+    device_create_result = ifn.vkCreateDevice(
+        physical_device, &device_create_info, nullptr, &device->device_);
+  }
   if (device_create_result != VK_SUCCESS) {
     XELOGE(
         "Failed to create a Vulkan logical device from the physical device "

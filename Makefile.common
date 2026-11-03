@@ -1,6 +1,6 @@
 # Shared, hand-maintained source selection for the GNU Make build.
 # Keep in sync with the libretro target when importing upstream changes.
-SOURCES_C += libretro/core_events.c
+SOURCES_C += libretro/core_events.c libretro/core_audio_cadence.c
 CORE_DIRS := src/xenia src/xenia/base src/xenia/apu src/xenia/apu/nop \
  src/xenia/cpu src/xenia/cpu/backend src/xenia/cpu/compiler \
  src/xenia/cpu/compiler/passes src/xenia/cpu/hir src/xenia/cpu/ppc \
@@ -22,6 +22,7 @@ CAPSTONE_DEFS := -DCAPSTONE_HAS_X86 -DCAPSTONE_X86_ATT_DISABLE
 BOOST_VARIANT := x86_64_sysv_elf_gas.S
 endif
 ifeq ($(OS),windows)
+SOURCES_C += libretro/core_d3d12_fence.c libretro/core_d3d12_video.c
 CORE_DIRS += src/xenia/gpu/d3d12 src/xenia/ui/d3d12
 OS_SUFFIXES := win
 BOOST_VARIANT := x86_64_ms_pe_gas.asm

@@ -1,5 +1,22 @@
 # Raw DXIL writer checks
 
+## Frame and audio cadence
+
+`core_audio_cadence_test.c` checks 800,000 consecutive fractional-clock steps at
+50, 60, 60000/1001, 59.94, 120, 144, 165 and 240 Hz, plus reset and invalid-rate
+handling. It links `libretro/core_audio_cadence.c` and compiles as MSVC C89.
+`core_run_cadence_test.c` loads the core without a game or GPU and verifies one
+video callback and 800 silent stereo frames on every run, then switches to the
+per-sample callback and verifies the same sample duration. The older core fails
+because a missing mixer suppresses the audio callback entirely.
+
+```bat
+cl /TC /W4 /WX /O2 /Ilibretro libretro\core_audio_cadence.c tools\tests\core_audio_cadence_test.c
+core_audio_cadence_test.exe
+cl /TC /W4 /WX /O2 /Ilibretro tools\tests\core_run_cadence_test.c
+core_run_cadence_test.exe C:\absolute\parallel_xbox360_libretro.dll
+```
+
 ## Windows content-close regression
 
 `core_content_close_test.c` is a C89 libretro frontend that starts the real
@@ -33,6 +50,10 @@ backend, exercises repeated context reset/destruction, and checks that no device
 negotiation callbacks were registered. After verified core DLL unload it creates
 a fence on the frontend's device and signals it from the frontend's queue,
 requiring completion within five seconds before releasing frontend COM objects.
+An optional fourth argument selects negotiation coverage: Vulkan modes 0 through
+4 cover no support query, explicit v1, v2 wrapper creation, rejected v2 and
+wrapper failure. D3D12 modes 0 through 3 cover legacy, v2, rejected negotiation
+and an older returned render interface. Run each mode separately.
 These are lifecycle checks without guest frames; they do not test frame-copy
 synchronization or gameplay.
 
@@ -42,6 +63,17 @@ same three absolute-path arguments as `core_content_close_test.exe`:
 ```bat
 cl /TC /W4 /WX /O2 /Ilibretro /Ithird_party\Vulkan-Headers\include tools\tests\core_vulkan_lifetime_test.c
 cl /TC /W4 /WX /external:anglebrackets /external:W0 /O2 /Ilibretro tools\tests\core_d3d12_lifetime_test.c /link d3d12.lib dxguid.lib
+```
+
+`core_d3d12_video_test.c` links the production C89 frame driver and checks 25
+frames byte-for-byte on the GPU. Coverage includes legacy structs against a
+guard page, sparse v2 sync indices, delayed frontend consumers, required resource
+states, padded and contiguous rows, resize, stale fence events and bounded
+teardown with a blocked queue. It does not measure gameplay performance.
+
+```bat
+cl /TC /W4 /WX /external:anglebrackets /external:W0 /O2 /Ilibretro libretro\core_d3d12_fence.c libretro\core_d3d12_video.c tools\tests\core_d3d12_video_test.c /link d3d12.lib dxguid.lib
+core_d3d12_video_test.exe
 ```
 
 `dxil_writer_test.c` emits a compute shader directly from typed operations using

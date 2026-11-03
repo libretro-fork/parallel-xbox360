@@ -32,7 +32,11 @@ class VulkanDevice {
     const char* const* extensions = nullptr;
     uint32_t extension_count = 0;
     const VkPhysicalDeviceFeatures* features = nullptr;
+    VkDevice (*create_device)(VkPhysicalDevice, void*,
+                              const VkDeviceCreateInfo*) = nullptr;
+    void* create_device_userdata = nullptr;
   };
+  void SetFrontendOwned() { owns_device_ = false; }
 #endif
 
   static std::unique_ptr<VulkanDevice> CreateIfSupported(

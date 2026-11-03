@@ -31,7 +31,13 @@ On Windows, the fiber stack exception callback is removed when the last stack is
 
 Content close also flushes and joins the logging writer before the core DLL can unload. Reset and graphics context rebuild share the existing logger; reopening content starts it again.
 
+Each `retro_run` supplies one video callback and one run's audio duration at the declared refresh rate. Fractional sample counts carry forward; audio underruns and a missing mixer produce silence for the remainder. Muting drains audio without adding a backlog. Stereo frontends may use either the batch or per-sample callback.
+
 RetroArch owns the negotiated Vulkan device. The core releases its non-owning wrappers before unload and supplies no late device-destroy callback, so threaded video can destroy a cached device after the core DLL is gone.
+
+Vulkan context negotiation v2 routes device creation through the frontend wrapper, allowing the frontend to merge its device requirements. Older frontends and rejected v2 negotiation use v1. D3D12 requests render interface v2 and uses its fenced sync-index handoff when available, with v1 fallback. This does not implement Reflex or DLSS. D3D12 teardown waits are bounded; a stalled GPU may retain system COM resources rather than release memory still in use.
+
+Guest audio uses libretro; miniaudio and the standalone achievement sound helper have been removed.
 
 Games that need a signed-in profile get one: the core signs in the first profile under `content/`, or creates one when there is none, named after the first line of `system/Xenia-Edge/xbl_profilename.txt` ("Player" if the file is missing, which the core then writes there).
 

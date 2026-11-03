@@ -114,3 +114,6 @@ xb.bat
 xb.ps1
 xenia-build.py
 xenia.entitlements
+src/xenia/ui/audio_helper.cc
+src/xenia/ui/audio_helper.h
+third_party/miniaudio

@@ -141,12 +141,6 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC imgui PRIVATE stb)
 
 # ==============================================================================
-# miniaudio (header-only)
-# ==============================================================================
-add_library(miniaudio INTERFACE)
-target_include_directories(miniaudio INTERFACE miniaudio)
-
-# ==============================================================================
 # mspack
 # ==============================================================================
 add_library(mspack STATIC

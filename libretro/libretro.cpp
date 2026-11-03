@@ -8,6 +8,15 @@
  * (at your option) any later version.
  */
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#endif
+
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -25,9 +34,11 @@
 
 #include "libretro.h"
 #include "core_events.h"
+#include "core_audio_cadence.h"
 #include "libretro_vulkan.h"
 #ifdef _WIN32
 #include "libretro_d3d12.h"
+#include "core_d3d12_video.h"
 #include "xenia/ui/d3d12/d3d12_struct_return.h"
 #endif
 #include "libretro_core_options.h"
@@ -253,6 +264,7 @@ struct retro_audio_sample_multi_callback
 #endif
 static retro_audio_sample_multi_callback s_audio_multi = {};
 static unsigned s_audio_channels = 2;
+static xe_audio_cadence s_audio_cadence = {0.0};
 static xe::hid::libretro_hid::LibretroInputDriver *lr_input_driver = nullptr;
 static xe::gpu::GraphicsSystem *lr_graphics = nullptr;
 static bool game_loaded = false;
@@ -332,31 +344,61 @@ static bool xenia_vk_create_device(
     return true;
 }
 
-#ifdef _WIN32
-/* ================================================================== */
-/*  D3D12 HW render state                                              */
-/* ================================================================== */
-struct D3D12FrameResources {
-    ID3D12Resource *texture;
-    ID3D12Resource *upload_buffer;
-    void *upload_mapped;
-    ID3D12CommandAllocator *cmd_alloc;
-    ID3D12GraphicsCommandList *cmd_list;
-    ID3D12Fence *fence;
-    HANDLE fence_event;
-    UINT64 fence_value;
-    uint32_t width;
-    uint32_t height;
-};
+static bool xenia_vk_create_device2(
+    struct retro_vulkan_context *context, VkInstance instance,
+    VkPhysicalDevice gpu, VkSurfaceKHR surface,
+    PFN_vkGetInstanceProcAddr get_instance_proc_addr,
+    retro_vulkan_create_device_wrapper_t create_device_wrapper, void *opaque) {
+    VkPhysicalDevice made_gpu = VK_NULL_HANDLE;
+    VkDevice device = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
+    uint32_t family = 0;
+    if (!create_device_wrapper || !libretro_vk_create_shared_device(
+            instance, gpu, surface, get_instance_proc_addr, NULL, 0, NULL,
+            made_gpu, device, queue, family, create_device_wrapper, opaque))
+        return false;
+    context->gpu = made_gpu;
+    context->device = device;
+    context->queue = queue;
+    context->queue_family_index = family;
+    context->presentation_queue = queue;
+    context->presentation_queue_family_index = family;
+    xenia_log(RETRO_LOG_INFO, "Vulkan: negotiated device through frontend v2 wrapper\n");
+    return true;
+}
 
-static const struct retro_hw_render_interface_d3d12 *d3d12_hw = nullptr;
-static constexpr int D3D12_NUM_FRAMES = 2;
-static D3D12FrameResources d3d12_frames[D3D12_NUM_FRAMES] = {};
-static int d3d12_frame_idx = 0;
-static bool d3d12_hw_render_active = false;
-#else
-static bool d3d12_hw_render_active = false;
+static void xenia_vk_negotiate_context(void) {
+    struct retro_hw_render_context_negotiation_interface probe;
+    const struct retro_hw_render_context_negotiation_interface_vulkan *selected;
+    static const struct retro_hw_render_context_negotiation_interface_vulkan legacy = {
+        RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN, 1,
+        xenia_vk_application_info, xenia_vk_create_device, NULL, NULL, NULL
+    };
+    static const struct retro_hw_render_context_negotiation_interface_vulkan modern = {
+        RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN, 2,
+        xenia_vk_application_info, xenia_vk_create_device, NULL, NULL,
+        xenia_vk_create_device2
+    };
+    probe.interface_type = RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN;
+    probe.interface_version = 0;
+    selected = &legacy;
+    if (core_state.environ_cb(
+            RETRO_ENVIRONMENT_GET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_SUPPORT,
+            &probe) && probe.interface_version >= 2)
+        selected = &modern;
+    if (!core_state.environ_cb(
+            RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE,
+            (void *)selected) && selected == &modern)
+        core_state.environ_cb(
+            RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE,
+            (void *)&legacy);
+}
+
+#ifdef _WIN32
+/* Frontend frame ownership and v1/v2 handoff live in the C89 driver. */
+static xe_d3d12_video d3d12_video = {};
 #endif
+static bool d3d12_hw_render_active = false;
 
 /* ================================================================== */
 /*  Logging                                                            */
@@ -603,126 +645,24 @@ static void vulkan_context_destroy(void) {
 /* ================================================================== */
 /*  D3D12 HW render helpers                                            */
 /* ================================================================== */
-static void d3d12_destroy_frame(D3D12FrameResources &f) {
-    if (f.upload_mapped && f.upload_buffer) {
-        f.upload_buffer->Unmap(0, nullptr);
-        f.upload_mapped = nullptr;
-    }
-    if (f.cmd_list)   { f.cmd_list->Release();   f.cmd_list = nullptr; }
-    if (f.cmd_alloc)  { f.cmd_alloc->Release();  f.cmd_alloc = nullptr; }
-    if (f.fence)      { f.fence->Release();      f.fence = nullptr; }
-    if (f.fence_event){ CloseHandle(f.fence_event); f.fence_event = nullptr; }
-    if (f.upload_buffer) { f.upload_buffer->Release(); f.upload_buffer = nullptr; }
-    if (f.texture)    { f.texture->Release();    f.texture = nullptr; }
-    f.fence_value = 0;
-    f.width = f.height = 0;
-}
-
-static bool d3d12_create_frame(D3D12FrameResources &f,
-                                ID3D12Device *device,
-                                uint32_t w, uint32_t h) {
-    HRESULT hr;
-
-    // Command allocator + list
-    hr = device->CreateCommandAllocator(
-        D3D12_COMMAND_LIST_TYPE_DIRECT,
-        IID_PPV_ARGS(&f.cmd_alloc));
-    if (FAILED(hr)) return false;
-
-    hr = device->CreateCommandList(
-        0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-        f.cmd_alloc, nullptr,
-        IID_PPV_ARGS(&f.cmd_list));
-    if (FAILED(hr)) return false;
-    f.cmd_list->Close();
-
-    // Fence
-    hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&f.fence));
-    if (FAILED(hr)) return false;
-    f.fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    f.fence_value = 0;
-
-    // Texture: DEFAULT heap, COPY_DEST ??? COPY_SOURCE
-    D3D12_RESOURCE_DESC tex_desc = {};
-    tex_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    tex_desc.Width = w;
-    tex_desc.Height = h;
-    tex_desc.DepthOrArraySize = 1;
-    tex_desc.MipLevels = 1;
-    tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    tex_desc.SampleDesc.Count = 1;
-    tex_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-    tex_desc.Flags = D3D12_RESOURCE_FLAG_NONE;
-
-    D3D12_HEAP_PROPERTIES default_heap = {};
-    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-    hr = device->CreateCommittedResource(
-        &default_heap, D3D12_HEAP_FLAG_NONE,
-        &tex_desc, D3D12_RESOURCE_STATE_COPY_DEST,
-        nullptr, IID_PPV_ARGS(&f.texture));
-    if (FAILED(hr)) return false;
-
-    // Upload buffer (row-pitch aligned)
-    UINT64 upload_size = 0;
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout = {};
-    device->GetCopyableFootprints(&tex_desc, 0, 1, 0, &layout, nullptr, nullptr, &upload_size);
-
-    D3D12_RESOURCE_DESC buf_desc = {};
-    buf_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    buf_desc.Width = upload_size;
-    buf_desc.Height = 1;
-    buf_desc.DepthOrArraySize = 1;
-    buf_desc.MipLevels = 1;
-    buf_desc.SampleDesc.Count = 1;
-    buf_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-    D3D12_HEAP_PROPERTIES upload_heap = {};
-    upload_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
-    hr = device->CreateCommittedResource(
-        &upload_heap, D3D12_HEAP_FLAG_NONE,
-        &buf_desc, D3D12_RESOURCE_STATE_GENERIC_READ,
-        nullptr, IID_PPV_ARGS(&f.upload_buffer));
-    if (FAILED(hr)) return false;
-
-    // Persistently map
-    D3D12_RANGE read_range = {0, 0};
-    hr = f.upload_buffer->Map(0, &read_range, &f.upload_mapped);
-    if (FAILED(hr)) return false;
-
-    f.width = w;
-    f.height = h;
-    return true;
-}
-
 static void d3d12_context_reset(void) {
-    const struct retro_hw_render_interface *iface = nullptr;
+    const struct retro_hw_render_interface *iface = NULL;
+    d3d12_hw_render_active = false;
     if (!core_state.environ_cb(RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE, &iface) ||
-        !iface ||
-        iface->interface_type != RETRO_HW_RENDER_INTERFACE_D3D12 ||
-        iface->interface_version < RETRO_HW_RENDER_INTERFACE_D3D12_VERSION) {
-        xenia_log(RETRO_LOG_ERROR,
-                  "Failed to get D3D12 HW render interface (type=%d ver=%u)\n",
-                  iface ? iface->interface_type : -1,
-                  iface ? iface->interface_version : 0);
-        d3d12_hw_render_active = false;
+        !iface || !xe_d3d12_video_bind(&d3d12_video,
+            (const struct retro_hw_render_interface_d3d12 *)iface)) {
+        xe_d3d12_video_bind(&d3d12_video, NULL);
+        xenia_log(RETRO_LOG_ERROR, "Failed to get a usable D3D12 HW render interface\n");
         return;
     }
-    d3d12_hw = (const struct retro_hw_render_interface_d3d12 *)iface;
     d3d12_hw_render_active = true;
-    xenia_log(RETRO_LOG_INFO,
-              "D3D12 HW render interface acquired (ver %u, device %p)\n",
-              d3d12_hw->interface_version, (void *)d3d12_hw->device);
-}
-
-static void d3d12_destroy_all_frames(void) {
-    for (int i = 0; i < D3D12_NUM_FRAMES; i++)
-        d3d12_destroy_frame(d3d12_frames[i]);
-    d3d12_frame_idx = 0;
+    xenia_log(RETRO_LOG_INFO, "D3D12 HW interface v%u, %s handoff\n",
+        iface->interface_version, d3d12_video.fenced ? "fenced" : "legacy");
 }
 
 static void d3d12_context_destroy(void) {
-    d3d12_destroy_all_frames();
-    d3d12_hw = nullptr;
+    if (!xe_d3d12_video_detach(&d3d12_video, XE_D3D12_VIDEO_TIMEOUT_MS))
+        xenia_log(RETRO_LOG_ERROR, "D3D12: retaining in-flight frame resources after bounded wait\n");
     d3d12_hw_render_active = false;
 }
 #endif /* _WIN32 */
@@ -1100,33 +1040,44 @@ static void apply_core_options(void) {
 /*  Per-frame helpers                                                  */
 /* ================================================================== */
 static void update_audio(void) {
-    if (!core_state.audio_enabled || !core_state.audio_buffer) return;
-    if (!audio_mixer || !core_state.audio_batch_cb) return;
-
-    // One frame of audio a call: 800 stereo frames at 48 kHz and 60 Hz (960 at 50). Up to
-    // twice that, as before, was what a call took whenever the ring had a
-    // backlog, which it always had; RetroArch's audio sync holds a call until
-    // about what it was given has played, so every call took 33 ms - 30 calls
-    // a second while the game swapped 60 times, and a ring kept full, about a
-    // second behind (NNshi's run stats). The audio driver waits for room
-    // instead, which paces the game's audio to playback.
-    // 48000 a second over the output rate, the fraction carried over to the
-    // next call (an uncapped rate like 165 does not divide 48000)
-    static double s_sample_carry = 0.0;
-    const double exact = 48000.0 / (core_state.output_fps > 0 ? core_state.output_fps : 60.0) + s_sample_carry;
-    const size_t frames = static_cast<size_t>(exact);
-    s_sample_carry = exact - static_cast<double>(frames);
-    const size_t frame_samples = std::min(frames * s_audio_channels, core_state.audio_buffer_size);
-    size_t got = audio_mixer->Mix(core_state.audio_buffer, frame_samples);
-    if (got > 0 && s_audio_channels == 6)
-        s_audio_multi.batch_int16(core_state.audio_buffer, got / 6, 6,
-                                  RETRO_AUDIO_SPEAKER_FRONT_LEFT | RETRO_AUDIO_SPEAKER_FRONT_RIGHT |
-                                  RETRO_AUDIO_SPEAKER_FRONT_CENTER | RETRO_AUDIO_SPEAKER_LOW_FREQUENCY |
-                                  RETRO_AUDIO_SPEAKER_SIDE_LEFT | RETRO_AUDIO_SPEAKER_SIDE_RIGHT);
-    else if (got > 0)
-        core_state.audio_batch_cb(core_state.audio_buffer, got / 2);
+    size_t frames, frame_samples, got, i;
+    int16_t *resized;
+    if (!core_state.audio_batch_cb && !core_state.audio_cb &&
+        !(s_audio_channels == 6 && s_audio_multi.batch_int16)) return;
+    frames = xe_audio_cadence_next(&s_audio_cadence,
+        (unsigned)core_state.audio_sample_rate, core_state.output_fps);
+    frame_samples = frames * s_audio_channels;
+    if (frame_samples > core_state.audio_buffer_size) {
+        resized = (int16_t *)realloc(core_state.audio_buffer,
+                                    frame_samples * sizeof(int16_t));
+        if (!resized) {
+            xenia_log(RETRO_LOG_ERROR, "Failed to grow per-run audio buffer\n");
+            return;
+        }
+        core_state.audio_buffer = resized;
+        core_state.audio_buffer_size = frame_samples;
+    }
+    if (!core_state.audio_buffer) return;
+    /* Consume exactly this run's duration. Silence completes an underrun, and
+     * disabling sound still drains the mixer so it cannot add guest latency. */
+    got = audio_mixer ? audio_mixer->Mix(core_state.audio_buffer, frame_samples) : 0;
+    if (got > frame_samples) got = frame_samples;
+    if (!core_state.audio_enabled) got = 0;
+    memset(core_state.audio_buffer + got, 0,
+           (frame_samples - got) * sizeof(int16_t));
+    if (s_audio_channels == 6 && s_audio_multi.batch_int16) {
+        s_audio_multi.batch_int16(core_state.audio_buffer, frames, 6,
+            RETRO_AUDIO_SPEAKER_FRONT_LEFT | RETRO_AUDIO_SPEAKER_FRONT_RIGHT |
+            RETRO_AUDIO_SPEAKER_FRONT_CENTER | RETRO_AUDIO_SPEAKER_LOW_FREQUENCY |
+            RETRO_AUDIO_SPEAKER_SIDE_LEFT | RETRO_AUDIO_SPEAKER_SIDE_RIGHT);
+    } else if (core_state.audio_batch_cb) {
+        core_state.audio_batch_cb(core_state.audio_buffer, frames);
+    } else if (core_state.audio_cb && s_audio_channels == 2) {
+        for (i = 0; i < frames; ++i)
+            core_state.audio_cb(core_state.audio_buffer[i * 2],
+                               core_state.audio_buffer[i * 2 + 1]);
+    }
 }
-
 static void update_video(void) {
     // Capture frame using presenter's CaptureGuestOutput.
     if (lr_graphics && lr_graphics->presenter()) {
@@ -1293,123 +1244,20 @@ static void update_video_vulkan(void)
 #ifdef _WIN32
 static void update_video_d3d12(void)
 {
-    D3D12_TEXTURE_COPY_LOCATION dst_loc = {};
-    D3D12_TEXTURE_COPY_LOCATION src_loc = {};
-    if (!d3d12_hw_render_active || !d3d12_hw) {
+    const void *pixels = NULL;
+    uint32_t width = 0, height = 0;
+    if (!d3d12_hw_render_active) {
         update_video();
         return;
     }
-
-    // Step 1: Capture with persistent resources (no per-frame alloc)
-    const void* blit_data = nullptr;
-    uint32_t w = 0, h = 0;
     if (!lr_graphics || !lr_graphics->presenter() ||
-        !libretro_d3d12_capture_gpu_blit(lr_graphics->presenter(),
-                                          blit_data, w, h) ||
-        !blit_data || w == 0 || h == 0) {
+        !libretro_d3d12_capture_gpu_blit(lr_graphics->presenter(), pixels, width, height) ||
+        !pixels || !width || !height) {
         core_state.video_cb(RETRO_HW_FRAME_BUFFER_VALID, 0, 0, 0);
         return;
     }
-
-    // Step 2: Upload to frontend D3D12 texture
-    ID3D12Device *device = d3d12_hw->device;
-
-    // Pick next frame slot (double-buffered, avoid CPU-GPU stalls)
-    D3D12FrameResources &f = d3d12_frames[d3d12_frame_idx];
-    d3d12_frame_idx = (d3d12_frame_idx + 1) % D3D12_NUM_FRAMES;
-
-    // Recreate resources if dimensions changed
-    if (f.width != w || f.height != h) {
-        // Wait for slot's prior work before destroying
-        if (f.fence && f.fence_value > 0) {
-            if (f.fence->GetCompletedValue() < f.fence_value) {
-                f.fence->SetEventOnCompletion(f.fence_value, f.fence_event);
-                WaitForSingleObject(f.fence_event, INFINITE);
-            }
-        }
-        d3d12_destroy_frame(f);
-        if (!d3d12_create_frame(f, device, w, h)) {
-            xenia_log(RETRO_LOG_ERROR,
-                      "Failed to create D3D12 frame resources %ux%u\n", w, h);
-            d3d12_hw_render_active = false;
-            update_video();
-            return;
-        }
-    }
-
-    // Wait for slot's prior GPU work (2 frames ago, usually done)
-    if (f.fence_value > 0) {
-        if (f.fence->GetCompletedValue() < f.fence_value) {
-            f.fence->SetEventOnCompletion(f.fence_value, f.fence_event);
-            WaitForSingleObject(f.fence_event, INFINITE);
-        }
-    }
-
-    // Copy pixels to upload buffer (row-pitch aligned)
-    D3D12_RESOURCE_DESC tex_desc = xe_d3d12_resource_desc(f.texture);
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout = {};
-    device->GetCopyableFootprints(&tex_desc, 0, 1, 0, &layout, nullptr, nullptr, nullptr);
-
-    uint8_t *dst = (uint8_t *)f.upload_mapped + layout.Offset;
-    const uint8_t *src = (const uint8_t *)blit_data;
-    uint32_t src_pitch = w * 4;
-    uint32_t dst_pitch = layout.Footprint.RowPitch;
-    for (uint32_t row = 0; row < h; row++) {
-        memcpy(dst + row * dst_pitch, src + row * src_pitch, src_pitch);
-    }
-
-    // Record commands
-    f.cmd_alloc->Reset();
-    f.cmd_list->Reset(f.cmd_alloc, nullptr);
-
-    // Transition: COPY_SOURCE ??? COPY_DEST (after first frame)
-    if (f.fence_value > 0) {
-        D3D12_RESOURCE_BARRIER barrier = {};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition.pResource = f.texture;
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        f.cmd_list->ResourceBarrier(1, &barrier);
-    }
-
-    // Copy upload buffer ??? texture
-    dst_loc.pResource = f.texture;
-    dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-    dst_loc.SubresourceIndex = 0;
-
-    src_loc.pResource = f.upload_buffer;
-    src_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-    src_loc.PlacedFootprint = layout;
-
-    f.cmd_list->CopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, nullptr);
-
-    // Transition: COPY_DEST ??? COPY_SOURCE (required)
-    {
-        D3D12_RESOURCE_BARRIER barrier = {};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition.pResource = f.texture;
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        f.cmd_list->ResourceBarrier(1, &barrier);
-    }
-
-    f.cmd_list->Close();
-
-    // Execute on the frontend's command queue
-    ID3D12CommandList *lists[] = { f.cmd_list };
-    d3d12_hw->queue->ExecuteCommandLists(1, lists);
-
-    // Signal fence
-    f.fence_value++;
-    d3d12_hw->queue->Signal(f.fence, f.fence_value);
-
-    // Pass the texture to the frontend
-    d3d12_hw->set_texture(d3d12_hw->handle, f.texture, DXGI_FORMAT_R8G8B8A8_UNORM);
-
-    // Signal to RetroArch that a HW frame is ready
-    core_state.video_cb(RETRO_HW_FRAME_BUFFER_VALID, w, h, 0);
+    if (!xe_d3d12_video_present(&d3d12_video, pixels, width, height, core_state.video_cb))
+        core_state.video_cb(NULL, width, height, 0);
 }
 #endif /* _WIN32 */
 
@@ -1765,8 +1613,7 @@ static void xenia_shutdown(void) {
 
     // Clean up D3D12 HW render resources
 #ifdef _WIN32
-    d3d12_destroy_all_frames();
-    d3d12_hw = nullptr;
+    d3d12_context_destroy();
 #endif
     d3d12_hw_render_active = false;
     // Every producer above has stopped. Use the logger's terminator and join
@@ -1857,6 +1704,7 @@ RETRO_API void retro_set_input_poll(retro_input_poll_t cb)            { core_sta
 RETRO_API void retro_set_input_state(retro_input_state_t cb)          { core_state.input_state_cb = cb; }
 
 RETRO_API void retro_init(void) {
+    xe_audio_cadence_reset(&s_audio_cadence);
     xenia_log(RETRO_LOG_INFO, "ParaLLEl Xbox360 libretro core %s, built from commit %s\n",
               XENIA_LIBRETRO_VERSION, XENIA_LIBRETRO_COMMIT);
     core_state.audio_sample_rate  = 48000.0;
@@ -1987,17 +1835,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
                       "Frontend rejected Vulkan HW render ??? falling back to software\n");
             vulkan_hw_render_active = false;
         } else {
-            static const struct retro_hw_render_context_negotiation_interface_vulkan negotiation = {
-                RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN,
-                RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION,
-                xenia_vk_application_info,
-                xenia_vk_create_device,
-                // RetroArch owns vkDestroyDevice and may destroy it after
-                // unloading this DLL. No core callback can survive that point.
-                nullptr,
-            };
-            core_state.environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE,
-                                  (void *)&negotiation);
+            // Both versions leave device destruction to the frontend. Never
+            // retain a callback into this DLL in a cached video context.
+            xenia_vk_negotiate_context();
             s_launch_on_context_reset = true;
         }
     }
@@ -2011,6 +1851,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
             xenia_log(RETRO_LOG_WARN,
                       "Frontend rejected D3D12 HW render ??? falling back to software\n");
             d3d12_hw_render_active = false;
+        } else {
+            xe_d3d12_video_negotiate(core_state.environ_cb);
         }
     }
 #endif
