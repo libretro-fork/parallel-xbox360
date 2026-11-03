@@ -16,6 +16,7 @@ target_sources(xenia-base PRIVATE "${PROJECT_SOURCE_DIR}/libretro/core_decompres
   "${PROJECT_SOURCE_DIR}/libretro/core_audio_cadence.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_audio_samples.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_audio_queue.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_input_analog.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_image.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_ui_queue.c")
 xe_target_defaults(xenia-base)

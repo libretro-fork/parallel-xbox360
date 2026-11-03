@@ -2,6 +2,19 @@
 
 ## Owned libretro-common primitives and codecs
 
+`core_input_analog_test.c` exhausts all 65,536 input values for raw sticks,
+saturating Y inversion, trigger monotonicity and nearest-quantization error.
+It also recovers all 256 physical trigger levels after truncated or rounded
+frontend expansion. `core_input_driver_test.c` uses the minimal C++ bridge in
+`core_input_driver_bridge.cc` to exercise the actual `LibretroInputDriver`:
+frontend polling, guest-state marshalling, small movements, endpoints, trigger
+levels and digital fallback. Compile its driver and bridge as C++20 and the
+test/`core_input_analog.c` as C89. It needs no emulator, GPU or game.
+
+`core_run_cadence_test.c` and `core_audio_format_test.c` use the native loader
+in `core_test_module.h` on Windows or POSIX (`-ldl`). Both run against the
+compiled core; the format fixture accepts hardware setup without resetting it.
+
 `core_audio_queue_test.c` checks 200,000 frames each of stereo and 5.1 concurrent
 production/consumption, exact additive sample order, whole-frame publication,
 physical wraps, destination bounds, the 64 ms limit, readiness wakeup and stop
@@ -16,12 +29,12 @@ conversion, including nonfinite inputs and destination bounds. The test exhausts
 all 65,536 int16 round trips and checks low-amplitude nearest-even ties,
 adjacent float values and saturation boundaries. Compile it with
 `core_audio_samples.c` as C89. `core_audio_format_test.c` exercises the real
-Windows DLL ABI with eight frontend-format modes, 20 runs each: stereo float,
+native core ABI with eight frontend-format modes, 20 runs each: stereo float,
 float-only and integer-only 5.1, float preference, unsupported/empty callbacks,
 legacy fallback and callback retirement at unload. It accepts hardware setup
 without resetting the context, so it checks silent cadence and negotiation
 without a GPU or guest title, not game-produced audio correctness. Arguments:
-DLL, private system directory and a synthetic invalid XEX file.
+core library, private system directory and a synthetic invalid XEX file.
 
 `core_ui_queue_test.c` checks headless button policy, frontend-driven close
 timing, active-request lifetime, the 64-request undrained bound, 8,000 completions

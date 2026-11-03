@@ -1,7 +1,6 @@
 /* Exercise retro_run without a mixer: one video and one full silent audio frame.
- * MSVC C89. Arg: core DLL. No game, GPU or private files required. */
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+ * MSVC C89. Arg: native core. No game, GPU or private files required. */
+#include "core_test_module.h"
 #include <stdio.h>
 #include <string.h>
 #include <libretro.h>
@@ -31,8 +30,8 @@ static void RETRO_CALLCONV audio(int16_t left, int16_t right) {
   ++individual;
 }
 int main(int argc, char **argv) {
-  HMODULE module;
-  FARPROC symbol;
+  CoreModule module;
+  CoreSymbol symbol;
   SetEnvironment set_environment;
   SetVideo set_video;
   SetAudioBatch set_batch;
@@ -40,8 +39,8 @@ int main(int argc, char **argv) {
   Lifecycle init, run, deinit;
   unsigned i;
   if (argc != 2) return 2;
-  module = LoadLibraryA(argv[1]); if (!module) return 3;
-#define FIND(function, name) do { symbol = GetProcAddress(module, name); if (!symbol) return 4; memcpy(&function, &symbol, sizeof(function)); } while (0)
+  module = CORE_LOAD(argv[1]); if (!module) return 3;
+#define FIND(function, name) do { symbol = CORE_FIND(module, name); if (!symbol) return 4; memcpy(&function, &symbol, sizeof(function)); } while (0)
   FIND(set_environment, "retro_set_environment"); FIND(set_video, "retro_set_video_refresh");
   FIND(set_batch, "retro_set_audio_sample_batch"); FIND(set_audio, "retro_set_audio_sample");
   FIND(init, "retro_init"); FIND(run, "retro_run"); FIND(deinit, "retro_deinit");
@@ -58,7 +57,7 @@ int main(int argc, char **argv) {
   for (i = 0; i < 20; ++i) run();
   if (pictures != 140 || batches != 120 || individual != 16000 || bad) return 6;
   deinit();
-  if (!FreeLibrary(module)) return 7;
+  if (!CORE_CLOSE(module)) return 7;
   puts("PASS: one video per retro_run, 800 silent audio frames per run, sample-callback fallback");
   return 0;
 }

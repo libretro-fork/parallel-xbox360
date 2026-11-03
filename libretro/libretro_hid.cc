@@ -5,6 +5,7 @@
  */
 
 #include "libretro_hid.h"
+#include "core_input_analog.h"
 
 #include <algorithm>
 #include <cstring>
@@ -133,32 +134,15 @@ X_RESULT LibretroInputDriver::GetState(uint32_t user_index,
   // Map libretro joypad buttons -> Xbox 360 button bitmask
   out_state->gamepad.buttons = XboxButtons(s);
 
-  // Triggers: libretro 0..+0x7FFF ??? Xbox 0..255
-  out_state->gamepad.left_trigger =
-      static_cast<uint8_t>((s.left_trigger * 255) / 0x7FFF);
-  out_state->gamepad.right_trigger =
-      static_cast<uint8_t>((s.right_trigger * 255) / 0x7FFF);
-
-  // Sticks: libretro -0x7FFF..+0x7FFF ??? Xbox -32768..+32767 (Y axis inverted).
-  int16_t lx = s.left_stick_x;
-  int16_t ly = static_cast<int16_t>(-s.left_stick_y);
-  int16_t rx = s.right_stick_x;
-  int16_t ry = static_cast<int16_t>(-s.right_stick_y);
-
-  if (lx > -X_INPUT_GAMEPAD_LEFT_THUMB_DEADZONE &&
-      lx <  X_INPUT_GAMEPAD_LEFT_THUMB_DEADZONE) lx = 0;
-  if (ly > -X_INPUT_GAMEPAD_LEFT_THUMB_DEADZONE &&
-      ly <  X_INPUT_GAMEPAD_LEFT_THUMB_DEADZONE) ly = 0;
-  if (rx > -X_INPUT_GAMEPAD_RIGHT_THUMB_DEADZONE &&
-      rx <  X_INPUT_GAMEPAD_RIGHT_THUMB_DEADZONE) rx = 0;
-  if (ry > -X_INPUT_GAMEPAD_RIGHT_THUMB_DEADZONE &&
-      ry <  X_INPUT_GAMEPAD_RIGHT_THUMB_DEADZONE) ry = 0;
-
-  out_state->gamepad.thumb_lx = lx;
-  out_state->gamepad.thumb_ly = ly;
-  out_state->gamepad.thumb_rx = rx;
-  out_state->gamepad.thumb_ry = ry;
-
+  xe_input_analog analog;
+  xe_input_analog_map(&analog, s.left_trigger, s.right_trigger,
+      s.left_stick_x, s.left_stick_y, s.right_stick_x, s.right_stick_y);
+  out_state->gamepad.left_trigger = analog.left_trigger;
+  out_state->gamepad.right_trigger = analog.right_trigger;
+  out_state->gamepad.thumb_lx = analog.left_x;
+  out_state->gamepad.thumb_ly = analog.left_y;
+  out_state->gamepad.thumb_rx = analog.right_x;
+  out_state->gamepad.thumb_ry = analog.right_y;
   return X_ERROR_SUCCESS;
 }
 

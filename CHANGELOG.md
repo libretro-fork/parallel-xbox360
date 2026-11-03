@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed the extra core-side stick dead zone from guest XInput state, preserving small movements supplied by the frontend for the game to filter. Fixed Y inversion at -32768 and changed analog trigger conversion to nearest rounding at the required 8-bit boundary, recovering all 256 physical trigger levels from frontend-expanded values. Mapping lives in C89 code; digital trigger fallback is retained.
+
 - Replaced the audio driver's overwrite-prone C++ ring with a C89 libretro-common SPSC queue. Unread samples remain consumer-owned, complete channel frames survive plain-ring wraps, and a logical 64 ms bound replaces the oversized buffer. Consumption notifications replace the 1 ms sleep loop; teardown cancels pending writes before existing joins. Mixing uses borrowed queue spans, compatible float submissions skip staging, and native-rate audio avoids the resampler call. Driver controls use common atomics; the bounded common-lock registry and remaining host-deadline/resampling paths still need further work. Media-player ownership is released before its audio system during shutdown.
 
 - Fixed avoidable precision loss in legacy int16 audio output: use the frontend's 32768 normalization scale and nearest-even rounding instead of 32767 scaling with truncation. All 65,536 int16 values now survive a normalized-float round trip exactly; float-capable frontends retain native float output. Guest-visible XMA formats are unchanged.

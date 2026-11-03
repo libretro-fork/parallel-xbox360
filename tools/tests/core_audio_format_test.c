@@ -1,8 +1,7 @@
 /* Float negotiation/fallback and unload contract through the real core ABI.
- * MSVC C89. Args: DLL, private system directory, synthetic invalid XEX.
+ * MSVC C89. Args: native core, private system directory, synthetic invalid XEX.
  * Accepts hardware setup without resetting it; no GPU or guest code runs. */
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include "core_test_module.h"
 #include <stdio.h>
 #include <string.h>
 #include "core_audio_callbacks.h"
@@ -79,8 +78,8 @@ static bool RETRO_CALLCONV environment(unsigned command, void *data) {
   return false;
 }
 int main(int argc, char **argv) {
-  HMODULE module;
-  FARPROC symbol;
+  CoreModule module;
+  CoreSymbol symbol;
   SetEnvironment set_environment;
   SetVideo set_video;
   SetBatch set_batch;
@@ -90,8 +89,8 @@ int main(int argc, char **argv) {
   unsigned i, j, expected;
   if (argc != 4) return 10;
   system_dir = argv[2];
-  module = LoadLibraryA(argv[1]); if (!module) return 11;
-#define FIND(function, name) do { symbol = GetProcAddress(module, name); if (!symbol) return 12; memcpy(&function, &symbol, sizeof(function)); } while (0)
+  module = CORE_LOAD(argv[1]); if (!module) return 11;
+#define FIND(function, name) do { symbol = CORE_FIND(module, name); if (!symbol) return 12; memcpy(&function, &symbol, sizeof(function)); } while (0)
   FIND(set_environment, "retro_set_environment"); FIND(set_video, "retro_set_video_refresh");
   FIND(set_batch, "retro_set_audio_sample_batch"); FIND(init, "retro_init");
   FIND(run, "retro_run"); FIND(load, "retro_load_game");
@@ -111,7 +110,7 @@ int main(int argc, char **argv) {
     run();
     if (calls[0] != 1 || calls[1] || calls[2] || calls[3] || bad) return 17;
   }
-  deinit(); if (!FreeLibrary(module)) return 18;
+  deinit(); if (!CORE_CLOSE(module)) return 18;
   puts("PASS: eight audio format modes, exact cadence, single-format handoff and callback retirement");
   return 0;
 }

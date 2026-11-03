@@ -19,6 +19,8 @@ The core option Graphics API picks Xenia's GPU backend: Vulkan, or on Windows Di
 
 ## Content
 
+Analog sticks preserve the frontend's raw 16-bit values; the core adds no stick dead zone before the title reads XInput state. Configure frontend dead zones as desired; games retain their own filtering. Y inversion saturates its unrepresentable positive endpoint, and analog triggers round once to the Xbox controller's 8-bit format, preserving physical 8-bit levels through frontend expansion. This follows [XInput's application-side dead-zone policy](https://learn.microsoft.com/en-us/windows/win32/xinput/getting-started-with-xinput).
+
 Startup does not display the standalone Windows disclaimer dialog or read/write its registry acknowledgement.
 
 Guest UI requests complete headlessly: message boxes choose an offline or confirmation answer, keyboards retain their default text, and storage selection uses the first available hard disk. UI open/close notifications use a bounded libretro-common queue drained by `retro_run`; the close delay follows frontend progress. There are no standalone UI widgets, bundled UI fonts or fontconfig dependency. Guest profile/tile image decoding remains available independently of the UI.
