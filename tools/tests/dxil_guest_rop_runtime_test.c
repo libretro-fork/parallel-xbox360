@@ -65,6 +65,22 @@ static void transition(ID3D12GraphicsCommandList *list, ID3D12Resource *resource
   barrier.Transition.StateAfter = after; barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
   ID3D12GraphicsCommandList_ResourceBarrier(list, 1, &barrier);
 }
+/* A masked float may jump far from the numeric oracle when an intrinsic differs
+ * by one ULP. Check that its written bits can come from the allowed LOD range;
+ * masked destination bits are checked separately and remain exact. */
+static int masked_interval(uint32_t actual, uint32_t mask, uint32_t lo, uint32_t hi) {
+  uint32_t bit, higher, candidate, swap; unsigned i;
+  if (lo > hi) { swap = lo; lo = hi; hi = swap; }
+  if ((lo&~mask) == (actual&~mask)) return 1;
+  for (i = 0; i < 32; ++i) {
+    bit = (uint32_t)1<<i; higher = ~(bit|(bit-1));
+    if (!(lo&bit) && ((mask|actual)&bit) && !((lo^actual)&~mask&higher)) {
+      candidate = (lo&higher)|bit|(actual&~mask&(bit-1));
+      if (candidate <= hi) return 1;
+    }
+  }
+  return 0;
+}
 int main(int argc, char **argv) {
   static const float vertices[12] = {-1,1,0,1, 3,1,0,1, -1,-3,0,1};
   IDXGIFactory4 *factory = NULL;
@@ -102,8 +118,9 @@ int main(int argc, char **argv) {
   void *ps = NULL, *vs = NULL, *mapped = NULL;
   uint32_t *values, *golden = NULL, *initial = NULL;
   size_t ps_size = 0, vs_size = 0, bytes = 0, fixture_size = 0;
+  uint32_t lod_lo_bits = 0, lod_hi_bits = 0, preserve;
   unsigned i, constants[128], counters[64], x, j, words, msaa, config, width, height;
-  float colors[20];
+  float colors[20], lod_bias, lod_lo, lod_hi;
   char *name = NULL;
   HRESULT status = E_FAIL;
   if (argc != 4) return 2;
@@ -119,6 +136,12 @@ int main(int argc, char **argv) {
     READ(".counters",part,fixture_size); if (fixture_size != sizeof(counters)) { free(part); goto done; } memcpy(counters,part,fixture_size); free(part);
   }
   if (constants[100] >= 1143) { width = config&4 ? 128 : 64; height = config&4 ? 24 : 8; }
+  if (constants[101] == 16) {
+    memcpy(&lod_bias,constants+7,4);
+    lod_lo = (float)(log(4.0/(double)height)/log(2.0))*lod_bias;
+    lod_hi = lod_lo+.008f*(float)fabs((double)lod_bias); lod_lo -= .008f*(float)fabs((double)lod_bias);
+    memcpy(&lod_lo_bits,&lod_lo,4); memcpy(&lod_hi_bits,&lod_hi,4);
+  }
   words = (unsigned)(bytes/4);
   ps = read_binary(argv[1], &ps_size); vs = read_binary(argv[2], &vs_size);
   if (!ps || !vs) goto done;
@@ -205,7 +228,7 @@ int main(int argc, char **argv) {
     heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER; heap_desc.NumDescriptors = 1;
     CHECK(ID3D12Device_CreateDescriptorHeap(device,&heap_desc,&IID_ID3D12DescriptorHeap,(void **)&sampler_heap));
     ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(sampler_heap,&cpu);
-    memset(&sampled_sampler,0,sizeof(sampled_sampler)); sampled_sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+    memset(&sampled_sampler,0,sizeof(sampled_sampler)); sampled_sampler.Filter = constants[101] == 16 ? D3D12_FILTER_MIN_MAG_MIP_LINEAR : D3D12_FILTER_MIN_MAG_MIP_POINT;
     sampled_sampler.AddressU = sampled_sampler.AddressV = sampled_sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     sampled_sampler.MaxAnisotropy = 1; sampled_sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER; sampled_sampler.MaxLOD = 1000;
     ID3D12Device_CreateSampler(device,&sampled_sampler,cpu);
@@ -256,8 +279,14 @@ int main(int argc, char **argv) {
   for (x = 0; x < words; ++x) if (values[x] != golden[x]) {
     if (constants[101] && constants[102] >= 14 && golden[x] != initial[x] && x >= constants[43] && x < constants[43]+bytes/24) {
       float actual, expected;
-      memcpy(&actual,values+x,4); memcpy(&expected,golden+x,4);
-      if (fabs((double)actual-expected) <= .00001) continue;
+      if (constants[101] == 16) {
+        preserve = constants[54];
+        if ((constants[102] != 15 || !((x-constants[43])&1)) &&
+            !((values[x]^initial[x])&preserve) && masked_interval(values[x],preserve,lod_lo_bits,lod_hi_bits)) continue;
+      } else {
+        memcpy(&actual,values+x,4); memcpy(&expected,golden+x,4);
+        if (fabs((double)actual-expected) <= .00001) continue;
+      }
     }
     fprintf(stderr, "EDRAM word %u mismatch: %08lX != %08lX\n", x, (unsigned long)values[x], (unsigned long)golden[x]); status = E_FAIL; goto done;
   }

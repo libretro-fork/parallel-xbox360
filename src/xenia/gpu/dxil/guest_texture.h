@@ -76,7 +76,8 @@ int xe_dxil_texture_fetch_init(XeDxilAlu *alu, XeDxilTextureFetch *fetch);
 /* Setters update persistent state without touching ALU p0/ps/a0. Fetches and
  * queries write only requested destination lanes. False predication suppresses
  * source reads, state changes and sampling. getGradients uses native pixel
- * derivatives; other queries are delegated with their raw opcode intact. */
+ * derivatives. Border fraction retains the core's zero-result policy, as do
+ * non-pixel or explicit-gradient LOD queries. Other queries are delegated. */
 int xe_dxil_emit_texture_fetch(XeDxilAlu *alu,
                                 const XeDxilTextureInstruction *instruction,
                                 const XeDxilAluIo *io, XeDxilTextureFetch *fetch);

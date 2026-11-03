@@ -8,7 +8,7 @@
 typedef struct XeDxilTextureBinding { unsigned fetch_constant, dimension, is_signed; } XeDxilTextureBinding;
 typedef struct XeDxilSamplerBinding { unsigned fetch_constant, mag_filter, min_filter, mip_filter, aniso_filter; } XeDxilSamplerBinding;
 typedef struct XeDxilTextureLayout {
-  unsigned texture_count, sampler_count, used_texture_mask;
+  unsigned texture_count, sampler_count, used_texture_mask, sampled_texture_mask;
   XeDxilTextureBinding textures[XE_DXIL_TEXTURE_BINDINGS_MAX];
   XeDxilSamplerBinding samplers[XE_DXIL_SAMPLER_BINDINGS_MAX];
 } XeDxilTextureLayout;

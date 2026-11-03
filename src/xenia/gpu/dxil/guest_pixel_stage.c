@@ -178,7 +178,7 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
       o->system_constants_bytes < 16 || o->system_constants_bytes > 65536 ||
       (o->rop && (o->rop->color_mask != o->color_mask || o->rop->depth.system_constants_bytes != o->system_constants_bytes || o->rop->depth.flags_word != o->flags_word))) return NULL;
   n = o->system_constants_bytes/4;
-  if (o->textures && (o->scale_x != 1 || o->scale_y != 1 || !o->textures->pixel_shader ||
+  if (o->textures && (!o->textures->layout || ((o->scale_x != 1 || o->scale_y != 1) && o->textures->layout->sampled_texture_mask) || !o->textures->pixel_shader ||
       o->textures->system_constants_bytes != o->system_constants_bytes)) return NULL;
   if (o->flags_word >= n || o->alpha_reference_word >= n || o->alpha_to_mask_word >= n || o->color_bias_word > n-4 ||
       o->blend_constant_word > n-4 || o->front_scale_word >= n || o->back_scale_word >= n || o->front_offset_word >= n ||

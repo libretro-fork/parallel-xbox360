@@ -5,7 +5,7 @@
 #include <dxil_module.h>
 #include <dxil_function.h>
 int xe_dxil_texture_query_supported(unsigned opcode, unsigned pixel_shader) {
-  return opcode == 19 || (opcode == 18 && pixel_shader);
+  return opcode == 16 || opcode == 19 || (opcode == 18 && pixel_shader);
 }
 
 static int signed_field(uint32_t value, unsigned shift, unsigned width) {
@@ -232,6 +232,7 @@ int xe_dxil_emit_texture_fetch(XeDxilAlu *s, const XeDxilTextureInstruction *ins
     else if (instruction->opcode == 1 && !instruction->dimension &&
         (((instruction->source_swizzle >> 2) & 3) != (instruction->source_swizzle & 3) ||
          ((instruction->source_swizzle >> 4) & 3) != (instruction->source_swizzle & 3))) count = 2;
+    if (instruction->opcode == 16 || (instruction->opcode == 17 && (!instruction->computed_lod || instruction->register_gradients || s->module->shader_kind != DXIL_PIXEL_SHADER))) count = 0;
     operands.coordinate_count = count; operands.result_components = used;
     offset = instruction->source_relative ? io->loop_address : NULL;
     for (i = 0; i < count; ++i) {
@@ -245,6 +246,9 @@ int xe_dxil_emit_texture_fetch(XeDxilAlu *s, const XeDxilTextureInstruction *ins
           instruction->opcode == 25 ? fetch->ddx_storage[i] : fetch->ddy_storage[i];
         if (!pointer || !dxil_emit_store(s->module, operands.coordinates[i], pointer, 4, 0)) goto fail;
       }
+    } else if (instruction->opcode == 16 || (instruction->opcode == 17 && (!instruction->computed_lod || instruction->register_gradients || s->module->shader_kind != DXIL_PIXEL_SHADER))) {
+      /* Preserve the existing core policy for unimplemented/invalid queries. */
+      for (i = 0; i < 4; ++i) result[i] = dxil_module_get_float_const(s->module,0.0f);
     } else if (instruction->opcode == 18) {
       if (s->module->shader_kind != DXIL_PIXEL_SHADER) goto fail;
       function = dxil_get_function(s->module, "dx.op.unary", DXIL_F32);

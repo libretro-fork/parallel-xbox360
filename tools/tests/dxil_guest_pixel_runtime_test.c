@@ -56,21 +56,21 @@ static HRESULT buffer(ID3D12Device *device, D3D12_HEAP_TYPE type, UINT64 size,
     &desc, state, NULL, &IID_ID3D12Resource, (void **)resource);
 }
 static HRESULT sample_texture(ID3D12Device *device, ID3D12Resource **texture,
-    ID3D12Resource **upload, D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[12], unsigned cube) {
+    ID3D12Resource **upload, D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[12], unsigned dimension) {
   D3D12_HEAP_PROPERTIES heap; D3D12_RESOURCE_DESC desc; D3D12_RANGE range;
-  UINT rows[12]; UINT64 row_sizes[12], bytes; void *mapped; unsigned face, mip, x, y, j; HRESULT status;
+  UINT rows[12]; UINT64 row_sizes[12], bytes; void *mapped; unsigned cube = dimension == 1, volume = dimension == 2, stack = dimension == 3, face, mip, slice, x, y, j; HRESULT status;
   memset(&heap,0,sizeof(heap)); heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-  memset(&desc,0,sizeof(desc)); desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; desc.Width = 4; desc.Height = 4;
-  desc.DepthOrArraySize = cube ? 6 : 1; desc.MipLevels = 2; desc.SampleDesc.Count = 1; desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+  memset(&desc,0,sizeof(desc)); desc.Dimension = volume ? D3D12_RESOURCE_DIMENSION_TEXTURE3D : D3D12_RESOURCE_DIMENSION_TEXTURE2D; desc.Width = 4; desc.Height = 4;
+  desc.DepthOrArraySize = cube ? 6 : volume || stack ? 4 : 1; desc.MipLevels = 2; desc.SampleDesc.Count = 1; desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
   status = ID3D12Device_CreateCommittedResource(device,&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_COPY_DEST,NULL,&IID_ID3D12Resource,(void **)texture);
   if (FAILED(status)) return status;
-  ID3D12Device_GetCopyableFootprints(device,&desc,0,cube ? 12 : 2,0,footprints,rows,row_sizes,&bytes);
+  ID3D12Device_GetCopyableFootprints(device,&desc,0,cube ? 12 : stack ? 8 : 2,0,footprints,rows,row_sizes,&bytes);
   status = buffer(device,D3D12_HEAP_TYPE_UPLOAD,bytes,D3D12_RESOURCE_STATE_GENERIC_READ,upload); if (FAILED(status)) return status;
   memset(&range,0,sizeof(range)); status = ID3D12Resource_Map(*upload,0,&range,&mapped); if (FAILED(status)) return status;
   memset(mapped,0,(size_t)bytes);
-  for (face = 0; face < (cube ? 6u : 1u); ++face) for (mip = 0; mip < 2; ++mip) for (y = 0; y < (mip ? 2u : 4u); ++y) for (x = 0; x < (mip ? 2u : 4u); ++x) {
-    float *pixel = (float *)((unsigned char *)mapped+(size_t)footprints[face*2+mip].Offset+y*footprints[face*2+mip].Footprint.RowPitch+x*16);
-    for (j = 0; j < 4; ++j) pixel[j] = (float)(face*100)+(mip ? (float)(20+(y*2+x)*4+j) : j == 0 ? (float)(x+1) : j == 1 ? (float)(y+1) : j == 2 ? (float)(y*4+x+1) : 1);
+  for (face = 0; face < (cube ? 6u : stack ? 4u : 1u); ++face) for (mip = 0; mip < 2; ++mip) for (slice = 0; slice < (volume ? mip ? 2u : 4u : 1u); ++slice) for (y = 0; y < (mip ? 2u : 4u); ++y) for (x = 0; x < (mip ? 2u : 4u); ++x) {
+    float *pixel = (float *)((unsigned char *)mapped+(size_t)footprints[face*2+mip].Offset+(slice*(mip ? 2u : 4u)+y)*footprints[face*2+mip].Footprint.RowPitch+x*16);
+    for (j = 0; j < 4; ++j) pixel[j] = (float)((volume ? slice : face)*100)+(mip ? (float)(20+(y*2+x)*4+j) : j == 0 ? (float)(x+1) : j == 1 ? (float)(y+1) : j == 2 ? (float)(y*4+x+1) : 1);
   }
   ID3D12Resource_Unmap(*upload,0,NULL); return S_OK;
 }
@@ -127,12 +127,12 @@ int main(int argc, char **argv) {
   D3D12_VIEWPORT viewport; D3D12_RECT scissor; D3D12_RANGE range;
   HANDLE event = NULL; void *ps = NULL, *vs = NULL, *mapped = NULL;
   uint32_t *data, expected_bits; float expected[4], unmultiplied[4], float_constants[20], clear[4] = {-99,-99,-99,-99};
-  size_t ps_size = 0, vs_size = 0; unsigned sampled, query, guest_msaa = 0, native_2x, conditional_color, factor_variant, mode, variant, scenario, i, j, x, y, alpha_function = 7, fail, slot, count = 0;
+  size_t ps_size = 0, vs_size = 0; unsigned border_query, lod_query, sampled, query, guest_msaa = 0, native_2x, conditional_color, factor_variant, mode, variant, scenario, i, j, x, y, alpha_function = 7, fail, slot, count = 0;
   HRESULT status = E_FAIL;
   if (argc != 5 && argc != 6) return 2;
   mode = (unsigned)strtoul(argv[3],NULL,10); scenario = (unsigned)strtoul(argv[4],NULL,10);
-  if (mode > 783 || scenario > 39) return 2;
-  variant = mode/28; sampled = variant >= 20 ? variant-19 : 0; query = variant >= 17 ? variant-16 : 0; mode %= 28; native_2x = variant == 5; conditional_color = variant == 6; factor_variant = variant >= 7 && variant <= 16 ? variant-7 : UINT32_MAX; if (variant >= 5) variant = 0;
+  if (mode > 1063 || scenario > 39) return 2;
+  variant = mode/28; border_query = variant == 37; lod_query = variant >= 32 && variant <= 36 ? variant-31 : 0; sampled = variant >= 20 && variant <= 31 ? variant-19 : 0; if (lod_query) sampled = lod_query == 2 ? 9 : lod_query == 3 ? 7 : lod_query == 4 ? 11 : 1; query = variant >= 17 ? variant-16 : 0; mode %= 28; native_2x = variant == 5; conditional_color = variant == 6; factor_variant = variant >= 7 && variant <= 16 ? variant-7 : UINT32_MAX; if (variant >= 5) variant = 0;
   if (argc == 6) guest_msaa = (unsigned)strtoul(argv[5],NULL,10);
   if (guest_msaa > 2) return 2;
   sample_count = guest_msaa ? native_2x && guest_msaa == 1 ? 2 : 4 : 1;
@@ -220,12 +220,16 @@ int main(int argc, char **argv) {
   {
     static const float vertex_constants[12] = {.5f,-.5f,0,0, .5f,.5f,3,4, 4,4,4,4};
     memcpy((unsigned char *)mapped+2560,vertex_constants,sizeof(vertex_constants));
+    if (lod_query == 3) { ((float *)mapped)[2560/4+4] = 1.5f; ((float *)mapped)[2560/4+5] = 1.5f; }
   }
   if (query) ((uint32_t *)mapped)[768/4+2] = 3u|(3u<<13);
   if (sampled) {
     uint32_t *indices = (uint32_t *)((unsigned char *)mapped+2816);
-    indices[0] = 1; indices[2] = 2; ((uint32_t *)mapped)[41] = 1u<<26;
+    if (lod_query) indices[5] = 1;
+    if (lod_query == 5) ((uint32_t *)mapped)[32] = 0x5500;
+    indices[0] = indices[4] = 1; indices[2] = indices[6] = 2; ((uint32_t *)mapped)[41] = 1u<<26;
     ((uint32_t *)mapped)[768/4+8] = sampled >= 5 && sampled <= 6 ? 16383 : sampled == 4 ? 3u : 3u|(3u<<13); ((uint32_t *)mapped)[768/4+10] = 1u<<6;
+    if (sampled >= 9) { ((uint32_t *)mapped)[768/4+8] = sampled < 11 ? 3u|(3u<<11)|(3u<<22) : 3u|(3u<<13)|(3u<<26); ((uint32_t *)mapped)[768/4+11] = (sampled < 11 ? 2u : 1u)<<9; }
   }
   ((float *)data)[8] = .0625f; ((float *)data)[9] = .125f; ((float *)data)[10] = .25f; ((float *)data)[11] = .5f;
   ((float *)data)[14] = .125f; ((float *)data)[15] = .25f;
@@ -237,11 +241,11 @@ int main(int argc, char **argv) {
   memset(&uav,0,sizeof(uav)); uav.Format = DXGI_FORMAT_R32_TYPELESS; uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER; uav.Buffer.NumElements = 64; uav.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
   ID3D12Device_CreateUnorderedAccessView(device,counter,NULL,&uav,cpu);
   if (sampled) {
-    CHECK(sample_texture(device,&sampled_texture,&sampled_upload,sampled_footprints,sampled >= 7));
+    CHECK(sample_texture(device,&sampled_texture,&sampled_upload,sampled_footprints,sampled >= 11 ? 3 : sampled >= 9 ? 2 : sampled >= 7 ? 1 : 0));
     memset(&sampled_view,0,sizeof(sampled_view)); sampled_view.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-    sampled_view.ViewDimension = sampled >= 7 ? D3D12_SRV_DIMENSION_TEXTURECUBE : D3D12_SRV_DIMENSION_TEXTURE2DARRAY; sampled_view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    sampled_view.Texture2DArray.MipLevels = 2; sampled_view.Texture2DArray.ArraySize = 1;
-    for (i = 0; i < (sampled >= 7 ? 3u : 2u); ++i) { cpu.ptr += ID3D12Device_GetDescriptorHandleIncrementSize(device,D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV); ID3D12Device_CreateShaderResourceView(device,sampled_texture,&sampled_view,cpu); }
+    sampled_view.ViewDimension = sampled >= 9 && sampled <= 10 ? D3D12_SRV_DIMENSION_TEXTURE3D : sampled >= 7 && sampled <= 8 ? D3D12_SRV_DIMENSION_TEXTURECUBE : D3D12_SRV_DIMENSION_TEXTURE2DARRAY; sampled_view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sampled_view.Texture2DArray.MipLevels = 2; sampled_view.Texture2DArray.ArraySize = sampled >= 11 ? 4 : 1;
+    for (i = 0; i < (sampled >= 7 ? 3u : 2u); ++i) { cpu.ptr += ID3D12Device_GetDescriptorHandleIncrementSize(device,D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV); sampled_view.Texture2D.MostDetailedMip = lod_query == 5 && i == 1 ? 1 : 0; sampled_view.Texture2D.MipLevels = lod_query == 5 && i == 1 ? 1 : 2; ID3D12Device_CreateShaderResourceView(device,sampled_texture,&sampled_view,cpu); }
     heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER; heap_desc.NumDescriptors = 1;
     CHECK(ID3D12Device_CreateDescriptorHeap(device,&heap_desc,&IID_ID3D12DescriptorHeap,(void **)&sampler_heap));
     ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(sampler_heap,&cpu);
@@ -265,15 +269,14 @@ int main(int argc, char **argv) {
   CHECK(ID3D12Device_CreateCommandAllocator(device,D3D12_COMMAND_LIST_TYPE_DIRECT,&IID_ID3D12CommandAllocator,(void **)&allocator));
   CHECK(ID3D12Device_CreateCommandList(device,0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator,pipeline,&IID_ID3D12GraphicsCommandList,(void **)&list));
   ID3D12GraphicsCommandList_CopyBufferRegion(list,counter,0,upload,123136,256); transition(list,counter,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-  ID3D12GraphicsCommandList_SetGraphicsRootSignature(list,root);
   if (sampled) {
-    for (i = 0; i < (sampled >= 7 ? 12u : 2u); ++i) { memset(&source,0,sizeof(source)); source.pResource = sampled_upload; source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; source.PlacedFootprint = sampled_footprints[i]; memset(&destination,0,sizeof(destination)); destination.pResource = sampled_texture; destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; destination.SubresourceIndex = i; ID3D12GraphicsCommandList_CopyTextureRegion(list,&destination,0,0,0,&source,NULL); }
+    for (i = 0; i < (sampled >= 11 ? 8u : sampled >= 9 ? 2u : sampled >= 7 ? 12u : 2u); ++i) { memset(&source,0,sizeof(source)); source.pResource = sampled_upload; source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; source.PlacedFootprint = sampled_footprints[i]; memset(&destination,0,sizeof(destination)); destination.pResource = sampled_texture; destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; destination.SubresourceIndex = i; ID3D12GraphicsCommandList_CopyTextureRegion(list,&destination,0,0,0,&source,NULL); }
     transition(list,sampled_texture,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    sampled_heaps[0] = uav_heap; sampled_heaps[1] = sampler_heap; ID3D12GraphicsCommandList_SetDescriptorHeaps(list,2,sampled_heaps);
+    sampled_heaps[0] = uav_heap; sampled_heaps[1] = sampler_heap; ID3D12GraphicsCommandList_SetDescriptorHeaps(list,2,sampled_heaps); ID3D12GraphicsCommandList_SetGraphicsRootSignature(list,root);
     ID3D12GraphicsCommandList_SetGraphicsRootShaderResourceView(list,7,ID3D12Resource_GetGPUVirtualAddress(upload)+2816);
     ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(uav_heap,&gpu); gpu.ptr += ID3D12Device_GetDescriptorHandleIncrementSize(device,D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV); ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(list,8,gpu);
     ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(sampler_heap,&gpu); ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(list,9,gpu);
-  } else ID3D12GraphicsCommandList_SetDescriptorHeaps(list,1,&uav_heap);
+  } else { ID3D12GraphicsCommandList_SetDescriptorHeaps(list,1,&uav_heap); ID3D12GraphicsCommandList_SetGraphicsRootSignature(list,root); }
   ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(uav_heap,&gpu);
 
   ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(list,0,gpu);
@@ -322,7 +325,10 @@ int main(int argc, char **argv) {
       }
       if (i == 1 && variant && variant != 3) { expected[0] = ((float)x+.5f)/160; expected[1] = ((float)y+.5f)/48; expected[2] = 3; expected[3] = 4; if (variant == 4) for (j = 0; j < 4; ++j) expected[j] += 4; }
       if (i == 3 && query) {
-        if (sampled) { unsigned tx = sampled == 2 ? 0 : sampled >= 5 && sampled <= 6 ? (x%80)/20 : x/40, ty = sampled == 2 || sampled == 4 ? 0 : sampled >= 5 && sampled <= 6 ? x < 80 ? 1 : 3 : y/12; expected[0] = (float)(tx+1); expected[1] = (float)(ty+1); expected[2] = (float)(ty*4+tx+1); expected[3] = 1; if (sampled >= 7) for (j = 0; j < 4; ++j) expected[j] += 300; }
+        if (border_query) for (j = 0; j < 4; ++j) expected[j] = 0;
+        else if (lod_query) { expected[0] = (float)(log((lod_query == 5 ? 2.0 : 4.0)/48)/log(2.0)); expected[1] = expected[2] = expected[3] = 0; }
+        else if (sampled) { unsigned tx = sampled == 2 ? 0 : sampled >= 5 && sampled <= 6 ? (x%80)/20 : x/40, ty = sampled == 2 || sampled == 4 ? 0 : sampled >= 5 && sampled <= 6 ? x < 80 ? 1 : 3 : y/12; expected[0] = (float)(tx+1); expected[1] = (float)(ty+1); expected[2] = (float)(ty*4+tx+1); expected[3] = 1; if (sampled >= 7 && sampled <= 8) for (j = 0; j < 4; ++j) expected[j] += 300;
+          if (sampled >= 9) { float layer = ((float)y+.5f)/48*4+1.5f/1024, fraction = 0; int first, second; if (sampled >= 11) { layer -= .5f; fraction = layer-(float)floor((double)layer); } first = (int)floor((double)layer); second = first+1; first = first < 0 ? 0 : first > 3 ? 3 : first; second = second < 0 ? 0 : second > 3 ? 3 : second; for (j = 0; j < 4; ++j) expected[j] = expected[j]+(float)first*100+(float)(second-first)*100*fraction; } }
         else if (query == 2) { expected[0] = 1.0f/160; expected[1] = expected[2] = 0; expected[3] = 1.0f/48; }
         else { expected[0] = ((float)x+.5f)/160; expected[1] = ((float)y+.5f)/48;
           for (j = 0; j < 2; ++j) { if (query == 1) expected[j] *= 4; expected[j] += -.5f+1.5f/1024; expected[j] -= (float)floor((double)expected[j]); }
@@ -344,7 +350,7 @@ int main(int argc, char **argv) {
         /* Floating resolve may discard NaN contributions. Other lanes and
          * the exact counter still verify whether the NaN alpha test passed. */
         if (sample_count > 1 && i < 4 && (expected_bits&0x7fffffff)>0x7f800000) continue;
-        if (data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j] != expected_bits && !((expected_bits&0x7fffffff)>0x7f800000 && (data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j]&0x7fffffff)>0x7f800000) && !(passed && i == 1 && variant && (scenario != 3 || j == 3) && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) < .00001) && !(passed && i == 3 && query && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) < .00001) && !(sample_count > 1 && i < 4 && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) <= .000002*(fabs((double)expected[j])+1))) { fprintf(stderr,"RT%u %u,%u component%u: %08lX != %08lX\n",i,x,y,j,(unsigned long)data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j],(unsigned long)expected_bits); status = E_FAIL; goto done; }
+        if (data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j] != expected_bits && !((expected_bits&0x7fffffff)>0x7f800000 && (data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j]&0x7fffffff)>0x7f800000) && !(passed && i == 1 && variant && (scenario != 3 || j == 3) && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) < .00001) && !(passed && i == 3 && query && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) < .00001) && !(passed && i == 3 && lod_query && j == 0 && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) < .008) && !(passed && i == 3 && sampled >= 11 && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) <= .000002*(fabs((double)expected[j])+1)) && !(sample_count > 1 && i < 4 && fabs((double)((float *)data)[i*30720+y*640+x*4+j]-expected[j]) <= .000002*(fabs((double)expected[j])+1))) { fprintf(stderr,"RT%u %u,%u component%u: %08lX != %08lX\n",i,x,y,j,(unsigned long)data[i*30720+y*640+x*(i == 4 ? 1 : 4)+j],(unsigned long)expected_bits); status = E_FAIL; goto done; }
       }
     }
   }

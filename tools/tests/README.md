@@ -486,8 +486,8 @@ direct heaps with barycentrics to check that version selection is preserved.
 ## Integrated native guest 2D sampling
 
 `make check-dxil-guest-sampling DXIL_VALIDATOR=/path/to/dxv` validates 45
-C89 sampling-policy containers, 224 complete guest pixel shaders (560..783),
-and five textured guest vertex shaders (9..13). All containers must validate
+C89 sampling-policy containers, 504 complete guest pixel shaders (560..1063),
+and nine guest vertex shaders (9..17). All containers must validate
 without changes. Shader logic is separately checked as strict C89.
 
 Run each policy container with `dxil_runtime_test.c` using arguments
@@ -507,11 +507,11 @@ normalized/unnormalized sampling through stream output, preserving positions
 and the export observer. Both use shader-model 6.6 dynamic resource/sampler
 heaps and the renderer's two-dword descriptor-index entry ABI.
 
-Current renderer sampling integration covers 1D, 2D and cube at unit draw resolution.
-3D/stacked textures, remaining queries, scaled sampling, memory export and tessellation still require
+Current renderer sampling integration covers 1D, 2D, 3D/stacked and cube at unit draw resolution.
+Scaled sampling, memory export and tessellation still require
 native implementation; these tests do not establish game compatibility.
 
-`make check-dxil-guest-sampling-rov` validates 108 complete sampled ROV shaders.
+`make check-dxil-guest-sampling-rov` validates 144 complete sampled/query ROV shaders.
 ROV reference/runtime harnesses accept sampling modes 560/588/616 at unit
 resolution. Generate with `dxil-guest-pixel-test shader.dxil MODE CONFIG`,
 then `dxil-guest-rop-reference-test shader.dxil MODE CONFIG SCENARIO` and
@@ -548,3 +548,50 @@ Run it with `heap-mixed`; the other cube cases use `heap-cube`. This checks
 mixed resource annotations and descriptor offsets, not just isolated view types.
 Metadata reads reuse their 16-byte CBV vector in the entry block and extract
 constant lanes; the policy and full guest execution suites cover the result.
+
+## Native volume sampling and computed LOD
+
+`make check-dxil-volume-sampling DXIL_VALIDATOR=/path/to/dxv` validates 32
+policy containers. The generic runtime accepts `heap-volume` for cases 0..15
+and `heap-stack` for 16..31. Actual four-slice 3D resources and four-layer arrays
+have distinguishable data in every slice and mip. Fixtures cover normalization,
+Z offsets, explicit and register-gradient LOD, hardware 3D filtering, manual
+layer filtering, fetch-constant filter overrides, absolute positive/negative
+layer gradients, clamped edges, zero interpolation weight, signed views and
+exponent adjustment. Uploads go directly into mapped GPU footprints.
+
+Full guest pixel modes 784..895 cover explicit/automatic 3D and stacked sampling;
+stacked outputs interpolate between distinguishable layers. Modes 896..1035
+cover computed LOD for 2D, 3D, cube and stacked views, including a signed view
+with a different most-detailed mip. These use the native unclamped LOD operation;
+query X allows 0.008 LOD error for hardware LOD precision. Other query lanes
+remain exact zero. Floating stacked outputs allow a 2e-6 relative tolerance for
+interpolator/filter ordering; untouched targets, depth and counters stay exact.
+
+Modes 1036..1063 verify the current zero-result border-fraction policy. This
+instruction remains unimplemented as in the existing Vulkan path; it now bypasses
+Mesa without inventing different output. Explicit-gradient or non-pixel computed
+LOD queries also preserve the existing zero-result policy and skip source reads.
+Vertex configurations 14/15 execute 3D explicit/gradient fetches through stream
+output; 16/17 execute descriptor-free zero LOD/border results.
+
+The ROV reference/runtime also accept mode 896 for computed LOD. All twelve
+packed/floating color formats, 1x/2x/4x coverage, masks, depth failures, kills and
+exponent adjustment can be compared over the complete EDRAM and counter buffers.
+Native volume filtering chooses minification using the absolute layer-gradient
+magnitude greater than one and clamps linear layer edges without blending the
+last two layers spuriously; these are covered by the independent numeric oracle.
+
+`make check-dxil-scaled-lod` also validates query-only ROV shaders at 2x3 draw
+resolution and 1x/2x/4x coverage. The resource layout records actual sampling
+separately from querying, allowing these queries while scaled texture sampling
+still follows the migration gate. Signed fixed-point and floating targets make
+the negative queried LOD observable rather than clamping every result to zero.
+For floating LOD outputs with discontiguous write masks, the runtime checks
+preserved bits exactly and verifies that written bits can originate from the
+allowed LOD interval. A one-ULP intrinsic difference can otherwise create a
+large post-mask float difference. Other packed outputs and counters stay exact.
+
+The sampling targets also compile the texture emitter with optimization and strict
+C89 warnings via "check-dxil-texture-stage-c89", catching definite/possible
+initialization diagnostics that a syntax-only check may not report.

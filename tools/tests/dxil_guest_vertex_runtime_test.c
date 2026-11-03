@@ -38,21 +38,21 @@ static HRESULT buffer(ID3D12Device *device, D3D12_HEAP_TYPE type, UINT64 size,
     &desc, state, NULL, &IID_ID3D12Resource, (void **)resource);
 }
 static HRESULT sample_texture(ID3D12Device *device, ID3D12Resource **texture,
-    ID3D12Resource **upload, D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[2]) {
+    ID3D12Resource **upload, D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[2], unsigned volume) {
   D3D12_HEAP_PROPERTIES heap; D3D12_RESOURCE_DESC desc; D3D12_RANGE range;
-  UINT rows[2]; UINT64 row_sizes[2], bytes; void *mapped; unsigned mip, x, y, j; HRESULT status;
+  UINT rows[2]; UINT64 row_sizes[2], bytes; void *mapped; unsigned mip, slice, x, y, j; HRESULT status;
   memset(&heap,0,sizeof(heap)); heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-  memset(&desc,0,sizeof(desc)); desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; desc.Width = 4; desc.Height = 4;
-  desc.DepthOrArraySize = 1; desc.MipLevels = 2; desc.SampleDesc.Count = 1; desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+  memset(&desc,0,sizeof(desc)); desc.Dimension = volume ? D3D12_RESOURCE_DIMENSION_TEXTURE3D : D3D12_RESOURCE_DIMENSION_TEXTURE2D; desc.Width = 4; desc.Height = 4;
+  desc.DepthOrArraySize = volume ? 4 : 1; desc.MipLevels = 2; desc.SampleDesc.Count = 1; desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
   status = ID3D12Device_CreateCommittedResource(device,&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_COPY_DEST,NULL,&IID_ID3D12Resource,(void **)texture);
   if (FAILED(status)) return status;
   ID3D12Device_GetCopyableFootprints(device,&desc,0,2,0,footprints,rows,row_sizes,&bytes);
   status = buffer(device,D3D12_HEAP_TYPE_UPLOAD,bytes,D3D12_RESOURCE_STATE_GENERIC_READ,upload); if (FAILED(status)) return status;
   memset(&range,0,sizeof(range)); status = ID3D12Resource_Map(*upload,0,&range,&mapped); if (FAILED(status)) return status;
   memset(mapped,0,(size_t)bytes);
-  for (mip = 0; mip < 2; ++mip) for (y = 0; y < (mip ? 2u : 4u); ++y) for (x = 0; x < (mip ? 2u : 4u); ++x) {
-    float *pixel = (float *)((unsigned char *)mapped+(size_t)footprints[mip].Offset+y*footprints[mip].Footprint.RowPitch+x*16);
-    for (j = 0; j < 4; ++j) pixel[j] = mip ? (float)(20+(y*2+x)*4+j) : j == 0 ? (float)(x+1) : j == 1 ? (float)(y+1) : j == 2 ? (float)(y*4+x+1) : 1;
+  for (mip = 0; mip < 2; ++mip) for (slice = 0; slice < (volume ? mip ? 2u : 4u : 1u); ++slice) for (y = 0; y < (mip ? 2u : 4u); ++y) for (x = 0; x < (mip ? 2u : 4u); ++x) {
+    float *pixel = (float *)((unsigned char *)mapped+(size_t)footprints[mip].Offset+(slice*(mip ? 2u : 4u)+y)*footprints[mip].Footprint.RowPitch+x*16);
+    for (j = 0; j < 4; ++j) pixel[j] = (float)(slice*100)+(mip ? (float)(20+(y*2+x)*4+j) : j == 0 ? (float)(x+1) : j == 1 ? (float)(y+1) : j == 2 ? (float)(y*4+x+1) : 1);
   }
   ID3D12Resource_Unmap(*upload,0,NULL); return S_OK;
 }
@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
   if (argc != 7) return 2;
   config = (unsigned)strtoul(argv[2],NULL,10); flags = (unsigned)strtoul(argv[3],NULL,10);
   endian = (unsigned)strtoul(argv[4],NULL,10); base = (int32_t)strtol(argv[5],NULL,10); kill = (unsigned)strtoul(argv[6],NULL,10);
-  if ((config > 10 && config != 13) || flags > 7 || endian > 3 || kill > 3) return 2;
+  if ((config > 10 && config != 13 && config != 14 && config != 15 && config != 16 && config != 17) || flags > 7 || endian > 3 || kill > 3) return 2;
   clips = config == 1 ? 6 : config == 3 ? 3 : 0;
   culls = config == 1 ? 1 : config == 2 ? 7 : 0;
   point = config >= 1 && config <= 4; interpolators = config == 5 ? 3 : 1; components = 4+interpolators*4+clips+culls+point; stride = components*4;
@@ -127,13 +127,13 @@ int main(int argc, char **argv) {
     parameters[i].Descriptor.ShaderRegister = i == 1 ? 0 : i == 2 ? 1 : i;
   }
   root_desc.NumParameters = 5; root_desc.pParameters = parameters; root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_STREAM_OUTPUT;
-  if (config >= 9) {
+  if (config >= 9 && config < 16 && config != 17) {
     root_desc.NumParameters = 8; root_desc.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
     parameters[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; parameters[5].Descriptor.ShaderRegister = 2;
     memset(texture_ranges,0,sizeof(texture_ranges));
     for (i = 0; i < 2; ++i) {
       texture_ranges[i].RangeType = i ? D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER : D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-      texture_ranges[i].NumDescriptors = 1; texture_ranges[i].RegisterSpace = 2;
+      texture_ranges[i].NumDescriptors = i || config < 14 ? 1 : 2; texture_ranges[i].RegisterSpace = 2;
       parameters[6+i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
       parameters[6+i].DescriptorTable.NumDescriptorRanges = 1; parameters[6+i].DescriptorTable.pDescriptorRanges = &texture_ranges[i];
     }
@@ -174,21 +174,21 @@ int main(int argc, char **argv) {
   words = (uint32_t *)((unsigned char *)mapped+512); ((float *)words)[0] = 2;
   for (i = 0; i < 4; ++i) ((float *)words)[4+i] = (float)(11+i);
   words[2] = kill == 1 ? 0x3f800000 : kill == 2 ? 0x80000000 : kill == 3 ? 1 : 0;
-  words = (uint32_t *)((unsigned char *)mapped+1024); words[0] = 2; words[1] = 64; if (config >= 6) words[2] = config == 13 ? 3u : 3u|(3u<<13);
-  if (config >= 9) {
-    words[4] = 1u<<6;
+  words = (uint32_t *)((unsigned char *)mapped+1024); words[0] = 2; words[1] = 64; if (config >= 6) words[2] = config == 13 ? 3u : config == 14 || config == 15 ? 3u|(3u<<11)|(3u<<22) : 3u|(3u<<13);
+  if (config >= 9 && config < 16 && config != 17) {
+    words[4] = 1u<<6; if (config == 14 || config == 15) words[5] = 2u<<9;
     words = (uint32_t *)((unsigned char *)mapped+256); words[48] = 1u<<26;
-    words = (uint32_t *)((unsigned char *)mapped+1280); words[0] = 0; words[2] = 1;
+    words = (uint32_t *)((unsigned char *)mapped+1280); words[0] = words[4] = 0; words[2] = words[6] = 1;
   }
   ID3D12Resource_Unmap(upload,0,NULL); mapped = NULL;
-  if (config >= 9) {
-    CHECK(sample_texture(device,&texture,&texture_upload,footprints));
+  if (config >= 9 && config < 16 && config != 17) {
+    CHECK(sample_texture(device,&texture,&texture_upload,footprints,config == 14 || config == 15));
     memset(&heap_desc,0,sizeof(heap_desc)); heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; heap_desc.NumDescriptors = 2; heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     CHECK(ID3D12Device_CreateDescriptorHeap(device,&heap_desc,&IID_ID3D12DescriptorHeap,(void **)&heaps[0]));
     heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER; heap_desc.NumDescriptors = 1;
     CHECK(ID3D12Device_CreateDescriptorHeap(device,&heap_desc,&IID_ID3D12DescriptorHeap,(void **)&heaps[1]));
     ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(heaps[0],&cpu);
-    memset(&view,0,sizeof(view)); view.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+    memset(&view,0,sizeof(view)); view.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; view.ViewDimension = config == 14 || config == 15 ? D3D12_SRV_DIMENSION_TEXTURE3D : D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
     view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING; view.Texture2DArray.MipLevels = 2; view.Texture2DArray.ArraySize = 1;
     for (i = 0; i < 2; ++i) { ID3D12Device_CreateShaderResourceView(device,texture,&view,cpu); cpu.ptr += ID3D12Device_GetDescriptorHandleIncrementSize(device,D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV); }
     ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(heaps[1],&cpu); memset(&sampler,0,sizeof(sampler));
@@ -203,20 +203,20 @@ int main(int argc, char **argv) {
   transition(list,output,D3D12_RESOURCE_STATE_STREAM_OUT,D3D12_RESOURCE_STATE_COPY_DEST);
   ID3D12GraphicsCommandList_CopyBufferRegion(list,output,0,upload,2048,8);
   transition(list,output,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_STREAM_OUT);
+  if (config >= 9 && config < 16) ID3D12GraphicsCommandList_SetDescriptorHeaps(list,2,heaps);
   ID3D12GraphicsCommandList_SetGraphicsRootSignature(list,root);
   ID3D12GraphicsCommandList_SetGraphicsRootShaderResourceView(list,0,ID3D12Resource_GetGPUVirtualAddress(upload));
   ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(list,1,ID3D12Resource_GetGPUVirtualAddress(upload)+256);
   ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(list,2,ID3D12Resource_GetGPUVirtualAddress(upload)+512);
   ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(list,3,ID3D12Resource_GetGPUVirtualAddress(upload)+768);
   ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(list,4,ID3D12Resource_GetGPUVirtualAddress(upload)+1024);
-  if (config >= 9) {
+  if (config >= 9 && config < 16 && config != 17) {
     for (i = 0; i < 2; ++i) {
       memset(&source,0,sizeof(source)); source.pResource = texture_upload; source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; source.PlacedFootprint = footprints[i];
       memset(&destination,0,sizeof(destination)); destination.pResource = texture; destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; destination.SubresourceIndex = i;
       ID3D12GraphicsCommandList_CopyTextureRegion(list,&destination,0,0,0,&source,NULL);
     }
     transition(list,texture,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    ID3D12GraphicsCommandList_SetDescriptorHeaps(list,2,heaps);
     ID3D12GraphicsCommandList_SetGraphicsRootShaderResourceView(list,5,ID3D12Resource_GetGPUVirtualAddress(upload)+1280);
     for (i = 0; i < 2; ++i) { ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(heaps[i],&gpu); ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(list,6+i,gpu); }
   }
@@ -255,11 +255,12 @@ int main(int argc, char **argv) {
         value += -.5f+1.5f/1024; value -= (float)floor((double)value); expected[n-4+j] = value;
       }
     }
-    if (config >= 9) {
-      float coordinate = config == 9 || config == 13 ? index_float*4 : index_float;
+    if (config >= 9 && config < 16 && config != 17) {
+      float coordinate = config == 9 || config == 13 || config == 14 || config == 15 ? index_float*4 : index_float;
       unsigned tx = coordinate < 0 ? 0 : coordinate >= 4 ? 3 : (unsigned)coordinate;
       expected[n-4] = (float)(tx+1); expected[n-3] = 1; expected[n-2] = (float)(tx+1); expected[n-1] = 1;
     }
+    if (config == 16 || config == 17) for (j = 0; j < 4; ++j) expected[n-4+j] = 0;
     if (config == 5) {
       for (j = 0; j < 4; ++j) expected[n++] = (float)(11+j);
       for (j = 0; j < 4; ++j) expected[n++] = id < 4 ? vertices[id][j] : 0;

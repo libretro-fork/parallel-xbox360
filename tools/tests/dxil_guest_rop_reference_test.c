@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
   int ok;
   if (argc != 5) return 2;
   mode = (unsigned)strtoul(argv[2],NULL,10); config = (unsigned)strtoul(argv[3],NULL,10); scenario = (unsigned)strtoul(argv[4],NULL,10);
-  msaa = config&3; if (msaa > 2 || (mode != 0 && mode != 14 && mode != 168 && mode != 182 && mode != 476 && mode != 504 && mode != 532 && mode != 560 && mode != 588 && mode != 616) || scenario > 1144) return 2;
+  msaa = config&3; if (msaa > 2 || (mode != 0 && mode != 14 && mode != 168 && mode != 182 && mode != 476 && mode != 504 && mode != 532 && mode != 560 && mode != 588 && mode != 616 && mode != 896) || scenario > 1144) return 2;
   variant = mode/28; query = variant >= 17 ? variant-16 : 0; mode %= 28;
   sx = config&4 ? 2 : 1; sy = config&4 ? 3 : 1; width = (scenario >= 1143 ? 64u : 80u)*sx; height = (scenario >= 1143 ? 8u : 16u)*sy;
   tile_words = 1280*sx*sy; words = (scenario == 3 ? 2048u : 48u)*tile_words; bytes = words*4; pitch = 2*tile_words;
@@ -106,7 +106,8 @@ int main(int argc, char **argv) {
       address %= words;
       for (j = 0; j < 4; ++j) output[j] = source[rt][j]*(scenario == 10 ? (float)(1u<<rt) : 1);
       if (rt == 3 && query) {
-        if (query >= 4) { unsigned tx = query == 5 ? 0 : x*4/width, ty = query == 5 ? 0 : y*4/height; output[0] = (float)(tx+1); output[1] = (float)(ty+1); output[2] = (float)(ty*4+tx+1); output[3] = 1; }
+        if (query == 16) { output[0] = (float)(log(4.0/(double)height)/log(2.0)); output[1] = output[2] = output[3] = 0; }
+        else if (query >= 4) { unsigned tx = query == 5 ? 0 : x*4/width, ty = query == 5 ? 0 : y*4/height; output[0] = (float)(tx+1); output[1] = (float)(ty+1); output[2] = (float)(ty*4+tx+1); output[3] = 1; }
         else if (query == 2) { output[0] = 1.0f/(float)width; output[1] = output[2] = 0; output[3] = 1.0f/(float)height; }
         else { output[0] = ((float)x+.5f)/(float)width; output[1] = ((float)y+.5f)/(float)height;
           for (j = 0; j < 2; ++j) { if (query == 1) output[j] *= 4; output[j] += -.5f+1.5f/1024; output[j] -= (float)floor((double)output[j]); }

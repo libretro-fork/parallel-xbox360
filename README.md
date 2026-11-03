@@ -52,17 +52,22 @@ reads; merged/blended outputs skip unchanged stores. Native format conversion
 retains signed fixed-point [-32,32] and finite extended-half values through
 131008. Failure counters retain early-test semantics across later pixel kills.
 Guest filtering-weight queries also compile natively in vertex and pixel
-shaders, and pixel gradient queries use native derivatives. Query-only shaders
+shaders, and pixel gradient queries use native derivatives. Weight/gradient-only shaders
 need no texture descriptors. Empty descriptor-index tables reuse the existing
 zero buffer instead of allocating and clearing an upload for every draw.
-Native shader-model 6.6 heap sampling now handles guest 1D, 2D and cube texture fetches
+Native shader-model 6.6 heap sampling now handles guest 1D, 2D, 3D/stacked and cube texture fetches
 in vertex and pixel stages at unit draw resolution. Raw fetch constants drive
 coordinate normalization, offsets, explicit/gradient LOD and bias, point
 snapping, signed/unsigned view selection, integer conversion, gamma and exponent
 adjustment. Wide 1D textures map directly to the cache's bounded row layout;
 cube coordinates convert directly to native directions. Resource layouts are published once and retained across native and
 remaining SPIR-V variants. Only required sign views are sampled, and fetch
-metadata is loaded once per used constant. 3D/stacked textures, remaining queries, scaled sampling,
+metadata is loaded once per used constant. Volume filtering selects runtime 3D or
+array views, handles layer edges and skips zero-weight second-layer fetches.
+Computed-LOD queries use native unclamped DXIL operations and select the signed
+view only when all swizzled components are signed. Query-only shaders also support
+scaled draws. Border-fraction queries retain
+the core's existing unimplemented zero result. Scaled sampling,
 memory exports and tessellation still use Mesa and its Meson/Python build while
 their replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
