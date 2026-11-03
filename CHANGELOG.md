@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Audio now negotiates native float stereo or multichannel output at load, retaining classic int16 and per-sample fallback. The mixer writes into the final float buffer instead of its own intermediate vector; float-capable frontends avoid int16 quantization and widening. Float-only 5.1 interfaces are accepted, the output format stays fixed until unload, and negotiated callbacks are retired there. C89 boundary conversion handles nonfinite guest samples explicitly. Producer scheduling, resampling and queue ownership changes remain in progress.
+
 - Linux builds expose the POSIX/GNU declarations needed by the selected libretro-common sources when compiling strict C. The definition is limited to that dependency target in both Make and CMake.
 
 - Removed the standalone UI toolkit, widgets, bundled fonts and trace-viewer/dump executables. Guest UI requests retain headless answers and completion through the kernel dispatcher. A bounded C89 libretro-common queue delivers UI notifications from frontend progress, replacing detached UI threads and their sleeps. Guest tile/profile decoding and trace screenshots retain their independent image codecs. Other timing and threading migrations remain in progress.

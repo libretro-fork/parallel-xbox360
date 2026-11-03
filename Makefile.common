@@ -1,6 +1,6 @@
 # Shared, hand-maintained source selection for the GNU Make build.
 # Keep in sync with the libretro target when importing upstream changes.
-SOURCES_C += libretro/core_events.c libretro/core_audio_cadence.c libretro/core_ui_queue.c libretro/core_decompress.c libretro/core_image.c
+SOURCES_C += libretro/core_events.c libretro/core_audio_cadence.c libretro/core_audio_samples.c libretro/core_ui_queue.c libretro/core_decompress.c libretro/core_image.c
 CORE_DIRS := src/xenia src/xenia/base src/xenia/apu src/xenia/apu/nop \
  src/xenia/cpu src/xenia/cpu/backend src/xenia/cpu/compiler \
  src/xenia/cpu/compiler/passes src/xenia/cpu/hir src/xenia/cpu/ppc \

@@ -35,6 +35,8 @@
 #include "libretro.h"
 #include "core_events.h"
 #include "core_audio_cadence.h"
+#include "core_audio_samples.h"
+#include "core_audio_callbacks.h"
 #include "libretro_vulkan.h"
 #ifdef _WIN32
 #include "libretro_d3d12.h"
@@ -213,7 +215,9 @@ struct xenia_core_state {
     retro_environment_t        environ_cb;
 
     int16_t *audio_buffer;
+    float   *audio_float_buffer;
     size_t   audio_buffer_size;
+    size_t   audio_int16_size;
     double   audio_sample_rate;
 
     char game_path[4096];
@@ -244,24 +248,7 @@ static xe::apu::libretro::LibretroAudioSystem *audio_mixer = nullptr;
 
 // RetroArch's multi-channel output, for 5.1 (NNshi). Once the frontend gives
 // it, all of the game's audio goes through it.
-#ifndef RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI
-#define RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI (94 | RETRO_ENVIRONMENT_EXPERIMENTAL)
-#define RETRO_AUDIO_SPEAKER_FRONT_LEFT    0x001
-#define RETRO_AUDIO_SPEAKER_FRONT_RIGHT   0x002
-#define RETRO_AUDIO_SPEAKER_FRONT_CENTER  0x004
-#define RETRO_AUDIO_SPEAKER_LOW_FREQUENCY 0x008
-#define RETRO_AUDIO_SPEAKER_SIDE_LEFT     0x200
-#define RETRO_AUDIO_SPEAKER_SIDE_RIGHT    0x400
-typedef size_t (RETRO_CALLCONV *retro_audio_sample_batch_multi_int16_t)(
-      const int16_t *data, size_t frames, unsigned channels, unsigned layout);
-typedef size_t (RETRO_CALLCONV *retro_audio_sample_batch_multi_float_t)(
-      const float *data, size_t frames, unsigned channels, unsigned layout);
-struct retro_audio_sample_multi_callback
-{
-   retro_audio_sample_batch_multi_int16_t batch_int16;
-   retro_audio_sample_batch_multi_float_t batch_float;
-};
-#endif
+static retro_audio_sample_float_callback s_audio_float = {};
 static retro_audio_sample_multi_callback s_audio_multi = {};
 static unsigned s_audio_channels = 2;
 static xe_audio_cadence s_audio_cadence = {0.0};
@@ -1040,31 +1027,49 @@ static void apply_core_options(void) {
 /*  Per-frame helpers                                                  */
 /* ================================================================== */
 static void update_audio(void) {
-    size_t frames, frame_samples, got, i;
-    int16_t *resized;
-    if (!core_state.audio_batch_cb && !core_state.audio_cb &&
-        !(s_audio_channels == 6 && s_audio_multi.batch_int16)) return;
+    size_t frames, frame_samples, i;
+    float *resized;
+    if (!core_state.audio_batch_cb && !core_state.audio_cb && !s_audio_float.batch &&
+        !(s_audio_channels == 6 && (s_audio_multi.batch_int16 || s_audio_multi.batch_float))) return;
     frames = xe_audio_cadence_next(&s_audio_cadence,
         (unsigned)core_state.audio_sample_rate, core_state.output_fps);
     frame_samples = frames * s_audio_channels;
     if (frame_samples > core_state.audio_buffer_size) {
-        resized = (int16_t *)realloc(core_state.audio_buffer,
-                                    frame_samples * sizeof(int16_t));
+        resized = (float *)realloc(core_state.audio_float_buffer,
+                                  frame_samples * sizeof(float));
         if (!resized) {
             xenia_log(RETRO_LOG_ERROR, "Failed to grow per-run audio buffer\n");
             return;
         }
-        core_state.audio_buffer = resized;
+        core_state.audio_float_buffer = resized;
         core_state.audio_buffer_size = frame_samples;
     }
-    if (!core_state.audio_buffer) return;
-    /* Consume exactly this run's duration. Silence completes an underrun, and
-     * disabling sound still drains the mixer so it cannot add guest latency. */
-    got = audio_mixer ? audio_mixer->Mix(core_state.audio_buffer, frame_samples) : 0;
-    if (got > frame_samples) got = frame_samples;
-    if (!core_state.audio_enabled) got = 0;
-    memset(core_state.audio_buffer + got, 0,
-           (frame_samples - got) * sizeof(int16_t));
+    if (!core_state.audio_float_buffer) return;
+    /* The mixer writes into the final float output buffer. Muting still drains
+     * guest audio; it cannot leave queued samples to play after unmuting. */
+    if (audio_mixer) audio_mixer->Mix(core_state.audio_float_buffer, frame_samples);
+    if (!audio_mixer || !core_state.audio_enabled)
+        memset(core_state.audio_float_buffer, 0, frame_samples * sizeof(float));
+    if ((s_audio_channels == 6 && s_audio_multi.batch_float) || s_audio_float.batch) {
+        xe_audio_samples_clamp(core_state.audio_float_buffer, frame_samples);
+        if (s_audio_channels == 6 && s_audio_multi.batch_float)
+            s_audio_multi.batch_float(core_state.audio_float_buffer, frames, 6,
+                RETRO_AUDIO_SPEAKER_FRONT_LEFT | RETRO_AUDIO_SPEAKER_FRONT_RIGHT |
+                RETRO_AUDIO_SPEAKER_FRONT_CENTER | RETRO_AUDIO_SPEAKER_LOW_FREQUENCY |
+                RETRO_AUDIO_SPEAKER_SIDE_LEFT | RETRO_AUDIO_SPEAKER_SIDE_RIGHT);
+        else
+            s_audio_float.batch(core_state.audio_float_buffer, frames);
+        return;
+    }
+    /* Allocate integer storage only for a frontend which needs this format. */
+    if (frame_samples > core_state.audio_int16_size) {
+        int16_t *integer_buffer = (int16_t *)realloc(core_state.audio_buffer,
+                                                   frame_samples * sizeof(int16_t));
+        if (!integer_buffer) return;
+        core_state.audio_buffer = integer_buffer;
+        core_state.audio_int16_size = frame_samples;
+    }
+    xe_audio_samples_int16(core_state.audio_buffer, core_state.audio_float_buffer, frame_samples);
     if (s_audio_channels == 6 && s_audio_multi.batch_int16) {
         s_audio_multi.batch_int16(core_state.audio_buffer, frames, 6,
             RETRO_AUDIO_SPEAKER_FRONT_LEFT | RETRO_AUDIO_SPEAKER_FRONT_RIGHT |
@@ -1707,9 +1712,12 @@ RETRO_API void retro_init(void) {
     xenia_log(RETRO_LOG_INFO, "ParaLLEl Xbox360 libretro core %s, built from commit %s\n",
               XENIA_LIBRETRO_VERSION, XENIA_LIBRETRO_COMMIT);
     core_state.audio_sample_rate  = 48000.0;
-    core_state.audio_buffer_size  = 6 * 4096;   // int16 values (4096 frames of 5.1)
-    core_state.audio_buffer       = static_cast<int16_t *>(
-        calloc(core_state.audio_buffer_size, sizeof(int16_t)));
+    core_state.audio_buffer_size = 6 * 1024;
+    core_state.audio_int16_size = 0;
+    core_state.audio_buffer = nullptr;
+    core_state.audio_float_buffer = (float *)calloc(core_state.audio_buffer_size, sizeof(float));
+    s_audio_float = {};
+    s_audio_multi = {};
     memset(core_state.graphics_backend, 0, sizeof(core_state.graphics_backend));
     core_state.vsync_enabled    = true;
     core_state.vblanks_per_run  = 1;
@@ -1726,6 +1734,10 @@ RETRO_API void retro_deinit(void) {
 
     free(core_state.audio_buffer);
     core_state.audio_buffer = nullptr;
+    free(core_state.audio_float_buffer);
+    core_state.audio_float_buffer = nullptr;
+    s_audio_float = {};
+    s_audio_multi = {};
 
 }
 
@@ -1872,14 +1884,20 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
     {
         const char *ch = opt_get(XENIA_OPT_AUDIO_CHANNELS);
         s_audio_multi = {};
+        s_audio_float = {};
         s_audio_channels = 2;
         if (ch && strcmp(ch, "5.1") == 0) {
             if (core_state.environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI, &s_audio_multi) &&
-                s_audio_multi.batch_int16)
+                (s_audio_multi.batch_int16 || s_audio_multi.batch_float))
                 s_audio_channels = 6;
             else
                 xenia_log(RETRO_LOG_WARN, "audio: the frontend has no multi-channel output, staying stereo\n");
         }
+    }
+    if (s_audio_channels == 2) {
+        retro_audio_sample_float_callback candidate = {};
+        if (core_state.environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT, &candidate))
+            s_audio_float = candidate;
     }
     xe::apu::libretro::LibretroAudioSystem::set_output_channels(s_audio_channels);
     xenia_log(RETRO_LOG_INFO, "audio: %u channels\n", s_audio_channels);
@@ -1912,6 +1930,10 @@ RETRO_API void retro_unload_game(void) {
     disc::release();
     xenia_shutdown();
     disc::unload();
+    s_audio_channels = 2;
+    s_audio_float = {};
+    s_audio_multi = {};
+    xe_audio_cadence_reset(&s_audio_cadence);
     core_state.title_id = 0;
     if (!gamedb::patches().empty()) {
         gamedb::forget_patches();

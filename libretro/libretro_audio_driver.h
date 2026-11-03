@@ -111,10 +111,9 @@ class LibretroAudioSystem : public AudioSystem {
                              bool need_format_conversion) override;
   void DestroyDriver(AudioDriver* driver) override;
 
-  // Mixes every driver's queued audio into `out` (interleaved int16 in the
-  // output's channels),
+  // Mixes directly into the caller's final interleaved float buffer,
   // at most `max_samples` samples; returns how many it wrote.
-  size_t Mix(int16_t* out, size_t max_samples);
+  size_t Mix(float* out, size_t max_samples);
 
   void Register(LibretroAudioDriver* driver);
   void Unregister(LibretroAudioDriver* driver);
@@ -126,7 +125,6 @@ class LibretroAudioSystem : public AudioSystem {
  private:
   std::mutex drivers_mutex_;
   std::vector<LibretroAudioDriver*> drivers_;
-  std::vector<float> mix_;
   static inline std::atomic<uint32_t> output_channels_{2};
 };
 

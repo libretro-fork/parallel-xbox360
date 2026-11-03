@@ -227,16 +227,12 @@ void LibretroAudioSystem::Unregister(LibretroAudioDriver* driver) {
                  drivers_.end());
 }
 
-size_t LibretroAudioSystem::Mix(int16_t* out, size_t max_samples) {
+size_t LibretroAudioSystem::Mix(float* out, size_t max_samples) {
   std::lock_guard<std::mutex> lock(drivers_mutex_);
-  mix_.assign(max_samples, 0.0f);
+  std::memset(out, 0, max_samples * sizeof(*out));
   size_t longest = 0;
   for (LibretroAudioDriver* driver : drivers_) {
-    longest = std::max(longest, driver->MixInto(mix_.data(), max_samples));
-  }
-  for (size_t i = 0; i < longest; ++i) {
-    const float s = std::max(-1.0f, std::min(1.0f, mix_[i]));
-    out[i] = static_cast<int16_t>(s * 32767.0f);
+    longest = std::max(longest, driver->MixInto(out, max_samples));
   }
   return longest;
 }

@@ -41,6 +41,8 @@ Vulkan context negotiation v2 routes device creation through the frontend wrappe
 
 Guest audio uses libretro; miniaudio and the standalone achievement sound helper have been removed.
 
+At content load, the core negotiates native float audio when the frontend supports it, including float-only multichannel output for 5.1. It keeps that format until unload and mixes directly into the final float buffer. Older frontends receive the classic int16 batch or per-sample output; conversion occurs only at that boundary. This removes a redundant integer round trip, not the remaining audio scheduling, resampling or queue work still being refactored.
+
 Selected RetroArch libretro-common sources now provide XXH3/XXH64 hashing and DEFLATE decompression. Persistent hash values remain compatible. Embedded patch data decodes directly into its final allocation, using its generated raw size; XLast requires complete, checksum-valid gzip data with the declared output size. Threading and file-I/O migration to libretro-common is still in progress. Source provenance and local changes are recorded in `third_party/libretro-common/SOURCE.txt`.
 
 ZArchive uses libretro-common rzstd for its complete 64 KiB blocks. Existing standard frames remain readable; newly compressed output may have a different size. Each reader allocates decoder scratch on its first compressed block and reuses it, writing output into the archive cache. Raw blocks need no decoder scratch. The old Zstandard dependency is removed.
