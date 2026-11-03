@@ -39,11 +39,11 @@ static HRESULT buffer(ID3D12Device *device, D3D12_HEAP_TYPE type, UINT64 size,
     &desc, state, NULL, &IID_ID3D12Resource, (void **)resource);
 }
 static HRESULT sample_texture(ID3D12Device *device, ID3D12Resource **texture,
-    ID3D12Resource **upload, D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[2]) {
+    ID3D12Resource **upload, D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[2], unsigned width, unsigned height) {
   D3D12_HEAP_PROPERTIES heap; D3D12_RESOURCE_DESC desc; D3D12_RANGE range;
   UINT rows[2]; UINT64 row_sizes[2], bytes; void *mapped; unsigned mip, x, y, j; HRESULT status;
   memset(&heap,0,sizeof(heap)); heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-  memset(&desc,0,sizeof(desc)); desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; desc.Width = 4; desc.Height = 4;
+  memset(&desc,0,sizeof(desc)); desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; desc.Width = width; desc.Height = height;
   desc.DepthOrArraySize = 1; desc.MipLevels = 2; desc.SampleDesc.Count = 1; desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
   status = ID3D12Device_CreateCommittedResource(device,&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_COPY_DEST,NULL,&IID_ID3D12Resource,(void **)texture);
   if (FAILED(status)) return status;
@@ -51,9 +51,9 @@ static HRESULT sample_texture(ID3D12Device *device, ID3D12Resource **texture,
   status = buffer(device,D3D12_HEAP_TYPE_UPLOAD,bytes,D3D12_RESOURCE_STATE_GENERIC_READ,upload); if (FAILED(status)) return status;
   memset(&range,0,sizeof(range)); status = ID3D12Resource_Map(*upload,0,&range,&mapped); if (FAILED(status)) return status;
   memset(mapped,0,(size_t)bytes);
-  for (mip = 0; mip < 2; ++mip) for (y = 0; y < (mip ? 2u : 4u); ++y) for (x = 0; x < (mip ? 2u : 4u); ++x) {
+  for (mip = 0; mip < 2; ++mip) for (y = 0; y < (mip ? height/2 : height); ++y) for (x = 0; x < (mip ? width/2 : width); ++x) {
     float *pixel = (float *)((unsigned char *)mapped+(size_t)footprints[mip].Offset+y*footprints[mip].Footprint.RowPitch+x*16);
-    for (j = 0; j < 4; ++j) pixel[j] = mip ? (float)(20+(y*2+x)*4+j) : j == 0 ? (float)(x+1) : j == 1 ? (float)(y+1) : j == 2 ? (float)(y*4+x+1) : 1;
+    for (j = 0; j < 4; ++j) pixel[j] = mip ? (float)(20+(y*(width/2)+x)*4+j) : j == 0 ? (float)(x+1) : j == 1 ? (float)(y+1) : j == 2 ? (float)(y*width+x+1) : 1;
   }
   ID3D12Resource_Unmap(*upload,0,NULL); return S_OK;
 }
@@ -201,6 +201,8 @@ int main(int argc, char **argv) {
   {
     static const float vs_constants[12] = {.5f,-.5f,0,0,.5f,.5f,3,4,4,4,4,4};
     memcpy((unsigned char *)mapped+bytes+2560,vs_constants,sizeof(vs_constants));
+    if (config&524288) ((float *)((unsigned char *)mapped+bytes+2560))[6] = .3125f;
+    if (config&2048) { float *bias = (float *)((unsigned char *)mapped+bytes+2560); bias[4] += 1.25f/(float)width; bias[5] += .75f/(float)height; }
   }
   if (constants[101] >= 4) {
     uint32_t *indices = (uint32_t *)((unsigned char *)mapped+bytes+2816);
@@ -220,7 +222,7 @@ int main(int argc, char **argv) {
   cpu.ptr += ID3D12Device_GetDescriptorHandleIncrementSize(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
   uav.Buffer.NumElements = words; ID3D12Device_CreateUnorderedAccessView(device, edram, NULL, &uav, cpu);
   if (constants[101] >= 4) {
-    CHECK(sample_texture(device,&sampled_texture,&sampled_upload,sampled_footprints));
+    CHECK(sample_texture(device,&sampled_texture,&sampled_upload,sampled_footprints,config&4096 ? 8 : 4,config&4096 ? 12 : 4));
     memset(&sampled_view,0,sizeof(sampled_view)); sampled_view.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
     sampled_view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY; sampled_view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     sampled_view.Texture2DArray.MipLevels = 2; sampled_view.Texture2DArray.ArraySize = 1;

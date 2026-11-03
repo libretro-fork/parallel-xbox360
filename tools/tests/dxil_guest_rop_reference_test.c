@@ -48,6 +48,7 @@ int main(int argc, char **argv) {
   for (x = 0; x < words; ++x) initial[x] = 0x80000011;
   memset(constants,0,sizeof(constants)); memset(counters,0,sizeof(counters));
   constants[0] = (7u<<11) | (msaa<<8); constants[1] = color_bits(.5f); constants[2] = scenario == 11 || scenario == 15 ? 0x55555555 : 0; constants[3] = scenario == 12 ? UINT32_MAX : 3;
+  if (config&4096) constants[79] = 2;
   constants[32] = pitch; constants[34] = constants[35] = 0xffff5a; constants[36] = constants[37] = 7u | (2u<<6);
   for (j = 0; j < 4; ++j) { constants[4+j] = color_bits(scenario == 10 ? (float)(1u<<j) : 1); constants[8+j] = color_bits(.2f*(float)(j+1)); }
   if ((scenario >= 4 && scenario <= 7) || (scenario >= 13 && scenario <= 15) || scenario >= 1141) {
@@ -107,7 +108,25 @@ int main(int argc, char **argv) {
       for (j = 0; j < 4; ++j) output[j] = source[rt][j]*(scenario == 10 ? (float)(1u<<rt) : 1);
       if (rt == 3 && query) {
         if (query == 16) { output[0] = (float)(log(4.0/(double)height)/log(2.0)); output[1] = output[2] = output[3] = 0; }
-        else if (query >= 4) { unsigned tx = query == 5 ? 0 : x*4/width, ty = query == 5 ? 0 : y*4/height; output[0] = (float)(tx+1); output[1] = (float)(ty+1); output[2] = (float)(ty*4+tx+1); output[3] = 1; }
+        else if (query >= 4) {
+          unsigned tsx = config&4096 ? 2 : 1, tsy = config&4096 ? 3 : 1, tw = 4*tsx, th = 4*tsy;
+          float bias_x = config&2048 ? 1.25f/(float)width : 0, bias_y = config&2048 ? .75f/(float)height : 0;
+          float cu = ((float)x+.5f)/(float)width+bias_x, cv = ((float)y+.5f)/(float)height+bias_y;
+          int tx = (int)floor((double)(cu*(float)(query == 5 ? tsx : tw))), ty = (int)floor((double)(cv*(float)(query == 5 ? tsy : th)));
+          if ((config&4) && query != 5 && (config&524288 ? cu <= .3125f : !(config&8192) || (config&16384) || (config&65536))) {
+            int first_x = (int)floor((double)((((float)(x/sx)+.5f)*(float)sx/(float)width+bias_x)*4))*(int)tsx;
+            int first_y = (int)floor((double)((((float)(y/sy)+.5f)*(float)sy/(float)height+bias_y)*4))*(int)tsy;
+            if (tx < first_x) tx = first_x;
+            if (tx > first_x+(int)tsx-1) tx = first_x+(int)tsx-1;
+            if (ty < first_y) ty = first_y;
+            if (ty > first_y+(int)tsy-1) ty = first_y+(int)tsy-1;
+          }
+          if (tx < 0) tx = 0;
+          if (tx >= (int)tw) tx = (int)tw-1;
+          if (ty < 0) ty = 0;
+          if (ty >= (int)th) ty = (int)th-1;
+          output[0] = (float)(tx+1); output[1] = (float)(ty+1); output[2] = (float)((unsigned)ty*tw+(unsigned)tx+1); output[3] = 1;
+        }
         else if (query == 2) { output[0] = 1.0f/(float)width; output[1] = output[2] = 0; output[3] = 1.0f/(float)height; }
         else { output[0] = ((float)x+.5f)/(float)width; output[1] = ((float)y+.5f)/(float)height;
           for (j = 0; j < 2; ++j) { if (query == 1) output[j] *= 4; output[j] += -.5f+1.5f/1024; output[j] -= (float)floor((double)output[j]); }

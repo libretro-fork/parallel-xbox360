@@ -11,7 +11,7 @@ struct XeDxilGuestProgram {
   XeDxilVertexResources resources;
   XeDxilVertexFetch vertex;
   XeDxilTextureFetch texture;
-  XeDxilValue registers, exports;
+  XeDxilValue registers, exports, center_valid[2], center_deltas[16][4];
   uint64_t initialized_exports;
   unsigned current_block, serialized, emitted;
 };
@@ -93,7 +93,7 @@ fail:
 }
 static int write_storage(XeDxilGuestProgram *p, unsigned exporting, unsigned index,
     unsigned mask, XeDxilValue values[4], XeDxilValue offset, unsigned notify) {
-  XeDxilValue destination;
+  XeDxilValue destination, valid;
   unsigned i;
   if (mask > 15 || !values || (exporting && offset)) goto fail;
   if (exporting && mask && !initialize_export(p, index)) goto fail;
@@ -101,6 +101,17 @@ static int write_storage(XeDxilGuestProgram *p, unsigned exporting, unsigned ind
     destination = pointer(p, exporting ? p->exports : p->registers, index, i,
       offset, exporting ? 64 : p->options.register_count);
     if (!destination || !values[i] || !dxil_emit_store(p->alu.module, values[i], destination, 4, 0)) goto fail;
+  }
+  if (!exporting && mask && p->center_valid[0]) {
+    if (offset) {
+      for (i = 0; i < 2; ++i) if ((p->options.guest_center_mask>>(i*8))&255u) {
+        if (!dxil_emit_store(p->alu.module,ic(p,0),p->center_valid[i],4,0)) goto fail;
+      }
+    } else if (index < 16 && (p->options.guest_center_mask&(1u<<index))) {
+      valid = dxil_emit_load(p->alu.module,p->center_valid[index/8],4,0);
+      valid = bin(p,DXIL_BINOP_AND,valid,ic(p,~(mask<<((index%8)*4))));
+      if (!valid || !dxil_emit_store(p->alu.module,valid,p->center_valid[index/8],4,0)) goto fail;
+    }
   }
   if (notify && exporting && mask && p->options.export_written &&
       !p->options.export_written(p->options.context, p, index, mask)) goto fail;
@@ -132,6 +143,19 @@ static XeDxilValue loop_constant(void *context, unsigned index) {
 static int texture_fetch(void *context, const XeDxilTextureInstruction *instruction,
     const XeDxilTextureOperands *operands, XeDxilValue values[4]) {
   XeDxilGuestProgram *p = (XeDxilGuestProgram *)context;
+  XeDxilTextureOperands adjusted = *operands; XeDxilValue valid; unsigned c0, c1, needed;
+  if (p->center_valid[0] && instruction->opcode == 1 && instruction->dimension == 1 && !instruction->unnormalized && !instruction->source_relative && instruction->source < 16) {
+    c0 = instruction->source_swizzle&3; c1 = (instruction->source_swizzle>>2)&3;
+    needed = ((1u<<c0)|(1u<<c1))<<((instruction->source%8)*4);
+    valid = dxil_emit_load(p->alu.module,p->center_valid[instruction->source/8],4,0);
+    valid = bin(p,DXIL_BINOP_AND,valid,ic(p,needed));
+    adjusted.guest_center_valid = valid ? dxil_emit_cmp(p->alu.module,DXIL_ICMP_EQ,valid,ic(p,needed)) : NULL;
+    adjusted.guest_center_delta[0] = p->center_deltas[instruction->source][c0];
+    adjusted.guest_center_delta[1] = p->center_deltas[instruction->source][c1];
+    if (!adjusted.guest_center_delta[0]) adjusted.guest_center_delta[0] = dxil_module_get_float_const(p->alu.module,0);
+    if (!adjusted.guest_center_delta[1]) adjusted.guest_center_delta[1] = dxil_module_get_float_const(p->alu.module,0);
+  }
+  operands = &adjusted;
   if (p->options.texture) return p->options.texture(p->options.context, &p->alu, &p->io,
     instruction, operands, p->serialized, values);
   return xe_dxil_texture_weights(&p->alu,instruction,operands,p->resources.fetch_constants,values);
@@ -172,6 +196,10 @@ XeDxilGuestProgram *xe_dxil_guest_program_create(struct dxil_module *module, con
   if (!p->exports) goto fail;
   for (i = 0; i < 4; ++i) zero[i] = dxil_module_get_float_const(module, 0.0f);
   for (i = 0; i < options->register_count; ++i) if (!write_value(p, 0, i, 15, zero, NULL)) goto fail;
+  if (options->guest_center_mask) for (i = 0; i < 2; ++i) {
+    p->center_valid[i] = dxil_emit_alloca(module,dxil_module_get_int_type(module,32),ic(p,1),4);
+    if (!p->center_valid[i] || !dxil_emit_store(module,ic(p,0),p->center_valid[i],4,0)) goto fail;
+  }
   p->resources.alu = &p->alu; p->resources.io = &p->io;
   p->resources.fetch_constants = options->fetch_constants; p->resources.shared_memory = options->shared_memory;
   p->vertex.context = &p->resources; p->vertex.constant = xe_dxil_vertex_resource_constant; p->vertex.load = xe_dxil_vertex_resource_load;
@@ -186,6 +214,14 @@ XeDxilAlu *xe_dxil_guest_program_alu(XeDxilGuestProgram *p) { return p ? &p->alu
 XeDxilAluIo *xe_dxil_guest_program_io(XeDxilGuestProgram *p) { return p ? &p->io : NULL; }
 int xe_dxil_guest_program_register(XeDxilGuestProgram *p, unsigned index, unsigned mask, XeDxilValue values[4]) {
   return p && write_value(p, 0, index, mask, values, NULL);
+}
+int xe_dxil_guest_program_center_delta(XeDxilGuestProgram *p, unsigned index, XeDxilValue values[4]) {
+  XeDxilValue valid; unsigned i;
+  if (!p || p->emitted || index >= 16 || !p->center_valid[0] || !values || !(p->options.guest_center_mask&(1u<<index))) return 0;
+  for (i = 0; i < 4; ++i) { if (!values[i]) return 0; p->center_deltas[index][i] = values[i]; }
+  valid = dxil_emit_load(p->alu.module,p->center_valid[index/8],4,0);
+  valid = bin(p,DXIL_BINOP_OR,valid,ic(p,15u<<((index%8)*4)));
+  return valid && dxil_emit_store(p->alu.module,valid,p->center_valid[index/8],4,0);
 }
 int xe_dxil_guest_program_default_export(XeDxilGuestProgram *p, unsigned index, unsigned mask, XeDxilValue values[4]) {
   return p && !p->emitted && !p->alu.module->cur_emitting_func->curr_block && write_storage(p,1,index,mask,values,NULL,0);

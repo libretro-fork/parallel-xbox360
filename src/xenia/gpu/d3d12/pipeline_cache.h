@@ -366,7 +366,7 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
     // zpd_total; then again for it also covering VIZ surveys; then again for
     // dropping use_mesa_dxil; then again for the line geometry shader
     // widening geometry_shader.
-    static constexpr uint32_t kVersion = 0x20261104;
+    static constexpr uint32_t kVersion = 0x20261105;
   });
 
   XEPACKEDSTRUCT(PipelineStoredDescription, {

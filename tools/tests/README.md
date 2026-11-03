@@ -485,7 +485,7 @@ direct heaps with barycentrics to check that version selection is preserved.
 
 ## Integrated native guest 2D sampling
 
-`make check-dxil-guest-sampling DXIL_VALIDATOR=/path/to/dxv` validates 45
+`make check-dxil-guest-sampling DXIL_VALIDATOR=/path/to/dxv` validates 62
 C89 sampling-policy containers, 504 complete guest pixel shaders (560..1063),
 and nine guest vertex shaders (9..17). All containers must validate
 without changes. Shader logic is separately checked as strict C89.
@@ -584,8 +584,8 @@ last two layers spuriously; these are covered by the independent numeric oracle.
 
 `make check-dxil-scaled-lod` also validates query-only ROV shaders at 2x3 draw
 resolution and 1x/2x/4x coverage. The resource layout records actual sampling
-separately from querying, allowing these queries while scaled texture sampling
-still follows the migration gate. Signed fixed-point and floating targets make
+separately from querying; scaled queries and sampling both compile natively.
+Signed fixed-point and floating targets make
 the negative queried LOD observable rather than clamping every result to zero.
 For floating LOD outputs with discontiguous write masks, the runtime checks
 preserved bits exactly and verifies that written bits can originate from the
@@ -595,3 +595,17 @@ large post-mask float difference. Other packed outputs and counters stay exact.
 The sampling targets also compile the texture emitter with optimization and strict
 C89 warnings via "check-dxil-texture-stage-c89", catching definite/possible
 initialization diagnostics that a syntax-only check may not report.
+
+`make check-dxil-scaled-sampling` validates 144 ROV shaders covering 2x3 draw
+resolution, resolved and ordinary resources, three color formats and 1x/2x/4x
+coverage. Configurations add 2048 for affine coordinate bias, 4096 for an 8x12
+resolved resource, and 8192 for a coordinate MOV. Further flags select a skipped
+predicate (16384), executed predicate (32768), Z-only write (65536), relative
+write (131072), or mixed per-pixel predicates across two clauses (524288).
+The latter predicate changes provenance during the same draw. Flag 262144
+disables tracking as a negative control and must fail the biased point oracle.
+Run each generated shader through the ROV runtime/reference with scenarios
+0, 1, 4, 5, 8 and 10 to compare all EDRAM words and query counters (864 draws).
+Policy cases 45..61 cover scaled sizes, resolved masks, disabled scaling,
+normalized/unnormalized coordinates, locked mips, gradients, half/whole offsets,
+point-footprint clamping, invalid provenance and linear-filter bypass.

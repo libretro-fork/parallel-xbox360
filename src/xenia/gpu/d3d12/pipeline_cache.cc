@@ -699,14 +699,6 @@ bool PipelineCache::IsGuestVertexReady(const Shader::Translation& translation) {
   return binary != shader->second.end() && binary->second != nullptr;
 }
 namespace {
-bool NativeTextureScaleSupported(const Shader& shader, uint32_t x, uint32_t y) {
-  if (x == 1 && y == 1) return true;
-  for (const auto& binding : shader.texture_bindings()) {
-    if (binding.fetch_instr.opcode == ucode::FetchOpcode::kTextureFetch &&
-        binding.fetch_instr.result.GetUsedResultComponents()) return false;
-  }
-  return true;
-}
 bool BuildNativeTextureLayout(const SpirvShader& shader, XeDxilTextureLayout& layout, unsigned pixel) {
   layout = {};
   if (shader.bindings_ready()) {
@@ -753,12 +745,15 @@ bool PublishNativeTextureLayout(SpirvShader& shader, const XeDxilTextureLayout& 
   }
   return shader.PublishNativeBindings(std::move(textures),std::move(samplers),layout.used_texture_mask);
 }
-XeDxilTextureStageOptions NativeTextureOptions(const XeDxilTextureLayout& layout, unsigned pixel) {
+XeDxilTextureStageOptions NativeTextureOptions(const XeDxilTextureLayout& layout, unsigned pixel, uint32_t scale_x, uint32_t scale_y) {
   XeDxilTextureStageOptions options = {};
   options.layout = &layout; options.pixel_shader = pixel;
   options.system_constants_bytes = sizeof(SpirvShaderTranslator::SystemConstants);
   options.signs_word = offsetof(SpirvShaderTranslator::SystemConstants,texture_swizzled_signs)/4;
   options.integer_scale_word = offsetof(SpirvShaderTranslator::SystemConstants,texture_integer_scale_bits)/4;
+  options.texture_scale_x = scale_x; options.texture_scale_y = scale_y;
+  options.scale_resolved_offsets = cvars::draw_resolution_scaled_texture_offsets;
+  options.resolved_word = offsetof(SpirvShaderTranslator::SystemConstants,textures_resolved)/4;
   return options;
 }
 }  // namespace
@@ -772,7 +767,6 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
       shader.kills_pixels()) {
     return nullptr;
   }
-  if (!NativeTextureScaleSupported(shader,render_target_cache_.draw_resolution_scale_x(),render_target_cache_.draw_resolution_scale_y())) return nullptr;
   {
     std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
     auto& cache = native_vertex_dxil_cache_[shader.ucode_data_hash()];
@@ -784,7 +778,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
   std::unique_lock<std::mutex> bindings_lock(binding_shader->resource_bindings_mutex());
   XeDxilTextureLayout texture_layout = {};
   if (!BuildNativeTextureLayout(*binding_shader,texture_layout,0)) return nullptr;
-  auto texture_options = NativeTextureOptions(texture_layout,0);
+  auto texture_options = NativeTextureOptions(texture_layout,0,render_target_cache_.draw_resolution_scale_x(),render_target_cache_.draw_resolution_scale_y());
   XeDxilGuestVertexOptions options = {};
   if (texture_layout.texture_count) options.textures = &texture_options;
   const auto& constants = shader.constant_register_map();
@@ -823,7 +817,6 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
     const Shader& shader, uint64_t modification) {
   SpirvShaderTranslator::Modification mod(modification);
   if (!shader.is_ucode_analyzed() || shader.memexport_eM_written()) return nullptr;
-  if (!NativeTextureScaleSupported(shader,render_target_cache_.draw_resolution_scale_x(),render_target_cache_.draw_resolution_scale_y())) return nullptr;
   bool edram_rov_used = render_target_cache_.GetPath() == RenderTargetCache::Path::kPixelShaderInterlock;
   {
     std::lock_guard<std::mutex> lock(mesa_dxil_cache_mutex_);
@@ -838,7 +831,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
   std::unique_lock<std::mutex> bindings_lock(binding_shader->resource_bindings_mutex());
   XeDxilTextureLayout texture_layout = {};
   if (!BuildNativeTextureLayout(*binding_shader,texture_layout,1)) return nullptr;
-  auto texture_options = NativeTextureOptions(texture_layout,1);
+  auto texture_options = NativeTextureOptions(texture_layout,1,render_target_cache_.draw_resolution_scale_x(),render_target_cache_.draw_resolution_scale_y());
   XeDxilGuestRopOptions rop_options = {};
   XeDxilGuestPixelOptions options = {};
   if (texture_layout.texture_count) options.textures = &texture_options;
@@ -849,6 +842,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
   options.program.float_dynamic_addressing = constants.float_dynamic_addressing;
   options.program.float_bitmap = constants.float_bitmap;
   options.interpolator_mask = mod.pixel.interpolator_mask;
+  options.point_coordinate_mask = shader.point_fetch_coordinate_registers();
   options.centroid_mask = mod.pixel.interpolators_centroid;
   options.color_mask = shader.writes_color_targets();
   options.writes_depth = shader.writes_depth();

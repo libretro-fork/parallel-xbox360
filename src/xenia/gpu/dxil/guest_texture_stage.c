@@ -54,7 +54,7 @@ struct XeDxilTextureStage {
   XeDxilShaderModule *shader;
   XeDxilAlu alu;
   XeDxilTextureStageOptions options;
-  XeDxilValue system, fetch, indices, signs[32], integer_bits[32], constants[32][4];
+  XeDxilValue system, fetch, indices, resolved, signs[32], integer_bits[32], constants[32][4];
   unsigned texture_resource[4], sampler_resource, current_block;
 };
 typedef struct XeDxilTextureStage TextureStage;
@@ -115,6 +115,15 @@ XeDxilTextureStage *xe_dxil_texture_stage_create(XeDxilShaderModule *shader, XeD
   t = (TextureStage *)calloc(1,sizeof(*t)); if (!t) return NULL;
   memset((void *)fetch_vectors,0,sizeof(fetch_vectors)); memset((void *)sign_vectors,0,sizeof(sign_vectors)); memset((void *)integer_vectors,0,sizeof(integer_vectors));
   t->shader = shader; t->options = *o; t->system = system; t->fetch = fetch; xe_dxil_alu_init(&t->alu,m); words = o->system_constants_bytes/4;
+  if (!t->options.texture_scale_x) t->options.texture_scale_x = 1;
+  if (!t->options.texture_scale_y) t->options.texture_scale_y = 1;
+  if (t->options.texture_scale_x > 16 || t->options.texture_scale_y > 16) goto fail;
+  t->resolved = ic(t,0);
+  if (o->scale_resolved_offsets && (t->options.texture_scale_x > 1 || t->options.texture_scale_y > 1)) {
+    if (o->resolved_word >= words) goto fail;
+    t->resolved = xe_dxil_cbuffer_word(&t->alu,system,ic(t,o->resolved_word));
+    if (!t->resolved) goto fail;
+  }
   resource = xe_dxil_shader_resource(shader,XE_DXIL_RESOURCE_SRV,DXIL_RESOURCE_KIND_RAW_BUFFER,0,o->pixel_shader ? 3 : 2,1,0);
   if (resource < 0) goto fail;
   t->indices = xe_dxil_resource_handle(&t->alu,XE_DXIL_RESOURCE_SRV,(unsigned)resource,o->pixel_shader ? 3 : 2);
@@ -325,7 +334,7 @@ static int numeric_format(TextureStage *t, XeDxilValue bits, unsigned used, unsi
 }
 int xe_dxil_texture_stage_fetch(XeDxilTextureStage *stage, XeDxilAlu *alu, XeDxilAluIo *io,
     const XeDxilTextureInstruction *i, const XeDxilTextureOperands *op, XeDxilValue result[4]) {
-  TextureStage *t = stage; XeDxilTextureSample sample; XeDxilTextureInstruction query; XeDxilValue sizes[3], coordinates[2], grad_coordinates[3], is_3d, needed[2], volumes[2][4], original_width, actual_1d, wide, rows, linear_x, row, lod, scale, shift, value, snap, signs[4], any_signed, any_unsigned, unsigned_values[4], signed_values[4], exponent;
+  TextureStage *t = stage; XeDxilTextureSample sample; XeDxilTextureInstruction query; XeDxilValue sizes[3], texture_scale[2], snapped, center, first_texel, coordinates[2], grad_coordinates[3], is_3d, needed[2], volumes[2][4], original_width, actual_1d, wide, rows, linear_x, row, lod, scale, shift, value, snap, signs[4], any_signed, any_unsigned, unsigned_values[4], signed_values[4], exponent;
   float epsilon;
   unsigned f, j, point, computed, components; int texture[4], sampler;
   if (!t || !alu || alu->module != t->alu.module || !io || !io->current_block || !i || !op || !result) return 0;
@@ -356,12 +365,27 @@ int xe_dxil_texture_stage_fetch(XeDxilTextureStage *stage, XeDxilAlu *alu, XeDxi
       value = pick(t,cmp(t,DXIL_ICMP_NE,value,ic(t,0)),value,ic(t,1));
       sizes[j] = pick(t,cmp(t,DXIL_ICMP_EQ,shift,field(t,t->constants[f][2],6,15)),value,sizes[j]);
     }
-    sizes[j] = cast(t,DXIL_CAST_UITOFP,1,sizes[j]); value = j < components ? op->coordinates[j] : fc(t,0);
+    sizes[j] = cast(t,DXIL_CAST_UITOFP,1,sizes[j]);
+    texture_scale[j] = fc(t,1); value = j < components ? op->coordinates[j] : fc(t,0);
+    if (t->options.scale_resolved_offsets && (j ? t->options.texture_scale_y : t->options.texture_scale_x) > 1) {
+      texture_scale[j] = pick(t,cmp(t,DXIL_ICMP_NE,bin(t,DXIL_BINOP_AND,t->resolved,ic(t,1u<<f)),ic(t,0)),fc(t,(float)(j ? t->options.texture_scale_y : t->options.texture_scale_x)),fc(t,1));
+      sizes[j] = bin(t,DXIL_BINOP_MUL,sizes[j],texture_scale[j]);
+      if (i->unnormalized) value = bin(t,DXIL_BINOP_MUL,value,texture_scale[j]);
+    }
     if (i->unnormalized) coordinates[j] = bin(t,DXIL_BINOP_SDIV,bin(t,DXIL_BINOP_ADD,value,fc(t,(float)i->offset_halves[j]*.5f)),sizes[j]);
     else coordinates[j] = bin(t,DXIL_BINOP_ADD,value,bin(t,DXIL_BINOP_SDIV,fc(t,(float)i->offset_halves[j]*.5f),sizes[j]));
     grad_coordinates[j] = !i->unnormalized && point ? coordinates[j] : bin(t,DXIL_BINOP_ADD,coordinates[j],bin(t,DXIL_BINOP_SDIV,fc(t,epsilon),sizes[j]));
+    snapped = unary(t,27,bin(t,DXIL_BINOP_MUL,coordinates[j],sizes[j]));
+    if (i->opcode == 1 && i->dimension == 1 && op->guest_center_valid && op->guest_center_delta[j]) {
+      center = bin(t,DXIL_BINOP_MUL,bin(t,DXIL_BINOP_ADD,coordinates[j],op->guest_center_delta[j]),sizes[j]);
+      if (i->offset_halves[j]) center = bin(t,DXIL_BINOP_ADD,center,bin(t,DXIL_BINOP_MUL,fc(t,(float)i->offset_halves[j]*.5f),bin(t,DXIL_BINOP_SUB,texture_scale[j],fc(t,1))));
+      first_texel = bin(t,DXIL_BINOP_MUL,unary(t,27,bin(t,DXIL_BINOP_SDIV,unary(t,27,center),texture_scale[j])),texture_scale[j]);
+      center = maximum(t,snapped,first_texel); value = bin(t,DXIL_BINOP_ADD,first_texel,bin(t,DXIL_BINOP_SUB,texture_scale[j],fc(t,1)));
+      center = pick(t,cmp(t,DXIL_FCMP_OLT,center,value),center,value);
+      snapped = pick(t,op->guest_center_valid,center,snapped);
+    }
     sample.coordinates[j] = pick(t,snap,
-      bin(t,DXIL_BINOP_SDIV,bin(t,DXIL_BINOP_ADD,unary(t,27,bin(t,DXIL_BINOP_MUL,coordinates[j],sizes[j])),fc(t,.5f)),sizes[j]),
+      bin(t,DXIL_BINOP_SDIV,bin(t,DXIL_BINOP_ADD,snapped,fc(t,.5f)),sizes[j]),
       bin(t,DXIL_BINOP_ADD,coordinates[j],bin(t,DXIL_BINOP_SDIV,fc(t,epsilon),sizes[j])));
   }
   if (components == 1) { sample.coordinates[1] = coordinates[1] = grad_coordinates[1] = fc(t,0); }

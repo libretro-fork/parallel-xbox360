@@ -679,7 +679,7 @@ $(HOST_DIR)/dxil-texture-stage-test$(HOST_EXEEXT): tools/tests/dxil_texture_stag
 
 .PHONY: check-dxil-guest-sampling
 check-dxil-guest-sampling: $(HOST_DIR)/dxil-texture-stage-test$(HOST_EXEEXT) check-dxil-texture-stage-c89 $(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT) $(HOST_DIR)/dxil-guest-vertex-test$(HOST_EXEEXT) check-dxil-alu-c89
-	@set -e; mode=0; while test $$mode -le 44; do \
+	@set -e; mode=0; while test $$mode -le 61; do \
 	  path="$(HOST_DIR)/dxil-sampling-policy-$$mode.dxil"; $< "$$path" $$mode; \
 	  $(DXIL_VALIDATOR) "$$path" -o="$$path.validated"; cmp "$$path" "$$path.validated"; \
 	  mode=$$((mode+1)); \
@@ -741,3 +741,15 @@ check-dxil-scaled-lod: $(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT) check-dxi
 check-dxil-texture-stage-c89:
 	@mkdir -p "$(HOST_DIR)"
 	$(HOST_CC) $(HOST_CFLAGS) -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -c $(DXIL_ALU_DIR)/guest_texture_stage.c -o "$(HOST_DIR)/dxil-texture-stage-c89.o"
+
+.PHONY: check-dxil-scaled-sampling
+check-dxil-scaled-sampling: $(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT) check-dxil-alu-c89
+	@set -e; for resolved in 0 4096; do \
+	  for provenance in 0 8192 24576 40960 73728 139264 155648 524288; do \
+	    for format in 1 7 8; do for msaa in 0 1 2; do \
+	      config=$$((resolved+provenance+format*8+msaa+4+2048)); \
+	      path="$(HOST_DIR)/dxil-scaled-sampling-$$config.dxil"; $< "$$path" 560 $$config; \
+	      $(DXIL_VALIDATOR) "$$path" -o="$$path.validated"; cmp "$$path" "$$path.validated"; \
+	    done; done; \
+	  done; \
+	done

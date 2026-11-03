@@ -57,6 +57,7 @@ typedef struct XeDxilTextureOperands {
   XeDxilValue coordinates[3];
   unsigned coordinate_count, result_components;
   XeDxilValue lod, ddx[3], ddy[3];
+  XeDxilValue guest_center_delta[2], guest_center_valid;
 } XeDxilTextureOperands;
 /* Base-level filtering weights, matching the core's guest query policy.
  * Cube queries return ST weights, unused lanes (including mip weight) are

@@ -167,7 +167,7 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
   XeDxilGuestProgramOptions options;
   XeDxilGuestProgram *program = NULL;
   XeDxilShaderBinary *binary = NULL;
-  XeDxilValue rop_colors[4][4], values[4], color[4], position[3], flags, front, value, slope, dx, dy;
+  XeDxilValue center_offsets[2], center_values[4], rop_colors[4][4], values[4], color[4], position[3], flags, front, value, slope, dx, dy;
   XeDxilValue bary_y = NULL, bary_z = NULL, a, b, c, mask, live, alpha, coverage, args[7], counters = NULL, index;
   int bary_id = -1, colors[4], depth_id = -1, mask_id = -1, point_id = -1, input_id;
   unsigned i, j, packed = 0, cbv = 1, n, float24, truncate, alpha_blocks;
@@ -178,7 +178,7 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
       o->system_constants_bytes < 16 || o->system_constants_bytes > 65536 ||
       (o->rop && (o->rop->color_mask != o->color_mask || o->rop->depth.system_constants_bytes != o->system_constants_bytes || o->rop->depth.flags_word != o->flags_word))) return NULL;
   n = o->system_constants_bytes/4;
-  if (o->textures && (!o->textures->layout || ((o->scale_x != 1 || o->scale_y != 1) && o->textures->layout->sampled_texture_mask) || !o->textures->pixel_shader ||
+  if (o->textures && (!o->textures->layout || !o->textures->pixel_shader ||
       o->textures->system_constants_bytes != o->system_constants_bytes)) return NULL;
   if (o->flags_word >= n || o->alpha_reference_word >= n || o->alpha_to_mask_word >= n || o->color_bias_word > n-4 ||
       o->blend_constant_word > n-4 || o->front_scale_word >= n || o->back_scale_word >= n || o->front_offset_word >= n ||
@@ -248,12 +248,17 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
   p.killed = dxil_emit_alloca(p.alu.module,integer_type,ic(&p,1),4);
   p.written = dxil_emit_alloca(p.alu.module,integer_type,ic(&p,1),4);
   if (!p.killed || !p.written || !dxil_emit_store(p.alu.module,ic(&p,0),p.killed,4,0) || !dxil_emit_store(p.alu.module,ic(&p,0),p.written,4,0)) goto done;
+  options.guest_center_mask = o->scale_x > 1 || o->scale_y > 1 ? o->point_coordinate_mask&o->interpolator_mask : 0;
   program = xe_dxil_guest_program_create(p.alu.module,&options); if (!program) goto done;
   flags = word(&p,o->flags_word); front = cmp(&p,DXIL_ICMP_NE,input(&p,1,0,1),ic(&p,0));
   for (i = 0; i < 3; ++i) position[i] = input(&p,0,i,0);
   dx = dy = NULL;
   if (!o->writes_depth && (o->rop || o->depth_mode >= 4)) { dx = unary(&p,83,position[2]); dy = unary(&p,84,position[2]); }
   if (bary_id >= 0) { bary_y = input(&p,(unsigned)bary_id,1,0); bary_z = input(&p,(unsigned)bary_id,2,0); }
+  if (options.guest_center_mask) for (i = 0; i < 2; ++i) {
+    value = fc(&p,(float)(i ? o->scale_y : o->scale_x));
+    center_offsets[i] = bin(&p,DXIL_BINOP_SUB,bin(&p,DXIL_BINOP_MUL,bin(&p,DXIL_BINOP_ADD,unary(&p,27,bin(&p,DXIL_BINOP_SDIV,position[i],value)),fc(&p,.5f)),value),position[i]);
+  }
   packed = 0;
   for (i = 0; i < 16; ++i) if (o->interpolator_mask & (1u<<i)) {
     for (j = 0; j < 4; ++j) {
@@ -264,6 +269,10 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
       } else values[j] = input(&p,2+packed,j,0);
     }
     if (!xe_dxil_guest_program_register(program,i,15,values)) goto done;
+    if (options.guest_center_mask&(1u<<i)) {
+      for (j = 0; j < 4; ++j) center_values[j] = bin(&p,DXIL_BINOP_ADD,bin(&p,DXIL_BINOP_MUL,unary(&p,83,values[j]),center_offsets[0]),bin(&p,DXIL_BINOP_MUL,unary(&p,84,values[j]),center_offsets[1]));
+      if (!xe_dxil_guest_program_center_delta(program,i,center_values)) goto done;
+    }
     ++packed;
   }
   if (o->param_gen && o->param_register < options.register_count) {

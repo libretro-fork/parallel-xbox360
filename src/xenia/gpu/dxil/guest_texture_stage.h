@@ -15,12 +15,13 @@ typedef struct XeDxilTextureLayout {
 typedef struct XeDxilTextureStageOptions {
   const XeDxilTextureLayout *layout;
   unsigned pixel_shader, system_constants_bytes, signs_word, integer_scale_word;
+  unsigned texture_scale_x, texture_scale_y, scale_resolved_offsets, resolved_word;
 } XeDxilTextureStageOptions;
 typedef struct XeDxilTextureStage XeDxilTextureStage;
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Collect all used instructions before emitting handles. Queries need no
+/* Collect all used instructions before emitting handles. Weight/gradient queries need no
  * descriptors. Samplers follow textures in two-dword index-buffer entries. */
 int xe_dxil_texture_layout_add(XeDxilTextureLayout *layout,
   const XeDxilTextureInstruction *instruction, unsigned pixel_shader);

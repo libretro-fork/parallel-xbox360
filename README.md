@@ -56,7 +56,7 @@ shaders, and pixel gradient queries use native derivatives. Weight/gradient-only
 need no texture descriptors. Empty descriptor-index tables reuse the existing
 zero buffer instead of allocating and clearing an upload for every draw.
 Native shader-model 6.6 heap sampling now handles guest 1D, 2D, 3D/stacked and cube texture fetches
-in vertex and pixel stages at unit draw resolution. Raw fetch constants drive
+in vertex and pixel stages at native or scaled draw resolution. Raw fetch constants drive
 coordinate normalization, offsets, explicit/gradient LOD and bias, point
 snapping, signed/unsigned view selection, integer conversion, gamma and exponent
 adjustment. Wide 1D textures map directly to the cache's bounded row layout;
@@ -67,8 +67,11 @@ array views, handles layer edges and skips zero-weight second-layer fetches.
 Computed-LOD queries use native unclamped DXIL operations and select the signed
 view only when all swizzled components are signed. Query-only shaders also support
 scaled draws. Border-fraction queries retain
-the core's existing unimplemented zero result. Scaled sampling,
-memory exports and tessellation still use Mesa and its Meson/Python build while
+the core's existing unimplemented zero result. Scaled sampling uses resolved-resource
+sizes and tracks untouched point-fetch coordinates through conditional register
+writes to retain the guest texel footprint. Tracking uses two 32-bit validity
+masks and immutable derivative values, avoiding duplicate register buffers.
+Memory exports and tessellation still use Mesa and its Meson/Python build while
 their replacements are implemented.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in

@@ -7,6 +7,7 @@
 typedef struct XeDxilGuestProgram XeDxilGuestProgram;
 typedef struct XeDxilGuestProgramOptions {
   unsigned register_count, float_constant_count, float_dynamic_addressing;
+  unsigned guest_center_mask; /* Optional initial interpolator provenance. */
   /* Optional borrowed four-word bitmap for tightly packed static constants.
    * NULL selects dense constants. Dynamic constants must use all 256 entries. */
   const uint64_t *float_bitmap;
@@ -34,6 +35,7 @@ XeDxilAlu *xe_dxil_guest_program_alu(XeDxilGuestProgram *program);
 XeDxilAluIo *xe_dxil_guest_program_io(XeDxilGuestProgram *program);
 int xe_dxil_guest_program_register(XeDxilGuestProgram *program, unsigned index,
   unsigned mask, XeDxilValue values[4]);
+int xe_dxil_guest_program_center_delta(XeDxilGuestProgram *program, unsigned index, XeDxilValue values[4]);
 /* Stage defaults, before emit, do not report guest export writes. */
 int xe_dxil_guest_program_default_export(XeDxilGuestProgram *program, unsigned index,
   unsigned mask, XeDxilValue values[4]);

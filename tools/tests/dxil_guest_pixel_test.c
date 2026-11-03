@@ -76,7 +76,7 @@ static int guest_vertex(const char *path, const XeDxilGuestPixelOptions *pixel) 
   xe_dxil_shader_binary_delete(binary); return result;
 }
 int main(int argc, char **argv) {
-  uint32_t words[21] = {0x6001,0,0};
+  uint32_t words[30] = {0x6001,0,0};
   XeDxilGuestRopOptions rop;
   XeDxilGuestPixelOptions o;
   XeDxilTextureLayout texture_layout;
@@ -121,11 +121,12 @@ int main(int argc, char **argv) {
     rop_config = (unsigned)strtoul(argv[3],NULL,10); if ((rop_config&3) > 2) return 2;
     memset(&rop,0,sizeof(rop)); o.rop = &rop; o.system_constants_bytes = 512;
     o.depth_mode = 0; o.count_coverage = 0; o.native_2x = 0;
-    if (o.textures) { texture_options.system_constants_bytes = 512; texture_options.signs_word = 80; texture_options.integer_scale_word = 88; }
+    if (o.textures) { texture_options.system_constants_bytes = 512; texture_options.signs_word = 80; texture_options.integer_scale_word = 88; texture_options.resolved_word = 79; texture_options.texture_scale_x = rop_config&4 ? 2 : 1; texture_options.texture_scale_y = rop_config&4 ? 3 : 1; texture_options.scale_resolved_offsets = 1; }
     o.blend_rgb_factor = o.blend_alpha_factor = 1;
     rop.depth.msaa = rop_config&3;
     rop.depth.scale_x = rop_config&4 ? 2 : 1; rop.depth.scale_y = rop_config&4 ? 3 : 1;
     o.scale_x = rop.depth.scale_x; o.scale_y = rop.depth.scale_y;
+    if ((variant == 20 || variant == 22) && (rop_config&4) && !(rop_config&262144)) o.point_coordinate_mask = 1;
     rop.depth.full_counters = !(rop_config&256); rop.depth.system_constants_bytes = 512;
     rop.depth.flags_word = 0; rop.depth.pitch_word = 32; rop.depth.depth_base_word = 33; rop.depth.counter_word = 3;
     rop.depth.front_scale_word = 12; rop.depth.back_scale_word = 13; rop.depth.front_offset_word = 14; rop.depth.back_offset_word = 15;
@@ -160,6 +161,18 @@ int main(int argc, char **argv) {
   }
     if (variant >= 32 && variant <= 36) { words[12] = (words[12]&~31u)|17u; words[14] = (variant == 33 || variant == 35 ? 2u : variant == 34 ? 3u : 1u)<<14; }
   if (variant == 37) words[12] = (words[12]&~31u)|16u;
+  if (argc == 4 && variant == 20 && (rop_config&524288)) {
+    memmove(words+21,words+12,9*sizeof(uint32_t));
+    words[12] = (25u<<26)|(1u<<20)|(2u<<8); words[13] = 0x42; words[14] = 1u<<29;
+    words[15] = 29u<<26; words[16] = 0x40; words[17] = (1u<<29)|2u;
+    words[18] = (50u<<26)|(3u<<16); words[19] = (1u<<28)|(1u<<27); words[20] = 0xc2000000;
+    words[0] = 0x6001; words[1] = 0x30071000; words[2] = 0x20000001;
+  } else if (argc == 4 && variant == 20 && (rop_config&8192)) {
+    memmove(words+15,words+12,9*sizeof(uint32_t));
+    words[12] = (50u<<26)|((rop_config&65536 ? 4u : 3u)<<16)|(rop_config&131072 ? 1u<<6 : 0);
+    words[13] = rop_config&16384 ? (1u<<28)|(1u<<27) : rop_config&32768 ? 1u<<28 : 0; words[14] = 0xc2000000;
+    words[0] = (words[0]&~((7u<<12)|(1u<<22)))|(7u<<12)|(1u<<24);
+  }
   binary = xe_dxil_build_guest_pixel_owned(&o,words,sizeof(words)/4,2);
   if (variant == 38) { if (!binary) return 0; xe_dxil_shader_binary_delete(binary); return 1; }
   if (!binary) return 1;

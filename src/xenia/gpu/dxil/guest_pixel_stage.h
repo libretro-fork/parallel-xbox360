@@ -10,7 +10,7 @@ typedef struct XeDxilGuestPixelOptions {
   XeDxilGuestProgramOptions program;
   const XeDxilGuestRopOptions *rop;
   const XeDxilTextureStageOptions *textures;
-  unsigned interpolator_mask, centroid_mask, color_mask, writes_depth;
+  unsigned point_coordinate_mask, interpolator_mask, centroid_mask, color_mask, writes_depth;
   unsigned system_constants_bytes, flags_word, alpha_reference_word;
   unsigned alpha_to_mask_word, color_bias_word, blend_constant_word;
   unsigned alpha_function_shift, gamma_mask, msaa_shift;
@@ -23,7 +23,8 @@ typedef struct XeDxilGuestPixelOptions {
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Host render targets; texture and memory-export callbacks are not supported yet.
+/* Host render targets or ROV; textures use the built-in native policy stage.
+ * Memory-export callbacks are not supported yet.
  * Export 61.x is guest depth; exports 0..3 are guest colors. */
 XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOptions *options,
   const uint32_t *words, size_t word_count, unsigned control_flow_count);
