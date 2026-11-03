@@ -1740,6 +1740,10 @@ static void xenia_stop_emulator(void) {
         xenia_emulator->Shutdown();
         xenia_emulator.reset();
     }
+    // Parked guest frames may retain their XThread/fiber owners after kernel
+    // teardown. No guest can execute now, but a process-wide exception callback
+    // must be detached before the frontend can unload this DLL.
+    xe::threading::Fiber::ShutdownStackHandling();
     audio_mixer = nullptr;
     lr_input_driver = nullptr;
     lr_graphics = nullptr;

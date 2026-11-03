@@ -381,6 +381,22 @@ std::unique_ptr<Fiber> Fiber::CreateFromThread() {
 
 Fiber* Fiber::GetCurrentFiber() { return current_fiber_; }
 
+void Fiber::ShutdownStackHandling() {
+#if XE_PLATFORM_WIN32
+  std::lock_guard<std::mutex> lock(stack_registry_lock_);
+  if (stack_veh_handle_) {
+    if (!RemoveVectoredExceptionHandler(stack_veh_handle_)) {
+      xe::FatalError("Failed to detach fiber stack exception handler");
+    }
+    stack_veh_handle_ = nullptr;
+  }
+  if (!stack_registry_.empty()) {
+    XELOGE("Fiber stack handling stopped with {} retired stack owners",
+           stack_registry_.size());
+  }
+#endif
+}
+
 bool Fiber::IsStackOverflowFault(const void* address) {
   auto addr = reinterpret_cast<uintptr_t>(address);
   const size_t page = HostPageSize();

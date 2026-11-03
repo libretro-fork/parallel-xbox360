@@ -25,7 +25,7 @@ Original Xbox games run through XeFu, the Xbox 360's own emulator of the origina
 
 Everything the core keeps is in `system/Xenia-Edge/`: saves, title updates and DLC under `content/`, laid out as in standalone Xenia's content folder; the shader and other caches under `cache/`; and Xenia's log, `xenia.log`. Errors and warnings from it also appear in RetroArch's log. The core option Apply Title Updates turns updates off.
 
-On Windows, the fiber stack exception callback is registered only while fiber stacks exist and removed when the last stack is released, allowing the frontend to unload the core safely after closing content.
+On Windows, the fiber stack exception callback is removed when the last stack is released and explicitly detached after emulator shutdown, including when retired guest frames retain stack owners. Any retained owners are reported in `xenia.log`.
 
 Games that need a signed-in profile get one: the core signs in the first profile under `content/`, or creates one when there is none, named after the first line of `system/Xenia-Edge/xbl_profilename.txt` ("Player" if the file is missing, which the core then writes there).
 

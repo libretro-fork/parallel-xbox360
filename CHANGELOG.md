@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Content close explicitly detaches the Windows fiber exception callback after stopping the emulator, including when retired guest frames retain fiber owners. This covers the repeated unload crash left by relying only on the last stack destructor; retained stack owners are reported in xenia.log.
+
 - Closing content now unregisters the Windows fiber stack exception callback when the last fiber stack is released. Loading another title registers it again, preventing a stale callback into an unloaded core DLL and recursive access-violation stack dumps.
 
 - Removed unused FFmpeg glslang/shaderc adapters and excluded them from upstream imports. Expanded native domain GPU checks to all 90 texture/export combinations. Fixed GCC ARM64 save/restore offsets and system-register reads, added POSIX core ABI/lifecycle checks, and clarified the D3D12 Shader Model 6.6 device requirement.

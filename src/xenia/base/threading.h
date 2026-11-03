@@ -543,6 +543,10 @@ class Fiber {
   // the thread has not been adopted via CreateFromThread()/a switch.
   static Fiber* GetCurrentFiber();
 
+  // After all dispatch/guest threads have stopped, detach process exception
+  // callbacks even if references to retired fiber objects remain.
+  static void ShutdownStackHandling();
+
   // True when |address| lies in a live fiber stack's floor page, meaning the
   // fault is a stack overflow. For crash handlers to label the failure.
   static bool IsStackOverflowFault(const void* address);
