@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed leaked FFmpeg contexts from streamed guest MD5/SHA-512 update and finalization. C89 adapters preserve guest count, word ordering, retained buffers and output aliases while borrowing bulk input. SHA-512 finalization now reads the correct 200-byte SHA-512 layout. Differential tests include retained-buffer behavior across 256 MiB MD5 update chunks.
+
 - Guest SHA-256 now uses an allocation-free C89 adapter over common streaming primitives, preserving exact guest state, counter wrapping and aliasing behavior. Removed the private C++ SHA-256 implementation. One-shot guest MD5 no longer leaks an allocated context, and one-shot guest HMAC-SHA-1 shares the common span adapter. Fixed unaligned word loads in common MD5; streamed guest MD5/SHA-512 migration remains pending.
 
 - Fixed an exit crash where a Windows APC could interrupt the logger join and let shutdown free its queue while the writer was still running. The writer is now joined non-alertably before its storage and sinks are destroyed.

@@ -1000,3 +1000,17 @@ and threading dependencies needed by the hash translation unit. MSVC C89 and
 MinGW runs pass. These are compatibility and memory-safety tests, not throughput
 or gameplay measurements. MD5 tests include known vectors, split/truncated spans,
 unaligned full blocks and exact input/output aliasing.
+
+`run_guest_hash_stream_test.sh` checks the C89 MD5/SHA-512 guest adapters
+against FFmpeg's actual source with stack contexts. SHA-512's oracle uses the
+correct 200-byte state, so this does not preserve the old Final export's wrong
+SHA-256 layout. Independent `abc` vectors check the digests. The driver compares
+entire guest states and guards across split/unaligned updates, truncated and
+aliased outputs, repeated finalization, update after finalization, input/state
+aliases and 64-bit count wrap. The reference allocator aborts if called; both
+reference and production adapters use stack state. The adapter and driver build
+as strict C89; existing FFmpeg source is compiled separately in its native C
+dialect. `LARGE_GUEST_HASH=1` adds a greater-than-256 MiB MD5 update with a partial
+initial block, checking both digest and retained buffer across length chunks.
+Linux ASan/UBSan and MSVC runs pass including this large case; MinGW runs pass
+the ordinary suite. These are compatibility/safety checks, not speed benchmarks.

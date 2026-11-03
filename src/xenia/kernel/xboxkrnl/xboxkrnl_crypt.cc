@@ -26,8 +26,6 @@
 #include "xenia/kernel/xboxkrnl/xecrypt_rsa.h"
 
 extern "C" {
-#include "third_party/FFmpeg/libavutil/md5.h"
-#include "third_party/FFmpeg/libavutil/sha512.h"
 #include "third_party/aes_128/aes.h"
 }
 
@@ -70,25 +68,16 @@ struct XECRYPT_SHA512_STATE {
   uint8_t buffer[128];        // 0x48
 };
 
-struct SHA512_STATE {
-  uint8_t digest_len;
-  uint64_t count;
-  uint8_t buffer[128];
-  uint64_t state[8];
-};
+static_assert_size(XECRYPT_SHA512_STATE, XE_GUEST_SHA512_SIZE);
+static_assert(offsetof(XECRYPT_SHA512_STATE, buffer) == 72);
 
-// TODO: Size of this struct hasn't been confirmed yet.
 struct XECRYPT_MD5_STATE {
   xe::be<uint64_t> count;
   xe::be<uint32_t> state[4];
   uint8_t buffer[64];
 };
-
-struct MD5_STATE {
-  uint64_t len;
-  uint8_t block[64];
-  uint32_t ABCD[4];
-};
+static_assert_size(XECRYPT_MD5_STATE, XE_GUEST_MD5_SIZE);
+static_assert(offsetof(XECRYPT_MD5_STATE, buffer) == 24);
 
 struct XECRYPT_RSA {
   xe::be<uint32_t> size;  // size of modulus in 8 byte units
@@ -582,111 +571,44 @@ void XeCryptSha256Final_entry(pointer_t<XECRYPT_SHA256_STATE> sha_state,
 DECLARE_XBOXKRNL_EXPORT1(XeCryptSha256Final, kNone, kImplemented);
 
 void XeCryptSha512Init_entry(pointer_t<XECRYPT_SHA512_STATE> sha_state) {
-  sha_state.Zero();
-
-  sha_state->state[0] = 0x6a09e667f3bcc908;
-  sha_state->state[1] = 0xbb67ae8584caa73b;
-  sha_state->state[2] = 0x3c6ef372fe94f82b;
-  sha_state->state[3] = 0xa54ff53a5f1d36f1;
-  sha_state->state[4] = 0x510e527fade682d1;
-  sha_state->state[5] = 0x9b05688c2b3e6c1f;
-  sha_state->state[6] = 0x1f83d9abfb41bd6b;
-  sha_state->state[7] = 0x5be0cd19137e2179;
+  XECRYPT_SHA512_STATE* state = sha_state;
+  xe_guest_sha512_init(reinterpret_cast<uint8_t*>(state));
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptSha512Init, kNone, kImplemented);
 
 void XeCryptSha512Update_entry(pointer_t<XECRYPT_SHA512_STATE> sha_state,
                                lpvoid_t input, dword_t input_size) {
-  AVSHA512* sha = av_sha512_alloc();
-  av_sha512_init(sha, 512);
-
-  // Trick to make similar implementation as SHA256
-  SHA512_STATE* sha2 = reinterpret_cast<SHA512_STATE*>(sha);
-  std::ranges::copy(sha_state->state, sha2->state);
-  std::ranges::copy(sha_state->buffer, sha2->buffer);
-  sha2->count = sha_state->count;
-
-  // Add new entry from input
-  av_sha512_update(sha, input, input_size);
-
-  // Copy back data to guest sha_state
-  std::copy_n(sha2->state, xe::countof(sha_state->state), sha_state->state);
-  std::copy_n(sha2->buffer, xe::countof(sha_state->buffer), sha_state->buffer);
-  sha_state->count = sha2->count;
+  XECRYPT_SHA512_STATE* state = sha_state;
+  xe_guest_sha512_update(reinterpret_cast<uint8_t*>(state),
+                        input.as<const uint8_t*>(), input_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptSha512Update, kNone, kImplemented);
 
-void XeCryptSha512Final_entry(pointer_t<XECRYPT_SHA256_STATE> sha_state,
+void XeCryptSha512Final_entry(pointer_t<XECRYPT_SHA512_STATE> sha_state,
                               pointer_t<uint8_t> out, dword_t out_size) {
-  AVSHA512* sha = av_sha512_alloc();
-  av_sha512_init(sha, 512);
-
-  // Trick to make similar implementation as SHA256
-  SHA512_STATE* sha2 = reinterpret_cast<SHA512_STATE*>(sha);
-  std::ranges::copy(sha_state->state, sha2->state);
-  std::ranges::copy(sha_state->buffer, sha2->buffer);
-  sha2->count = sha_state->count;
-
-  uint8_t hash[64];
-  av_sha512_final(sha, hash);
-
-  std::copy_n(hash, std::min<size_t>(xe::countof(hash), out_size),
-              static_cast<uint8_t*>(out));
-  std::ranges::copy(hash, sha_state->buffer);
+  XECRYPT_SHA512_STATE* state = sha_state;
+  xe_guest_sha512_final(reinterpret_cast<uint8_t*>(state), out, out_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptSha512Final, kNone, kImplemented);
 
 void XeCryptMd5Init_entry(pointer_t<XECRYPT_MD5_STATE> md5_state) {
-  md5_state.Zero();
-
-  // must match av_md5_init
-  md5_state->state[0] = 0x10325476;
-  md5_state->state[1] = 0x98badcfe;
-  md5_state->state[2] = 0xefcdab89;
-  md5_state->state[3] = 0x67452301;
+  XECRYPT_MD5_STATE* state = md5_state;
+  xe_guest_md5_init(reinterpret_cast<uint8_t*>(state));
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptMd5Init, kNone, kImplemented);
 
 void XeCryptMd5Update_entry(pointer_t<XECRYPT_MD5_STATE> md5_state,
                             lpvoid_t input, dword_t input_size) {
-  AVMD5* md5 = av_md5_alloc();
-  av_md5_init(md5);
-
-  // Trick to make similar implementation as SHA256
-  MD5_STATE* md5InternalState = reinterpret_cast<MD5_STATE*>(md5);
-  std::ranges::copy(md5_state->state, md5InternalState->ABCD);
-  std::ranges::copy(md5_state->buffer, md5InternalState->block);
-  md5InternalState->len = md5_state->count;
-
-  // Add new entry from input
-  av_md5_update(md5, input, input_size);
-
-  // Copy back data to guest md5_state
-  std::copy_n(md5InternalState->ABCD, xe::countof(md5_state->state),
-              md5_state->state);
-  std::copy_n(md5InternalState->block, xe::countof(md5_state->buffer),
-              md5_state->buffer);
-  md5_state->count = md5InternalState->len;
+  XECRYPT_MD5_STATE* state = md5_state;
+  xe_guest_md5_update(reinterpret_cast<uint8_t*>(state),
+                     input.as<const uint8_t*>(), input_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptMd5Update, kNone, kImplemented);
 
 void XeCryptMd5Final_entry(pointer_t<XECRYPT_MD5_STATE> md5_state,
                            pointer_t<uint8_t> out, dword_t out_size) {
-  AVMD5* md5 = av_md5_alloc();
-  av_md5_init(md5);
-
-  // Trick to make similar implementation as SHA256
-  MD5_STATE* md5InternalState = reinterpret_cast<MD5_STATE*>(md5);
-  std::ranges::copy(md5_state->state, md5InternalState->ABCD);
-  std::ranges::copy(md5_state->buffer, md5InternalState->block);
-  md5InternalState->len = md5_state->count;
-
-  uint8_t hash[16];
-  av_md5_final(md5, hash);
-
-  std::copy_n(hash, std::min<size_t>(xe::countof(hash), out_size),
-              static_cast<uint8_t*>(out));
-  std::ranges::copy(hash, md5_state->buffer);
+  XECRYPT_MD5_STATE* state = md5_state;
+  xe_guest_md5_final(reinterpret_cast<uint8_t*>(state), out, out_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptMd5Final, kNone, kImplemented);
 

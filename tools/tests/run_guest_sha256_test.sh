@@ -22,7 +22,7 @@ for source in libretro/core_guest_hash.c tools/tests/core_guest_sha256_test.c; d
   "$cc" -std=c89 -pedantic-errors -Wall -Wextra -Werror "${flags[@]}" "${san[@]}" \
     -c "$source" -o "$out/$(basename "$source" .c).o"
 done
-sources=(hash/lrc_hash.c features/features_cpu.c)
+sources=(hash/lrc_hash.c features/features_cpu.c utils/md5.c)
 windows=0
 case $(uname -s) in MINGW*|MSYS*) windows=1 ;; esac
 if (( windows )); then
