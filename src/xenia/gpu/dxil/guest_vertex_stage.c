@@ -78,6 +78,33 @@ static int distance_signature(Vertex *v, unsigned kind, unsigned system, const c
   }
   return 1;
 }
+static int domain_registers(Vertex *v, XeDxilGuestProgram *program, unsigned domain, unsigned points) {
+  const struct dxil_func *location = dxil_get_function(v->alu.module,"dx.op.domainLocation",DXIL_F32);
+  const struct dxil_func *load = dxil_get_function(v->alu.module,"dx.op.loadInput",DXIL_F32);
+  XeDxilValue args[5], coordinates[3], indices[4], r0[4], r1[4]; unsigned i;
+  for (i = 0; i < (domain == 2 ? 3u : 2u); ++i) {
+    args[0] = ic(v,105); args[1] = dxil_module_get_int8_const(v->alu.module,(int8_t)i);
+    coordinates[i] = location ? dxil_emit_call(v->alu.module,location,args,2) : NULL;
+    if (!coordinates[i]) return 0;
+  }
+  for (i = 0; i < points; ++i) {
+    args[0] = ic(v,4); args[1] = args[2] = ic(v,0);
+    args[3] = dxil_module_get_int8_const(v->alu.module,0); args[4] = ic(v,i);
+    indices[i] = load ? dxil_emit_call(v->alu.module,load,args,5) : NULL;
+    if (!indices[i]) return 0;
+  }
+  for (i = 0; i < 4; ++i) r0[i] = r1[i] = fc(v,0);
+  if (domain == 2) {
+    r0[0] = coordinates[2]; r0[1] = coordinates[1]; r0[2] = coordinates[0]; r0[3] = fc(v,1);
+    for (i = 0; i < points; ++i) r1[i] = indices[i];
+  } else if (points == 1) {
+    r0[0] = indices[0]; r0[1] = coordinates[0]; r0[2] = coordinates[1]; r0[3] = fc(v,1);
+  } else {
+    r0[0] = coordinates[0]; r0[1] = coordinates[1]; r0[2] = indices[0];
+    for (i = 1; i < 4; ++i) r1[i-1] = indices[i];
+  }
+  return xe_dxil_guest_program_register(program,0,15,r0) && xe_dxil_guest_program_register(program,1,15,r1);
+}
 int xe_dxil_build_guest_vertex(const XeDxilGuestVertexOptions *o, const uint32_t *words,
     size_t word_count, unsigned cf_count, XeDxilShaderBinary *binary) {
   Vertex v;
@@ -90,6 +117,8 @@ int xe_dxil_build_guest_vertex(const XeDxilGuestVertexOptions *o, const uint32_t
   if (!o || !binary || o->program.register_count > 256 || o->program.float_constant_count > 256 ||
       o->interpolator_mask > 65535 || o->clip_planes > 6 || o->cull_planes > 6 || (o->clip_planes && o->cull_planes) ||
       o->system_constants_bytes < 4 || o->system_constants_bytes > 65536) return 0;
+  if (o->domain && ((o->domain != 2 && o->domain != 3) || o->program.register_count < 2 ||
+      (o->control_points != 1 && o->control_points != (o->domain == 2 ? 3u : 4u)))) return 0;
   i = o->system_constants_bytes/4;
   if (o->textures && (o->textures->pixel_shader || o->textures->system_constants_bytes != o->system_constants_bytes ||
       o->program.texture || o->program.allocation || o->program.kill)) return 0;
@@ -98,10 +127,13 @@ int xe_dxil_build_guest_vertex(const XeDxilGuestVertexOptions *o, const uint32_t
       ((o->clip_planes || o->cull_planes) && (o->clip_planes_word > i || (o->clip_planes+o->cull_planes)*4 > i-o->clip_planes_word))) return 0;
   for (i = 0; i < 16; ++i) if (o->interpolator_mask & (1u<<i)) ++interpolator_count;
   memset(&v,0,sizeof(v)); options = o->program;
-  v.shader = xe_dxil_shader_create(DXIL_VERTEX_SHADER); if (!v.shader) return 0;
+  v.shader = xe_dxil_shader_create(o->domain ? DXIL_DOMAIN_SHADER : DXIL_VERTEX_SHADER); if (!v.shader) return 0;
   if (o->textures && !xe_dxil_shader_bindless(v.shader)) goto done;
   xe_dxil_alu_init(&v.alu,xe_dxil_shader_module(v.shader));
-  if (xe_dxil_shader_signature_typed(v.shader,0,"SV_VertexID",0,DXIL_SEM_VERTEX_ID,DXIL_PROG_SEM_VERTEX_ID,
+  if (o->domain) {
+    if (!xe_dxil_shader_domain(v.shader,o->domain,o->control_points) ||
+        xe_dxil_shader_signature(v.shader,0,"XEVERTEXID",0,DXIL_SEM_ARBITRARY,0,0,0,1,0) != 0) goto done;
+  } else if (xe_dxil_shader_signature_typed(v.shader,0,"SV_VertexID",0,DXIL_SEM_VERTEX_ID,DXIL_PROG_SEM_VERTEX_ID,
         0,0,1,0,DXIL_COMP_TYPE_U32) != 0) goto done;
   position_id = xe_dxil_shader_signature(v.shader,1,"SV_Position",0,DXIL_SEM_POSITION,DXIL_PROG_SEM_POSITION,XE_DXIL_GUEST_POSITION_ROW,0,4,0);
   culls = o->cull_planes+(o->vertex_kill && o->vertex_kill_and ? 1 : 0);
@@ -143,6 +175,9 @@ int xe_dxil_build_guest_vertex(const XeDxilGuestVertexOptions *o, const uint32_t
     v.user = o->program; options.context = &v; options.texture = texture_fetch; options.export_written = observed_export;
   }
   program = xe_dxil_guest_program_create(v.alu.module,&options); if (!program) goto done;
+  if (o->domain) {
+    if (!domain_registers(&v,program,o->domain,o->control_points)) goto done;
+  } else {
   load = dxil_get_function(v.alu.module,"dx.op.loadInput",DXIL_I32);
   args[0] = ic(&v,4); args[1] = ic(&v,0); args[2] = args[1]; args[3] = dxil_module_get_int8_const(v.alu.module,0);
   args[4] = dxil_module_get_undef(v.alu.module,dxil_module_get_int_type(v.alu.module,32));
@@ -152,6 +187,7 @@ int xe_dxil_build_guest_vertex(const XeDxilGuestVertexOptions *o, const uint32_t
   values[0] = cast(&v,DXIL_CAST_SITOFP,1,index);
   for (i = 1; i < 4; ++i) values[i] = fc(&v,0);
   if (options.register_count && !xe_dxil_guest_program_register(program,0,15,values)) goto done;
+  }
   if (o->point_size) {
     values[0] = fc(&v,-1); if (!xe_dxil_guest_program_default_export(program,63,1,values)) goto done;
   }

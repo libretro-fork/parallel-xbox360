@@ -318,6 +318,36 @@ int xe_dxil_shader_geometry(XeDxilShaderModule *s, unsigned primitive, unsigned 
   return 1;
 }
 
+static int domain_patch_array(XeDxilShaderModule *s, const char *name, unsigned kind,
+    unsigned system, unsigned row, unsigned column, unsigned rows) {
+  struct dxil_module *m = &s->module; struct dxil_signature_record *record;
+  int id; unsigned i;
+  id = xe_dxil_shader_signature(s,2,name,0,kind,system,row,column,1,0);
+  if (id < 0 || m->sem_index_table.size+rows-1 > 128) return 0;
+  record = &m->patch_consts[id]; record->num_elements = rows;
+  record->elements[0].always_reads_mask = 0;
+  for (i = 1; i < rows; ++i) {
+    record->elements[i] = record->elements[0]; record->elements[i].reg = row+i;
+    record->elements[i].semantic_index = i; m->sem_index_table.data[m->sem_index_table.size++] = i;
+  }
+  m->psv_patch_consts[id].rows = (uint8_t)rows;
+  if (m->num_psv_patch_consts < row+rows) m->num_psv_patch_consts = row+rows;
+  return 1;
+}
+int xe_dxil_shader_domain(XeDxilShaderModule *s, unsigned domain, unsigned points) {
+  if (!s || s->failed || s->finished) return 0;
+  if (s->module.shader_kind != DXIL_DOMAIN_SHADER || domain < 1 || domain > 3 || !points || points > 32) { s->failed = 1; return 0; }
+  s->stage_tag = DXIL_SHADER_TAG_DS_STATE; s->stage_count = 2;
+  s->stage_values[0] = domain; s->stage_values[1] = points;
+  s->validation.state.psv2.psv1.psv0.ds.input_control_point_count = points;
+  s->validation.state.psv2.psv1.psv0.ds.tessellator_domain = domain;
+  if (domain == 2 || domain == 3) {
+    unsigned edges = domain == 2 ? 3 : 4;
+    if (!domain_patch_array(s,"SV_TessFactor",DXIL_SEM_TESS_FACTOR,domain == 2 ? DXIL_PROG_SEM_FINAL_TRI_EDGE_TESSFACTOR : DXIL_PROG_SEM_FINAL_QUAD_EDGE_TESSFACTOR,0,3,edges) ||
+        !domain_patch_array(s,"SV_InsideTessFactor",DXIL_SEM_INSIDE_TESS_FACTOR,domain == 2 ? DXIL_PROG_SEM_FINAL_TRI_INSIDE_EDGE_TESSFACTOR : DXIL_PROG_SEM_FINAL_QUAD_INSIDE_EDGE_TESSFACTOR,edges,domain == 2 ? 0 : 3,domain == 2 ? 1 : 2)) return 0;
+  }
+  return 1;
+}
 int xe_dxil_shader_threads(XeDxilShaderModule *s, unsigned x, unsigned y, unsigned z) {
   if (!s || s->failed || s->finished) return 0;
   if (s->module.shader_kind != DXIL_COMPUTE_SHADER || !x || !y || !z ||
@@ -391,6 +421,14 @@ int xe_dxil_shader_finish(XeDxilShaderModule *s, XeDxilShaderBinary *binary) {
     m->io_dependency_table[0] = rzalloc_array(m->ralloc_ctx, uint32_t, dependency_words);
     if (!m->io_dependency_table[0]) goto done;
     m->io_dependency_table_size[0] = dependency_words;
+  }
+  if (m->shader_kind == DXIL_DOMAIN_SHADER && m->num_psv_patch_consts) {
+    dependency_words = ((m->num_psv_outputs[0]*4+31)/32)*m->num_psv_patch_consts*4;
+    if (dependency_words) {
+      m->io_dependency_table[1] = rzalloc_array(m->ralloc_ctx,uint32_t,dependency_words);
+      if (!m->io_dependency_table[1]) goto done;
+      m->io_dependency_table_size[1] = dependency_words;
+    }
   }
   if (!dxil_container_add_features(&container, &m->feats) ||
       !dxil_container_add_io_signature(&container, DXIL_ISG1, m->num_sig_inputs, m->inputs, 0) ||

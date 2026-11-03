@@ -654,3 +654,35 @@ Direct compute/program containers use the existing `dxil-runtime` helper with
 `shader expected input constants resource-raw`. The graphics stage deliberately
 uses UAV loads for shared-memory reads during export draws, avoiding SRV access
 while the backing resource is in its write state.
+
+### Native guest domain shaders
+
+`make check-dxil-guest-domain DXIL_VALIDATOR=/path/to/dxv` checks 70 domain
+containers and optimized C89 compilation. Modes 0..3 select triangle CP/patch
+and quad CP/patch layouts. Add 4 for continuous tessellation or 8 for adaptive
+(patch modes 9 and 11 only). Flags 16/32 add an actual texture fetch or memory
+export, 64 adds six clip planes, and 128 adds cull planes, point size and vertex
+kill output. Flag 240 combines all those interfaces. Texture/export combinations
+are container checks; the domain GPU runs do not claim textured gameplay.
+
+The `dxil-guest-domain-test prefix config` fixture writes `.ds`, `.system`,
+`.constants`, `.expected` and `.hosts`. The latter contains two 32-bit asset
+indices from the same C89 selector the pipeline uses. In order, the assets are
+indexed/adaptive tessellation VS, discrete triangle1/triangle3/quad1/quad4 HS,
+continuous equivalents, and adaptive triangle/quad HS, all under
+`src/xenia/gpu/shaders/bytecode/d3d12_dxil/`. Copy the selected raw assets to
+`prefix.host.vs` and `prefix.hs`.
+
+Run `dxil-memexport-runtime prefix prefix mode` on Windows to capture domain
+output through stream output. The fixture writes guest r0/r1 and a separate
+hardware domain-location probe. Every captured vertex must match the exact
+triangle ZYX or quad/patch register layout and the processed control-point or
+patch indices. All corners must appear, and vertex counts must match the chosen
+tessellator partition. Factor-2 fractional-even triangle patches form six
+triangles around a center; factor-2 quads form an eight-triangle grid. The GPU
+matrix covers ten supported mode/layout combinations, each with ordinary,
+clip-plane, cull/kill/point-size and combined output interfaces (40 executions).
+The raw host helpers use b0/space0 with pinned system offsets; guest stages use
+b0/space1, so both root bindings alias the same existing constant upload.
+There is no intermediate SPIR-V conversion or owned copy of the static helpers.
+Line-domain tessellation remains unimplemented as in the existing Vulkan path.

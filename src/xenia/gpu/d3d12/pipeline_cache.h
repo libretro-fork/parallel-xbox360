@@ -366,7 +366,7 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
     // zpd_total; then again for it also covering VIZ surveys; then again for
     // dropping use_mesa_dxil; then again for the line geometry shader
     // widening geometry_shader.
-    static constexpr uint32_t kVersion = 0x20261106;
+    static constexpr uint32_t kVersion = 0x20261107;
   });
 
   XEPACKEDSTRUCT(PipelineStoredDescription, {
@@ -382,8 +382,11 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
     // Caches retain stable owned entries. Default initialization also covers
     // storage reloads, before workers compile the guest shaders.
     const std::vector<uint8_t>* mesa_vertex_dxil = nullptr;
+    // Guest vertex or domain bytecode, selected by the host shader type.
     const XeDxilShaderBinary* native_vertex_dxil = nullptr;
     const XeDxilShaderBinary* native_pixel_dxil = nullptr;
+    D3D12_SHADER_BYTECODE native_tess_host_vs = {};
+    D3D12_SHADER_BYTECODE native_tess_host_hs = {};
     const std::vector<uint8_t>* mesa_pixel_dxil = nullptr;
     // Guest compilation handles deferred to a creation thread. Native stages
     // read ucode directly; remaining stages pass through SPIR-V/Mesa. Point

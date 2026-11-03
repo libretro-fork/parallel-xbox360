@@ -756,13 +756,39 @@ XeDxilTextureStageOptions NativeTextureOptions(const XeDxilTextureLayout& layout
   options.resolved_word = offsetof(SpirvShaderTranslator::SystemConstants,textures_resolved)/4;
   return options;
 }
+bool NativeTessellationHosts(unsigned mode, Shader::HostVertexShaderType host,
+    D3D12_SHADER_BYTECODE& vertex, D3D12_SHADER_BYTECODE& hull) {
+  static_assert(unsigned(Shader::HostVertexShaderType::kTriangleDomainCPIndexed) == 3);
+  static_assert(unsigned(Shader::HostVertexShaderType::kTriangleDomainPatchIndexed) == 4);
+  static_assert(unsigned(Shader::HostVertexShaderType::kQuadDomainCPIndexed) == 5);
+  static_assert(unsigned(Shader::HostVertexShaderType::kQuadDomainPatchIndexed) == 6);
+  static const D3D12_SHADER_BYTECODE assets[] = {
+    {shaders::tessellation_indexed_vs,sizeof(shaders::tessellation_indexed_vs)},
+    {shaders::tessellation_adaptive_vs,sizeof(shaders::tessellation_adaptive_vs)},
+    {shaders::discrete_triangle_1cp_hs,sizeof(shaders::discrete_triangle_1cp_hs)},
+    {shaders::discrete_triangle_3cp_hs,sizeof(shaders::discrete_triangle_3cp_hs)},
+    {shaders::discrete_quad_1cp_hs,sizeof(shaders::discrete_quad_1cp_hs)},
+    {shaders::discrete_quad_4cp_hs,sizeof(shaders::discrete_quad_4cp_hs)},
+    {shaders::continuous_triangle_1cp_hs,sizeof(shaders::continuous_triangle_1cp_hs)},
+    {shaders::continuous_triangle_3cp_hs,sizeof(shaders::continuous_triangle_3cp_hs)},
+    {shaders::continuous_quad_1cp_hs,sizeof(shaders::continuous_quad_1cp_hs)},
+    {shaders::continuous_quad_4cp_hs,sizeof(shaders::continuous_quad_4cp_hs)},
+    {shaders::adaptive_triangle_hs,sizeof(shaders::adaptive_triangle_hs)},
+    {shaders::adaptive_quad_hs,sizeof(shaders::adaptive_quad_hs)}
+  };
+  unsigned vs, hs;
+  if (!xe_dxil_guest_tessellation_hosts(mode,unsigned(host),&vs,&hs)) return false;
+  vertex = assets[vs]; hull = assets[hs]; return true;
+}
 }  // namespace
 
 const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
     const Shader& shader, uint64_t modification) {
   SpirvShaderTranslator::Modification mod(modification);
+  unsigned domain = 0, control_points = 0;
   if (!shader.is_ucode_analyzed() ||
-      mod.vertex.host_vertex_shader_type != Shader::HostVertexShaderType::kVertex ||
+      (mod.vertex.host_vertex_shader_type != Shader::HostVertexShaderType::kVertex &&
+       !xe_dxil_guest_domain_config(unsigned(mod.vertex.host_vertex_shader_type),&domain,&control_points)) ||
       shader.kills_pixels()) {
     return nullptr;
   }
@@ -780,11 +806,13 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
   auto texture_options = NativeTextureOptions(texture_layout,0,render_target_cache_.draw_resolution_scale_x(),render_target_cache_.draw_resolution_scale_y());
   XeDxilGuestVertexOptions options = {};
   options.program.memexport_mask = shader.memexport_eM_written();
+  options.domain = domain; options.control_points = control_points;
   if (texture_layout.texture_count) options.textures = &texture_options;
   const auto& constants = shader.constant_register_map();
   options.program.register_count = std::max(
       shader.register_static_address_bound(),
       uint32_t(mod.vertex.dynamic_addressable_register_count));
+  if (domain) options.program.register_count = std::max(options.program.register_count,2u);
   options.program.float_constant_count = constants.float_count;
   options.program.float_dynamic_addressing = constants.float_dynamic_addressing;
   options.program.float_bitmap = constants.float_bitmap;
@@ -1248,7 +1276,7 @@ bool PipelineCache::BuildMesaPipelineDxil(
   Shader::HostVertexShaderType host_vertex_shader_type =
       vs_modification.vertex.host_vertex_shader_type;
 
-  // Translation objects are created on the main thread. Native vertex
+  // Translation objects are created on the main thread. Native vertex/domain
   // generation, or the remaining Mesa conversion, runs on this worker.
   runtime_description.native_vertex_dxil = GetGuestNativeVertexDxil(
       vertex_translation->shader(), vertex_translation->modification());
@@ -1259,7 +1287,10 @@ bool PipelineCache::BuildMesaPipelineDxil(
   }
   uint64_t vertex_ucode_hash = vertex_translation->shader().ucode_data_hash();
   uint64_t vertex_spirv_modification = vertex_translation->modification();
-  if (Shader::IsHostVertexShaderTypeDomain(host_vertex_shader_type)) {
+  if (Shader::IsHostVertexShaderTypeDomain(host_vertex_shader_type) && runtime_description.native_vertex_dxil) {
+    if (!NativeTessellationHosts(description.primitive_topology_type_or_tessellation_mode,host_vertex_shader_type,
+        runtime_description.native_tess_host_vs,runtime_description.native_tess_host_hs)) return false;
+  } else if (Shader::IsHostVertexShaderTypeDomain(host_vertex_shader_type)) {
     xenos::TessellationMode tessellation_mode = xenos::TessellationMode(
         description.primitive_topology_type_or_tessellation_mode);
     const MesaTessellationDxil* tess_dxil = ConvertGuestMesaTessellationToDxil(
@@ -1485,7 +1516,10 @@ bool PipelineCache::ConfigurePipeline(
           vertex_shader->shader().ucode_data_hash());
       return false;
     }
-    if (is_tess_eval) {
+    if (is_tess_eval && runtime_description.native_vertex_dxil) {
+      if (!NativeTessellationHosts(description.primitive_topology_type_or_tessellation_mode,host_vertex_shader_type,
+          runtime_description.native_tess_host_vs,runtime_description.native_tess_host_hs)) return false;
+    } else if (is_tess_eval) {
       // Tessellation: link the host vertex and hull shaders with the guest
       // domain shader so their inter-stage signatures match (required by
       // D3D12).
@@ -2263,7 +2297,12 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
     state_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
     xenos::TessellationMode tessellation_mode = xenos::TessellationMode(
         description.primitive_topology_type_or_tessellation_mode);
-    if (runtime_description.mesa_tess_host_vs_dxil) {
+    if (runtime_description.native_vertex_dxil) {
+      state_desc.VS = runtime_description.native_tess_host_vs;
+      state_desc.HS = runtime_description.native_tess_host_hs;
+      state_desc.DS.pShaderBytecode = runtime_description.native_vertex_dxil->data;
+      state_desc.DS.BytecodeLength = runtime_description.native_vertex_dxil->size;
+    } else if (runtime_description.mesa_tess_host_vs_dxil) {
       // Linked Mesa tessellation: host vertex, host hull and guest domain all
       // come from spirv_to_dxil with matching inter-stage signatures.
       state_desc.VS.pShaderBytecode =
@@ -2275,7 +2314,9 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
       state_desc.HS.BytecodeLength =
           runtime_description.mesa_tess_host_hs_dxil->size();
     }
-    if (runtime_description.mesa_vertex_dxil) {
+    if (runtime_description.native_vertex_dxil) {
+      if (!state_desc.VS.pShaderBytecode || !state_desc.HS.pShaderBytecode) return nullptr;
+    } else if (runtime_description.mesa_vertex_dxil) {
       // The guest domain shader comes from spirv_to_dxil, bound as the DS.
       state_desc.DS.pShaderBytecode =
           runtime_description.mesa_vertex_dxil->data();

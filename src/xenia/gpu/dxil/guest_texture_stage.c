@@ -111,7 +111,7 @@ XeDxilTextureStage *xe_dxil_texture_stage_create(XeDxilShaderModule *shader, XeD
   XeDxilValue fetch_vectors[48], sign_vectors[3], integer_vectors[9];
   if (!shader || !system || !fetch || !o || !layout_valid(o->layout) || !o->layout->texture_count || !o->layout->sampler_count || o->system_constants_bytes > 65536) return NULL;
   m = xe_dxil_shader_module(shader); if (!m || m->minor_version < 6 || !m->cur_emitting_func || m->cur_emitting_func->curr_block ||
-      (o->pixel_shader ? m->shader_kind != DXIL_PIXEL_SHADER : (m->shader_kind != DXIL_VERTEX_SHADER && m->shader_kind != DXIL_COMPUTE_SHADER))) return NULL;
+      (o->pixel_shader ? m->shader_kind != DXIL_PIXEL_SHADER : (m->shader_kind != DXIL_VERTEX_SHADER && m->shader_kind != DXIL_DOMAIN_SHADER && m->shader_kind != DXIL_COMPUTE_SHADER))) return NULL;
   t = (TextureStage *)calloc(1,sizeof(*t)); if (!t) return NULL;
   memset((void *)fetch_vectors,0,sizeof(fetch_vectors)); memset((void *)sign_vectors,0,sizeof(sign_vectors)); memset((void *)integer_vectors,0,sizeof(integer_vectors));
   t->shader = shader; t->options = *o; t->system = system; t->fetch = fetch; xe_dxil_alu_init(&t->alu,m); words = o->system_constants_bytes/4;

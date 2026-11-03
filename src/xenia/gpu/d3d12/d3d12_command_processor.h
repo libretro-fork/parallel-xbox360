@@ -475,6 +475,7 @@ class D3D12CommandProcessor final : public CommandProcessor {
     // used by RTV hybrid occlusion queries.
     kRootParameter_Mesa_ZpdCounter,  // u1 UAV, space0.
     kRootParameter_Mesa_Edram,       // u2 UAV, space0.
+    kRootParameter_Native_TessellationConstants,  // b0, space0; raw host stages.
 
     kRootParameter_Mesa_Count,
   };

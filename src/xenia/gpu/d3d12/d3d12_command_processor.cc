@@ -742,6 +742,7 @@ bool D3D12CommandProcessor::SetupContext() {
     set_mesa_cbv(kRootParameter_Mesa_BoolLoopConstants, 3, 1);
     set_mesa_cbv(kRootParameter_Mesa_FetchConstants, 4, 1);
     set_mesa_cbv(kRootParameter_Mesa_RuntimeData, 0, 31);
+    set_mesa_cbv(kRootParameter_Native_TessellationConstants, 0, 0);
     auto set_mesa_srv = [&](uint32_t index, uint32_t shader_register,
                             uint32_t register_space) {
       auto& parameter = root_parameters_mesa[index];
@@ -4729,6 +4730,7 @@ bool D3D12CommandProcessor::UpdateBindingsMesa(
   bind_cbv(kRootParameter_Mesa_BoolLoopConstants, cbuffer_binding_bool_loop_);
   bind_cbv(kRootParameter_Mesa_FetchConstants, cbuffer_binding_fetch_);
   bind_cbv(kRootParameter_Mesa_RuntimeData, cbuffer_binding_runtime_data_);
+  bind_cbv(kRootParameter_Native_TessellationConstants, cbuffer_binding_system_);
 
   // Shared memory descriptor table (SRV t0 + UAV u0, space0). The bindless
   // system view heap holds an adjacent [shared SRV, null UAV] pair for reads

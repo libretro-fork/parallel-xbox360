@@ -59,6 +59,8 @@ int xe_dxil_shader_ordered_buffer(XeDxilShaderModule *shader, unsigned space, un
 int xe_dxil_shader_geometry(XeDxilShaderModule *shader, unsigned input_primitive,
                               unsigned max_vertices, unsigned output_topology);
 int xe_dxil_shader_threads(XeDxilShaderModule *shader, unsigned x, unsigned y, unsigned z);
+/* Tessellator domain: isoline=1, triangle=2, quad=3. */
+int xe_dxil_shader_domain(XeDxilShaderModule *shader, unsigned domain, unsigned control_points);
 /* The body must end in return. Successful finish transfers the serialized
  * container buffer directly to binary; no intermediary output copy. */
 int xe_dxil_shader_finish(XeDxilShaderModule *shader, XeDxilShaderBinary *binary);

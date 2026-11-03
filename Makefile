@@ -330,7 +330,7 @@ check-dxil-writer: $(HOST_DIR)/dxil-writer-test$(HOST_EXEEXT)
 	cmp "$(HOST_DIR)/dxil-writer-test-ps.dxil" "$(HOST_DIR)/dxil-writer-test-ps-validated.dxil"
 
 DXIL_ALU_DIR := src/xenia/gpu/dxil
-DXIL_ALU_SOURCES := $(DXIL_ALU_DIR)/guest_alu.c $(DXIL_ALU_DIR)/guest_alu_instruction.c $(DXIL_ALU_DIR)/guest_flow.c $(DXIL_ALU_DIR)/guest_vertex.c $(DXIL_ALU_DIR)/guest_resources.c $(DXIL_ALU_DIR)/guest_texture.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_ALU_DIR)/guest_geometry.c $(DXIL_ALU_DIR)/edram_format.c $(DXIL_ALU_DIR)/edram_dump.c $(DXIL_ALU_DIR)/edram_transfer.c $(DXIL_ALU_DIR)/depth_only.c $(DXIL_ALU_DIR)/edram_depth_stencil.c $(DXIL_ALU_DIR)/rov_depth.c $(DXIL_ALU_DIR)/guest_program.c $(DXIL_ALU_DIR)/guest_vertex_stage.c $(DXIL_ALU_DIR)/guest_pixel_stage.c $(DXIL_ALU_DIR)/guest_rop.c $(DXIL_ALU_DIR)/guest_texture_stage.c $(DXIL_ALU_DIR)/guest_memexport.c
+DXIL_ALU_SOURCES := $(DXIL_ALU_DIR)/guest_alu.c $(DXIL_ALU_DIR)/guest_alu_instruction.c $(DXIL_ALU_DIR)/guest_flow.c $(DXIL_ALU_DIR)/guest_vertex.c $(DXIL_ALU_DIR)/guest_resources.c $(DXIL_ALU_DIR)/guest_texture.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_ALU_DIR)/guest_geometry.c $(DXIL_ALU_DIR)/edram_format.c $(DXIL_ALU_DIR)/edram_dump.c $(DXIL_ALU_DIR)/edram_transfer.c $(DXIL_ALU_DIR)/depth_only.c $(DXIL_ALU_DIR)/edram_depth_stencil.c $(DXIL_ALU_DIR)/rov_depth.c $(DXIL_ALU_DIR)/guest_program.c $(DXIL_ALU_DIR)/guest_vertex_stage.c $(DXIL_ALU_DIR)/guest_pixel_stage.c $(DXIL_ALU_DIR)/guest_rop.c $(DXIL_ALU_DIR)/guest_texture_stage.c $(DXIL_ALU_DIR)/guest_memexport.c $(DXIL_ALU_DIR)/guest_tessellation.c
 $(HOST_DIR)/dxil-alu-test$(HOST_EXEEXT): tools/tests/dxil_writer_test.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c tools/tests/dxil_test_storage.h $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -DXE_DXIL_ALU_TEST -DXE_DXIL_FLOW_TEST -DXE_DXIL_VERTEX_TEST -DXE_DXIL_RESOURCES_TEST -DXE_DXIL_TEXTURE_TEST -DXE_DXIL_EDRAM_TEST -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_writer_test.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
@@ -780,3 +780,20 @@ check-dxil-memexport-c89:
 	$(HOST_CC) $(HOST_CFLAGS) -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -c $(DXIL_ALU_DIR)/guest_memexport.c -o "$(HOST_DIR)/dxil-memexport-c89.o"
 	$(HOST_CC) $(HOST_CFLAGS) -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -c $(DXIL_ALU_DIR)/guest_program.c -o "$(HOST_DIR)/dxil-memexport-program-c89.o"
 	$(HOST_CC) $(HOST_CFLAGS) -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -c tools/tests/dxil_memexport_test.c -o "$(HOST_DIR)/dxil-memexport-fixture-c89.o"
+
+$(HOST_DIR)/dxil-guest-domain-test$(HOST_EXEEXT): tools/tests/dxil_guest_domain_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h) $(HOST_DIR)/config
+	@mkdir -p "$(@D)"
+	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) $< $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
+
+.PHONY: check-dxil-guest-domain check-dxil-domain-c89
+check-dxil-guest-domain: $(HOST_DIR)/dxil-guest-domain-test$(HOST_EXEEXT) check-dxil-domain-c89 check-dxil-alu-c89
+	@set -e; for mode in 0 1 2 3 4 5 6 7 9 11; do for flags in 0 16 32 48 64 128 240; do \
+	  config=$$((mode+flags)); path="$(HOST_DIR)/dxil-guest-domain-$$config"; $< "$$path" $$config; \
+	  $(DXIL_VALIDATOR) "$$path.ds" -o="$$path.ds.validated"; cmp "$$path.ds" "$$path.ds.validated"; \
+	done; done
+check-dxil-domain-c89:
+	@mkdir -p "$(HOST_DIR)"
+	@set -e; for source in guest_vertex_stage guest_tessellation shader_module; do \
+	  $(HOST_CC) $(HOST_CFLAGS) -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -c "$(DXIL_ALU_DIR)/$$source.c" -o "$(HOST_DIR)/dxil-domain-$$source.o"; \
+	done
+	$(HOST_CC) $(HOST_CFLAGS) -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -c tools/tests/dxil_guest_domain_test.c -o "$(HOST_DIR)/dxil-domain-fixture.o"

@@ -78,8 +78,12 @@ scaled pixel exports run only at the permitted host pixel. Shared-memory reads
 during export draws use the UAV without an intermediate copy. Unused export
 elements skip initialization and loads; format aliases share conversion/store
 bodies.
-Tessellation still uses Mesa and its Meson/Python build while
-its replacement is implemented.
+Triangle and quad tessellation now generate guest domain DXIL directly. The
+checked-in raw vertex/hull helpers share matching patch/control-point signatures
+and borrow the existing system constants through a root alias. Discrete,
+continuous and adaptive modes need no linked conversion or temporary shader copy.
+The Mesa fallback and its Meson/Python build remain while final removal and
+platform checks are completed.
 Set `XENIA_LIBRETRO_DXIL=/path/to/dxil.dll` to embed the Windows shader validator.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in
 [`tools/tests/README.md`](tools/tests/README.md); whole-shader integration

@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Triangle/quad guest domain shaders now compile directly to DXIL and pair with the checked-in raw host vertex/hull helpers for discrete, continuous and adaptive tessellation. Matching patch signatures and a constant-buffer root alias avoid linked SPIR-V/Mesa conversion and bytecode copies. GPU stream-output checks cover coordinates, index layouts and clip/cull interfaces. Mesa fallback/dependency removal and platform checks remain.
+
 - Guest vertex and pixel memory exports now compile directly to DXIL, including all existing export formats, extended half floats, endian modes, stream bounds and atomic subword writes. Executed writes mark only their eM elements dirty; ALLOC and true kills commit pending exports before resetting or suppressing later writes. Shared-memory reads during export draws use the UAV. Scaled pixel exports retain the center-host-pixel rule. Tessellation remains before Mesa removal.
 
 - Scaled guest texture sampling now compiles directly to DXIL. Resolved textures use host-scaled sizes and offsets; point sampling preserves guest texel footprints until a coordinate write executes. Conditional and component writes update two compact validity masks instead of copying register buffers. Added 17 policy cases and 144 full ROV shader configurations, exercised in 864 GPU runs. Memory exports and tessellation remain before Mesa removal.
