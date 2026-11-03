@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <lrc_hash.h>
 #include <vector>
 #include <string_view>
 #include <unordered_map>
@@ -81,6 +82,7 @@ private:
 	uint64_t m_numWrittenOffsetRecords{ 0 };
 	std::vector<_ZARCHIVE::CompressionOffsetRecord> m_compressionOffsetRecord;
 	// hashing
-	struct Sha_256* m_mainShaCtx{};
+        struct sha256_state m_mainShaCtx;
+        bool m_hashActive{true};
 	uint8_t m_integritySha[32];
 };

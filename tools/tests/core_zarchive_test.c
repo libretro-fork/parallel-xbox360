@@ -3,6 +3,37 @@
 #include <stdint.h>
 #include <string.h>
 #include <streams/file_stream.h>
+#include <lrc_hash.h>
+/* Independent footer-format check: the stored digest covers the complete
+ * archive with the footer's 32 digest octets replaced by zero. */
+static int verify_footer(const char *path) {
+  RFILE *file = filestream_open(path, RETRO_VFS_FILE_ACCESS_READ, 0);
+  struct sha256_state state;
+  uint8_t buffer[4096], footer_bytes[144], digest[32];
+  int64_t size, left, got;
+  if (!file) return 0;
+  size = filestream_get_size(file);
+  if (size < 144) { filestream_close(file); return 0; }
+  sha256_stream_init(&state, 0);
+  left = size - 144;
+  while (left) {
+    size_t want = left > (int64_t)sizeof(buffer) ? sizeof(buffer) : (size_t)left;
+    got = filestream_read(file, buffer, want);
+    if (got <= 0 || got > (int64_t)want) { filestream_close(file); return 0; }
+    sha256_stream_update(&state, buffer, (size_t)got); left -= got;
+  }
+  left = 0;
+  while (left < 144) {
+    got = filestream_read(file, footer_bytes + (size_t)left, (size_t)(144 - left));
+    if (got <= 0 || got > 144 - left) { filestream_close(file); return 0; }
+    left += got;
+  }
+  filestream_close(file);
+  memcpy(digest, footer_bytes + 96, 32); memset(footer_bytes + 96, 0, 32);
+  sha256_stream_update(&state, footer_bytes, sizeof(footer_bytes));
+  sha256_stream_final(&state, buffer);
+  return memcmp(digest, buffer, 32) == 0;
+}
 static struct retro_vfs_file_handle *RETRO_CALLCONV vfs_open(const char *path, unsigned mode, unsigned hints) {
   return (struct retro_vfs_file_handle *)retro_vfs_file_open_impl(path, mode, hints);
 }
@@ -51,6 +82,7 @@ int main(int argc,char **argv){
      !archive_test_write(writer,"random.bin",random_bytes,sizeof(random_bytes)) ||
      !archive_test_write(writer,"empty.bin",source,0) || !archive_test_write(writer,long_name,source,11))return 5;
   archive_test_finish(writer);if(ferror(file)||fclose(file))return 6;
+  if (!verify_footer(argv[1])) return 14;
   reader=archive_test_open(argv[1]);if(!reader)return 7;
   /* Reverse traversal exceeds the four-MiB cache and crosses block edges. */
   for(i=0;i<120;++i){offset=(sizeof(source)-1-(i*65521u)%sizeof(source));want=sizeof(source)-offset;if(want>sizeof(output))want=sizeof(output);

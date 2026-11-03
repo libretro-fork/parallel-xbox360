@@ -51,9 +51,22 @@ Audio queues use owned libretro-common SPSC spans with a logical 64 ms bound per
 
 The ZArchive reader is now C89 code using owned libretro-common streams/VFS and rthreads, with direct C calls from the core. Native immutable mappings lend metadata and compressed input without copying or endian-converting whole tables. Validated contiguous raw spans copy directly to the final destination without a decoder/cache lock. The bounded 64-block decoded cache allocates its 4 MiB payload only when needed, avoids per-block container allocations and publishes only complete, successfully validated blocks. Frontend VFS and unsupported-mapping paths retain exact reads and bounded reusable scratch. Reader operations must be quiesced before close.
 
-Opening an archive validates section arithmetic, names, file extents and directory ownership/connectivity without recursive validation. Archive read failures propagate to guest file I/O. These changes do not complete the wider file-I/O/std::filesystem migration, global memory-safety work, or existing recursive device mounting. The full-archive footer integrity hash remains unchecked as before; decoder frame checksums are enforced when present. Component correctness tests and hardware-budget measurements are described in `tools/tests/README.md`.
+Opening an archive validates section arithmetic, names, file extents and directory ownership/connectivity without recursive validation. Archive read failures propagate to guest file I/O. These changes do not complete the wider file-I/O/std::filesystem migration, global memory-safety work, or existing recursive device mounting.
+
+XEX metadata uses an allocation-free C89 parser with checked optional-header ranges.
+Native files use the common-backed immutable input reader; raw mapped archive
+metadata is borrowed, with bounded reads for compressed or unmapped input. Mapped native fields are borrowed, and only the final module-name
+string is owned by the C++ metadata interface. Declared header sizes do not trigger
+whole-header allocations. This covers metadata extraction, not the separate guest
+executable loader.
+
+The full-archive footer integrity hash remains unchecked as before; decoder frame checksums are enforced when present. Component correctness tests and hardware-budget measurements are described in `tools/tests/README.md`.
 
 Selected RetroArch libretro-common sources now provide XXH3/XXH64 hashing and DEFLATE decompression. Persistent hash values remain compatible. Embedded patch data decodes directly into its final allocation, using its generated raw size; XLast requires complete, checksum-valid gzip data with the declared output size. Threading and file-I/O migration to libretro-common is still in progress. Source provenance and local changes are recorded in `third_party/libretro-common/SOURCE.txt`.
+
+The archive writer uses libretro-common streaming SHA-256 with inline state and
+unchanged digest bytes; complete SHA input blocks bypass the partial-block buffer.
+Runtime SHA-NI dispatch is supported by modern MSVC as well as GCC/Clang.
 
 ZArchive uses libretro-common rzstd for its complete 64 KiB blocks. Existing standard frames remain readable; newly compressed output may have a different size. Each reader allocates decoder scratch on its first compressed block and reuses it, writing output into the archive cache. Raw blocks need no decoder scratch. The old Zstandard dependency is removed.
 

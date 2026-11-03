@@ -904,3 +904,49 @@ also compiles for Windows, using native loader, profiling and resident-memory
 APIs. The shell runner is Linux-specific.
 
 The [3 November measurement report](results/zarchive-2026-11-03/README.md) includes raw samples, source/compiler identification, assembly and the remaining gap to the copy reference.
+
+
+`core_xex_metadata_test.c` exercises the production allocation-free C89 parser with
+memory views and exact-read callbacks: both XEX versions, execution and ratings
+fields, first-duplicate precedence, embedded NULs and trailing padding, malformed
+counts/offsets/lengths, short sources and failed reads. Failure must leave output
+unchanged. A sparse source declares a 4 GiB header while asserting that fewer than
+256 bytes are read; its callback rejects any access outside the actual fixture.
+This establishes bounded traffic for that fixture, not gameplay throughput.
+
+Example from the repository root (use an available temporary directory):
+
+```sh
+cc -std=c89 -pedantic -Wall -Wextra -Werror -fsanitize=address,undefined -g \
+  -I. libretro/core_xex_metadata.c tools/tests/core_xex_metadata_test.c \
+  -o core-xex-test
+./core-xex-test
+```
+
+MSVC accepts the same two sources with `/TC /W4 /WX /I.`.
+
+`core_sha256_test.c` checks owned common SHA-256/SHA-224 known answers,
+million-a, every split of the standard messages, unaligned inputs, padding
+boundaries, raw compression-block semantics and SHA-1 single/two-message paths.
+Compile `hash/lrc_hash.c` and the test as C89 with the owned common headers;
+link `retro-common` for its CPU/file helpers. MSVC `/TC /MD /O2 /W4 /WX` and
+MinGW are covered. For a forced scalar check, compile the implementation with
+`cpu_features_get=xe_test_cpu_features_get` and the test with
+`XE_SHA_TEST_SCALAR`. The native CPU probe remains unchanged in production.
+Linux ASan/UBSan exercises the real source, CPU probe and test. The real-writer
+archive test independently checks the footer's byte coverage and zeroed digest
+field through both native streams and frontend VFS with short reads.
+
+`core_sha256_benchmark.c` compares exact historical private SHA and current
+common streaming SHA. Define `XE_SHA_BASELINE` for the former, and provide its
+historical header and source extracted with `git show`. The scalar benchmark
+uses the same test-probe flags above. See [recorded SHA-256 observations](results/sha256-2026-11-03/README.md)
+for raw samples, compiler/host conditions, reproduction and limitations.
+
+`core_xex_metadata_bridge.cc` is minimal C++ interoperability for the existing
+metadata result. Compile the C89 metadata test with `XE_XEX_CPP_BRIDGE`, link
+the bridge and production `src/xenia/vfs/xex_metadata.cc`, and define
+`FMT_HEADER_ONLY` or link fmt. The bridge verifies mapped-memory and exact-read
+projection into the final metadata/string, including an embedded NUL. Linux
+function sections plus linker garbage collection allow testing these overloads
+without the unused native-path adapter and filesystem dependency graph.

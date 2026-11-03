@@ -1,6 +1,6 @@
 # Shared, hand-maintained source selection for the GNU Make build.
 # Keep in sync with the libretro target when importing upstream changes.
-SOURCES_C += libretro/core_events.c libretro/core_audio_cadence.c libretro/core_audio_samples.c libretro/core_audio_queue.c libretro/core_input_analog.c libretro/core_ui_queue.c libretro/core_decompress.c libretro/core_image.c libretro/core_file.c libretro/core_zarchive.c
+SOURCES_C += libretro/core_events.c libretro/core_audio_cadence.c libretro/core_audio_samples.c libretro/core_audio_queue.c libretro/core_input_analog.c libretro/core_ui_queue.c libretro/core_decompress.c libretro/core_image.c libretro/core_file.c libretro/core_zarchive.c libretro/core_xex_metadata.c
 CORE_DIRS := src/xenia src/xenia/base src/xenia/apu src/xenia/apu/nop \
  src/xenia/cpu src/xenia/cpu/backend src/xenia/cpu/compiler \
  src/xenia/cpu/compiler/passes src/xenia/cpu/hir src/xenia/cpu/ppc \
@@ -82,7 +82,6 @@ SOURCES_CXX += third_party/fmt/src/format.cc third_party/fmt/src/os.cc \
  third_party/snappy/snappy-sinksource.cc third_party/snappy/snappy-stubs-internal.cc \
  third_party/zarchive/src/zarchivewriter.cpp
 SOURCES_CXX += $(wildcard src/xenia/gpu/spirv/*.cpp)
-SOURCES_C += third_party/zarchive/src/sha_256.c
 
 SOURCES_ASM := $(addprefix third_party/boost_context/context/src/asm/,$(addsuffix _$(BOOST_VARIANT),make jump ontop))
 ifeq ($(ARCH),aarch64)
@@ -320,7 +319,7 @@ SOURCES_ASM += third_party/FFmpeg/libavutil/aarch64/float_dsp_neon.S \
 endif
 SOURCES_C += $(FFMPEG_SOURCES)
 
-SOURCES_C += $(addprefix third_party/libretro-common/,encodings/encoding_xxh3.c \
+SOURCES_C += $(addprefix third_party/libretro-common/,hash/lrc_hash.c encodings/encoding_xxh3.c \
  encodings/encoding_xxh64.c encodings/encoding_rzstd.c encodings/encoding_crc32.c encodings/encoding_deflate.c \
  features/features_cpu.c compat/compat_strl.c time/rtime.c queues/retro_spsc.c \
  streams/file_stream.c vfs/vfs_implementation.c file/file_path.c file/file_path_io.c \

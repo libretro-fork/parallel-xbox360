@@ -80,3 +80,18 @@ c85e80448aa7138adef29c27e3f7882e5e3b2485c6ac5a63acbceca3cb41f923  string/rstrtod
 89a3b54752e1b24a5ddc81cc1f33b622643ed001987988d6487c7b80b3341edf  string/stdstring.c
 c50bdb625dbf93a44ae852c5e5b4c03577cedec98fedc13397dd8815dae8fd41  vfs/vfs_implementation.c
 Additional I/O import whitespace normalization: trailing whitespace removed and leading tabs expanded; hashes above refer to original RetroArch source.
+
+SHA-256 import: RetroArch origin/master f3316c77d8 (full revision below).
+Imported hash/lrc_hash.c and include/lrc_hash.h from upstream;
+streaming SHA-256 replaces the ZArchive writer private implementation.
+Source revision: f3316c77d8dafd329cdcdfec4d553a571b806b61
+21800cfe6cea77ef6653ed0b48977a42d3d8e8a008bafed5335d657c85a65a3c  hash/lrc_hash.c
+6d67507d87228cf6bf7e37ad2ebffbc6057db37756d39e50a2310fd815d1bd51  include/lrc_hash.h
+
+Local hash changes: enable runtime-dispatched SHA-NI for MSVC >= 1940; isolate
+SHA functions from inlining and silence only intentional constant-round branches.
+SHA-256 complete input blocks are borrowed directly; scalar loads use memcpy for
+unaligned and alias-safe words. Only incomplete blocks enter the state buffer.
+Hashes above record pristine upstream bytes before these changes.
+Scalar SHA-256 uses a 16-word local rolling schedule; CPU dispatch is once per batch.
+Imported header indentation expanded to spaces for repository whitespace rules.

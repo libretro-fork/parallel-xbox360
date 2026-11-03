@@ -4,6 +4,10 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- ZArchive writing now uses owned libretro-common streaming SHA-256 with inline state, preserving footer digests. Complete input blocks bypass staging copies; modern MSVC can use the runtime-checked SHA-NI path, with a bounded rolling scalar fallback. The private archive SHA implementation is removed.
+
+- XEX metadata extraction now bounds optional-header counts, offsets and payloads before access. A shared allocation-free C89 parser reads only needed fields through common-backed file streams or archive reads, avoiding whole-header allocations and unaligned structure casts. Malformed metadata returns failure without publishing partial output.
+
 - Replaced the C++ ZArchive reader with a direct C89 implementation. Immutable mapped metadata is borrowed in place; contiguous raw reads bypass the decoder/cache lock and intermediary block copies. The 64-block decoded cache is allocated lazily and uses fixed hash/LRU storage, keeping failed decodes private. Added checked metadata/tree validation and correct guest read-error propagation. Other filesystem paths and recursive device mounting remain in progress.
 
 - ZArchive reads now use libretro-common streams, frontend VFS v2 when supported and native fallback. Mapped compressed blocks decode without an intermediary input copy; fallback scratch is allocated lazily and reused. Reads validate complete ranges, retry short/interrupted transfers and retain the cursor across adjacent requests. The shared archive cache/decoder uses rthreads instead of std::mutex. Fixed archive name-table endpoint bounds and two-byte name lengths; writer ownership now releases its child nodes. This starts the wider file-I/O migration; other loaders and filesystem APIs still need conversion.

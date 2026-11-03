@@ -362,6 +362,14 @@ static const uint8_t *block_get(xe_zar *r, uint64_t block) {
   }
   return block_load(r, block);
 }
+const uint8_t *xe_zar_view(const xe_zar *r, uint32_t node,
+    uint64_t offset, size_t length) {
+  uint64_t size;
+  if (!length || xe_zar_type(r, node) != 1) return NULL;
+  size = xe_zar_size(r, node);
+  if (offset > size || length > size - offset) return NULL;
+  return raw_range(r, node_offset(node_ptr(r, node)) + offset, length);
+}
 uint64_t xe_zar_read(xe_zar *r, uint32_t node, uint64_t offset, uint64_t length, void *output) {
   uint64_t size, position, remaining, count;
   size_t within, step;

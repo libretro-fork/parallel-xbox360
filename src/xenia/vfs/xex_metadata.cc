@@ -10,23 +10,16 @@
 #include "xenia/vfs/xex_metadata.h"
 
 #include <cstring>
-#include <fstream>
-#include <vector>
+#include <memory>
+#include <new>
+#include <stdexcept>
 
 #include "third_party/fmt/include/fmt/format.h"
-#include "xenia/base/byte_order.h"
-#include "xenia/kernel/util/xex2_info.h"
-#include "xenia/kernel/util/xex2_util.h"
+#include "libretro/core_file.h"
+#include "xenia/base/filesystem.h"
 
 namespace xe {
 namespace vfs {
-
-namespace {
-
-constexpr uint32_t kXex1Signature = 0x58455831;  // 'XEX1'
-constexpr uint32_t kXex2Signature = 0x58455832;  // 'XEX2'
-
-}  // namespace
 
 std::string XexVersion::ToString() const {
   return fmt::format("{}.{}.{}.{}", major, minor, build, qfe);
@@ -136,106 +129,70 @@ toml::table XexMetadata::ToToml() const {
   return root;
 }
 
-std::optional<XexMetadata> ExtractXexMetadata(const uint8_t* data,
-                                              size_t size) {
-  if (size < sizeof(xex2_header)) {
-    return std::nullopt;
-  }
-
-  auto header = reinterpret_cast<const xex2_header*>(data);
-
-  XexFormat format;
-  uint32_t magic = header->magic;
-  if (magic == kXex2Signature) {
-    format = XexFormat::kXex2;
-  } else if (magic == kXex1Signature) {
-    format = XexFormat::kXex1;
-  } else {
-    return std::nullopt;
-  }
-
-  uint32_t header_size = header->header_size;
-  if (header_size < sizeof(xex2_header) || header_size > size) {
-    return std::nullopt;
-  }
-
-  XexMetadata metadata;
-  metadata.format = format;
-
-  xex2_opt_execution_info* exec_info = nullptr;
-  if (GetXexOptHeader(header, XEX_HEADER_EXECUTION_INFO, &exec_info) &&
-      exec_info) {
-    metadata.title_id = exec_info->title_id;
-    metadata.media_id = exec_info->media_id;
-    metadata.savegame_id = exec_info->savegame_id;
-    metadata.version = XexVersion::FromValue(exec_info->version_value);
-    metadata.base_version =
-        XexVersion::FromValue(exec_info->base_version_value);
-    metadata.disc_number = exec_info->disc_number;
-    metadata.disc_count = exec_info->disc_count;
-  }
-
-  xex2_opt_original_pe_name* pe_name = nullptr;
-  if (GetXexOptHeader(header, XEX_HEADER_ORIGINAL_PE_NAME, &pe_name) &&
-      pe_name) {
-    // Size field includes itself.
-    uint32_t name_size = pe_name->size;
-    if (name_size > sizeof(uint32_t)) {
-      size_t name_len = name_size - sizeof(uint32_t);
-      metadata.module_name = std::string(pe_name->name, name_len);
-      while (!metadata.module_name.empty() &&
-             metadata.module_name.back() == '\0') {
-        metadata.module_name.pop_back();
+std::optional<XexMetadata> ExtractXexMetadata(const xe_xex_source& source) {
+  xe_xex_metadata parsed;
+  if (!xe_xex_parse(&source, &parsed)) return std::nullopt;
+  try {
+    XexMetadata m;
+    m.format = parsed.format == 1 ? XexFormat::kXex1 : XexFormat::kXex2;
+    m.title_id = parsed.title_id;
+    m.media_id = parsed.media_id;
+    m.savegame_id = parsed.savegame_id;
+    m.version = XexVersion::FromValue(parsed.version);
+    m.base_version = XexVersion::FromValue(parsed.base_version);
+    m.disc_number = parsed.disc_number;
+    m.disc_count = parsed.disc_count;
+    m.ratings.present = parsed.ratings_present != 0;
+    m.ratings.esrb = parsed.esrb;
+    m.ratings.pegi = parsed.pegi;
+    m.ratings.cero = parsed.cero;
+    m.ratings.usk = parsed.usk;
+    m.ratings.oflc_au = parsed.oflc_au;
+    m.ratings.oflc_nz = parsed.oflc_nz;
+    if (parsed.name_size) {
+      const uint8_t* name = source.view ? source.view(source.context,
+          parsed.name_offset, parsed.name_size) : nullptr;
+      if (name) {
+        m.module_name.assign(reinterpret_cast<const char*>(name), parsed.name_size);
+      } else {
+        m.module_name.resize(parsed.name_size);
+        if (!source.read || !source.read(source.context, parsed.name_offset,
+            m.module_name.data(), parsed.name_size)) return std::nullopt;
       }
     }
+    return m;
+  } catch (const std::bad_alloc&) {
+    return std::nullopt;
+  } catch (const std::length_error&) {
+    return std::nullopt;
   }
-
-  xex2_game_ratings_t* ratings = nullptr;
-  if (GetXexOptHeader(header, XEX_HEADER_GAME_RATINGS, &ratings) && ratings) {
-    metadata.ratings.present = true;
-    metadata.ratings.esrb = static_cast<uint8_t>(ratings->esrb);
-    metadata.ratings.pegi = static_cast<uint8_t>(ratings->pegi);
-    metadata.ratings.cero = static_cast<uint8_t>(ratings->cero);
-    metadata.ratings.usk = static_cast<uint8_t>(ratings->usk);
-    metadata.ratings.oflc_au = static_cast<uint8_t>(ratings->oflcau);
-    metadata.ratings.oflc_nz = static_cast<uint8_t>(ratings->oflcnz);
-  }
-
-  return metadata;
 }
 
-std::optional<XexMetadata> ExtractXexMetadata(
-    const std::filesystem::path& path) {
-  std::ifstream file(path, std::ios::binary);
-  if (!file) {
-    return std::nullopt;
-  }
+std::optional<XexMetadata> ExtractXexMetadata(const uint8_t* data, size_t size) {
+  if (!data) return std::nullopt;
+  xe_xex_source source = {};
+  source.context = const_cast<uint8_t*>(data);
+  source.size = size;
+  source.view = [](void* context, uint64_t offset, size_t) -> const uint8_t* {
+    return static_cast<const uint8_t*>(context) + size_t(offset);
+  };
+  return ExtractXexMetadata(source);
+}
 
-  xex2_header base_header;
-  file.read(reinterpret_cast<char*>(&base_header), sizeof(base_header));
-  if (!file ||
-      file.gcount() < static_cast<std::streamsize>(sizeof(base_header))) {
-    return std::nullopt;
-  }
-
-  uint32_t magic = base_header.magic;
-  if (magic != kXex2Signature && magic != kXex1Signature) {
-    return std::nullopt;
-  }
-
-  uint32_t header_size = base_header.header_size;
-  if (header_size < sizeof(xex2_header)) {
-    return std::nullopt;
-  }
-
-  std::vector<uint8_t> header_data(header_size);
-  file.seekg(0);
-  file.read(reinterpret_cast<char*>(header_data.data()), header_size);
-  if (!file || file.gcount() < static_cast<std::streamsize>(header_size)) {
-    return std::nullopt;
-  }
-
-  return ExtractXexMetadata(header_data.data(), header_data.size());
+std::optional<XexMetadata> ExtractXexMetadata(const std::filesystem::path& path) {
+  std::unique_ptr<xe_file, decltype(&xe_file_close)> file(
+      xe_file_open(xe::path_to_utf8(path).c_str()), &xe_file_close);
+  if (!file) return std::nullopt;
+  xe_xex_source source = {};
+  source.context = file.get();
+  source.size = xe_file_size(file.get());
+  source.read = [](void* context, uint64_t offset, void* out, size_t size) {
+    return xe_file_read(static_cast<xe_file*>(context), offset, out, size);
+  };
+  source.view = [](void* context, uint64_t offset, size_t size) {
+    return xe_file_view(static_cast<xe_file*>(context), offset, size);
+  };
+  return ExtractXexMetadata(source);
 }
 
 }  // namespace vfs

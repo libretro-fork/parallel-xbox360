@@ -25,6 +25,10 @@ uint32_t xe_zar_count(const xe_zar *reader, uint32_t node);
 int xe_zar_entry_get(const xe_zar *reader, uint32_t node, uint32_t index,
     xe_zar_entry *entry);
 uint64_t xe_zar_size(const xe_zar *reader, uint32_t node);
+/* Borrow only immutable, contiguous raw mapped storage, never cache entries.
+ * A nonempty exact range is required; retain reader until the view is unused. */
+const uint8_t *xe_zar_view(const xe_zar *reader, uint32_t node,
+    uint64_t offset, size_t length);
 /* Exact bounded prefix, capped at EOF. Failure may modify output. */
 uint64_t xe_zar_read(xe_zar *reader, uint32_t node, uint64_t offset,
     uint64_t length, void *output);

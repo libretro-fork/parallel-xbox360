@@ -14,7 +14,6 @@
 #include <memory>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "libretro/core_zarchive.h"
 #include "xenia/base/filesystem.h"
@@ -100,37 +99,19 @@ std::optional<XexMetadata> ExtractZarMetadata(
     return std::nullopt;
   }
 
-  uint64_t file_size = xe_zar_size(reader.get(), handle);
-  if (file_size < 24) {
-    return std::nullopt;
-  }
-
-  // Read base header to get header_size (big-endian at offset 0x08).
-  uint8_t base_header[24];
-  if (xe_zar_read(reader.get(), handle, 0, sizeof(base_header), base_header) !=
-      sizeof(base_header)) {
-    return std::nullopt;
-  }
-
-  uint32_t magic = (uint32_t(base_header[0]) << 24) | (base_header[1] << 16) |
-                   (base_header[2] << 8) | base_header[3];
-  if (magic != 0x58455831 && magic != 0x58455832) {
-    return std::nullopt;
-  }
-
-  uint32_t header_size = (uint32_t(base_header[8]) << 24) | (base_header[9] << 16) |
-                         (base_header[10] << 8) | base_header[11];
-  if (header_size < 24 || header_size > file_size) {
-    return std::nullopt;
-  }
-
-  std::vector<uint8_t> header_data(header_size);
-  if (xe_zar_read(reader.get(), handle, 0, header_size, header_data.data()) !=
-      header_size) {
-    return std::nullopt;
-  }
-
-  return ExtractXexMetadata(header_data.data(), header_data.size());
+  struct ArchiveSource { xe_zar* reader; uint32_t node; } context = {reader.get(), handle};
+  xe_xex_source source = {};
+  source.context = &context;
+  source.size = xe_zar_size(reader.get(), handle);
+  source.read = [](void* opaque, uint64_t offset, void* out, size_t size) -> int {
+    auto* context = static_cast<ArchiveSource*>(opaque);
+    return xe_zar_read(context->reader, context->node, offset, size, out) == size;
+  };
+  source.view = [](void* opaque, uint64_t offset, size_t size) {
+    auto* context = static_cast<ArchiveSource*>(opaque);
+    return xe_zar_view(context->reader, context->node, offset, size);
+  };
+  return ExtractXexMetadata(source);
 }
 
 }  // namespace vfs

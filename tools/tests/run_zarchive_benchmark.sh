@@ -22,7 +22,7 @@ sources=(streams/file_stream.c vfs/vfs_implementation.c file/file_path.c
   file/file_path_io.c string/stdstring.c string/rstrtod.c encodings/encoding_utf.c
   compat/compat_posix_string.c compat/compat_strcasestr.c compat/fopen_utf8.c
   compat/compat_strl.c time/rtime.c rthreads/rthreads.c rthreads/retro_eventcount.c
-  encodings/encoding_rzstd.c encodings/encoding_xxh64.c)
+  encodings/encoding_rzstd.c encodings/encoding_xxh64.c hash/lrc_hash.c features/features_cpu.c)
 objects=()
 for source in "${sources[@]}"; do
   object="$out/objects/$(basename "$source" .c).o"
@@ -31,10 +31,9 @@ for source in "${sources[@]}"; do
 done
 "$cc" -std=c89 "${flags[@]}" -c libretro/core_file.c -o "$out/objects/core_file.o"
 objects+=("$out/objects/core_file.o")
-"$cc" -std=c89 "${flags[@]}" -c third_party/zarchive/src/sha_256.c -o "$out/objects/sha.o"
 "$cxx" -std=c++20 "${flags[@]}" -Ithird_party/zarchive/include \
   -c third_party/zarchive/src/zarchivewriter.cpp -o "$out/objects/writer.o"
-writer=("$out/objects/sha.o" "$out/objects/writer.o")
+writer=("$out/objects/writer.o")
 for variant in baseline current; do
   definitions=()
   extra=()

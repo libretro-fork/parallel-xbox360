@@ -180,6 +180,7 @@ target_compile_definitions(snappy PRIVATE HAVE_CONFIG_H)
 # Selected owned RetroArch libretro-common primitives
 # ==============================================================================
 add_library(retro-common STATIC
+  libretro-common/hash/lrc_hash.c
   libretro-common/encodings/encoding_xxh3.c
   libretro-common/encodings/encoding_xxh64.c
   libretro-common/encodings/encoding_rzstd.c
@@ -231,11 +232,10 @@ endif()
 add_library(zarchive STATIC
   ../libretro/core_file.c
   ../libretro/core_zarchive.c
+  ../libretro/core_xex_metadata.c
   zarchive/include/zarchive/zarchivecommon.h
   zarchive/include/zarchive/zarchivewriter.h
   zarchive/src/zarchivewriter.cpp
-  zarchive/src/sha_256.c
-  zarchive/src/sha_256.h
 )
 target_include_directories(zarchive PUBLIC zarchive/include ../libretro)
 target_link_libraries(zarchive PUBLIC retro-common)

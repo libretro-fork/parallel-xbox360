@@ -10,6 +10,8 @@
 #ifndef XENIA_VFS_XEX_METADATA_H_
 #define XENIA_VFS_XEX_METADATA_H_
 
+#include "libretro/core_xex_metadata.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -72,6 +74,7 @@ struct XexMetadata {
   toml::table ToToml() const;
 };
 
+std::optional<XexMetadata> ExtractXexMetadata(const xe_xex_source& source);
 std::optional<XexMetadata> ExtractXexMetadata(
     const std::filesystem::path& path);
 std::optional<XexMetadata> ExtractXexMetadata(const uint8_t* data, size_t size);

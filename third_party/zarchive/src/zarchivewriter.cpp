@@ -7,7 +7,6 @@
 
 #include <encodings/rzstd.h>
 
-#include "sha_256.h"
 
 #include <cassert>
 #include <algorithm>
@@ -15,13 +14,12 @@
 ZArchiveWriter::ZArchiveWriter(CB_NewOutputFile cbNewOutputFile, CB_WriteOutputData cbWriteOutputData, void* ctx) : m_cbCtx(ctx), m_cbNewOutputFile(cbNewOutputFile), m_cbWriteOutputData(cbWriteOutputData)
 {
 	cbNewOutputFile(-1, ctx);
-	m_mainShaCtx = (struct Sha_256*)malloc(sizeof(struct Sha_256));
-	sha_256_init(m_mainShaCtx, m_integritySha);
+    sha256_stream_init(&m_mainShaCtx, 0);
 };
 
 ZArchiveWriter::~ZArchiveWriter()
 {
-	free(m_mainShaCtx);
+
 }
 
 ZArchiveWriter::PathNode* ZArchiveWriter::GetNodeByPath(ZArchiveWriter::PathNode* root, std::string_view path)
@@ -125,8 +123,8 @@ void ZArchiveWriter::OutputData(const void* data, size_t length)
 	m_cbWriteOutputData(data, length, m_cbCtx);
 	m_currentCompressedWriteIndex += length;
 	// hash the data
-	if (m_mainShaCtx)
-		sha_256_write(m_mainShaCtx, data, length);
+    if (m_hashActive)
+        sha256_stream_update(&m_mainShaCtx, static_cast<const uint8_t*>(data), length);
 }
 
 uint64_t ZArchiveWriter::GetCurrentOutputOffset() const
@@ -335,10 +333,9 @@ void ZArchiveWriter::WriteFooter()
 	// serialize and hash the footer with all hash bytes set to zero
 	memset(m_footer.integrityHash, 0, 32);
 	_ZARCHIVE::Footer::Serialize(&m_footer, &tmp);
-	sha_256_write(m_mainShaCtx, &tmp, sizeof(_ZARCHIVE::Footer));
-	sha_256_close(m_mainShaCtx);
-	free(m_mainShaCtx);
-	m_mainShaCtx = nullptr;
+    sha256_stream_update(&m_mainShaCtx, reinterpret_cast<const uint8_t*>(&tmp), sizeof(tmp));
+    sha256_stream_final(&m_mainShaCtx, m_integritySha);
+    m_hashActive = false;
 
 	// set hash and write footer
 	memcpy(m_footer.integrityHash, m_integritySha, 32);

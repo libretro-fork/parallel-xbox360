@@ -123,11 +123,21 @@ static int valid_test(const char *path, int compressed) {
   xe_zar_entry entry;
   unsigned i, block;
   size_t metadata;
+  const uint8_t *view;
   reader_thread states[4];
   sthread_t *threads[4];
   make_image(compressed); r = open_image(path);
   if (!r) return 0;
   metadata = xe_zar_test_metadata_bytes(r);
+  view = xe_zar_view(r, 1, 65400, 700);
+  if ((view != NULL) != (!compressed && !metadata)) return 0;
+  if (view) {
+    if (!check_read(r, 65400, 700, compressed) || memcmp(view, output + 1, 700)) return 0;
+    if (xe_zar_test_cache_bytes(r)) return 0;
+  }
+  if (xe_zar_view(r, 0, 0, 1) || xe_zar_view(r, 99, 0, 1) ||
+      xe_zar_view(r, 1, (uint64_t)-1, 1) || xe_zar_view(r, 1, 0, 0) ||
+      xe_zar_view(r, 1, xe_zar_size(r, 1), 1)) return 0;
   if (xe_zar_test_cache_bytes(r) || xe_zar_lookup(r, "//D\\tail", 8, 1, 0) != 3 ||
       xe_zar_lookup(r, "raw", 3, 0, 1) != XE_ZAR_INVALID ||
       xe_zar_lookup(r, NULL, 0, 0, 1) != 0 || xe_zar_type(r, 99) != -1 ||

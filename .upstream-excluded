@@ -145,3 +145,6 @@ src/xenia/gpu/vulkan/vulkan_trace_dump_main.cc
 
 third_party/zarchive/include/zarchive/zarchivereader.h
 third_party/zarchive/src/zarchivereader.cpp
+
+third_party/zarchive/src/sha_256.c
+third_party/zarchive/src/sha_256.h
