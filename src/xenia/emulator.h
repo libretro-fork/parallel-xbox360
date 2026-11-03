@@ -53,7 +53,6 @@ class InputDriver;
 class InputSystem;
 }  // namespace hid
 namespace ui {
-class ImGuiDrawer;
 class Window;
 }  // namespace ui
 }  // namespace xe
@@ -163,9 +162,6 @@ class Emulator {
   // Window used for displaying graphical output. Can be null.
   ui::Window* display_window() const { return display_window_; }
 
-  // ImGui drawer for various kinds of dialogs requested by the guest. Can be
-  // null.
-  ui::ImGuiDrawer* imgui_drawer() const { return imgui_drawer_; }
 
   // Guest memory system modelling the RAM (both virtual and physical) of the
   // system.
@@ -214,7 +210,7 @@ class Emulator {
   // attach input drivers — call SetupSubsystems for that, after any per-game
   // cvar overrides are in place.
   X_STATUS Setup(
-      ui::Window* display_window, ui::ImGuiDrawer* imgui_drawer,
+      ui::Window* display_window,
       bool require_cpu_backend,
       std::function<std::unique_ptr<apu::AudioSystem>(cpu::Processor*)>
           audio_system_factory,
@@ -548,7 +544,6 @@ class Emulator {
   std::string title_version_;
 
   ui::Window* display_window_ = nullptr;
-  ui::ImGuiDrawer* imgui_drawer_ = nullptr;
 
   std::unique_ptr<Memory> memory_;
 

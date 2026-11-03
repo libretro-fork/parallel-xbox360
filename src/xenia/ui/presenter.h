@@ -93,7 +93,7 @@ struct RawImage {
 // The presenter displays up to two layers of content on a host surface:
 // - Guest output image, focusing on lowering latency and maintaining stable
 //   frame pacing, with various scaling and sharpening methods and letterboxing;
-// - Xenia's internal UI (such as the profiler and Dear ImGui).
+// - Optional host drawing layers.
 //
 // The guest output image may be refreshed from any thread generating it
 // (usually the GPU emulation thread), as long as there are no multiple threads

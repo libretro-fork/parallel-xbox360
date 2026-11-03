@@ -392,52 +392,6 @@ static void bundle(const char *out) {
   free_files(&files);
 }
 
-static void fonts(const char *out) {
-  Files files = {NULL, 0};
-  Buffer header = {0, 0, 0};
-  Buffer source = {0, 0, 0};
-  Buffer entries = {0, 0, 0};
-  Buffer file;
-  char *path;
-  char *symbol;
-  char *cursor;
-  size_t i;
-  list_files(&files, "assets/font", "", 0);
-  sort_files(&files);
-  text(&header, "#pragma once\n#include <cstddef>\nnamespace xe::ui::embedded_font {\nstruct Asset { const char *name; const unsigned char *data; size_t size; };\n");
-  text(&source, "#include \"embedded_font.h\"\nnamespace xe::ui::embedded_font {\n");
-  for (i = 0; i < files.count; ++i) {
-    symbol = (char *)allocate(strlen(files.names[i]) + 2);
-    symbol[0] = 0;
-    if (files.names[i][0] >= '0' && files.names[i][0] <= '9') strcpy(symbol, "_");
-    strcat(symbol, files.names[i]);
-    for (cursor = symbol; *cursor; ++cursor)
-      if (!((*cursor >= 'A' && *cursor <= 'Z') ||
-            (*cursor >= 'a' && *cursor <= 'z') ||
-            (*cursor >= '0' && *cursor <= '9'))) *cursor = '_';
-    path = join("assets/font", files.names[i]);
-    file = read_file(path, 1);
-    text(&header, "extern const unsigned char "); text(&header, symbol);
-    text(&header, "_data[];\nextern const size_t "); text(&header, symbol);
-    text(&header, "_size;\n");
-    text(&source, "const unsigned char "); text(&source, symbol);
-    text(&source, "_data[] = {"); bytes(&source, (unsigned char *)file.data, file.size, 1);
-    text(&source, "};\nconst size_t "); text(&source, symbol);
-    text(&source, "_size = "); number(&source, file.size); text(&source, ";\n");
-    if (i) text(&entries, ",\n");
-    text(&entries, "{"); quoted(&entries, files.names[i]); text(&entries, ",");
-    text(&entries, symbol); text(&entries, "_data,"); number(&entries, file.size);
-    text(&entries, "}");
-    free(file.data); free(path); free(symbol);
-  }
-  text(&header, "extern const Asset kAll[];\nextern const size_t kAllCount;\n}\n");
-  text(&source, "const Asset kAll[] = {\n"); text(&source, entries.data);
-  text(&source, "};\nconst size_t kAllCount = sizeof(kAll) / sizeof(kAll[0]);\n}\n");
-  output(out, "embedded_font.h", &header);
-  output(out, "embedded_font.cc", &source);
-  free(entries.data); free_files(&files);
-}
-
 static int enabled(const char *name, int windows, int arm64, int msvc) {
   const char *common[] = {"HAVE_ATTRIBUTE_ALWAYS_INLINE", "HAVE_BUILTIN_CTZ",
     "HAVE_BUILTIN_EXPECT", "HAVE_BUILTIN_PREFETCH", NULL};
@@ -641,7 +595,7 @@ int main(int argc, char **argv) {
       else fail("unknown option", argv[i]);
     }
     configs(argv[2], windows, arm64, msvc);
-    fonts(argv[2]); bundle(argv[2]); version_header(argv[2]);
+    bundle(argv[2]); version_header(argv[2]);
     data = read_file("libretro/data/xenia_framerate_unlock.txt", 1);
     text(&value, "#include <cstddef>\nextern const unsigned char xenia_libretro_framerate_unlock[] = {");
     bytes(&value, (unsigned char *)data.data, data.size, 1);

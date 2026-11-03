@@ -4,7 +4,6 @@
 add_library(xenia-libretro SHARED
   libretro.cpp
   core_events.c
-  core_audio_cadence.c
   libretro_audio_driver.cc
   libretro_graphics_system.cc
   libretro_headless_stubs.cc
@@ -110,7 +109,6 @@ set(_xe_libretro_libs
   capstone
   fmt
   xenia-spirv-writer
-  imgui
   libavcodec
   libavutil
   mspack

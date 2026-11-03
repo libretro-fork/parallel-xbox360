@@ -13,8 +13,6 @@
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_private.h"
-#include "xenia/ui/imgui_dialog.h"
-#include "xenia/ui/imgui_drawer.h"
 #include "xenia/ui/window.h"
 #include "xenia/ui/windowed_app_context.h"
 #include "xenia/xbox.h"
@@ -190,7 +188,7 @@ dword_result_t XamNuiCameraSetFlags_entry(qword_t unk1, dword_t unk2) {
 DECLARE_XAM_EXPORT1(XamNuiCameraSetFlags, kNone, kStub);
 
 dword_result_t XamIsNuiUIActive_entry() {
-  return kernel_state()->xam_state()->is_xam_dialog_present_.load();
+  return kernel_state()->xam_state()->IsUIActive();
 }
 DECLARE_XAM_EXPORT1(XamIsNuiUIActive, kNone, kImplemented);
 
@@ -361,23 +359,6 @@ dword_result_t XamShowNuiTroubleshooterUI_entry(dword_t user_index,
      - XamNuiNatalCameraUpdateComplete calls
      XamShowNuiTroubleshooterUI(0xff,0,0) if param = -0x7ff8fffe
   */
-
-  const Emulator* emulator = kernel_state()->emulator();
-  ui::Window* display_window = emulator->display_window();
-  ui::ImGuiDrawer* imgui_drawer = emulator->imgui_drawer();
-  if (display_window && imgui_drawer) {
-    xe::threading::Fence fence;
-    if (display_window->app_context().CallInUIThreadSynchronous([&]() {
-          xe::ui::ImGuiDialog::ShowMessageBox(
-              imgui_drawer, "NUI Troubleshooter",
-              "The game has indicated there is a problem with NUI (Kinect).")
-              ->Then(&fence);
-        })) {
-      kernel_state()->xam_state()->is_xam_dialog_present_.store(true);
-      GuestScheduler::WaitOnFence(fence);
-      kernel_state()->xam_state()->is_xam_dialog_present_.store(false);
-    }
-  }
 
   return X_ERROR_SUCCESS;
 }

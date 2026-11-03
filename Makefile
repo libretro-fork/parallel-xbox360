@@ -102,8 +102,8 @@ endif
 
 include Makefile.common
 
-DEFINES := -DXENIA_LIBRETRO=1 -DVULKAN_HPP_NO_TO_STRING -DIMGUI_DISABLE_OBSOLETE_FUNCTIONS \
- -DIMGUI_DISABLE_DEFAULT_FONT -DIMGUI_USE_STB_SPRINTF -DUSE_CPP17 -D_LIB \
+DEFINES := -DXENIA_LIBRETRO=1 -DVULKAN_HPP_NO_TO_STRING \
+ -DUSE_CPP17 -D_LIB \
  -DASIO_STANDALONE -DASIO_NO_DEPRECATED -DXBYAK_NO_OP_NAMES -DXBYAK_ENABLE_OMITTED_OPERAND
 VERSION := $(shell head -1 upstream.version)
 DEFINES += -DHAVE_THREADS -DHAVE_THREAD_STORAGE
@@ -157,7 +157,7 @@ endif
 ifeq ($(OS),linux)
 # Match local binding at link time and permit GCC to inline PM4 helpers.
 BASE_FLAGS += -fno-semantic-interposition
-LDLIBS += -lstdc++fs -ldl -lm -lpthread -lrt -lfontconfig
+LDLIBS += -lstdc++fs -ldl -lm -lpthread -lrt
 LDFLAGS += -Wl,-Bsymbolic -Wl,--no-undefined -Wl,--version-script=libretro/link.T -Wl,--exclude-libs,ALL
 endif
 ifeq ($(OS),android)
@@ -200,7 +200,7 @@ FRONTEND_OBJECTS := $(filter $(BUILD_DIR)/obj/libretro/%,$(OBJECTS))
 CORE_OBJECTS := $(filter-out $(FRONTEND_OBJECTS),$(OBJECTS))
 CORE_ARCHIVE := $(BUILD_DIR)/core.a
 CONFIG_INPUTS := tools/build/core_codegen.c tools/build/core_deflate.c \
- upstream.version $(wildcard assets/font/* libretro/data/*) \
+ upstream.version $(wildcard libretro/data/*) \
  third_party/snappy/snappy-stubs-public.h.in third_party/snappy/cmake/config.h.in
 
 .PHONY: all clean generated shaders host-tools help print-config FORCE $(TARGET)
@@ -214,7 +214,7 @@ generated: $(CONFIG_INPUTS) $(CODEGEN) | check-target-tools
 	@mkdir -p "$(GEN)"
 	$(CODEGEN) inputs "$(GEN)" $(if $(filter windows,$(OS)),windows) $(if $(filter aarch64,$(ARCH)),aarch64)
 
-$(GEN)/embedded_font.cc $(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc: | generated
+$(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc: | generated
 	@test -f "$@"
 
 export MAKE_BUILD_SIGNATURE := $(CC)|$(CXX)|$(BASE_FLAGS)|$(CPPFLAGS)|$(CFLAGS)|$(CXXFLAGS)|$(LDFLAGS)|$(LDLIBS)

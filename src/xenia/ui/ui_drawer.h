@@ -26,9 +26,7 @@ class UIDrawer {
   // Z order the changes may or may not effect immediately). However, they must
   // not perform any lifetime management of the presenter and of its connection
   // to the surface. Ideally drawing should not be changing any state at all,
-  // however, in Dear ImGui, input is handled directly during drawing - any
-  // quitting or resizing, if done in the UI, must be deferred via something
-  // like WindowedAppContext::CallInUIThreadDeferred.
+  // window changes must be deferred until drawing has finished.
   virtual void Draw(UIDrawContext& context) = 0;
 };
 

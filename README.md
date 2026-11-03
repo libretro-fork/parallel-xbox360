@@ -9,7 +9,7 @@ This repository follows xenia-edge and adds the libretro frontend in `libretro/`
 The buildbot configuration covers Windows, Linux (x86_64, arm64) and Android (arm64-v8a, x86_64). The [Actions workflow](https://github.com/libretro-fork/parallel-xbox360/actions/workflows/libretro.yml) also includes macOS on Apple Silicon. Successful runs publish build artifacts when Actions is enabled.
 
 - **Windows:** `parallel_xbox360_libretro.dll`, whose MSVC builds need the Visual C++ 2015-2022 runtime (GNU Make/MinGW builds link their compiler runtimes statically).
-- **Linux:** `parallel_xbox360_libretro.so`, glibc 2.35 or newer; uses fontconfig and the C/C++ runtime, with no X11 or Wayland libraries (the CMake build also links lz4 where available). ARM64 uses the a64 CPU backend.
+- **Linux:** `parallel_xbox360_libretro.so`, glibc 2.35 or newer; uses the C/C++ runtime, with no X11 or Wayland libraries (the CMake build also links lz4 where available). ARM64 uses the a64 CPU backend.
 - **macOS:** `parallel_xbox360_libretro.dylib`, Apple Silicon only. The x64 CPU backend needs the address space below 4 GB, which a core loaded into RetroArch cannot free, so there is no Intel build.
 - **Android:** `parallel_xbox360_libretro_android.so`.
 
@@ -20,6 +20,8 @@ The core option Graphics API picks Xenia's GPU backend: Vulkan, or on Windows Di
 ## Content
 
 Startup does not display the standalone Windows disclaimer dialog or read/write its registry acknowledgement.
+
+Guest UI requests complete headlessly: message boxes choose an offline or confirmation answer, keyboards retain their default text, and storage selection uses the first available hard disk. UI open/close notifications use a bounded libretro-common queue drained by `retro_run`; the close delay follows frontend progress. There are no standalone UI widgets, bundled UI fonts or fontconfig dependency. Guest profile/tile image decoding remains available independently of the UI.
 
 Xbox 360 games as a disc image (`.iso`), an executable (`.xex`), or a `.zar` / `.xcp` package. No BIOS or firmware is needed.
 
@@ -49,8 +51,7 @@ Games that need a signed-in profile get one: the core signs in the first profile
 
 The checked-in `Makefile` and `Makefile.common` compile the core and its
 owned dependency sources directly, without CMake. Use GNU Make, a C++20 target compiler and a host C compiler.
-Linux also needs the fontconfig
-development package. Fonts, patch data and raw SPIR-V/DXIL built-in shaders
+Patch data and raw SPIR-V/DXIL built-in shaders
 are included in the repository; a native C89 tool embeds them during the build.
 Linux, Android and macOS builds do not require Python or a shader compiler.
 D3D12 primitive-expansion geometry shaders are generated directly as DXIL.

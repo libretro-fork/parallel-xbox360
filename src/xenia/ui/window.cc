@@ -9,11 +9,9 @@
 
 #include "xenia/ui/window.h"
 
-#include "third_party/imgui/imgui.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
-#include "xenia/ui/imgui_drawer.h"
 #include "xenia/ui/presenter.h"
 
 namespace xe {

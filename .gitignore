@@ -69,7 +69,6 @@ obj/
 npm-debug.log
 private/
 *.trace
-imgui.ini
 
 # ==============================================================================
 # Build system output

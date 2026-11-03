@@ -37,6 +37,14 @@ XamState::XamState(Emulator* emulator, KernelState* kernel_state)
   AppManager::RegisterApps(kernel_state, app_manager_.get());
 }
 
+static void HeadlessUiNotification(void* context, int active) {
+  static_cast<KernelState*>(context)->BroadcastNotification(
+      kXNotificationSystemUI, active ? 1u : 0u);
+}
+void XamState::AdvanceUiNotifications(double fps) {
+  xe_ui_queue_step(ui_notifications_.get(), fps, HeadlessUiNotification, kernel_state_);
+}
+
 void XamState::LoadLanguageLocaleFallback() {
   const std::array<std::u16string, 18> locale_data = {
       u"",      u"",      u"ja-JP", u"de-DE", u"fr-FR",  u"es-ES",

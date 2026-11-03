@@ -14,7 +14,6 @@
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/achievement_backends/gpd_achievement_backend.h"
 #include "xenia/kernel/xam/xdbf/gpd_info.h"
-#include "xenia/ui/imgui_guest_notification.h"
 
 DEFINE_bool(show_achievement_notification, true,
             "Show achievement notification on screen.", "UI");
@@ -146,32 +145,8 @@ bool AchievementManager::DoesAchievementExist(
 
 void AchievementManager::ShowAchievementEarnedNotification(
     const Achievement* achievement) const {
-  const std::string description =
-      fmt::format("{}G - {}", achievement->gamerscore,
-                  xe::to_utf8(achievement->achievement_name));
-
-  const Emulator* emulator = kernel_state()->emulator();
-  if (!emulator->display_window() || !emulator->imgui_drawer()) {
-    // No window to show it in (the libretro core): logged only. Reaching
-    // for the window's app context crashed the title's thread at the first
-    // achievement (NNshi, Mushihimesama Futari).
-    XELOGI("Achievement earned: {}", description);
-    return;
-  }
-  ui::WindowedAppContext& app_context =
-      emulator->display_window()->app_context();
-  ui::ImGuiDrawer* imgui_drawer = emulator->imgui_drawer();
-
-  // Use game-specified position if enabled, otherwise default to center-bottom
-  const uint8_t position = cvars::achievement_notification_position_by_game
-                               ? kernel_state()->notification_position_
-                               : 2;
-
-  app_context.CallInUIThread([imgui_drawer, description, position]() {
-    // Show notification
-    new ui::AchievementNotificationWindow(imgui_drawer, "Achievement unlocked",
-                                          description, 0, position);
-  });
+  XELOGI("Achievement earned: {}G - {}", achievement->gamerscore,
+         xe::to_utf8(achievement->achievement_name));
 }
 
 }  // namespace xam

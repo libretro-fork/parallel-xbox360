@@ -232,14 +232,10 @@ include_directories(SYSTEM
 
 add_compile_definitions(
   VULKAN_HPP_NO_TO_STRING
-  IMGUI_DISABLE_OBSOLETE_FUNCTIONS
-  IMGUI_DISABLE_DEFAULT_FONT
   USE_CPP17  # Tabulate
   _LIB
 )
 
-# Prevent ASan error from ImGUI
-add_compile_definitions($<$<NOT:$<CONFIG:Checked>>:IMGUI_USE_STB_SPRINTF>)
 
 # ==============================================================================
 # Platform-specific global settings

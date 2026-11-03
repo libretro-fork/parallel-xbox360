@@ -2,6 +2,17 @@
 
 ## Owned libretro-common primitives and codecs
 
+`core_ui_queue_test.c` checks headless button policy, frontend-driven close
+timing, active-request lifetime, the 64-request undrained bound, 8,000 completions
+from four producer threads, and teardown with an unfinished request. Compile
+with `core_ui_queue.c`, `core_audio_cadence.c` and the selected common sources
+below. Strict MSVC C89, MinGW C89 and Linux ASan/UBSan runs pass. These tests
+exercise queue ownership and policy, not game-specific UI compatibility.
+
+`core_image_test.c`, linked with `libretro/core_image.c`, checks shared codec
+linkage, PNG metadata, exact RGBA encode/decode and truncated input rejection.
+The guest image codecs remain usable after removal of the standalone UI.
+
 `core_hash_test.c` checks legacy XXH3/XXH64 golden folds over three seeds,
 unaligned input and lengths spanning short-input, stripe and block boundaries
 through roughly 1 MiB. Segmented streaming and intermediate digest calls must

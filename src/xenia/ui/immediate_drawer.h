@@ -45,9 +45,7 @@ enum class ImmediatePrimitiveType {
 };
 
 // Simple vertex used by the immediate mode drawer.
-// To avoid translations, this matches both imgui and elemental-forms vertices:
-//   ImDrawVert
-//   el::graphics::Renderer::Vertex
+// Host position, texture coordinate and color.
 struct ImmediateVertex {
   float x, y;
   float u, v;

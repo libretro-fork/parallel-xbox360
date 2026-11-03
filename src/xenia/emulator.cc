@@ -49,7 +49,6 @@
 #include "xenia/kernel/title_id_utils.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/xam/achievement_manager.h"
-#include "xenia/kernel/xam/ui/disc_swap_ui.h"
 #include "xenia/kernel/xam/xam_module.h"
 #include "xenia/kernel/xam/xdbf/spa_info.h"
 #include "xenia/kernel/xbdm/xbdm_module.h"
@@ -57,8 +56,6 @@
 #include "xenia/kernel/xthread.h"
 #include "xenia/memory.h"
 #include "xenia/ui/file_picker.h"
-#include "xenia/ui/imgui_dialog.h"
-#include "xenia/ui/imgui_drawer.h"
 #include "xenia/ui/window.h"
 #include "xenia/ui/windowed_app_context.h"
 #include "xenia/vfs/device.h"
@@ -293,7 +290,7 @@ uint32_t Emulator::main_thread_id() {
 }
 
 X_STATUS Emulator::Setup(
-    ui::Window* display_window, ui::ImGuiDrawer* imgui_drawer,
+    ui::Window* display_window,
     bool require_cpu_backend,
     std::function<std::unique_ptr<apu::AudioSystem>(cpu::Processor*)>
         audio_system_factory,
@@ -306,9 +303,7 @@ X_STATUS Emulator::Setup(
   if (display_window) {
     display_window_ = display_window;
   }
-  if (imgui_drawer) {
-    imgui_drawer_ = imgui_drawer;
-  }
+
   require_cpu_backend_ = require_cpu_backend;
   if (audio_system_factory) {
     audio_system_factory_ = audio_system_factory;
@@ -396,10 +391,7 @@ X_STATUS Emulator::Setup(
     }
   }
 
-  // Add inputSystem to UI (if imgui is enabled)
-  if (imgui_drawer_) {
-    imgui_drawer_->LoadInputSystem(input_system_.get());
-  }
+
 
   XELOGI("{}: Initializing VFS...", __func__);
   // Bring up the virtual filesystem used by the kernel.
@@ -1697,9 +1689,8 @@ void Emulator::MountStandardDrives() {
 
 const std::filesystem::path Emulator::GetNewDiscPath(
     std::string window_message, uint8_t disc_number) {
-  std::filesystem::path path = "";
-
-  if (!display_window_ && disc_request_) {
+  std::filesystem::path path;
+  if (disc_request_) {
     xe::threading::Fence fence;
     disc_request_(disc_number, window_message,
                   [&path, &fence](std::filesystem::path chosen) {
@@ -1707,134 +1698,7 @@ const std::filesystem::path Emulator::GetNewDiscPath(
                     fence.Signal();
                   });
     kernel::GuestScheduler::WaitOnFence(fence);
-    return path;
   }
-
-  uint32_t current_title_id = !title_id_.has_value() ? 0 : title_id_.value();
-  std::vector<TitleDisc> saved_discs;
-
-  if (current_title_id != 0 && disc_provider_) {
-    saved_discs = disc_provider_(current_title_id);
-    // Sort discs alphanumerically by label.
-    std::sort(saved_discs.begin(), saved_discs.end(),
-              [](const TitleDisc& a, const TitleDisc& b) {
-                return a.label < b.label;
-              });
-  }
-
-  // Get the original game launch path from XAM loader data
-  std::filesystem::path initial_dir;
-  if (kernel_state_) {
-    auto xam =
-        kernel_state_->GetKernelModule<kernel::xam::XamModule>("xam.xex");
-    if (xam) {
-      const std::string& host_path = xam->loader_data().host_path;
-      if (!host_path.empty()) {
-        // Convert the stored host path to a filesystem path and get its parent
-        // directory
-        std::filesystem::path game_path = xe::to_path(host_path);
-        if (std::filesystem::exists(game_path)) {
-          initial_dir = game_path.parent_path();
-          XELOGI("Setting file picker initial directory to game directory: {}",
-                 xe::path_to_utf8(initial_dir));
-        }
-      }
-    }
-  }
-
-  // Check if we need to show the disc selection dialog
-  bool show_error = window_message.find("ERROR:") != std::string::npos;
-  bool use_file_picker = false;
-
-  if (display_window_ && imgui_drawer_ &&
-      (saved_discs.size() > 1 || show_error)) {
-    // Convert saved_discs to DiscSwapUI format
-    std::vector<kernel::xam::ui::DiscSwapUI::DiscInfo> disc_infos;
-    for (const auto& disc : saved_discs) {
-      disc_infos.push_back({disc.label, disc.path});
-    }
-
-    // Variables to store dialog result (captured by close callback)
-    kernel::xam::ui::DiscSwapResult result =
-        kernel::xam::ui::DiscSwapResult::kCancelled;
-    std::filesystem::path selected_path;
-
-    // Create the dialog and set up the close callback to capture results
-    xe::threading::Fence fence;
-    display_window_->app_context().CallInUIThreadSynchronous([&, this]() {
-      auto* dialog = new kernel::xam::ui::DiscSwapUI(
-          imgui_drawer_, input_system_.get(), window_message, disc_infos,
-          show_error);
-      dialog->set_close_callback([&result, &selected_path, dialog]() {
-        result = dialog->result();
-        selected_path = dialog->selected_path();
-      });
-      dialog->Then(&fence);
-    });
-
-    // Wait for the dialog to close. Parks the fiber the way every other xam
-    // dialog does, so the guest CPU stays free while the prompt is up.
-    kernel::GuestScheduler::WaitOnFence(fence);
-
-    // Process the result
-    if (result == kernel::xam::ui::DiscSwapResult::kSelected) {
-      path = selected_path;
-      XELOGI("GetNewDiscPath: Selected disc from saved paths: {}",
-             xe::path_to_utf8(path));
-      return path;
-    } else if (result == kernel::xam::ui::DiscSwapResult::kBrowse) {
-      use_file_picker = true;
-    } else {
-      // Cancelled - return empty path
-      return path;
-    }
-  } else {
-    // No saved discs or no display window - go straight to file picker
-    use_file_picker = true;
-  }
-
-  // Show file picker if needed
-  if (use_file_picker && display_window_) {
-    display_window_->app_context().CallInUIThreadSynchronous([&]() {
-      auto file_picker = xe::ui::FilePicker::Create();
-      file_picker->set_mode(ui::FilePicker::Mode::kOpen);
-      file_picker->set_type(ui::FilePicker::Type::kFile);
-      file_picker->set_multi_selection(false);
-
-      // Use the message without ERROR: prefix for the title
-      std::string picker_title = window_message;
-      if (show_error) {
-        size_t error_pos = picker_title.find("ERROR:");
-        if (error_pos != std::string::npos) {
-          picker_title = picker_title.substr(0, error_pos);
-        }
-      }
-      file_picker->set_title(!picker_title.empty() ? picker_title
-                                                   : "Select Content Package");
-
-      // Set the initial directory to the game's directory if available
-      if (!initial_dir.empty() && std::filesystem::exists(initial_dir)) {
-        file_picker->set_initial_directory(initial_dir);
-      }
-
-      file_picker->set_extensions({
-          {"Supported Files", "*;*.iso;*.xex;*.xcp"},
-          {"Disc Image (*.iso)", "*.iso"},
-          {"Xbox Executable (*.xex)", "*.xex"},
-          {"All Files", "*"},
-      });
-
-      if (file_picker->Show(display_window_)) {
-        auto selected_files = file_picker->selected_files();
-        if (!selected_files.empty()) {
-          path = selected_files[0];
-        }
-      }
-    });
-  } else if (!display_window_) {
-    XELOGE("Cannot show file picker: no display window available");
-  }
-
   return path;
 }
 
@@ -2056,19 +1920,6 @@ bool Emulator::ExceptionCallback(Exception* ex) {
                     context->v[i].u32[2], context->v[i].u32[3]));
   }
   XELOGE("{}", crash_msg);
-  std::string crash_dlg = fmt::format(
-      "The guest has crashed.\n\n"
-      "Xenia has now paused itself.\n\n"
-      "{}",
-      crash_msg);
-  // Display a dialog telling the user the guest has crashed.
-  if (display_window_ && imgui_drawer_) {
-    display_window_->app_context().CallInUIThreadSynchronous([this,
-                                                              &crash_dlg]() {
-      xe::ui::ImGuiDialog::ShowMessageBox(imgui_drawer_, "Uh-oh!", crash_dlg);
-    });
-  }
-
   // Halt the crashed thread without unwinding the rest of the emulator. Host
   // mode suspends self. Fiber mode diverts the resume PC to a halt thunk, since
   // calling Suspend here would yield from inside the exception handler.
@@ -2217,7 +2068,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
 
 void Emulator::SetupAgain() {
   const X_STATUS result =
-      Setup(nullptr, nullptr, require_cpu_backend_, nullptr, nullptr, nullptr);
+      Setup(nullptr, require_cpu_backend_, nullptr, nullptr, nullptr);
   if (XFAILED(result)) {
     xe::FatalError(
         fmt::format("Failed to set the emulator up again: {:08X}", result));

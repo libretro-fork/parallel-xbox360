@@ -128,3 +128,17 @@ third_party/zarchive/CMakeLists.txt
 third_party/zarchive/vcpkg.json
 third_party/zarchive/zarchive.pc.in
 third_party/zarchive/src/main.cpp
+
+third_party/imgui
+assets/font
+src/xenia/kernel/xam/ui
+src/xenia/ui/imgui*
+src/xenia/gpu/trace_viewer.cc
+src/xenia/gpu/trace_viewer.h
+src/xenia/gpu/d3d12/d3d12_trace_viewer_main.cc
+src/xenia/gpu/vulkan/vulkan_trace_viewer_main.cc
+
+src/xenia/gpu/trace_dump.cc
+src/xenia/gpu/trace_dump.h
+src/xenia/gpu/d3d12/d3d12_trace_dump_main.cc
+src/xenia/gpu/vulkan/vulkan_trace_dump_main.cc

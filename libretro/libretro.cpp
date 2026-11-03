@@ -1388,7 +1388,6 @@ static bool xenia_setup_and_launch(const char *path) {
 
         xe::X_STATUS status = xenia_emulator->Setup(
             /*display_window=*/nullptr,
-            /*imgui_drawer=*/nullptr,
             /*require_cpu_backend=*/true,
             /*audio_system_factory=*/
             [](xe::cpu::Processor *processor)
@@ -2040,6 +2039,9 @@ RETRO_API void retro_run(void) {
     // Feed libretro input state into Xenia's HID system
     if (lr_input_driver && core_state.input_state_cb)
         lr_input_driver->UpdateFromLibretro(core_state.input_state_cb);
+
+    if (xenia_emulator && xenia_emulator->kernel_state())
+        xenia_emulator->kernel_state()->xam_state()->AdvanceUiNotifications(core_state.output_fps);
 
     // One guest vblank per frontend frame (two at 120 Hz), with the refresh
     // rate not uncapped

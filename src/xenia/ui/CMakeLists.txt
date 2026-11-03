@@ -14,10 +14,6 @@ endif()
 target_link_libraries(xenia-ui PUBLIC xenia-base)
 if(WIN32)
   target_link_libraries(xenia-ui PRIVATE dxgi)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  # fontconfig: imgui_drawer.cc font lookup. No xcb or X11: the core creates
-  # no Vulkan surface, the frontend owns the window.
-  target_link_libraries(xenia-ui PRIVATE fontconfig)
 elseif(APPLE)
   # xe_platform_sources globs *.cc only; .mm sources need explicit listing.
   target_sources(xenia-ui PRIVATE
@@ -29,7 +25,3 @@ elseif(APPLE)
   )
 endif()
 xe_target_defaults(xenia-ui)
-
-xe_embed_binary_assets(xenia-ui
-    "${PROJECT_SOURCE_DIR}/assets/font" font)
-

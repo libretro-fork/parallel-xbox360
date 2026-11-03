@@ -12,7 +12,10 @@ if(_base_exclude AND _base_srcs)
 endif()
 target_link_libraries(xenia-base PUBLIC fmt retro-common)
 target_link_libraries(xenia-base PRIVATE boost_context)
-target_sources(xenia-base PRIVATE "${PROJECT_SOURCE_DIR}/libretro/core_decompress.c")
+target_sources(xenia-base PRIVATE "${PROJECT_SOURCE_DIR}/libretro/core_decompress.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_audio_cadence.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_image.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_ui_queue.c")
 xe_target_defaults(xenia-base)
 
 if(XENIA_BUILD_TESTS)

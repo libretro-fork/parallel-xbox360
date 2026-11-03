@@ -45,7 +45,7 @@ if(XENIA_BUILD_MISC)
     xenia-apu xenia-apu-nop xenia-base xenia-core xenia-cpu
     xenia-gpu xenia-hid xenia-hid-nop xenia-hid-portal
     xenia-kernel xenia-patcher xenia-ui xenia-ui-vulkan xenia-vfs
-    aes_128 capstone fmt xenia-spirv-writer imgui libavcodec libavutil mspack
+    aes_128 capstone fmt xenia-spirv-writer libavcodec libavutil mspack
     snappy retro-common
   )
   if(XE_TARGET_X86_64)

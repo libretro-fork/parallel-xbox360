@@ -11,6 +11,7 @@
 #define XENIA_KERNEL_XAM_XAM_STATE_H_
 
 #include <memory>
+#include "libretro/core_ui_queue.h"
 
 #include "xenia/kernel/xam/achievement_manager.h"
 #include "xenia/kernel/xam/app_manager.h"
@@ -59,7 +60,9 @@ class XamState {
 
   void SetContentRegisterCallback(uint32_t callback);
 
-  bool IsUIActive() const { return is_xam_dialog_present_.load(); }
+  bool IsUIActive() const { return xe_ui_queue_active(ui_notifications_.get()) != 0; }
+  xe_ui_queue* ui_notifications() const { return ui_notifications_.get(); }
+  void AdvanceUiNotifications(double fps);
 
   uint32_t GetLanguageFallbackAddress(uint32_t index) const {
     return language_fallback_address_[index];
@@ -74,7 +77,8 @@ class XamState {
   X_DASH_BACKSTACK_DATA dash_backstack_data_[2] = {};
   uint32_t content_register_callback = 0;
 
-  std::atomic<bool> is_xam_dialog_present_ = false;
+  std::unique_ptr<xe_ui_queue, decltype(&xe_ui_queue_free)> ui_notifications_{
+      xe_ui_queue_new(), &xe_ui_queue_free};
 
  private:
   void LoadLanguageLocaleFallback();

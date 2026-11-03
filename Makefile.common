@@ -1,6 +1,6 @@
 # Shared, hand-maintained source selection for the GNU Make build.
 # Keep in sync with the libretro target when importing upstream changes.
-SOURCES_C += libretro/core_events.c libretro/core_audio_cadence.c libretro/core_decompress.c
+SOURCES_C += libretro/core_events.c libretro/core_audio_cadence.c libretro/core_ui_queue.c libretro/core_decompress.c libretro/core_image.c
 CORE_DIRS := src/xenia src/xenia/base src/xenia/apu src/xenia/apu/nop \
  src/xenia/cpu src/xenia/cpu/backend src/xenia/cpu/compiler \
  src/xenia/cpu/compiler/passes src/xenia/cpu/hir src/xenia/cpu/ppc \
@@ -63,7 +63,7 @@ endif
 
 INCLUDE_DIRS := $(GEN) $(GEN)/generated third_party/ffmpeg-xenia \
  . src libretro third_party third_party/capstone/include third_party/fmt/include \
- third_party/imgui third_party/stb third_party/snappy \
+ third_party/stb third_party/snappy \
  third_party/libretro-common/include third_party/mspack third_party/pugixml/src \
  third_party/asio/include third_party/tomlplusplus/include third_party/llvm/include \
  third_party/Vulkan-Headers/include third_party/ffmpeg-xenia third_party/FFmpeg third_party/aes_128 \
@@ -77,9 +77,7 @@ SOURCES_C += third_party/aes_128/unroll/aes.c \
  third_party/capstone/utils.c third_party/capstone/Mapping.c
 SOURCES_C += $(filter-out %/X86ATTInstPrinter.c,$(wildcard third_party/capstone/arch/$(CAPSTONE_ARCH)/*.c))
 SOURCES_CXX += third_party/fmt/src/format.cc third_party/fmt/src/os.cc \
- third_party/imgui/imgui.cpp third_party/imgui/imgui_demo.cpp \
- third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp \
- third_party/imgui/imgui_widgets.cpp third_party/mspack/logging.cc \
+ third_party/mspack/logging.cc \
  third_party/pugixml/src/pugixml.cpp third_party/snappy/snappy.cc \
  third_party/snappy/snappy-sinksource.cc third_party/snappy/snappy-stubs-internal.cc \
  third_party/zarchive/src/zarchivereader.cpp third_party/zarchive/src/zarchivewriter.cpp
@@ -107,7 +105,7 @@ SHADER_HEADERS := $(foreach s,$(SHADER_SOURCES),$(call shader-output,$(s)))
 ifeq ($(OS),macos)
 SOURCES_OBJCXX := src/xenia/ui/surface_mac.mm
 endif
-SOURCES_CXX += $(GEN)/embedded_font.cc $(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc
+SOURCES_CXX += $(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc
 
 # FFmpeg: the same fixed codec/container subset as the existing core.
 FFMPEG_SOURCES := \
