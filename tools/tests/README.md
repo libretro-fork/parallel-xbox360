@@ -986,3 +986,17 @@ core-logger-apc.exe <core.dll> <private-system-directory> <invalid-content.xex>
 
 The non-Windows build reports that the Windows APC test is skipped. The existing
 content-close and Vulkan/D3D12 lifetime tests cover the ordinary shutdown path.
+
+`run_guest_sha256_test.sh` compares the C89 adapter with the historical private
+SHA-256 class extracted from commit `183a97d1`. Git extraction is developer-only;
+the core build needs neither Git extraction nor that reference implementation.
+The oracle's unaligned word loads are changed to memcpy only in the test build.
+The C89 driver compares complete guest states and surrounding guards after each
+operation, including unaligned input/state, split blocks, truncated and aliased
+outputs, repeated finalization, update after finalization and 32-bit count wrap.
+It also checks the independent SHA-256 `abc` known answer. Linux enables
+ASan/UBSan with failure recovery disabled; MinGW links the real common VFS/time
+and threading dependencies needed by the hash translation unit. MSVC C89 and
+MinGW runs pass. These are compatibility and memory-safety tests, not throughput
+or gameplay measurements. MD5 tests include known vectors, split/truncated spans,
+unaligned full blocks and exact input/output aliasing.

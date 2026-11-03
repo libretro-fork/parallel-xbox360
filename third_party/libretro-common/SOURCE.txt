@@ -106,3 +106,4 @@ c0416b7b41c607525ea5ad27d1aa356082b3739b79e15cdc031dce742ba5c0ac  include/crypto
 625df188e6cdfd9fd50e50e7b4276a3bc7f29d4dcc71d756e7706bcf1d58513d  include/crypto/kdf.h
 MD5 source indentation expanded to spaces to satisfy repository whitespace rules.
 Crypto header scope comment adapted for the selected always-built core primitives.
+Local MD5 change: byte-safe little-endian direct reads remove x86 unaligned/aliasing UB.

@@ -237,6 +237,7 @@ add_library(zarchive STATIC
   ../libretro/core_zarchive.c
   ../libretro/core_xex_metadata.c
   ../libretro/core_crypto.c
+  ../libretro/core_guest_hash.c
   zarchive/include/zarchive/zarchivecommon.h
   zarchive/include/zarchive/zarchivewriter.h
   zarchive/src/zarchivewriter.cpp

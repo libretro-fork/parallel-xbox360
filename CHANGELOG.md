@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Guest SHA-256 now uses an allocation-free C89 adapter over common streaming primitives, preserving exact guest state, counter wrapping and aliasing behavior. Removed the private C++ SHA-256 implementation. One-shot guest MD5 no longer leaks an allocated context, and one-shot guest HMAC-SHA-1 shares the common span adapter. Fixed unaligned word loads in common MD5; streamed guest MD5/SHA-512 migration remains pending.
+
 - Fixed an exit crash where a Windows APC could interrupt the logger join and let shutdown free its queue while the writer was still running. The writer is now joined non-alertably before its storage and sinks are destroyed.
 
 - XEX block/image and title-update signature hashing now use libretro-common SHA-1. Account HMAC uses common streaming primitives through a bounded C89 span adapter, writing full digests directly to their destination. Account RC4 is now C89 with exact in-place support and checked key/output/overlap bounds; its unused key copy is removed. Guest-visible crypto state migration remains in progress.

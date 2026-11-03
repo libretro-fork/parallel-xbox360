@@ -66,7 +66,10 @@ Host-side XEX block/image and title-update hashes now use common SHA-1. Account
 HMAC uses common streaming SHA-1/key derivation with borrowed input spans and
 full digests written directly to the destination; short digests use bounded
 scratch. Account RC4 runs in C89, supports exact in-place operation and checks
-key/output sizes and partial overlap. Guest-visible SHA/AES/DES/RSA state and
+key/output sizes and partial overlap. Guest SHA-256 uses a C89 adapter over common
+streaming state, preserving guest buffer bytes and counter wrapping. One-shot
+guest MD5 uses stack state rather than a leaked heap context; guest one-shot
+HMAC-SHA-1 also shares the span adapter. Other guest SHA/AES/DES/RSA state and
 remaining third-party crypto callers still need their own migration and tests.
 
 Selected RetroArch libretro-common sources now provide XXH3/XXH64 hashing and DEFLATE decompression. Persistent hash values remain compatible. Embedded patch data decodes directly into its final allocation, using its generated raw size; XLast requires complete, checksum-valid gzip data with the declared output size. Threading and file-I/O migration to libretro-common is still in progress. Source provenance and local changes are recorded in `third_party/libretro-common/SOURCE.txt`.

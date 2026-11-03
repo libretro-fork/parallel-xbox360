@@ -68,17 +68,16 @@
    (a) = (((a) << (s)) | (((a) & 0xffffffff) >> (32 - (s)))); \
    (a) += (b);
 
-/*
- * MD5_SET reads 4 input bytes in little-endian byte order and stores them
- * in a properly aligned word in host byte order.
- *
- * The check for little-endian architectures that tolerate unaligned
- * memory accesses is just an optimization.  Nothing will break if it
- * doesn't work.
- */
+/* Little-endian word loads must accept arbitrary byte-buffer alignment.
+ * Fast targets reread input directly; others cache decoded words. */
 #if defined(__i386__) || defined(__x86_64__) || defined(__vax__)
+static INLINE uint32_t md5_load_le(const unsigned char *p)
+{
+   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+      ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
 #define MD5_SET(n) \
-   (*(uint32_t*)&ptr[(n) * 4])
+   md5_load_le(ptr + (n) * 4)
 #define MD5_GET(n) \
    MD5_SET(n)
 #else

@@ -21,8 +21,8 @@
 #include "third_party/crypto/des/des.h"
 #include "third_party/crypto/des/des3.h"
 #include "third_party/crypto/des/descbc.h"
-#include "third_party/crypto/sha256.cpp"
-#include "third_party/crypto/sha256.h"
+#include "libretro/core_guest_hash.h"
+#include "libretro/core_crypto.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_rsa.h"
 
 extern "C" {
@@ -60,6 +60,8 @@ struct XECRYPT_SHA256_STATE {
   xe::be<uint32_t> state[8];  // 0x4
   uint8_t buffer[64];         // 0x24
 };
+static_assert_size(XECRYPT_SHA256_STATE, XE_GUEST_SHA256_SIZE);
+static_assert(offsetof(XECRYPT_SHA256_STATE, buffer) == 36);
 
 // TODO: Size of this struct hasn't been confirmed yet.
 struct XECRYPT_SHA512_STATE {
@@ -551,73 +553,31 @@ void XeCryptMd5_entry(lpvoid_t input_1, dword_t input_1_size, lpvoid_t input_2,
                       dword_t input_2_size, lpvoid_t input_3,
                       dword_t input_3_size, lpvoid_t output,
                       dword_t output_size) {
-  AVMD5* md5 = av_md5_alloc();
-  av_md5_init(md5);
-
-  if (input_1 && input_1_size) {
-    av_md5_update(md5, input_1, input_1_size);
-  }
-
-  if (input_2 && input_2_size) {
-    av_md5_update(md5, input_2, input_2_size);
-  }
-
-  if (input_3 && input_3_size) {
-    av_md5_update(md5, input_3, input_3_size);
-  }
-
-  uint8_t digest[16];
-  av_md5_final(md5, digest);
-
-  std::copy_n(digest, std::min<size_t>(xe::countof(digest), output_size),
-              output.as<uint8_t*>());
+  xe_md5_3(input_1.as<const uint8_t*>(), input_1 ? input_1_size.value() : 0,
+           input_2.as<const uint8_t*>(), input_2 ? input_2_size.value() : 0,
+           input_3.as<const uint8_t*>(), input_3 ? input_3_size.value() : 0,
+           output.as<uint8_t*>(), output_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptMd5, kNone, kImplemented);
 
 void XeCryptSha256Init_entry(pointer_t<XECRYPT_SHA256_STATE> sha_state) {
-  sha_state.Zero();
-
-  sha_state->state[0] = 0x6a09e667;
-  sha_state->state[1] = 0xbb67ae85;
-  sha_state->state[2] = 0x3c6ef372;
-  sha_state->state[3] = 0xa54ff53a;
-  sha_state->state[4] = 0x510e527f;
-  sha_state->state[5] = 0x9b05688c;
-  sha_state->state[6] = 0x1f83d9ab;
-  sha_state->state[7] = 0x5be0cd19;
+  XECRYPT_SHA256_STATE* state = sha_state;
+  xe_guest_sha256_init(reinterpret_cast<uint8_t*>(state));
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptSha256Init, kNone, kImplemented);
 
 void XeCryptSha256Update_entry(pointer_t<XECRYPT_SHA256_STATE> sha_state,
                                lpvoid_t input, dword_t input_size) {
-  sha256::SHA256 sha;
-  std::ranges::copy(sha_state->state, sha.getHashValues());
-  std::ranges::copy(sha_state->buffer, sha.getBuffer());
-  sha.setTotalSize(sha_state->count);
-
-  sha.add(input, input_size);
-
-  std::copy_n(sha.getHashValues(), xe::countof(sha_state->state),
-              sha_state->state);
-  std::copy_n(sha.getBuffer(), xe::countof(sha_state->buffer),
-              sha_state->buffer);
-  sha_state->count = static_cast<uint32_t>(sha.getTotalSize());
+  XECRYPT_SHA256_STATE* state = sha_state;
+  xe_guest_sha256_update(reinterpret_cast<uint8_t*>(state),
+                          input.as<const uint8_t*>(), input_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptSha256Update, kNone, kImplemented);
 
 void XeCryptSha256Final_entry(pointer_t<XECRYPT_SHA256_STATE> sha_state,
                               pointer_t<uint8_t> out, dword_t out_size) {
-  sha256::SHA256 sha;
-  std::ranges::copy(sha_state->state, sha.getHashValues());
-  std::ranges::copy(sha_state->buffer, sha.getBuffer());
-  sha.setTotalSize(sha_state->count);
-
-  uint8_t hash[32];
-  sha.getHash(hash);
-
-  std::copy_n(hash, std::min<size_t>(xe::countof(hash), out_size),
-              static_cast<uint8_t*>(out));
-  std::ranges::copy(hash, sha_state->buffer);
+  XECRYPT_SHA256_STATE* state = sha_state;
+  xe_guest_sha256_final(reinterpret_cast<uint8_t*>(state), out, out_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptSha256Final, kNone, kImplemented);
 
@@ -970,56 +930,11 @@ void XeCryptHmacSha_entry(lpvoid_t key, dword_t key_size_in, lpvoid_t inp_1,
                           dword_t inp_1_size, lpvoid_t inp_2,
                           dword_t inp_2_size, lpvoid_t inp_3,
                           dword_t inp_3_size, lpvoid_t out, dword_t out_size) {
-  uint32_t key_size = key_size_in;
-  sha1::SHA1 sha;
-  uint8_t kpad_i[0x40];
-  uint8_t kpad_o[0x40];
-  uint8_t tmp_key[0x40];
-  std::memset(kpad_i, 0x36, 0x40);
-  std::memset(kpad_o, 0x5C, 0x40);
-
-  // Setup HMAC key
-  // If > block size, use its hash
-  if (key_size > 0x40) {
-    sha1::SHA1 sha_key;
-    sha_key.processBytes(key, key_size);
-    sha_key.finalize((uint8_t*)tmp_key);
-
-    key_size = 0x14u;
-  } else {
-    std::memcpy(tmp_key, key, key_size);
-  }
-
-  for (uint32_t i = 0; i < key_size; i++) {
-    kpad_i[i] = tmp_key[i] ^ 0x36;
-    kpad_o[i] = tmp_key[i] ^ 0x5C;
-  }
-
-  // Inner
-  sha.processBytes(kpad_i, 0x40);
-
-  if (inp_1_size) {
-    sha.processBytes(inp_1, inp_1_size);
-  }
-
-  if (inp_2_size) {
-    sha.processBytes(inp_2, inp_2_size);
-  }
-
-  if (inp_3_size) {
-    sha.processBytes(inp_3, inp_3_size);
-  }
-
-  uint8_t digest[0x14];
-  sha.finalize(digest);
-  sha.reset();
-
-  // Outer
-  sha.processBytes(kpad_o, 0x40);
-  sha.processBytes(digest, 0x14);
-  sha.finalize(digest);
-
-  std::memcpy(out, digest, std::min((uint32_t)out_size, 0x14u));
+  xe_hmac_sha1_3(key.as<const uint8_t*>(), key_size_in,
+                 inp_1.as<const uint8_t*>(), inp_1_size,
+                 inp_2.as<const uint8_t*>(), inp_2_size,
+                 inp_3.as<const uint8_t*>(), inp_3_size,
+                 out.as<uint8_t*>(), out_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptHmacSha, kNone, kImplemented);
 

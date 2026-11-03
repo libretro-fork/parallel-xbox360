@@ -148,3 +148,6 @@ third_party/zarchive/src/zarchivereader.cpp
 
 third_party/zarchive/src/sha_256.c
 third_party/zarchive/src/sha_256.h
+
+third_party/crypto/sha256.cpp
+third_party/crypto/sha256.h

@@ -49,3 +49,27 @@ int xe_rc4_16(const uint8_t *key, size_t key_size, const uint8_t *input,
   crypto_memzero(state, sizeof(state));
   return 1;
 }
+
+static void md5_span(MD5_CTX *state, const uint8_t *input, size_t size) {
+  /* MD5_Update's length is unsigned long, which is 32 bits on Win64. */
+  while (size) {
+    unsigned long chunk = size > 0x10000000U ? 0x10000000UL : (unsigned long)size;
+    MD5_Update(state, input, chunk);
+    input += chunk; size -= chunk;
+  }
+}
+int xe_md5_3(const uint8_t *a, size_t a_size, const uint8_t *b, size_t b_size,
+    const uint8_t *c, size_t c_size, uint8_t *out, size_t out_size) {
+  MD5_CTX state;
+  uint8_t digest[16];
+  if (!out_size) return 1;
+  if (!out || (!a && a_size) || (!b && b_size) || (!c && c_size)) return 0;
+  MD5_Init(&state);
+  md5_span(&state, a, a_size); md5_span(&state, b, b_size); md5_span(&state, c, c_size);
+  MD5_Final(out_size >= 16 ? out : digest, &state);
+  if (out_size < 16) {
+    memcpy(out, digest, out_size);
+    crypto_memzero(digest, sizeof(digest));
+  }
+  return 1;
+}
