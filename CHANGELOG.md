@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Closing content now unregisters the Windows fiber stack exception callback when the last fiber stack is released. Loading another title registers it again, preventing a stale callback into an unloaded core DLL and recursive access-violation stack dumps.
+
 - Removed unused FFmpeg glslang/shaderc adapters and excluded them from upstream imports. Expanded native domain GPU checks to all 90 texture/export combinations. Fixed GCC ARM64 save/restore offsets and system-register reads, added POSIX core ABI/lifecycle checks, and clarified the D3D12 Shader Model 6.6 device requirement.
 
 - Expanded native tessellation checks to execute memory exports alongside stream output, covering 60 GPU cases and 90 validated containers. Fixed shared host-tool signature checks during simultaneous builds. Android info-cache flag updates use the existing portable atomics, supporting libc++ releases without `atomic_ref`.

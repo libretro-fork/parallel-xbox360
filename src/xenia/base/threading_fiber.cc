@@ -155,7 +155,9 @@ LONG NTAPI FiberStackExceptionHandler(PEXCEPTION_POINTERS info) {
   return EXCEPTION_CONTINUE_SEARCH;
 }
 
-std::once_flag veh_install_once_;
+// Protected by stack_registry_lock_. The callback must not outlive the last
+// stack: the frontend can unload this DLL after closing content.
+void* stack_veh_handle_ = nullptr;
 #endif  // XE_PLATFORM_WIN32
 
 FiberStack AllocFiberStack(size_t size) {
@@ -169,11 +171,6 @@ FiberStack AllocFiberStack(size_t size) {
   StackRecord record;
 
 #if XE_PLATFORM_WIN32
-  // First-position handler, so guard faults grow the stack before any other
-  // handler sees them.
-  std::call_once(veh_install_once_, []() {
-    AddVectoredExceptionHandler(1, FiberStackExceptionHandler);
-  });
   s.base = VirtualAlloc(nullptr, s.total, MEM_RESERVE, PAGE_READWRITE);
   if (!s.base) {
     xe::FatalError("Failed to reserve fiber stack");
@@ -208,6 +205,17 @@ FiberStack AllocFiberStack(size_t size) {
   {
     std::lock_guard<std::mutex> lock(stack_registry_lock_);
     stack_registry_.push_back(record);
+#if XE_PLATFORM_WIN32
+    // Install before publishing the stack to its owner, and reinstall when
+    // content is loaded again after all previous stacks were released.
+    if (!stack_veh_handle_) {
+      stack_veh_handle_ =
+          AddVectoredExceptionHandler(1, FiberStackExceptionHandler);
+      if (!stack_veh_handle_) {
+        xe::FatalError("Failed to install fiber stack exception handler");
+      }
+    }
+#endif
   }
   return s;
 }
@@ -224,6 +232,14 @@ void FreeFiberStack(FiberStack& s) {
         break;
       }
     }
+#if XE_PLATFORM_WIN32
+    if (stack_registry_.empty() && stack_veh_handle_) {
+      if (!RemoveVectoredExceptionHandler(stack_veh_handle_)) {
+        xe::FatalError("Failed to remove fiber stack exception handler");
+      }
+      stack_veh_handle_ = nullptr;
+    }
+#endif
   }
 #if XE_PLATFORM_WIN32
   VirtualFree(s.base, 0, MEM_RELEASE);
