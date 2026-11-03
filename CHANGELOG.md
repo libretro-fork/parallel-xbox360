@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fixed avoidable precision loss in legacy int16 audio output: use the frontend's 32768 normalization scale and nearest-even rounding instead of 32767 scaling with truncation. All 65,536 int16 values now survive a normalized-float round trip exactly; float-capable frontends retain native float output. Guest-visible XMA formats are unchanged.
+
 - Audio now negotiates native float stereo or multichannel output at load, retaining classic int16 and per-sample fallback. The mixer writes into the final float buffer instead of its own intermediate vector; float-capable frontends avoid int16 quantization and widening. Float-only 5.1 interfaces are accepted, the output format stays fixed until unload, and negotiated callbacks are retired there. C89 boundary conversion handles nonfinite guest samples explicitly. Producer scheduling, resampling and queue ownership changes remain in progress.
 
 - Linux builds expose the POSIX/GNU declarations needed by the selected libretro-common sources when compiling strict C. The definition is limited to that dependency target in both Make and CMake.

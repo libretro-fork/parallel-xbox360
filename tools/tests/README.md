@@ -3,7 +3,9 @@
 ## Owned libretro-common primitives and codecs
 
 `core_audio_samples_test.c` checks final float normalization and legacy integer
-conversion, including nonfinite inputs and destination bounds. Compile it with
+conversion, including nonfinite inputs and destination bounds. The test exhausts
+all 65,536 int16 round trips and checks low-amplitude nearest-even ties,
+adjacent float values and saturation boundaries. Compile it with
 `core_audio_samples.c` as C89. `core_audio_format_test.c` exercises the real
 Windows DLL ABI with eight frontend-format modes, 20 runs each: stereo float,
 float-only and integer-only 5.1, float preference, unsupported/empty callbacks,
