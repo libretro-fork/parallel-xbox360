@@ -1,0 +1,28 @@
+
+../optimization-tests/zar-final-measurements/copy.so:     file format elf64-x86-64
+
+
+Disassembly of section .init:
+
+Disassembly of section .plt:
+
+Disassembly of section .plt.got:
+
+Disassembly of section .plt.sec:
+
+Disassembly of section .text:
+
+0000000000001120 <archive_test_copy>:
+    1120:	f3 0f 1e fa          	endbr64
+    1124:	53                   	push   %rbx
+    1125:	48 89 fe             	mov    %rdi,%rsi
+    1128:	48 89 cb             	mov    %rcx,%rbx
+    112b:	4c 89 c7             	mov    %r8,%rdi
+    112e:	48 01 d6             	add    %rdx,%rsi
+    1131:	48 89 ca             	mov    %rcx,%rdx
+    1134:	e8 17 ff ff ff       	call   1050 <memcpy@plt>
+    1139:	48 89 d8             	mov    %rbx,%rax
+    113c:	5b                   	pop    %rbx
+    113d:	c3                   	ret
+
+Disassembly of section .fini:

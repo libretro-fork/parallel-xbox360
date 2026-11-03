@@ -12,7 +12,7 @@
 #include "xenia/base/math.h"
 #include "xenia/vfs/devices/disc_zarchive_file.h"
 
-#include "third_party/zarchive/include/zarchive/zarchivereader.h"
+#include "libretro/core_zarchive.h"
 
 namespace xe {
 namespace vfs {
@@ -22,7 +22,7 @@ DiscZarchiveEntry::DiscZarchiveEntry(Device* device, Entry* parent,
     : Entry(device, parent, path),
       data_offset_(0),
       data_size_(0),
-      handle_(ZARCHIVE_INVALID_NODE) {}
+      handle_(XE_ZAR_INVALID) {}
 
 DiscZarchiveEntry::~DiscZarchiveEntry() = default;
 

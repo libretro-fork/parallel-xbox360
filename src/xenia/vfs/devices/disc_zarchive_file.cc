@@ -26,6 +26,8 @@ void DiscZarchiveFile::Destroy() { delete this; }
 X_STATUS DiscZarchiveFile::ReadSync(std::span<uint8_t> buffer,
                                     size_t byte_offset,
                                     size_t* out_bytes_read) {
+  if (!out_bytes_read) return X_STATUS_INVALID_PARAMETER;
+  *out_bytes_read = 0;
   if (byte_offset >= entry_->size()) {
     return X_STATUS_END_OF_FILE;
   }
@@ -37,10 +39,10 @@ X_STATUS DiscZarchiveFile::ReadSync(std::span<uint8_t> buffer,
     return X_STATUS_UNSUCCESSFUL;
   }
 
-  const uint64_t bytes_read = zArchDev->reader()->ReadFromFile(
+  const uint64_t bytes_read = xe_zar_read(zArchDev->reader(),
       entry_->handle_, byte_offset, buffer.size(), buffer.data());
   *out_bytes_read = bytes_read;
-  return X_STATUS_SUCCESS;
+  return !buffer.empty() && !bytes_read ? X_STATUS_UNSUCCESSFUL : X_STATUS_SUCCESS;
 }
 
 }  // namespace vfs

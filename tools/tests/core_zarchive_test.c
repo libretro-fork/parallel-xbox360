@@ -59,6 +59,7 @@ int main(int argc,char **argv){
   for(offset=0;offset<sizeof(random_bytes);offset+=32761){want=sizeof(random_bytes)-offset;if(want>sizeof(output))want=sizeof(output);
     if(archive_test_read(reader,"random.bin",offset,want,output)!=want||memcmp(output,random_bytes+offset,want))return 9;
   }
+  if(archive_test_read(reader,"alpha/data.bin",0,11,output)!=11||memcmp(output,source,11)||archive_test_read(reader,"random.bin",0,11,output)!=11||memcmp(output,random_bytes,11))return 13;
   if(archive_test_read(reader,"empty.bin",0,1,output)!=0||archive_test_read(reader,"absent",0,1,output)!=0)return 10;
   if(archive_test_read(reader,long_name,0,11,output)!=11||memcmp(output,source,11))return 12;
   archive_test_close(reader);puts("PASS: real archive compressed/raw blocks, cross-block random reads, cache eviction and empty files");return 0;

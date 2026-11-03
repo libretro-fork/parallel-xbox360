@@ -13,9 +13,10 @@
 #include <cctype>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include "third_party/zarchive/include/zarchive/zarchivereader.h"
+#include "libretro/core_zarchive.h"
 #include "xenia/base/filesystem.h"
 
 namespace xe {
@@ -37,94 +38,94 @@ bool EqualsIgnoreCase(std::string_view a, std::string_view b) {
 }
 
 // Recursively search for default.xex in the archive.
-ZArchiveNodeHandle FindDefaultXex(ZArchiveReader* reader,
+uint32_t FindDefaultXex(xe_zar* reader,
                                   const std::string& dir_path, int max_depth) {
   if (max_depth <= 0) {
-    return ZARCHIVE_INVALID_NODE;
+    return XE_ZAR_INVALID;
   }
 
-  ZArchiveNodeHandle dir_handle = reader->LookUp(dir_path, false, true);
-  if (dir_handle == ZARCHIVE_INVALID_NODE || !reader->IsDirectory(dir_handle)) {
-    return ZARCHIVE_INVALID_NODE;
+  uint32_t dir_handle = xe_zar_lookup(reader, dir_path.data(), dir_path.size(), 0, 1);
+  if (dir_handle == XE_ZAR_INVALID || !(xe_zar_type(reader, dir_handle) == 0)) {
+    return XE_ZAR_INVALID;
   }
 
-  uint32_t entry_count = reader->GetDirEntryCount(dir_handle);
+  uint32_t entry_count = xe_zar_count(reader, dir_handle);
   for (uint32_t i = 0; i < entry_count; i++) {
-    ZArchiveReader::DirEntry entry;
-    if (!reader->GetDirEntry(dir_handle, i, entry)) {
+    xe_zar_entry entry;
+    if (!xe_zar_entry_get(reader, dir_handle, i, &entry)) {
       continue;
     }
 
-    if (entry.isFile && EqualsIgnoreCase(entry.name, "default.xex")) {
+    if (entry.is_file && EqualsIgnoreCase(std::string_view(entry.name, entry.name_size), "default.xex")) {
       std::string file_path = dir_path;
       if (!file_path.empty() && file_path.back() != '/') {
         file_path += '/';
       }
-      file_path += std::string(entry.name);
-      return reader->LookUp(file_path, true, false);
+      file_path += std::string(entry.name, entry.name_size);
+      return xe_zar_lookup(reader, file_path.data(), file_path.size(), 1, 0);
     }
 
-    if (entry.isDirectory) {
+    if (!entry.is_file) {
       std::string subdir_path = dir_path;
       if (!subdir_path.empty() && subdir_path.back() != '/') {
         subdir_path += '/';
       }
-      subdir_path += std::string(entry.name);
+      subdir_path += std::string(entry.name, entry.name_size);
 
-      ZArchiveNodeHandle result =
+      uint32_t result =
           FindDefaultXex(reader, subdir_path, max_depth - 1);
-      if (result != ZARCHIVE_INVALID_NODE) {
+      if (result != XE_ZAR_INVALID) {
         return result;
       }
     }
   }
 
-  return ZARCHIVE_INVALID_NODE;
+  return XE_ZAR_INVALID;
 }
 
 }  // namespace
 
 std::optional<XexMetadata> ExtractZarMetadata(
     const std::filesystem::path& path) {
-  std::unique_ptr<ZArchiveReader> reader(ZArchiveReader::OpenFromFile(xe::path_to_utf8(path).c_str()));
+  std::unique_ptr<xe_zar, decltype(&xe_zar_close)> reader(xe_zar_open(xe::path_to_utf8(path).c_str()), &xe_zar_close);
   if (!reader) {
     return std::nullopt;
   }
 
-  ZArchiveNodeHandle handle = FindDefaultXex(reader.get(), "/", 2);
-  if (handle == ZARCHIVE_INVALID_NODE) {
+  uint32_t handle = FindDefaultXex(reader.get(), "/", 2);
+  if (handle == XE_ZAR_INVALID) {
     handle = FindDefaultXex(reader.get(), "", 2);
   }
-  if (handle == ZARCHIVE_INVALID_NODE || !reader->IsFile(handle)) {
+  if (handle == XE_ZAR_INVALID || !(xe_zar_type(reader.get(), handle) == 1)) {
     return std::nullopt;
   }
 
-  uint64_t file_size = reader->GetFileSize(handle);
+  uint64_t file_size = xe_zar_size(reader.get(), handle);
   if (file_size < 24) {
     return std::nullopt;
   }
 
   // Read base header to get header_size (big-endian at offset 0x08).
   uint8_t base_header[24];
-  if (reader->ReadFromFile(handle, 0, sizeof(base_header), base_header) !=
+  if (xe_zar_read(reader.get(), handle, 0, sizeof(base_header), base_header) !=
       sizeof(base_header)) {
     return std::nullopt;
   }
 
-  uint32_t magic = (base_header[0] << 24) | (base_header[1] << 16) |
+  uint32_t magic = (uint32_t(base_header[0]) << 24) | (base_header[1] << 16) |
                    (base_header[2] << 8) | base_header[3];
   if (magic != 0x58455831 && magic != 0x58455832) {
     return std::nullopt;
   }
 
-  uint32_t header_size = (base_header[8] << 24) | (base_header[9] << 16) |
+  uint32_t header_size = (uint32_t(base_header[8]) << 24) | (base_header[9] << 16) |
                          (base_header[10] << 8) | base_header[11];
   if (header_size < 24 || header_size > file_size) {
     return std::nullopt;
   }
 
   std::vector<uint8_t> header_data(header_size);
-  if (reader->ReadFromFile(handle, 0, header_size, header_data.data()) !=
+  if (xe_zar_read(reader.get(), handle, 0, header_size, header_data.data()) !=
       header_size) {
     return std::nullopt;
   }

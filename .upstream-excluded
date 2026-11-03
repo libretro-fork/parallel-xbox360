@@ -142,3 +142,6 @@ src/xenia/gpu/trace_dump.cc
 src/xenia/gpu/trace_dump.h
 src/xenia/gpu/d3d12/d3d12_trace_dump_main.cc
 src/xenia/gpu/vulkan/vulkan_trace_dump_main.cc
+
+third_party/zarchive/include/zarchive/zarchivereader.h
+third_party/zarchive/src/zarchivereader.cpp

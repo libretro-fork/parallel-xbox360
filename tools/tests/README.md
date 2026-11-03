@@ -866,3 +866,41 @@ both native input and a frontend VFS that forces short reads and disables
 borrowed mappings. Compare exact source bytes through compressed/raw blocks,
 cross-block random reads, cache eviction and empty files. New I/O algorithms
 are C89; the existing archive classes retain minimal C++ ownership adapters.
+
+`core_zarchive_format_test.c` independently constructs the byte format instead
+of relying on the existing writer as its oracle. It checks native borrowed
+metadata, allocation-free mapped raw reads, short-read VFS fallback, four
+concurrent raw/compressed readers, collision-heavy cache churn, invalid ranges/names/graphs, and private publication after failed
+reads/decodes/checksums. `XE_ZAR_TEST` enables storage queries only in test
+builds. Strict MSVC and MinGW C89, Android syntax, Linux ASan/UBSan and TSan
+cover the reader. On this WSL host TSan needs per-process ASLR disabled with
+`setarch x86_64 -R`; this changes neither production flags nor system policy.
+The independent real-writer fixture still checks compatibility, long names,
+compressed/raw blocks, mixed cache backings, random reads, eviction and empty files.
+
+`run_zarchive_benchmark.sh` builds the exact historical reader at `3ca00408`
+and the current production reader as separate shared objects, with matching
+Make-shaped flags and symbol binding. Its C89 process driver keeps a common
+rthreads worker parked to exercise libc's multithreaded mutex path, checks
+returned bytes, compares name-based and already-resolved-handle reads, and
+records peak resident memory. It runs serial alternating process pairs,
+identical-baseline controls and an opaque-ABI copy-only reference on one guest
+CPU. The latter is a measured sustainable data-movement reference, not a claim
+of the hardware's theoretical peak. Assembly and machine/compiler/source
+identification are saved alongside raw CSV samples. Run from Linux after other
+builds/tests finish:
+
+```sh
+bash tools/tests/run_zarchive_benchmark.sh
+```
+
+`BENCH_CPU`, `BENCH_PAIRS`, `BENCH_CONTROL_PAIRS`, `BENCH_FLOOR_PAIRS`,
+`BENCH_CACHE_ITERS`, `BENCH_MISS_ITERS` and `BENCH_OPEN_ITERS` allow controlled
+experiments. Defaults use 10 comparison pairs, 5 identical-baseline pairs,
+10 reference processes, 30 million cached/reference reads, 1.2 million misses
+and 300 opens. This is a cache-hot CPU/DrvFS component experiment; it does not
+measure cold storage, frontend throughput or game frame rates. The C89 driver
+also compiles for Windows, using native loader, profiling and resident-memory
+APIs. The shell runner is Linux-specific.
+
+The [3 November measurement report](results/zarchive-2026-11-03/README.md) includes raw samples, source/compiler identification, assembly and the remaining gap to the copy reference.

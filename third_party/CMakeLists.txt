@@ -230,10 +230,9 @@ endif()
 # ==============================================================================
 add_library(zarchive STATIC
   ../libretro/core_file.c
+  ../libretro/core_zarchive.c
   zarchive/include/zarchive/zarchivecommon.h
-  zarchive/include/zarchive/zarchivereader.h
   zarchive/include/zarchive/zarchivewriter.h
-  zarchive/src/zarchivereader.cpp
   zarchive/src/zarchivewriter.cpp
   zarchive/src/sha_256.c
   zarchive/src/sha_256.h

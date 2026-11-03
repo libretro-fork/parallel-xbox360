@@ -16,15 +16,16 @@
 #include "xenia/base/mapped_memory.h"
 #include "xenia/vfs/device.h"
 
-#include "third_party/zarchive/include/zarchive/zarchivereader.h"
+#include "libretro/core_zarchive.h"
+
 
 namespace xe {
 namespace vfs {
 
-const fourcc_t kZarMagic = make_fourcc((_ZARCHIVE::Footer::kMagic >> 24 & 0xFF),
-                                       (_ZARCHIVE::Footer::kMagic >> 16 & 0xFF),
-                                       (_ZARCHIVE::Footer::kMagic >> 8 & 0xFF),
-                                       (_ZARCHIVE::Footer::kMagic & 0xFF));
+const fourcc_t kZarMagic = make_fourcc((XE_ZAR_MAGIC >> 24 & 0xFF),
+                                       (XE_ZAR_MAGIC >> 16 & 0xFF),
+                                       (XE_ZAR_MAGIC >> 8 & 0xFF),
+                                       (XE_ZAR_MAGIC & 0xFF));
 
 class DiscZarchiveEntry;
 
@@ -47,7 +48,7 @@ class DiscZarchiveDevice : public Device {
   uint32_t sectors_per_allocation_unit() const override { return 1; }
   uint32_t bytes_per_sector() const override { return 0x200; }
 
-  ZArchiveReader* reader() const { return reader_.get(); }
+  xe_zar* reader() const { return reader_.get(); }
 
  private:
   bool ReadAllEntries(const std::string& path, DiscZarchiveEntry* node,
@@ -56,7 +57,7 @@ class DiscZarchiveDevice : public Device {
   std::string name_;
   std::filesystem::path host_path_;
   std::unique_ptr<Entry> root_entry_;
-  std::unique_ptr<ZArchiveReader> reader_;
+  std::unique_ptr<xe_zar, decltype(&xe_zar_close)> reader_{nullptr, &xe_zar_close};
 };
 
 }  // namespace vfs

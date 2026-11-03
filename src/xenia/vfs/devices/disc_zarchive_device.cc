@@ -14,7 +14,7 @@
 #include "xenia/base/math.h"
 #include "xenia/vfs/devices/disc_zarchive_entry.h"
 
-#include "third_party/zarchive/include/zarchive/zarchivereader.h"
+#include "libretro/core_zarchive.h"
 #include "xenia/base/filesystem.h"
 
 namespace xe {
@@ -22,13 +22,12 @@ namespace vfs {
 
 DiscZarchiveDevice::DiscZarchiveDevice(const std::string_view mount_path,
                                        const std::filesystem::path& host_path)
-    : Device(mount_path), name_("GDFX"), host_path_(host_path), reader_() {}
+    : Device(mount_path), name_("GDFX"), host_path_(host_path) {}
 
 DiscZarchiveDevice::~DiscZarchiveDevice() {};
 
 bool DiscZarchiveDevice::Initialize() {
-  reader_ =
-      std::unique_ptr<ZArchiveReader>(ZArchiveReader::OpenFromFile(xe::path_to_utf8(host_path_).c_str()));
+  reader_.reset(xe_zar_open(xe::path_to_utf8(host_path_).c_str()));
 
   if (!reader_) {
     XELOGE("Disc ZArchive could not be opened");
@@ -36,7 +35,7 @@ bool DiscZarchiveDevice::Initialize() {
   }
 
   constexpr std::string_view root_path = "/";
-  const ZArchiveNodeHandle handle = reader_->LookUp(root_path);
+  const uint32_t handle = xe_zar_lookup(reader_.get(), root_path.data(), root_path.size(), 1, 1);
   XELOGI("DiscZarchiveDevice::Initialize: root LookUp('{}') -> handle={}",
          root_path, static_cast<uint32_t>(handle));
   auto root_entry = new DiscZarchiveEntry(this, nullptr, root_path);
@@ -71,11 +70,11 @@ Entry* DiscZarchiveDevice::ResolvePath(const std::string_view path) {
     return nullptr;
   }
 
-  const ZArchiveNodeHandle handle = reader_->LookUp(path);
+  const uint32_t handle = xe_zar_lookup(reader_.get(), path.data(), path.size(), 1, 1);
   XELOGI(
       "DiscZarchiveDevice::ResolvePath: LookUp('{}') -> handle={} (invalid={})",
-      path, static_cast<uint32_t>(handle), handle == ZARCHIVE_INVALID_NODE);
-  if (handle == ZARCHIVE_INVALID_NODE) {
+      path, static_cast<uint32_t>(handle), handle == XE_ZAR_INVALID);
+  if (handle == XE_ZAR_INVALID) {
     return nullptr;
   }
 
@@ -88,13 +87,13 @@ Entry* DiscZarchiveDevice::ResolvePath(const std::string_view path) {
 bool DiscZarchiveDevice::ReadAllEntries(const std::string& path,
                                         DiscZarchiveEntry* node,
                                         DiscZarchiveEntry* parent) {
-  const ZArchiveNodeHandle handle = node->handle_;
+  const uint32_t handle = node->handle_;
 
-  if (handle == ZARCHIVE_INVALID_NODE) {
+  if (handle == XE_ZAR_INVALID) {
     return false;
   }
 
-  if (reader_->IsFile(handle)) {
+  if ((xe_zar_type(reader_.get(), handle) == 1)) {
     auto entry = new DiscZarchiveEntry(this, parent, path);
     entry->attributes_ = kFileAttributeReadOnly;
     entry->handle_ = static_cast<uint32_t>(handle);
@@ -103,25 +102,25 @@ bool DiscZarchiveDevice::ReadAllEntries(const std::string& path,
     return true;
   }
 
-  if (reader_->IsDirectory(handle)) {
-    const uint32_t count = reader_->GetDirEntryCount(handle);
+  if ((xe_zar_type(reader_.get(), handle) == 0)) {
+    const uint32_t count = xe_zar_count(reader_.get(), handle);
 
     for (uint32_t i = 0; i < count; i++) {
-      ZArchiveReader::DirEntry dirEntry;
-      if (!reader_->GetDirEntry(handle, i, dirEntry)) {
+      xe_zar_entry dirEntry;
+      if (!xe_zar_entry_get(reader_.get(), handle, i, &dirEntry)) {
         XELOGE("Invalid ZArchive directory! Skipping loading");
         return false;
       }
 
-      const std::string full_path = path + std::string(dirEntry.name);
-      const ZArchiveNodeHandle fileHandle = reader_->LookUp(full_path);
+      const std::string full_path = path + std::string(dirEntry.name, dirEntry.name_size);
+      const uint32_t fileHandle = xe_zar_lookup(reader_.get(), full_path.data(), full_path.size(), 1, 1);
       XELOGI(
           "DiscZarchiveDevice::ReadAllEntries: entry='{}' type={} "
           "handle={} size={}",
           full_path,
-          dirEntry.isDirectory ? "dir" : (dirEntry.isFile ? "file" : "unknown"),
+          !dirEntry.is_file ? "dir" : (dirEntry.is_file ? "file" : "unknown"),
           static_cast<uint32_t>(fileHandle), dirEntry.size);
-      if (fileHandle == ZARCHIVE_INVALID_NODE) {
+      if (fileHandle == XE_ZAR_INVALID) {
         XELOGE("DiscZarchiveDevice::ReadAllEntries: LookUp failed for '{}'",
                full_path);
         return false;
@@ -137,7 +136,7 @@ bool DiscZarchiveDevice::ReadAllEntries(const std::string& path,
       entry->write_timestamp_ = 10000 * 11644473600000LL;
       entry->parent_ = node;
 
-      if (dirEntry.isDirectory) {
+      if (!dirEntry.is_file) {
         entry->data_size_ = 0;
         entry->size_ = dirEntry.size;
         entry->attributes_ = kFileAttributeDirectory | kFileAttributeReadOnly;
@@ -145,8 +144,8 @@ bool DiscZarchiveDevice::ReadAllEntries(const std::string& path,
         if (!ReadAllEntries(full_path + "\\", entry, node)) {
           return false;
         }
-      } else if (dirEntry.isFile) {
-        entry->data_size_ = entry->size_ = reader_->GetFileSize(fileHandle);
+      } else if (dirEntry.is_file) {
+        entry->data_size_ = entry->size_ = xe_zar_size(reader_.get(), fileHandle);
         entry->attributes_ = kFileAttributeReadOnly;
         entry->allocation_size_ =
             xe::round_up(entry->size_, bytes_per_sector());
