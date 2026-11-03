@@ -486,6 +486,9 @@ void InitializeLogging(const std::string_view app_name) {
 
 void ShutdownLogging() {
   Logger* logger = logger_;
+  if (!logger) {
+    return;
+  }
   logger_ = nullptr;
 
   logger->~Logger();
@@ -534,7 +537,7 @@ void logging::internal::AppendLogLine(LogLevel log_level,
 
 void logging::AppendLogLine(LogLevel log_level, const char prefix_char,
                             const std::string_view str, uint32_t log_mask) {
-  if (!ShouldLog(log_level, log_mask) || !str.size()) {
+  if (!logger_ || !ShouldLog(log_level, log_mask) || !str.size()) {
     return;
   }
   logger_->AppendLine(xe::threading::current_thread_id(), prefix_char,

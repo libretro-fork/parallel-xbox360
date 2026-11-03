@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Content close now flushes and joins Xenia's logging writer before the core can unload. Reset/context rebuild retains one logger; reopening content creates a fresh logger and frontend log sink. Repeated shutdown and late log messages safely handle an already stopped logger.
+
 - Removed the Windows first-run disclaimer dialog, browser launch and Xenia registry acknowledgement check. Core startup no longer depends on a desktop prompt or the standalone emulator's registry state.
 
 - Content close explicitly detaches the Windows fiber exception callback after stopping the emulator, including when retired guest frames retain fiber owners. This covers the repeated unload crash left by relying only on the last stack destructor; retained stack owners are reported in xenia.log.

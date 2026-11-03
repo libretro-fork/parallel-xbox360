@@ -228,6 +228,7 @@ struct xenia_core_state {
 
 static struct xenia_core_state core_state;
 static std::unique_ptr<xe::Emulator> xenia_emulator;
+static bool s_logging_initialized = false;
 static xe::apu::libretro::LibretroAudioSystem *audio_mixer = nullptr;
 
 // RetroArch's multi-channel output, for 5.1 (NNshi). Once the frontend gives
@@ -1518,9 +1519,8 @@ static bool xenia_setup_and_launch(const char *path) {
         if (cvars::log_file.empty())
             cvars::log_file = root / "xenia.log";
 #endif
-        // Once per process: a reset launches again in the same process, and a
-        // second logger would be a second writer thread on the same file.
-        static bool s_logging_initialized = false;
+        // Share a logger across reset/context rebuild, but join its writer at
+        // content close. A core DLL may be unloaded before the process exits.
         if (!s_logging_initialized)
             xe::SetExtraLogSink(std::make_unique<RetroLogSink>());
         if (!s_logging_initialized) {
@@ -1769,6 +1769,16 @@ static void xenia_shutdown(void) {
     d3d12_hw = nullptr;
 #endif
     d3d12_hw_render_active = false;
+    // Every producer above has stopped. Use the logger's terminator and join
+    // sequence before the frontend unloads the core's code and static runtime.
+    if (s_logging_initialized) {
+#ifdef _WIN32
+        xe::ShutdownWin32App();
+#else
+        xe::ShutdownLogging();
+#endif
+        s_logging_initialized = false;
+    }
 }
 
 /* ================================================================== */

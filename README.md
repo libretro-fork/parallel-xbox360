@@ -29,6 +29,8 @@ Everything the core keeps is in `system/Xenia-Edge/`: saves, title updates and D
 
 On Windows, the fiber stack exception callback is removed when the last stack is released and explicitly detached after emulator shutdown, including when retired guest frames retain stack owners. Any retained owners are reported in `xenia.log`.
 
+Content close also flushes and joins the logging writer before the core DLL can unload. Reset and graphics context rebuild share the existing logger; reopening content starts it again.
+
 Games that need a signed-in profile get one: the core signs in the first profile under `content/`, or creates one when there is none, named after the first line of `system/Xenia-Edge/xbl_profilename.txt` ("Player" if the file is missing, which the core then writes there).
 
 ## Building
