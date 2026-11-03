@@ -5,6 +5,8 @@
 #include <string_view>
 #include <unordered_map>
 #include <mutex>
+#include <memory>
+#include <encodings/rzstd.h>
 
 #include <filesystem>
 #include <fstream>
@@ -53,6 +55,7 @@ private:
 	};
 
 	std::mutex m_accessMutex;
+    std::unique_ptr<rzstd_decoder_t, decltype(&rzstd_decoder_free)> m_decoder{nullptr, &rzstd_decoder_free};
 
 	std::vector<uint8_t> m_cacheDataBuffer;
 	std::vector<CacheBlock> m_cacheBlocks;

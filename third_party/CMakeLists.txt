@@ -192,6 +192,7 @@ target_compile_definitions(snappy PRIVATE HAVE_CONFIG_H)
 add_library(retro-common STATIC
   libretro-common/encodings/encoding_xxh3.c
   libretro-common/encodings/encoding_xxh64.c
+  libretro-common/encodings/encoding_rzstd.c
   libretro-common/encodings/encoding_crc32.c
   libretro-common/encodings/encoding_deflate.c
   libretro-common/features/features_cpu.c
@@ -219,32 +220,6 @@ endif()
 
 
 # ==============================================================================
-# zstd
-# ==============================================================================
-file(GLOB_RECURSE _zstd_common "zstd/lib/common/*.c" "zstd/lib/common/*.h")
-list(FILTER _zstd_common EXCLUDE REGEX "threading\\.c$")
-file(GLOB_RECURSE _zstd_compress "zstd/lib/compress/*.c" "zstd/lib/compress/*.h")
-file(GLOB_RECURSE _zstd_decompress "zstd/lib/decompress/*.c" "zstd/lib/decompress/*.h")
-add_library(zstd STATIC
-  zstd/lib/zstd.h
-  ${_zstd_common}
-  ${_zstd_compress}
-  ${_zstd_decompress}
-)
-target_include_directories(zstd PUBLIC zstd/lib PRIVATE zstd/lib/common)
-target_link_libraries(zstd PUBLIC retro-common)
-target_compile_definitions(zstd PRIVATE
-  XXH_NAMESPACE=ZSTD_
-  ZSTD_LEGACY_SUPPORT=0
-)
-if(XE_TARGET_X86_64 AND NOT MSVC)
-  enable_language(ASM)
-  target_sources(zstd PRIVATE zstd/lib/decompress/huf_decompress_amd64.S)
-else()
-  target_compile_definitions(zstd PRIVATE ZSTD_DISABLE_ASM)
-endif()
-
-# ==============================================================================
 # zarchive
 # ==============================================================================
 add_library(zarchive STATIC
@@ -256,8 +231,8 @@ add_library(zarchive STATIC
   zarchive/src/sha_256.c
   zarchive/src/sha_256.h
 )
-target_include_directories(zarchive PUBLIC zarchive/include PRIVATE zstd/lib)
-target_link_libraries(zarchive PUBLIC zstd)
+target_include_directories(zarchive PUBLIC zarchive/include)
+target_link_libraries(zarchive PUBLIC retro-common)
 
 # ==============================================================================
 # libusb (Windows only)

@@ -3,7 +3,7 @@
 
 #include <fstream>
 
-#include <zstd.h>
+#include <encodings/rzstd.h>
 #include <cassert>
 
 static uint64_t _ifstream_getFileSize(std::ifstream& file)
@@ -342,9 +342,13 @@ bool ZArchiveReader::LoadBlock(CacheBlock* block)
 	}
 	if (!_ifstream_readBytes(m_file, offset, m_blockDecompressionBuffer.data(), compressedSize))
 		return false;
+    // Retain scratch only after the first compressed block; raw archives need none.
+    if (!m_decoder) m_decoder.reset(rzstd_decoder_new());
+    if (!m_decoder) return false;
 	// decompress
-	size_t outputSize = ZSTD_decompress(block->data, _ZARCHIVE::COMPRESSED_BLOCK_SIZE, m_blockDecompressionBuffer.data(), compressedSize);
-	return outputSize == _ZARCHIVE::COMPRESSED_BLOCK_SIZE;
+    size_t outputSize = 0;
+    int status = rzstd_decode_reuse(m_decoder.get(), block->data, _ZARCHIVE::COMPRESSED_BLOCK_SIZE, m_blockDecompressionBuffer.data(), compressedSize, &outputSize);
+    return status == RZSTD_PROCESS_END && outputSize == _ZARCHIVE::COMPRESSED_BLOCK_SIZE;
 }
 
 // returns empty view on failure

@@ -48,3 +48,10 @@ ad31f3d4258976bf7ecbcdc2a2efe91db706f2d80a4aee30dee9a3fbd3b20735  time/rtime.c
 
 Local changes after import: rthreads.c suppresses the unused Win32 thread_priority parameter and omits unreachable fallback returns in Windows affinity functions. Hash/codec sources retain imported implementations.
 Import whitespace normalization: removed trailing whitespace and expanded leading tabs in files reported by git diff --check; import hashes above describe the original source.
+aa2fff6b11abd545e612e8e2844ae3c9a7aa5cc7c4ca52d0ff143a12ff6ae8c9  encodings/encoding_rzstd.c (additional rzstd import from the same recorded revision)
+f5af7371ba09b523cc5c736cdba6aa8250ee07849863389d6558a8ba170debc8  include/encodings/rzstd.h (additional rzstd import from the same recorded revision)
+882a6df5210a12da30664bed1f69ab39e8ee363c2934ee01b0c15ba703347158  include/compat/intrinsics.h (additional rzstd import from the same recorded revision)
+Local rzstd change: explicitly mask frame-magic bytes before uint8_t conversion, avoiding MSVC constant-truncation warnings without changing emitted bytes.
+Local rzstd change: replace the volatile BMI2 dispatch flag and constructor with native retro_atomic acquire/release publication, including concurrent lazy initialization.
+Local rzstd extension: reusable single-owner decoder scratch API; ZArchive retains one per reader to eliminate per-block scratch allocation/free without clearing the full decode workspace.
+Local rzstd optimization: terminal matches use bounded 16-byte copies after safely growing short periods, retaining a narrow tail and exact output bounds.

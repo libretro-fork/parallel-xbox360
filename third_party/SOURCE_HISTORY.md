@@ -35,7 +35,7 @@ and nested sample dependencies were omitted.
 | `third_party/xxhash` | `e626a72bc2321cd320e953a0ccf1584cad60f363` (removed; replaced by libretro-common) |
 | `third_party/zarchive` | `b467f7aa342895e66a1a003377ed63b3c1be3de3` |
 | `third_party/zlib-ng` | `860e4cff7917d93f54f5d7f0bc1d0e8b1a3cb988` (removed; replaced by libretro-common) |
-| `third_party/zstd` | `20707e3718ee14250fb8a44b3bf023ea36bd88df` |
+| `third_party/zstd` | `20707e3718ee14250fb8a44b3bf023ea36bd88df` (removed; replaced by libretro-common rzstd) |
 | `third_party/DirectXShaderCompiler` (Windows API header only) | `69e54e29086b7035acffb304cec57a350225f8b0` |
 
 The core raw SPIR-V writer in `src/xenia/gpu/spirv` reuses binary-writer code
@@ -46,4 +46,4 @@ The patch data in `libretro/data/patches` comes from
 https://github.com/xenia-canary/game-patches at
 `fe957a050e37f5a1e3f485ca43c2e37ee2a9c92d`.
 
-Selected libretro-common sources come from RetroArch commit `c358071531a568859654f46a0826f409495c08be`; see `third_party/libretro-common/SOURCE.txt` for the import manifest and local changes. Zstandard's checksum adapter now calls this XXH64 implementation.
+Selected libretro-common sources come from RetroArch commit `c358071531a568859654f46a0826f409495c08be`; see `third_party/libretro-common/SOURCE.txt` for the import manifest and local changes. ZArchive now uses the owned rzstd encoder/decoder and XXH64 checksum implementation.

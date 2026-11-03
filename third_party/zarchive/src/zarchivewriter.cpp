@@ -5,7 +5,7 @@
 #include <string_view>
 #include <queue>
 
-#include <zstd.h>
+#include <encodings/rzstd.h>
 
 #include "sha_256.h"
 
@@ -138,10 +138,10 @@ void ZArchiveWriter::StoreBlock(const uint8_t* uncompressedData)
 {
 	// compress and store
 	uint64_t compressedWriteOffset = GetCurrentOutputOffset();
-	m_compressionBuffer.resize(ZSTD_compressBound(_ZARCHIVE::COMPRESSED_BLOCK_SIZE));
-	size_t outputSize = ZSTD_compress(m_compressionBuffer.data(), m_compressionBuffer.size(), uncompressedData, _ZARCHIVE::COMPRESSED_BLOCK_SIZE, 6);
-	assert(outputSize >= 0);
-	if (outputSize >= _ZARCHIVE::COMPRESSED_BLOCK_SIZE)
+    m_compressionBuffer.resize(rzstd_compress_bound(_ZARCHIVE::COMPRESSED_BLOCK_SIZE));
+    size_t outputSize = 0;
+    int status = rzstd_encode(m_compressionBuffer.data(), m_compressionBuffer.size(), uncompressedData, _ZARCHIVE::COMPRESSED_BLOCK_SIZE, 6, &outputSize);
+    if (status != RZSTD_PROCESS_END || outputSize >= _ZARCHIVE::COMPRESSED_BLOCK_SIZE)
 	{
 		// store block uncompressed if it is equal or larger than the input after compression
 		outputSize = _ZARCHIVE::COMPRESSED_BLOCK_SIZE;

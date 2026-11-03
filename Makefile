@@ -247,7 +247,6 @@ $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter src/xenia/cpu/backend/%,$(
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/mspack/% third_party/snappy/%,$(SOURCES_C) $(SOURCES_CXX)))): CPPFLAGS += -DHAVE_CONFIG_H
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/snappy/%,$(SOURCES_CXX)))): CPPFLAGS := -I$(GEN)/snappy $(CPPFLAGS) -w -DHAVE_CONFIG_H
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/libusb/%,$(SOURCES_C)))): CPPFLAGS := -Ithird_party/libusb/$(if $(filter msvc,$(WINDOWS_ABI)),msvc,mingw) $(CPPFLAGS) -w
-$(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(ZSTD_SOURCES))): CPPFLAGS += -DXXH_NAMESPACE=ZSTD_ -DZSTD_LEGACY_SUPPORT=0 -DZSTD_DISABLE_ASM
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(FFMPEG_SOURCES))): CPPFLAGS += -DHAVE_AV_CONFIG_H -D_USE_MATH_DEFINES -Ithird_party/FFmpeg/libavcodec
 ifneq ($(OS),windows)
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(FFMPEG_SOURCES))): CPPFLAGS += -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 -Ithird_party/FFmpeg/compat/atomics/gcc

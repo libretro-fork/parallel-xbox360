@@ -67,7 +67,7 @@ INCLUDE_DIRS := $(GEN) $(GEN)/generated third_party/ffmpeg-xenia \
  third_party/libretro-common/include third_party/mspack third_party/pugixml/src \
  third_party/asio/include third_party/tomlplusplus/include third_party/llvm/include \
  third_party/Vulkan-Headers/include third_party/ffmpeg-xenia third_party/FFmpeg third_party/aes_128 \
- third_party/zstd/lib third_party/zarchive/include
+ third_party/zarchive/include
 
 SOURCES_C += third_party/aes_128/unroll/aes.c \
  third_party/mspack/lzxd.c third_party/mspack/system.c \
@@ -85,9 +85,6 @@ SOURCES_CXX += third_party/fmt/src/format.cc third_party/fmt/src/os.cc \
  third_party/zarchive/src/zarchivereader.cpp third_party/zarchive/src/zarchivewriter.cpp
 SOURCES_CXX += $(wildcard src/xenia/gpu/spirv/*.cpp)
 SOURCES_C += third_party/zarchive/src/sha_256.c
-ZSTD_SOURCES := $(filter-out %/threading.c,$(wildcard third_party/zstd/lib/common/*.c)) \
- $(wildcard third_party/zstd/lib/compress/*.c third_party/zstd/lib/decompress/*.c)
-SOURCES_C += $(ZSTD_SOURCES)
 
 SOURCES_ASM := $(addprefix third_party/boost_context/context/src/asm/,$(addsuffix _$(BOOST_VARIANT),make jump ontop))
 ifeq ($(ARCH),aarch64)
@@ -326,7 +323,7 @@ endif
 SOURCES_C += $(FFMPEG_SOURCES)
 
 SOURCES_C += $(addprefix third_party/libretro-common/,encodings/encoding_xxh3.c \
- encodings/encoding_xxh64.c encodings/encoding_crc32.c encodings/encoding_deflate.c \
+ encodings/encoding_xxh64.c encodings/encoding_rzstd.c encodings/encoding_crc32.c encodings/encoding_deflate.c \
  features/features_cpu.c compat/compat_strl.c time/rtime.c queues/retro_spsc.c \
  rthreads/rthreads.c rthreads/retro_eventcount.c rthreads/retro_asym_eventcount.c \
  rthreads/retro_procbarrier.c)

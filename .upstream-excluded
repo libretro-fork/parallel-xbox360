@@ -120,3 +120,11 @@ third_party/miniaudio
 
 third_party/xxhash
 third_party/zlib-ng
+
+third_party/zstd
+
+third_party/zarchive/cmake
+third_party/zarchive/CMakeLists.txt
+third_party/zarchive/vcpkg.json
+third_party/zarchive/zarchive.pc.in
+third_party/zarchive/src/main.cpp

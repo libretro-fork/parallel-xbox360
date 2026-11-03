@@ -18,8 +18,12 @@ handoffs, MPSC nodes, hash vectors and a DEFLATE round trip. Define
 `RETRO_ATOMIC_FORCE_MSVC` or `RETRO_ATOMIC_FORCE_GCC_NEW` consistently with the
 compiler, plus `HAVE_THREADS` and `HAVE_THREAD_STORAGE`, and link the selected
 library sources listed in `third_party/CMakeLists.txt` (Windows also needs winmm).
-`core_zstd_test.c` checks checksum-bearing frames through the Zstandard adapter,
-the XXH64 trailer and corrupt-checksum rejection. Hash timings and limits are
+`core_rzstd_test.c` checks a reference-generated level-9 multiblock/checksum
+fixture, 180 encoded cases across sizes and patterns, output bounds, truncation
+workspace reuse after errors, and exact-boundary terminal matches with offsets 1 through 32. `core_zarchive_test.c` uses a minimal C++
+bridge to exercise the real archive classes: compressed/raw blocks, cross-block
+random reads, four-MiB cache eviction and empty files. Its test driver is C89.
+Hash timings and limits are
 recorded in `optimization_measurements.md`.
 These tests do not establish that the core's remaining C++ threading has been
 migrated, or measure gameplay performance.
