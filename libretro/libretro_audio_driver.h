@@ -48,6 +48,7 @@ class LibretroAudioDriver : public AudioDriver {
 
  private:
   void Resample(const float* in, size_t frames);
+  XE_NOINLINE void SubmitFrameResampled(float* samples);
 
   xe_audio_group* group_ = nullptr;
   bool registry_required_ = false;

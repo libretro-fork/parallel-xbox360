@@ -1,4 +1,6 @@
 #include "core_audio_queue.h"
+#include "core_audio_convert.h"
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <retro_atomic.h>
@@ -222,11 +224,22 @@ static size_t room(const xe_audio_queue *queue) {
   return used < queue->limit ? queue->limit - used : 0;
 }
 
-size_t xe_audio_queue_write(xe_audio_queue *queue, const float *data, size_t count) {
+typedef struct xe_audio_convert_source {
+  size_t frames;
+  unsigned channels;
+  int sequential_be;
+  float volume;
+} xe_audio_convert_source;
+
+static size_t write_samples(xe_audio_queue *queue, const float *data, size_t count,
+      const xe_audio_convert_source *convert) {
   size_t written = 0, span, available, remaining;
   void *destination;
+  float wrapped[6];
+  unsigned output_channels;
   int key;
   if (!queue || (!data && count) || count % (queue->frame_bytes / sizeof(float))) return 0;
+  output_channels = (unsigned)(queue->frame_bytes / sizeof(float));
   while (written < count && !stopped(queue)) {
     available = room(queue);
     if (!available) {
@@ -247,17 +260,46 @@ size_t xe_audio_queue_write(xe_audio_queue *queue, const float *data, size_t cou
       /* A plain ring can wrap in the middle of a six-channel frame. Publish
        * that complete frame in one operation, never a partial channel group. */
       retro_spsc_write_end(&queue->samples, 0);
-      retro_spsc_write(&queue->samples, data + written, queue->frame_bytes);
+      if (convert) {
+        xe_audio_convert(wrapped, data, convert->frames, written / output_channels,
+              1, convert->channels, output_channels, convert->sequential_be,
+              convert->volume);
+        retro_spsc_write(&queue->samples, wrapped, queue->frame_bytes);
+      } else retro_spsc_write(&queue->samples, data + written, queue->frame_bytes);
       written += queue->frame_bytes / sizeof(float);
       continue;
     }
     remaining = count - written;
     if (span / sizeof(float) > remaining) span = remaining * sizeof(float);
-    memcpy(destination, data + written, span);
+    if (convert)
+      xe_audio_convert((float *)destination, data, convert->frames,
+            written / output_channels, span / queue->frame_bytes,
+            convert->channels, output_channels, convert->sequential_be,
+            convert->volume);
+    else memcpy(destination, data + written, span);
     retro_spsc_write_end(&queue->samples, span);
     written += span / sizeof(float);
   }
   return written;
+}
+
+size_t xe_audio_queue_write(xe_audio_queue *queue, const float *data, size_t count) {
+  return write_samples(queue, data, count, NULL);
+}
+
+size_t xe_audio_queue_write_converted(xe_audio_queue *queue, const float *data,
+      size_t frames, unsigned channels, int sequential_be, float volume) {
+  xe_audio_convert_source source;
+  size_t output_channels;
+  if (!queue || (!data && frames) || (channels != 2 && channels != 6) ||
+      (sequential_be && channels != 6) || frames > SIZE_MAX / (6 * sizeof(float)))
+    return 0;
+  output_channels = queue->frame_bytes / sizeof(float);
+  source.frames = frames;
+  source.channels = channels;
+  source.sequential_be = sequential_be;
+  source.volume = volume;
+  return write_samples(queue, data, frames * output_channels, &source);
 }
 
 static size_t queue_mix(xe_audio_queue *queue, float *mix, size_t count, int notify) {

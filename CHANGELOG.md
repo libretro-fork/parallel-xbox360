@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Native 48 kHz guest audio now converts byte order, channel layout and volume directly into owned queue spans using MSVC C89 code. This removes the intermediate converted block and queue copy, and folds volume into conversion. SSE/NEON stereo downmix retains the existing matrix and operation order. Non-48-kHz media conversion remains separate; whole-frame wrap publication and shutdown cancellation are preserved.
+
 - Frontend audio batches now use fixed reusable storage sized for all supported channel and refresh modes. Float mixing writes directly into the final output buffer; integer conversion uses reusable storage, removing lazy integer allocation and per-run buffer growth.
 
 - Render-target collection now marks ownership directly on cached objects, removing its temporary hash set and ownership-key copies in both Vulkan and D3D12. All four EDRAM ownership representations remain protected. Other gameplay allocation paths remain under audit.

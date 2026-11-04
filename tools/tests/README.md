@@ -30,7 +30,7 @@ compiled core; the format fixture accepts hardware setup without resetting it.
 `core_audio_queue_test.c` checks 200,000 frames each of stereo and 5.1 concurrent
 production/consumption, exact additive sample order, whole-frame publication,
 physical wraps, destination bounds, the 64 ms limit, readiness wakeup and stop
-while full. Build it with `core_audio_queue.c` and the common SPSC, eventcount,
+while full. Build it with `core_audio_queue.c`, `core_audio_convert.c` and the common SPSC, eventcount,
 thread, feature and time sources. Test both normal and `XE_AUDIO_QUEUE_PLAIN`
 builds to force the non-mirrored wrap path. These are C89 component tests;
 failed-content core lifecycle tests do not substitute for a loaded-game audio
@@ -1092,6 +1092,20 @@ build, audio format/cadence, repeated invalid-content close, APC interruption,
 and Vulkan/D3D12 interface/lifetime fixtures. Those lifecycle fixtures do not
 boot a retail game or prove visual output across all titles. macOS and Android
 SDK builds are not available in this validation environment.
+
+### Direct audio production
+
+Run bash tools/tests/run_direct_audio_tests.sh (SANITIZER= under MSYS2).
+The C89 converter test checks exact output bits for every span size from 1 to
+257 frames, all supported channel layouts, planar big-endian stride, volume
+and output bounds. Queue tests exercise original and direct-conversion writes
+through 200,000-frame streams, mirrored/plain wraps, known channel-matrix
+impulses, the 64 ms bound, readiness and stop while full. Linux uses ASan/UBSan.
+MSVC uses /TC /MD /O2 /W4 /WX; compile the converter and queue tests separately
+with the selected common sources or built retro-common library. MinGW's runner
+relaxes only the existing common rtime.c function-pointer-cast warning.
+Android NDK r27d also compiles the NEON converter as strict C89 for ARM64.
+These tests do not prove loaded-game audio or native ARM64 execution.
 
 ### GPU resource retirement
 

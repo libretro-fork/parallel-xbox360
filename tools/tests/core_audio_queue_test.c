@@ -1,5 +1,6 @@
 /* Whole-frame SPSC ownership, wrap, readiness and cancellation; MSVC C89. */
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <retro_atomic.h>
 #include <rthreads/rthreads.h>
@@ -8,6 +9,7 @@
 
 static xe_audio_queue *queue;
 static unsigned channels;
+static int converted;
 static retro_atomic_int_t started, done, failed;
 static retro_eventcount_t completion;
 static size_t written;
@@ -22,7 +24,8 @@ static void producer(void *opaque) {
     count = 1 + frame % 511;
     if (count > 200000 - frame) count = 200000 - frame;
     for (i = 0; i < count * channels; ++i) data[i] = sample(frame * channels + i);
-    result = xe_audio_queue_write(queue, data, count * channels);
+    result = converted ? xe_audio_queue_write_converted(queue, data, count, channels, 0, 1.0f) :
+        xe_audio_queue_write(queue, data, count * channels);
     if (result != count * channels) {
       retro_atomic_store_release_int(&failed, 1); break;
     }
@@ -36,7 +39,8 @@ static void blocked_writer(void *opaque) {
   float frame[6] = {99, 99, 99, 99, 99, 99};
   (void)opaque;
   retro_atomic_store_release_int(&started, 1);
-  written = xe_audio_queue_write(queue, frame, channels);
+  written = converted ? xe_audio_queue_write_converted(queue, frame, 1, channels, 0, 1.0f) :
+      xe_audio_queue_write(queue, frame, channels);
   retro_atomic_store_release_int(&done, 1);
   retro_eventcount_notify(&completion);
 }
@@ -120,12 +124,64 @@ static int full_test(unsigned ch, int cancel) {
   return 1;
 }
 
+static int matrix_test(unsigned output_channels, int be) {
+  float source[257 * 6], mix[257 * 6 + 2], amplitude, expected;
+  static const float left[6] = {1, 0, 0.707106781f, 0.5f, 0.707106781f, 0};
+  static const float right[6] = {0, 1, 0.707106781f, 0.5f, 0, 0.707106781f};
+  unsigned channel, round, c;
+  size_t i, index;
+  uint32_t bits;
+  unsigned char *bytes;
+  xe_audio_queue *q = xe_audio_queue_new(output_channels);
+  if (!q) return 0;
+  if (xe_audio_queue_write_converted(q, source, SIZE_MAX, 6, be, 1.0f) ||
+      xe_audio_queue_write_converted(q, source, 1, 2, 1, 1.0f)) return 0;
+  for (channel = 0; channel < 6; ++channel) {
+    memset(source, 0, sizeof(source));
+    for (i = 0; i < 257; ++i) {
+      amplitude = (float)(i + 1) / 32.0f;
+      index = be ? channel * 257 + i : i * 6 + channel;
+      if (be) {
+        memcpy(&bits, &amplitude, sizeof(bits)); bytes = (unsigned char *)&source[index];
+        bytes[0] = (unsigned char)(bits >> 24); bytes[1] = (unsigned char)(bits >> 16);
+        bytes[2] = (unsigned char)(bits >> 8); bytes[3] = (unsigned char)bits;
+      } else source[index] = amplitude;
+    }
+    for (round = 0; round < 32; ++round) {
+      if (xe_audio_queue_write_converted(q, source, 257, 6, be, 0.375f) !=
+          257 * output_channels) return 0;
+      memset(mix, 0, sizeof(mix));
+      mix[257 * output_channels] = 1234.0f;
+      if (xe_audio_queue_mix(q, mix, 257 * output_channels) !=
+          257 * output_channels || mix[257 * output_channels] != 1234.0f) return 0;
+      for (i = 0; i < 257; ++i) for (c = 0; c < output_channels; ++c) {
+        amplitude = (float)(i + 1) / 32.0f;
+        if (output_channels == 6) expected = channel == c ? amplitude : 0.0f;
+        else if (be) expected = amplitude * (c ? right[channel] : left[channel]);
+        else if (channel == c) expected = amplitude;
+        else if (channel == 2 || channel == (c ? 5u : 4u)) expected = amplitude * 0.7071f;
+        else expected = 0.0f;
+        expected *= 0.375f;
+        if (mix[i * output_channels + c] != expected) return 0;
+      }
+    }
+  }
+  xe_audio_queue_free(q);
+  return 1;
+}
+
 int main(void) {
   if (!retro_eventcount_init(&completion)) return 1;
   if (xe_audio_queue_new(1) || xe_audio_queue_new(8)) return 2;
   if (!stream_test(2) || !stream_test(6)) return 3;
   if (!full_test(2, 0) || !full_test(6, 0) ||
       !full_test(2, 1) || !full_test(6, 1)) return 4;
+  converted = 1;
+  if (!stream_test(2) || !stream_test(6)) return 5;
+  if (!full_test(2, 0) || !full_test(6, 0) ||
+      !full_test(2, 1) || !full_test(6, 1)) return 6;
+  if (!matrix_test(2, 0) || !matrix_test(6, 0) ||
+      !matrix_test(2, 1) || !matrix_test(6, 1)) return 7;
   retro_eventcount_free(&completion);
   puts("PASS: stereo/5.1 whole-frame wrap, 64ms bound, readiness and cancellation");
   return 0;

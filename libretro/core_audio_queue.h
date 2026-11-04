@@ -35,6 +35,12 @@ void xe_audio_queue_free(xe_audio_queue *queue);
  * Count must contain complete channel frames. Invalid arguments return zero;
  * a valid write is short only after stop or for an unavailable queue. */
 size_t xe_audio_queue_write(xe_audio_queue *queue, const float *data, size_t count);
+/* Convert directly into owned queue spans, preserving complete-frame publication.
+ * Input is borrowed until return. No resampling; count is input frames.
+ * sequential_be requires six planar big-endian channels. Returns output sample
+ * count, like write(), rather than frames. Stop may short-write. */
+size_t xe_audio_queue_write_converted(xe_audio_queue *queue, const float *data,
+      size_t frames, unsigned channels, int sequential_be, float volume);
 /* Adds directly from borrowed queue spans into final mix storage. */
 size_t xe_audio_queue_mix(xe_audio_queue *queue, float *mix, size_t count);
 void xe_audio_queue_pause(xe_audio_queue *queue, int paused);

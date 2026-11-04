@@ -74,6 +74,18 @@ void LibretroAudioDriver::Resample(const float* in, size_t frames) {
 }
 
 void LibretroAudioDriver::SubmitFrame(float* samples) {
+  if (frequency_ != 48000) {
+    SubmitFrameResampled(samples);
+    return;
+  }
+  if (!xe_audio_queue_paused(ring_.get())) {
+    xe_audio_queue_write_converted(ring_.get(), samples, channel_samples_,
+        channels_, channels_ == 6 && need_format_conversion_, xe_audio_queue_get_volume(ring_.get()));
+  }
+  if (semaphore_) semaphore_->Release(1, nullptr);
+}
+
+void LibretroAudioDriver::SubmitFrameResampled(float* samples) {
   if (!xe_audio_queue_paused(ring_.get())) {
     // Up to 768 frames (the media player's stereo) in up to 6 channels.
     float out[768 * 6];
