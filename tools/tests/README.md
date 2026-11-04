@@ -340,10 +340,26 @@ compiled with MinGW-w64 GCC using `-std=c89 -Wall -Wextra -Werror`.
 
 - `core_events_test.c` checks coalesced title-stop requests and stale-state
   clearing. Run `make check-core-events` on Windows or Linux.
-- `context_switch_test.c` checks two fiber resumes using the owned
-  `make_x86_64_ms_pe_gas.asm` and `jump_x86_64_ms_pe_gas.asm` objects under
-  `third_party/boost_context/context/src/asm/`. Assemble with GCC using
-  `-x assembler-with-cpp -DBOOST_CONTEXT_EXPORT=`; link the objects to the test.
+- `context_switch_test.c` checks two fiber resumes using owned libco. Compile
+  with `-Ithird_party/libretro-common/include -DLIBCO_MP` and link
+  `third_party/libretro-common/libco/amd64.c`; use `aarch64.c` on ARM64 with
+  `-D_GNU_SOURCE -DHAVE_POSIX_MEMALIGN=1`. The AMD64 source also builds with
+  MSVC `/TC`, without a separate assembler.
+- `core_fiber_test.c` exercises the production guarded-stack wrapper through
+  `core_fiber_bridge.cc`, linked with the core's base/common libraries. It
+  checks callback return, stack reuse, suspended restart/deletion, caller
+  tracking, host-thread exit and migration, deep-stack growth with canaries,
+  and eight concurrent workers.
+  Compile the driver as C89 and bridge as C++20. On Linux, instrument the
+  driver, bridge, `threading_fiber.cc` and `core_fiber_context.c` with
+  `-fsanitize=address,undefined -fno-omit-frame-pointer`; run with
+  `ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1` and
+  `UBSAN_OPTIONS=halt_on_error=1`, then repeat with stack-use-after-return
+  detection disabled. Linux sanitizer checks also verify retired fake-stack
+  mappings are released. Dependency archives must use the same compiler ABI.
+  `build_core_fiber_benchmark.cmd` and `run_core_fiber_benchmark.ps1` compare
+  the production wrappers, extracting the old implementation from Git history.
+  Results and limitations are in `results/fiber-9950x3d/README.md`.
 - `d3d12_struct_return_test.c` checks five D3D12 C ABI adapters against real WARP
   objects. Compile it with `src/xenia/ui/d3d12/d3d12_struct_return.c`, add
   `-Isrc -isystem . -isystem third_party/DirectX-Headers/include`, and link

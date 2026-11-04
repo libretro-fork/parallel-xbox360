@@ -31,7 +31,7 @@ Original Xbox games run through XeFu, the Xbox 360's own emulator of the origina
 
 Everything the core keeps is in `system/Xenia-Edge/`: saves, title updates and DLC under `content/`, laid out as in standalone Xenia's content folder; the shader and other caches under `cache/`; and Xenia's log, `xenia.log`. Errors and warnings from it also appear in RetroArch's log. The core option Apply Title Updates turns updates off.
 
-On Windows, the fiber stack exception callback is removed when the last stack is released and explicitly detached after emulator shutdown, including when retired guest frames retain stack owners. Any retained owners are reported in `xenia.log`.
+Fibers use owned libretro-common libco AMD64/ARM64 backends, including direct AMD64 switching under MSVC. A C89 lifecycle adapter reuses guarded stack allocations on restart without copying stack contents. On Windows, the fiber stack exception callback is removed when the last stack is released and explicitly detached after emulator shutdown, including when retired guest frames retain stack owners. Any retained owners are reported in `xenia.log`.
 
 Content close flushes and joins the logging writer non-alertably before the core DLL can unload. Windows APC delivery cannot release its queue and sinks before the writer exits. Reset and graphics context rebuild share the existing logger; reopening content starts it again.
 

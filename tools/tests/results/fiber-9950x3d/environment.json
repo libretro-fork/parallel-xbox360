@@ -1,0 +1,18 @@
+{
+  "date_utc": "2026-11-04T01:14:17.3303509Z",
+  "cpu": "AMD Ryzen 9 9950X3D, 16 cores / 32 logical processors",
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "compiler": "cl.exe 19.44.35224.0; toolset directory 14.44.35207",
+  "flags": "/MD /O2 /DNDEBUG /arch:AVX (C++ bridge/reference); /TC /MD /O2 /W4 /WX (C89 driver)",
+  "baseline": "967d10598afc0a7b2f9d33f770efd528457756f9",
+  "baseline_fiber_blob": "7f80866c15b0aa7f83184f34fc299b5d7bb8183c",
+  "libco_import": "f13b1459b166dcf89cfedf33f020f2e5345af040",
+  "affinity_mask": 4,
+  "stack_bytes": 1048576,
+  "rounds": 12,
+  "cases": 10,
+  "rows": 240,
+  "order": "Alternate backend order on each round",
+  "background": "Core builds completed; no native compiler processes observed for the published run",
+  "notes": "Same C89 driver, C++ bridge and current dependency libraries; old reference Fiber and make/jump assembly extracted from Git history. Switching warms 100000 round trips, then times 2000000; ns per one-way switch. Memory is peak process working set / private commit in KiB. No PMU counters or gameplay/FPS measurements."
+}

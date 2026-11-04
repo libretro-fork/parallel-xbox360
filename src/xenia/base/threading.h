@@ -519,7 +519,7 @@ class Thread : public WaitHandle {
 // cooperatively — control only moves between them at explicit SwitchTo()
 // calls — which is what lets the guest scheduler serialize guest execution.
 //
-// Backed by Boost.Context (fcontext_t). Unlike Thread, a Fiber is not a host
+// Backed by owned libretro-common libco. Unlike Thread, a Fiber is not a host
 // wait object; the guest scheduler tracks blocked fibers itself.
 class Fiber {
  public:

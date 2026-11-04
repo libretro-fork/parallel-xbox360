@@ -26,42 +26,12 @@
 #include <unistd.h>
 #endif
 
-// AddressSanitizer needs to be told about stack switches or it poisons and
-// unwinds against the wrong stack, making sanitized builds unusable with
-// fibers.
-#if defined(__has_feature)
-#if __has_feature(address_sanitizer)
-#define XE_FIBER_ASAN 1
-#endif
-#elif defined(__SANITIZE_ADDRESS__)
-#define XE_FIBER_ASAN 1
-#endif
-#if XE_FIBER_ASAN
-#include <sanitizer/common_interface_defs.h>
-#endif
-
-// Boost.Context fcontext_t primitives. The implementation is the hand-written
-// owned assembly in third_party/boost_context, linked into the core.
-// These routines carry no Boost
-// header dependencies, so we declare the two we use directly here.
-extern "C" {
-typedef void* fcontext_t;
-struct fcontext_transfer_t {
-  fcontext_t fctx;
-  void* data;
-};
-fcontext_t make_fcontext(void* sp, size_t size,
-                         void (*fn)(fcontext_transfer_t));
-fcontext_transfer_t jump_fcontext(fcontext_t to, void* vp);
-}  // extern "C"
+#include "libretro/core_fiber_context.h"
 
 namespace xe {
 namespace threading {
 
 namespace {
-
-// The fiber currently executing on this host thread.
-thread_local Fiber* current_fiber_ = nullptr;
 
 size_t HostPageSize() {
 #if XE_PLATFORM_WIN32
@@ -79,7 +49,7 @@ size_t HostPageSize() {
 struct FiberStack {
   void* base = nullptr;  // low address of the whole allocation
   size_t total = 0;      // whole allocation, including the floor page
-  void* high = nullptr;  // one past the top (what make_fcontext wants)
+  void* high = nullptr;  // one past the top, aligned for libco initialization
   size_t usable = 0;     // total minus the floor page
 };
 
@@ -249,137 +219,79 @@ void FreeFiberStack(FiberStack& s) {
   s = FiberStack{};
 }
 
-class FcontextFiber : public Fiber {
+class LibcoFiber : public Fiber {
  public:
-  // Created fiber: owns a guard-paged stack and a context entered the first
-  // time it is switched to.
-  FcontextFiber(size_t stack_size, std::function<void()> start_routine)
+  LibcoFiber(size_t stack_size, std::function<void()> start_routine)
       : entry_(std::move(start_routine)) {
+    context_.owner = this;
     stack_ = AllocFiberStack(stack_size);
     ResetContext();
     owns_stack_ = true;
   }
 
-  // Adopted fiber: wraps the calling thread's existing stack. Its context is
-  // captured the first time something switches away from it.
-  FcontextFiber() {
-#if XE_FIBER_ASAN
-    // The sanitizer needs real bounds when fibers switch back to this stack.
-#if XE_PLATFORM_WIN32
-    ULONG_PTR low = 0, high = 0;
-    GetCurrentThreadStackLimits(&low, &high);
-    stack_.base = reinterpret_cast<void*>(low);
-    stack_.usable = high - low;
-#elif XE_PLATFORM_LINUX || XE_PLATFORM_ANDROID
-    pthread_attr_t attr;
-    if (pthread_getattr_np(pthread_self(), &attr) == 0) {
-      pthread_attr_getstack(&attr, &stack_.base, &stack_.usable);
-      pthread_attr_destroy(&attr);
-    }
-#elif XE_PLATFORM_MAC
-    stack_.usable = pthread_get_stacksize_np(pthread_self());
-    stack_.base = static_cast<char*>(pthread_get_stackaddr_np(pthread_self())) -
-                  stack_.usable;
-#endif
-#endif  // XE_FIBER_ASAN
+  LibcoFiber() {
+    context_.owner = this;
+    xe_fiber_context_adopt(&context_);
   }
 
-  ~FcontextFiber() override {
+  ~LibcoFiber() override {
+    xe_fiber_context_destroy(&context_);
     if (owns_stack_) {
       FreeFiberStack(stack_);
     }
   }
 
   void SwitchTo() override {
-    auto* prev = static_cast<FcontextFiber*>(current_fiber_);
-    // SwitchTo requires the host thread to have a current fiber (established by
-    // CreateFromThread or a prior switch).
-    assert_not_null(prev);
-    assert_true(prev != this);
-    current_fiber_ = this;
-#if XE_FIBER_ASAN
-    __sanitizer_start_switch_fiber(&prev->asan_fake_stack_, stack_.base,
-                                   stack_.usable);
-#endif
-    // Enter this fiber, handing it |prev| so it can record where prev resumes.
-    fcontext_transfer_t t = jump_fcontext(fctx_, prev);
-#if XE_FIBER_ASAN
-    // Back on |prev|'s stack.
-    __sanitizer_finish_switch_fiber(prev->asan_fake_stack_, nullptr, nullptr);
-#endif
-    // Resumed: |t.data| is the fiber that switched back into us, |t.fctx| its
-    // continuation point. Save it so we can return to that fiber later.
-    auto* resumer = static_cast<FcontextFiber*>(t.data);
-    resumer->fctx_ = t.fctx;
+    assert_not_null(GetCurrentFiber());
+    assert_true(GetCurrentFiber() != this);
+    assert_false(context_.finished);
+    xe_fiber_context_switch(&context_);
   }
 
-  void SetTerminated() override { terminated_ = true; }
+  void SetTerminated() override { context_.finished = 1; }
 
   void Restart() override {
     assert_true(owns_stack_);
-    assert_true(current_fiber_ != this);
+    assert_true(GetCurrentFiber() != this);
     ResetContext();
-    terminated_ = false;
   }
 
  private:
-  // The stack's floor page is not part of what the context may use.
   void ResetContext() {
-    fctx_ = make_fcontext(stack_.high, stack_.usable,
-                          &FcontextFiber::EntryTrampoline);
+    const int initialized = xe_fiber_context_reset(&context_, stack_.high,
+        static_cast<char*>(stack_.high) - stack_.usable,
+        &LibcoFiber::EntryTrampoline);
+    assert_true(initialized != 0);
+    (void)initialized;
   }
 
-  static void EntryTrampoline(fcontext_transfer_t t) {
-    // First entry into a created fiber. |t.data| is the switcher (prev),
-    // |t.fctx| its continuation - record it so prev can be resumed.
-    auto* prev = static_cast<FcontextFiber*>(t.data);
-    prev->fctx_ = t.fctx;
-
-    auto* self = static_cast<FcontextFiber*>(current_fiber_);
-#if XE_FIBER_ASAN
-    __sanitizer_finish_switch_fiber(self->asan_fake_stack_, nullptr, nullptr);
-#endif
+  static void EntryTrampoline() {
+    auto* self = static_cast<LibcoFiber*>(GetCurrentFiber());
     self->entry_();
-    self->terminated_ = true;
-
-    // The start routine returned. In normal use the guest scheduler switches
-    // away before this point, so this is only a safety net: hand control back
-    // to whoever last resumed us. Resuming a terminated fiber is undefined.
-#if XE_FIBER_ASAN
-    // Passing null frees this dying fiber's fake stack.
-    __sanitizer_start_switch_fiber(nullptr, prev->stack_.base,
-                                   prev->stack_.usable);
-#endif
-    jump_fcontext(prev->fctx_, prev);
   }
 
   std::function<void()> entry_;
-  fcontext_t fctx_ = nullptr;
+  xe_fiber_context context_{};
   FiberStack stack_;
   bool owns_stack_ = false;
-  bool terminated_ = false;
-#if XE_FIBER_ASAN
-  // Sanitizer fake-stack handle, saved when this fiber suspends and consumed
-  // when it resumes.
-  void* asan_fake_stack_ = nullptr;
-#endif
 };
 
 }  // namespace
 
 std::unique_ptr<Fiber> Fiber::Create(CreationParameters params,
                                      std::function<void()> start_routine) {
-  return std::make_unique<FcontextFiber>(params.stack_size,
+  return std::make_unique<LibcoFiber>(params.stack_size,
                                          std::move(start_routine));
 }
 
 std::unique_ptr<Fiber> Fiber::CreateFromThread() {
-  auto fiber = std::make_unique<FcontextFiber>();
-  current_fiber_ = fiber.get();
+  auto fiber = std::make_unique<LibcoFiber>();
   return fiber;
 }
 
-Fiber* Fiber::GetCurrentFiber() { return current_fiber_; }
+Fiber* Fiber::GetCurrentFiber() {
+  return static_cast<Fiber*>(xe_fiber_context_current_owner());
+}
 
 void Fiber::ShutdownStackHandling() {
 #if XE_PLATFORM_WIN32

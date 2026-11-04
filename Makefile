@@ -236,10 +236,10 @@ $(BUILD_DIR)/obj/%.mm.o: %.mm
 	$(CXX) $(BASE_FLAGS) $(CPPFLAGS) $(CXXFLAGS) -c "$<" -o "$@"
 $(BUILD_DIR)/obj/%.asm.o: %.asm
 	@mkdir -p "$(@D)"
-	$(CC) $(BASE_FLAGS) $(CPPFLAGS) -DBOOST_CONTEXT_EXPORT= -x assembler-with-cpp -c "$<" -o "$@"
+	$(CC) $(BASE_FLAGS) $(CPPFLAGS) -x assembler-with-cpp -c "$<" -o "$@"
 $(BUILD_DIR)/obj/%.S.o: %.S
 	@mkdir -p "$(@D)"
-	$(CC) $(BASE_FLAGS) $(CPPFLAGS) -DBOOST_CONTEXT_EXPORT= -c "$<" -o "$@"
+	$(CC) $(BASE_FLAGS) $(CPPFLAGS) -c "$<" -o "$@"
 
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/%,$(SOURCES_C) $(SOURCES_CXX)))): CPPFLAGS += -w
 ifeq ($(OS),linux)

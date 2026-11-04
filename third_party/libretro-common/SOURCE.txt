@@ -114,3 +114,14 @@ b1ab7251aa3d8eb908feab50ad8da244a77f4bf1802de31d0d6f06ba9dcaad0d  include/format
 Local XML changes: safe partial-allocation cleanup (also published in RetroArch 7d8c433ba5),
 lazy accumulator allocation and sixteen inline parser frames with checked heap growth.
 d97b1deab898071d7b11d8c10ae90d23b94b37be49eb6755ef9daa5e40cf096d  formats/xml/rxml.c (local source)
+
+Fiber context import: RetroArch f13b1459b166dcf89cfedf33f020f2e5345af040 (master verified).
+b644abba28bbfda46a623fdea0767891eecf169d59f29bcb1bffe6ee656a57a7  include/libco.h (upstream)
+881d2c615bea5245dc61f1a5aab061a15e59a904314444c8fade90031d404252  libco/amd64.c (upstream)
+158cfc481a6012461e5e06387d952aa637e71d9d41007ea2f9c53e47233c7e4c  libco/aarch64.c (upstream)
+Local fiber change: factor private context initialization for external guarded stacks
+and in-place restart; the public libco API remains unchanged.
+Initial stack-pointer/FP-control stores use memcpy to avoid typed-record aliasing.
+
+1f6190c237754d598e1328a6f776d0195d762ded84eccf6baa950535da619874  libco/amd64.c (local source)
+f3ee26ce3acdc0dccc7a2711846a79c14d80bdf333235b60ad091fcef336c4f1  libco/aarch64.c (local source)

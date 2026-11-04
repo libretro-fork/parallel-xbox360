@@ -157,3 +157,5 @@ third_party/crypto/TinySHA1.hpp
 third_party/rapidjson
 
 third_party/pugixml
+
+third_party/boost_context

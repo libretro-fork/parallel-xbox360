@@ -1,6 +1,6 @@
 # Shared, hand-maintained source selection for the GNU Make build.
 # Keep in sync with the libretro target when importing upstream changes.
-SOURCES_C += libretro/core_events.c libretro/core_audio_cadence.c libretro/core_audio_samples.c libretro/core_audio_queue.c libretro/core_input_analog.c libretro/core_ui_queue.c libretro/core_decompress.c libretro/core_image.c libretro/core_file.c libretro/core_zarchive.c libretro/core_xex_metadata.c libretro/core_crypto.c libretro/core_guest_hash.c libretro/core_xlast.c
+SOURCES_C += libretro/core_fiber_context.c libretro/core_events.c libretro/core_audio_cadence.c libretro/core_audio_samples.c libretro/core_audio_queue.c libretro/core_input_analog.c libretro/core_ui_queue.c libretro/core_decompress.c libretro/core_image.c libretro/core_file.c libretro/core_zarchive.c libretro/core_xex_metadata.c libretro/core_crypto.c libretro/core_guest_hash.c libretro/core_xlast.c
 CORE_DIRS := src/xenia src/xenia/base src/xenia/apu src/xenia/apu/nop \
  src/xenia/cpu src/xenia/cpu/backend src/xenia/cpu/compiler \
  src/xenia/cpu/compiler/passes src/xenia/cpu/hir src/xenia/cpu/ppc \
@@ -13,25 +13,18 @@ CORE_DIRS += src/xenia/cpu/backend/a64
 ARCH_SUFFIXES := arm64
 CAPSTONE_ARCH := AArch64
 CAPSTONE_DEFS := -DCAPSTONE_HAS_ARM64 -DCAPSTONE_HAS_AARCH64
-BOOST_VARIANT := arm64_aapcs_elf_gas.S
 else
 CORE_DIRS += src/xenia/cpu/backend/x64
 ARCH_SUFFIXES := amd64 x64
 CAPSTONE_ARCH := X86
 CAPSTONE_DEFS := -DCAPSTONE_HAS_X86 -DCAPSTONE_X86_ATT_DISABLE
-BOOST_VARIANT := x86_64_sysv_elf_gas.S
 endif
 ifeq ($(OS),windows)
 SOURCES_C += libretro/core_d3d12_fence.c libretro/core_d3d12_video.c
 CORE_DIRS += src/xenia/gpu/d3d12 src/xenia/ui/d3d12
 OS_SUFFIXES := win
-BOOST_VARIANT := x86_64_ms_pe_gas.asm
-ifeq ($(WINDOWS_ABI),msvc)
-BOOST_VARIANT := x86_64_ms_pe_clang_gas.S
-endif
 else ifeq ($(OS),macos)
 OS_SUFFIXES := posix mac
-BOOST_VARIANT := arm64_aapcs_macho_gas.S
 else ifeq ($(OS),android)
 OS_SUFFIXES := posix linux android
 else
@@ -83,7 +76,7 @@ SOURCES_CXX += third_party/fmt/src/format.cc third_party/fmt/src/os.cc \
  third_party/zarchive/src/zarchivewriter.cpp
 SOURCES_CXX += $(wildcard src/xenia/gpu/spirv/*.cpp)
 
-SOURCES_ASM := $(addprefix third_party/boost_context/context/src/asm/,$(addsuffix _$(BOOST_VARIANT),make jump ontop))
+SOURCES_ASM :=
 ifeq ($(ARCH),aarch64)
 SOURCES_CXX += third_party/xbyak_aarch64/src/xbyak_aarch64_impl.cpp \
  third_party/xbyak_aarch64/src/util_impl.cpp
