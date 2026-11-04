@@ -3,6 +3,7 @@
 #include <string.h>
 #include <errno.h>
 #include "core_cache_file.h"
+#include "core_cache_writer.h"
 #include "core_file.h"
 #include <encodings/xxh3.h>
 #ifdef XE_TEST_SHADER_STORAGE
@@ -60,6 +61,53 @@ static int64_t RETRO_CALLCONV truncate_file(struct retro_vfs_file_handle *file, 
    (void)file; ++truncates;
    if (fault == 2 || size < 0 || size > (int64_t)sizeof(storage)) return -1;
    length = (size_t)size; return 0;
+}
+/* Exercise the actual async queue -> transfer helper -> VFS path. */
+struct writer_file_state { RFILE *file; unsigned rows, flushes; int ok; };
+static void writer_file_sink(void *opaque, unsigned kind, const void *data, size_t size) {
+   struct writer_file_state *state = (struct writer_file_state *)opaque;
+   if (kind == 2) {
+      if (size || filestream_flush(state->file)) state->ok = 0;
+      ++state->flushes;
+   } else {
+      if (kind != 1 || size != 48 ||
+            xe_cache_file_write(data, size, 1, state->file) != 1) state->ok = 0;
+      ++state->rows;
+   }
+}
+static int writer_file_test(const char *path) {
+   struct writer_file_state state;
+   xe_cache_writer *writer;
+   uint8_t payload[40], actual[48], expected[48];
+   uint64_t hash;
+   unsigned r, i;
+   state.file = xe_cache_file_open(path);
+   state.rows = state.flushes = 0; state.ok = 1;
+   if (!state.file || !xe_cache_file_repair(state.file, 0)) return 0;
+   writer = xe_cache_writer_new(48, 4, writer_file_sink, &state);
+   if (!writer) return 0;
+   if (!strcmp(path, "cache://pipeline")) interrupted = 1;
+   for (r = 0; r < 64; ++r) {
+      for (i = 0; i < sizeof(payload); ++i) payload[i] = (uint8_t)(r * 13 + i * 37);
+      hash = xxh3_64(payload, sizeof(payload), 0);
+      if (!xe_cache_writer_submit_parts(writer, 1, &hash, sizeof(hash),
+            payload, sizeof(payload))) return 0;
+      memset(payload, 0xcc, sizeof(payload));
+      if ((r + 1) % 8 == 0 && !xe_cache_writer_submit(writer, 2, NULL, 0)) return 0;
+   }
+   xe_cache_writer_free(writer);
+   if (!state.ok || state.rows != 64 || state.flushes != 8 ||
+         filestream_seek(state.file, 0, RETRO_VFS_SEEK_POSITION_START) < 0) return 0;
+   for (r = 0; r < 64; ++r) {
+      for (i = 0; i < sizeof(payload); ++i) payload[i] = (uint8_t)(r * 13 + i * 37);
+      hash = xxh3_64(payload, sizeof(payload), 0);
+      memcpy(expected, &hash, sizeof(hash));
+      memcpy(expected + sizeof(hash), payload, sizeof(payload));
+      if (xe_cache_file_read(actual, sizeof(actual), 1, state.file) != 1 ||
+            memcmp(actual, expected, sizeof(actual))) return 0;
+   }
+   filestream_close(state.file);
+   return 1;
 }
 static unsigned sink_calls;
 static int sink_reject;
@@ -160,6 +208,7 @@ int main(int argc, char **argv) {
    }
    fault = 0; filestream_close(file);
    if (!validation_test("cache://pipeline")) return 33;
+   if (!writer_file_test("cache://pipeline")) return 35;
    info.iface = NULL; filestream_vfs_init(&info);
    file = xe_cache_file_open(argv[1]); if (!file || !xe_cache_file_repair(file, 0)) return 15;
    if (xe_cache_file_write(data, 1, 100, file) != 100) return 16;
@@ -210,7 +259,8 @@ int main(int argc, char **argv) {
    filestream_close(file);
 #endif
    if (!validation_test(argv[1])) return 34;
+   if (!writer_file_test(argv[1])) return 36;
    remove(argv[1]);
-   puts("PASS: VFS short/EINTR transfers, repair/append position, errors, no truncating retry, bounds and native reopen");
+   puts("PASS: VFS short/EINTR transfers, repair/append position, errors, no truncating retry, bounds, native reopen and async split-record persistence");
    return 0;
 }

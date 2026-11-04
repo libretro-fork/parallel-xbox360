@@ -83,13 +83,18 @@ fail:
    free(writer);
    return NULL;
 }
-int xe_cache_writer_submit(xe_cache_writer *writer, unsigned kind,
-      const void *data, size_t size)
+int xe_cache_writer_submit_parts(xe_cache_writer *writer, unsigned kind,
+      const void *first, size_t first_size, const void *second, size_t second_size)
 {
    void *view;
    xe_cache_message *message;
    int key;
-   if (!writer || size > writer->max_record || (!data && size)) return 0;
+   size_t size;
+   unsigned char *payload;
+   if (!writer || first_size > writer->max_record ||
+         second_size > writer->max_record - first_size ||
+         (!first && first_size) || (!second && second_size)) return 0;
+   size = first_size + second_size;
    for (;;) {
       if (retro_atomic_load_acquire_int(&writer->stopped)) return 0;
       if (retro_spsc_write_begin(&writer->queue, &view) >= writer->stride) break;
@@ -102,10 +107,17 @@ int xe_cache_writer_submit(xe_cache_writer *writer, unsigned kind,
    message = (xe_cache_message *)view;
    message->size = size;
    message->kind = kind;
-   if (size) memcpy((unsigned char *)view + sizeof(*message), data, size);
+   payload = (unsigned char *)view + sizeof(*message);
+   if (first_size) memcpy(payload, first, first_size);
+   if (second_size) memcpy(payload + first_size, second, second_size);
    retro_spsc_write_end(&writer->queue, writer->stride);
    retro_eventcount_notify(&writer->work);
    return 1;
+}
+int xe_cache_writer_submit(xe_cache_writer *writer, unsigned kind,
+      const void *data, size_t size)
+{
+   return xe_cache_writer_submit_parts(writer, kind, data, size, NULL, 0);
 }
 void xe_cache_writer_free(xe_cache_writer *writer)
 {

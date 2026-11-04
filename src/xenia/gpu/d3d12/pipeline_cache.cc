@@ -1228,11 +1228,7 @@ bool PipelineCache::ConfigurePipeline(
   // A rebuilt entry came from storage, so writing it again would duplicate it.
   if (storage_writer_.is_active() && !rebuild_pipeline) {
     pipeline_storage_file_flush_needed_ = true;
-    PipelineStoredDescription stored_description;
-    stored_description.description_hash = hash;
-    std::memcpy(&stored_description.description, &description,
-                sizeof(description));
-    storage_writer_.QueuePipelineWrite(stored_description);
+    storage_writer_.QueuePipelineWrite(hash, &description);
   }
 
   current_pipeline_ = new_pipeline;

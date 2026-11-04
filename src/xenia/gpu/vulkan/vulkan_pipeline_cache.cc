@@ -705,11 +705,7 @@ bool VulkanPipelineCache::ConfigurePipeline(
     }
 
     pipeline_storage_file_flush_needed_ = true;
-    PipelineStoredDescription stored_description;
-    stored_description.description_hash = description.GetHash();
-    std::memcpy(&stored_description.description, &description,
-                sizeof(description));
-    storage_writer_.QueuePipelineWrite(stored_description);
+    storage_writer_.QueuePipelineWrite(description.GetHash(), &description);
   }
 
   // Get tessellation shaders if needed.

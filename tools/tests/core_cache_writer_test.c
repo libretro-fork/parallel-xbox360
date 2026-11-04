@@ -37,6 +37,7 @@ int main(void)
    struct record record;
    xe_cache_writer *writer;
    unsigned round, i, j, count;
+   size_t split;
    CHECK(!xe_cache_writer_new((size_t)-1, 1, consume, NULL));
    CHECK(!xe_cache_writer_new(8, 0, consume, NULL));
    CHECK(!xe_cache_writer_new(8, (size_t)-1, consume, NULL));
@@ -50,13 +51,18 @@ int main(void)
       CHECK(writer);
       CHECK(!xe_cache_writer_submit(writer, 1, &record, sizeof(record)+1));
       CHECK(!xe_cache_writer_submit(writer, 1, NULL, 1));
+      CHECK(!xe_cache_writer_submit_parts(writer, 1, &record,
+            sizeof(record), &record, (size_t)-1));
+      CHECK(!xe_cache_writer_submit_parts(writer, 1, &record, 1, NULL, 1));
       count = 3000 + round;
       for (i = 0; i < count; ++i) {
          memset(&record, 0, sizeof(record));
          record.index = i;
          for (j = 0; j < sizeof(record.payload); ++j)
             record.payload[j] = (unsigned char)(i + j);
-         CHECK(xe_cache_writer_submit(writer, 1, &record, sizeof(record)));
+         split = i % (sizeof(record) + 1);
+         CHECK(xe_cache_writer_submit_parts(writer, 1, &record, split,
+               (const unsigned char *)&record + split, sizeof(record) - split));
          memset(&record, 0xcc, sizeof(record));
          if ((i+1) % 97 == 0)
             CHECK(xe_cache_writer_submit(writer, 2, NULL, 0));

@@ -11,6 +11,7 @@
 #define XENIA_GPU_SHADER_STORAGE_H_
 
 #include <cstdint>
+#include <cstddef>
 #include "libretro/core_cache_file.h"
 #include "libretro/core_cache_writer.h"
 #include "libretro/core_file.h"
@@ -420,8 +421,15 @@ class ShaderStorageWriter {
     xe_cache_writer_submit(storage_writer_, 1, &shader, sizeof(shader));
   }
 
-  void QueuePipelineWrite(const TPipelineStoredDescription& description) {
-    xe_cache_writer_submit(storage_writer_, 2, &description, sizeof(description));
+  void QueuePipelineWrite(uint64_t description_hash, const void* description) {
+    // The persistent format is a packed hash followed by descriptor bytes.
+    static_assert(offsetof(TPipelineStoredDescription, description) ==
+                  sizeof(uint64_t));
+    static_assert(sizeof(TPipelineStoredDescription) == sizeof(uint64_t) +
+                  sizeof(TPipelineStoredDescription::description));
+    xe_cache_writer_submit_parts(storage_writer_, 2,
+        &description_hash, sizeof(description_hash), description,
+        sizeof(TPipelineStoredDescription::description));
   }
 
   void RequestFlush(bool flush_shaders, bool flush_pipelines) {
