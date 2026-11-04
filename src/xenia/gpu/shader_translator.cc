@@ -772,7 +772,7 @@ bool ShaderTranslator::TranslateAnalyzedShader(
       break;
     }
   }
-  translation.is_valid_.store(is_valid, std::memory_order_relaxed);
+  xe_shader_set_valid(&translation.publication_state_, is_valid);
 
   PostTranslation();
   if (translation.is_valid() && !translation.PrepareForPublication()) {
@@ -782,9 +782,9 @@ bool ShaderTranslator::TranslateAnalyzedShader(
   // Publish last: a thread that lost TryClaimTranslation spins on
   // is_translated() and reads the validity and the binary right after, so all
   // of the above has to be visible once it observes this.
-  translation.is_translated_.store(true, std::memory_order_release);
+  xe_shader_publish(&translation.publication_state_);
 
-  // In case is_valid_ is modified by PostTranslation, reload.
+  // Preparation may invalidate the translation.
   if (translation.is_valid()) {
     XELOGI("Shader {:016X} {} translated successfully ({} bytes)",
            shader.ucode_data_hash(),

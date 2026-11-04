@@ -25,7 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
-#include <atomic>
+#include <retro_atomic.h>
 #include <chrono>
 #include <condition_variable>
 #include <memory>
@@ -668,7 +668,7 @@ static const char *opt_get(const char *key) {
 // A message box the core answered without a window (xam_ui.cc), from a guest
 // thread, shown by retro_run on RetroArch's screen
 // Dialog Notifications: whether an answered dialog is shown as one
-static std::atomic<bool> s_dialog_notices{true};
+static retro_atomic_int_t s_dialog_notices = 1;
 
 // system/Xenia-Edge, where the core keeps everything (xenia_setup_and_launch)
 static std::filesystem::path xenia_root_dir(void) {
@@ -903,7 +903,7 @@ static void apply_core_options(void) {
     }
 
     if ((v = opt_get(XENIA_OPT_DIALOG_NOTICES))) {
-        s_dialog_notices.store(strcmp(v, "disabled") != 0, std::memory_order_relaxed);
+        retro_atomic_store_relaxed_int(&s_dialog_notices, strcmp(v, "disabled") != 0);
     }
 
     // License mask (0=None, 1=Full, -1=All)
@@ -1278,7 +1278,7 @@ static xe::X_STATUS xenia_launch_path_seh(const std::filesystem::path &p) {
 static std::filesystem::path xenia_root;
 
 // Guest swaps and vblanks (command_processor.cc), for the run stats
-namespace xe { namespace gpu { extern std::atomic<uint64_t> g_guest_swaps, g_guest_vblanks; } }
+namespace xe { namespace gpu { extern retro_atomic_size_t g_guest_swaps, g_guest_vblanks; } }
 using xe::gpu::g_guest_swaps;
 using xe::gpu::g_guest_vblanks;
 
@@ -1442,7 +1442,7 @@ static bool xenia_setup_and_launch(const char *path) {
         // loaded after it go by.
         xe::kernel::xam::xam_message_box_notice =
             [](const std::string &title, const std::string &answer) {
-                if (!s_dialog_notices.load(std::memory_order_relaxed))
+                if (!retro_atomic_load_relaxed_int(&s_dialog_notices))
                     return;
                 xe_libretro_notice_post(title.c_str(), answer.c_str());
             };
@@ -1504,8 +1504,8 @@ static std::thread s_pause_watchdog;
 static std::mutex s_pause_mutex;
 static std::condition_variable s_pause_cv;
 static bool s_pause_watchdog_stop = false;
-static std::atomic<bool> s_guest_paused{false};
-static std::atomic<int64_t> s_last_run_ms{0};
+static retro_atomic_int_t s_guest_paused;
+static retro_atomic_64_t s_last_run_ms;
 
 static int64_t steady_ms(void) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1518,7 +1518,7 @@ static void guest_set_paused(bool paused) {
     // One at a time: the watchdog pausing and retro_run resuming must not
     // land in the scheduler in the opposite order
     std::lock_guard<std::mutex> lock(s_pause_state_mutex);
-    if (s_guest_paused.exchange(paused) == paused)
+    if ((retro_atomic_exchange_int(&s_guest_paused, paused) != 0) == paused)
         return;
     // Restore guest time before waking dispatch workers. Freeze it only after
     // requesting the pause, so resumed workers never see a stale paused clock.
@@ -1531,7 +1531,7 @@ static void guest_set_paused(bool paused) {
 }
 
 static void pause_watchdog_start(void) {
-    s_last_run_ms = steady_ms();
+    retro_atomic_store_release_64(&s_last_run_ms, steady_ms());
     std::lock_guard<std::mutex> lock(s_pause_mutex);
     if (s_pause_watchdog.joinable())
         return;
@@ -1540,8 +1540,8 @@ static void pause_watchdog_start(void) {
         std::unique_lock<std::mutex> lock(s_pause_mutex);
         while (!s_pause_watchdog_stop) {
             s_pause_cv.wait_for(lock, std::chrono::milliseconds(25));
-            if (!s_pause_watchdog_stop && game_loaded && !s_guest_paused &&
-                steady_ms() - s_last_run_ms.load() > 100)
+            if (!s_pause_watchdog_stop && game_loaded && !retro_atomic_load_acquire_int(&s_guest_paused) &&
+                steady_ms() - retro_atomic_load_acquire_64(&s_last_run_ms) > 100)
                 guest_set_paused(true);
         }
     });
@@ -2009,8 +2009,8 @@ static void run_stats_end(std::chrono::steady_clock::time_point run_start, doubl
     const double window = std::chrono::duration<double>(std::chrono::steady_clock::now() - st.window_start).count();
     if (window < 1.0)
         return;
-    const uint64_t swaps = g_guest_swaps.load(std::memory_order_relaxed);
-    const uint64_t vblanks = g_guest_vblanks.load(std::memory_order_relaxed);
+    const uint64_t swaps = retro_atomic_load_relaxed_size(&g_guest_swaps);
+    const uint64_t vblanks = retro_atomic_load_relaxed_size(&g_guest_vblanks);
     xenia_log(RETRO_LOG_INFO,
               "[run stats] %.2f s: retro_run %llu (avg %.2f ms, max %.2f ms, longest gap %.2f ms); "
               "frame capture avg %.2f ms, max %.2f ms; guest swaps %llu, vblanks %llu\n",
@@ -2043,8 +2043,8 @@ RETRO_API void retro_run(void) {
             std::chrono::duration<double, std::milli>(run_start - s_run_stats.last_run).count());
     s_run_stats.last_run = run_start;
 
-    s_last_run_ms = steady_ms();
-    if (s_guest_paused)
+    retro_atomic_store_release_64(&s_last_run_ms, steady_ms());
+    if (retro_atomic_load_acquire_int(&s_guest_paused))
         guest_set_paused(false);
     // Input first, so the frame the vblank below starts reads this run's
     // input rather than the last one's

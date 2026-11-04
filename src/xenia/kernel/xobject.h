@@ -11,7 +11,7 @@
 #define XENIA_KERNEL_XOBJECT_H_
 
 #include <algorithm>
-#include <atomic>
+#include <retro_atomic.h>
 #include <cstddef>
 #include <deque>
 #include <mutex>
@@ -261,10 +261,10 @@ class XObject {
   // to apply a priority boost matching real Xenon scheduler behavior.
   // Atomic: a pooled object can be signalled again while a waiter reads it.
   uint32_t priority_increment() const {
-    return priority_increment_.load(std::memory_order_relaxed);
+    return static_cast<uint32_t>(retro_atomic_load_relaxed_int(&priority_increment_));
   }
   void set_priority_increment(uint32_t inc) {
-    priority_increment_.store(inc, std::memory_order_relaxed);
+    retro_atomic_store_relaxed_int(&priority_increment_, static_cast<int>(inc));
   }
 
  protected:
@@ -297,7 +297,7 @@ class XObject {
   // Bumped by every state change that could satisfy a cooperative waiter, so
   // the scheduler can skip re-polling a parked waiter until it moves.
   uint32_t cooperative_signal_epoch() const {
-    return cooperative_signal_epoch_.load();
+    return static_cast<uint32_t>(retro_atomic_load_acquire_int(&cooperative_signal_epoch_));
   }
   // Bumped by a release-everyone-then-reset transition (a manual-reset pulse),
   // which is gone from the host primitive before any parked fiber re-polls it.
@@ -341,15 +341,15 @@ class XObject {
 
   KernelState* kernel_state_;
 
-  std::atomic<uint32_t> priority_increment_{0};
+  retro_atomic_int_t priority_increment_{0};
 
-  std::atomic<uint32_t> cooperative_signal_epoch_{0};
+  retro_atomic_int_t cooperative_signal_epoch_{0};
 
   // Host objects are persisted through resets/etc.
   bool host_object_ = false;
 
  private:
-  std::atomic<int32_t> pointer_ref_count_;
+  retro_atomic_int_t pointer_ref_count_;
 
   Type type_;
   std::vector<X_HANDLE> handles_;

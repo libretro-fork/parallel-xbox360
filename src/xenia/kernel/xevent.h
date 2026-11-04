@@ -46,7 +46,7 @@ class XEvent : public XObject {
                                     ByteStream* stream);
 
   uint32_t cooperative_pulse_epoch() const override {
-    return pulse_epoch_.load();
+    return static_cast<uint32_t>(retro_atomic_load_acquire_int(&pulse_epoch_));
   }
 
  protected:
@@ -69,7 +69,7 @@ class XEvent : public XObject {
   bool host_signaled_ = false;
   // Parked cooperative waiters, so Pulse knows one will consume a set.
   CooperativeWaiterFifo waiters_;
-  std::atomic<uint32_t> pulse_epoch_{0};
+  retro_atomic_int_t pulse_epoch_{0};
 };
 
 }  // namespace kernel

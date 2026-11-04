@@ -9,6 +9,8 @@
 
 #include "xenia/gpu/graphics_system.h"
 
+#include <retro_atomic.h>
+
 #include <atomic>
 
 #include "xenia/base/byte_stream.h"
@@ -295,11 +297,11 @@ void GraphicsSystem::DispatchInterruptCallback(uint32_t source, uint32_t cpu) {
                                         interrupt_callback_data_, source, cpu);
 }
 
-extern std::atomic<uint64_t> g_guest_vblanks;
+extern retro_atomic_size_t g_guest_vblanks;
 
 void GraphicsSystem::MarkVblank() {
   SCOPE_profile_cpu_f("gpu");
-  g_guest_vblanks.fetch_add(1, std::memory_order_relaxed);
+  retro_atomic_fetch_add_size(&g_guest_vblanks, 1);
 
   // Capture vblank cadence so D1MODE_V_COUNTER tracks the actual rate
   // (50Hz, 60Hz, or the frontend target refresh rate), not just the configured one.

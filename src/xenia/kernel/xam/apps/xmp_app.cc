@@ -261,7 +261,7 @@ X_HRESULT XmpApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
 
       xe::store_and_swap<float>(
           memory_->TranslateVirtual(args->volume_ptr),
-          kernel_state_->emulator()->audio_media_player()->GetVolume()->load());
+          kernel_state_->emulator()->audio_media_player()->GetVolume());
       return X_E_SUCCESS;
     }
     case 0x0007000C: {

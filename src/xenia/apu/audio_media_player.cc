@@ -153,7 +153,7 @@ AudioMediaPlayer::AudioMediaPlayer(apu::AudioSystem* audio_system,
 AudioMediaPlayer::~AudioMediaPlayer() {
   Stop();
   // Thread::reset() only closes the handle; must wait for the worker to exit.
-  worker_running_ = false;
+  retro_atomic_store_release_int(&worker_running_, 0);
   resume_fence_.Signal();
   if (worker_thread_) {
     xe::threading::Wait(worker_thread_.get(), false);
@@ -163,12 +163,12 @@ AudioMediaPlayer::~AudioMediaPlayer() {
 };
 
 void AudioMediaPlayer::WorkerThreadMain() {
-  while (worker_running_) {
+  while (retro_atomic_load_acquire_int(&worker_running_)) {
     if (!IsPlaying()) {
       resume_fence_.Wait();
     }
 
-    if (!worker_running_) break;
+    if (!retro_atomic_load_acquire_int(&worker_running_)) break;
     if (!active_playlist_ || !active_song_) {
       // Play/Resume/track changes and shutdown signal this fence. No polling
       // interval or empty-playlist spin is needed while there is no work.
@@ -190,7 +190,7 @@ void AudioMediaPlayer::Setup() {
   // sample_buffer_ptr_ = kernel_state_->memory()->SystemHeapAlloc(
   //     xe::apu::AudioDriver::kFrameSamplesMax);
 
-  worker_running_ = true;
+  retro_atomic_store_release_int(&worker_running_, 1);
   worker_thread_ = threading::Thread::Create({}, [&] { WorkerThreadMain(); });
   worker_thread_->set_name("Audio Media Player");
 };
@@ -254,13 +254,13 @@ void AudioMediaPlayer::Play() {
   current_song_handle_ = active_song_->handle;
   OnStateChanged();
 
-  if (volume_ == 0.0f) {
-    volume_ = kernel_state_->xconfig()->ReadSetting<float>(
-        kernel::XCONFIG_USER_CATEGORY, kernel::XCONFIG_USER_MUSIC_VOLUME);
+  if (GetVolume() == 0.0f) {
+    xe_atomic_float_store(&volume_, kernel_state_->xconfig()->ReadSetting<float>(
+        kernel::XCONFIG_USER_CATEGORY, kernel::XCONFIG_USER_MUSIC_VOLUME));
   }
 
   // Always apply the stored volume to the newly created driver
-  driver_->SetVolume(volume_);
+  driver_->SetVolume(GetVolume());
 
   auto result =
       ProcessAudioLoop(this, driver_.get(), formatContext, codecContext, 0);
@@ -475,14 +475,14 @@ void AudioMediaPlayer::RemovePlaylist(uint32_t handle) {
 }
 
 X_STATUS AudioMediaPlayer::SetVolume(float volume) {
-  volume_.store(std::min(volume, 1.0f));
+  xe_atomic_float_store(&volume_, std::min(volume, 1.0f));
 
   std::unique_lock<xe_mutex> guard(driver_mutex_);
   if (!driver_) {
     return X_STATUS_UNSUCCESSFUL;
   }
 
-  driver_->SetVolume(volume_);
+  driver_->SetVolume(GetVolume());
   return X_STATUS_SUCCESS;
 }
 

@@ -11,7 +11,7 @@
 #define XENIA_GPU_SHADER_H_
 
 #include <algorithm>
-#include <atomic>
+#include "libretro/core_shader_state.h"
 #include <cstdint>
 #include <filesystem>
 #include <set>
@@ -811,6 +811,8 @@ class Shader {
   class Translation {
    public:
     virtual ~Translation() {}
+    Translation(const Translation&) = delete;
+    Translation& operator=(const Translation&) = delete;
 
     Shader& shader() const { return shader_; }
 
@@ -818,20 +820,20 @@ class Shader {
     uint64_t modification() const { return modification_; }
 
     // True if the shader was translated and prepared without error.
-    bool is_valid() const { return is_valid_.load(std::memory_order_acquire); }
+    bool is_valid() const { return xe_shader_valid(&publication_state_); }
 
     // True if the shader has already been translated. Acquire-paired with the
-    // release store at the end of translation, so once this reads true, the
+    // release publication at the end of translation, so once this reads true, the
     // validity, the errors and the translated binary are all published.
     bool is_translated() const {
-      return is_translated_.load(std::memory_order_acquire);
+      return xe_shader_ready(&publication_state_);
     }
 
     // For background-thread translation: atomically claim the right to
     // translate. Returns true if the caller should translate, false if another
     // thread already claimed it (and is_translated() should be awaited).
     bool TryClaimTranslation() {
-      return !translation_claimed_.test_and_set(std::memory_order_acq_rel);
+      return xe_shader_claim(&publication_state_);
     }
 
     // Errors that occurred during translation.
@@ -871,7 +873,7 @@ class Shader {
     virtual bool PrepareForPublication() { return true; }
 
     // If there was some failure during preparation on the implementation side.
-    void MakeInvalid() { is_valid_.store(false, std::memory_order_release); }
+    void MakeInvalid() { xe_shader_set_valid(&publication_state_, 0); }
 
     std::vector<uint8_t> translated_binary_;
 
@@ -882,9 +884,7 @@ class Shader {
     Shader& shader_;
     uint64_t modification_;
 
-    std::atomic<bool> is_valid_{false};
-    std::atomic<bool> is_translated_{false};
-    std::atomic_flag translation_claimed_ = ATOMIC_FLAG_INIT;
+    retro_atomic_int_t publication_state_{0};
     std::vector<Error> errors_;
     std::string host_disassembly_;
   };
@@ -895,6 +895,8 @@ class Shader {
          const uint32_t* ucode_dwords, size_t ucode_dword_count,
          std::endian ucode_source_endian = std::endian::big);
   virtual ~Shader();
+  Shader(const Shader&) = delete;
+  Shader& operator=(const Shader&) = delete;
 
   // Whether the shader is identified as a vertex or pixel shader.
   xenos::ShaderType type() const { return shader_type_; }
@@ -1068,19 +1070,18 @@ class Shader {
   // shader was last written to, or was loaded from, to only write the shader
   // microcode to the storage once. UINT32_MAX by default.
   uint32_t ucode_storage_index() const {
-    return ucode_storage_index_.load(std::memory_order_relaxed);
+    return static_cast<uint32_t>(retro_atomic_load_relaxed_int(&ucode_storage_index_));
   }
   void set_ucode_storage_index(uint32_t storage_index) {
-    ucode_storage_index_.store(storage_index, std::memory_order_relaxed);
+    retro_atomic_store_relaxed_int(&ucode_storage_index_, static_cast<int>(storage_index));
   }
   // Atomically set storage index if changed. Returns true if updated.
   bool try_set_ucode_storage_index(uint32_t new_index) {
-    uint32_t expected = ucode_storage_index_.load(std::memory_order_relaxed);
+    uint32_t expected = static_cast<uint32_t>(retro_atomic_load_relaxed_int(&ucode_storage_index_));
     if (expected == new_index) {
       return false;
     }
-    return ucode_storage_index_.compare_exchange_strong(
-        expected, new_index, std::memory_order_relaxed);
+    return retro_atomic_cas_int(&ucode_storage_index_, static_cast<int>(expected), static_cast<int>(new_index));
   }
 
   // Dumps the shader's microcode binary and, if analyzed, disassembly, to files
@@ -1151,7 +1152,7 @@ class Shader {
   // Modification bits -> translation.
   std::unordered_map<uint64_t, Translation*> translations_;
 
-  std::atomic<uint32_t> ucode_storage_index_{UINT32_MAX};
+  retro_atomic_int_t ucode_storage_index_{-1};
 
  private:
   void GatherExecInformation(

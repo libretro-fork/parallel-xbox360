@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Frontend/APU state, shader translation/binding publication, kernel object references and event epochs now use libretro-common atomics. Worker stop/pause flags use release/acquire publication; diagnostic counters remain atomic. Media volume transfers IEEE float bits through a C89 helper without quantization or an atomic<float> pointer API. Shader claim/validity/completion bits share one atomic word, preserving translation-object size. Modern MSVC x86/x64 common acquire/release operations use native loads/stores with compiler barriers. Remaining C++ atomics elsewhere are still being migrated; required ownership synchronization is retained.
+
 - Kernel I/O completion events use a fixed atomic ownership cache instead of a mutex and growing vector. The two-party retirement handshake still prevents reuse until both caller and worker finish; overflow releases idle event handles. Removed per-wake signal-history recording, its global mutex and clock sampling; blocked-thread diagnostics remain.
 
 - Vulkan shader modules are created by the sole translation owner before publishing translation completion. Pipeline workers read the immutable module without a lazy-creation mutex or duplicate driver calls. Preparation failure publishes an invalid translation.

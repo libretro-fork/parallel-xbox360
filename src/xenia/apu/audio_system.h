@@ -11,7 +11,7 @@
 #define XENIA_APU_AUDIO_SYSTEM_H_
 
 #include "libretro/core_pause_gate.h"
-#include <atomic>
+#include <retro_atomic.h>
 #include <mutex>
 
 #include "xenia/base/mutex.h"
@@ -96,7 +96,7 @@ class AudioSystem {
   std::unique_ptr<XmaDecoder> xma_decoder_;
   uint32_t queued_frames_;
 
-  std::atomic<bool> worker_running_ = {false};
+  retro_atomic_int_t worker_running_{0};
   kernel::object_ref<kernel::XHostThread> worker_thread_;
 
   // Guards clients_. The global lock is never taken while holding it, so its
@@ -109,9 +109,9 @@ class AudioSystem {
     uint32_t callback_arg = 0;
     uint32_t wrapped_callback_arg = 0;
     bool in_use = false;
-    std::atomic<uint32_t> frames_submitted{0};
-    std::atomic<uint32_t> frames_processed{0};
-    std::atomic<uint32_t> frames_dropped{0};
+    retro_atomic_int_t frames_submitted{0};
+    retro_atomic_int_t frames_processed{0};
+    retro_atomic_int_t frames_dropped{0};
     // Held by worker during Execute; UnregisterClient waits on it.
     std::mutex callback_mutex;
   };

@@ -10,6 +10,7 @@
 #include "xenia/gpu/command_processor.h"
 
 #include <atomic>
+#include <retro_atomic.h>
 #include <algorithm>
 #include <fstream>
 
@@ -431,10 +432,11 @@ void CommandProcessor::SetDesiredSwapPostEffect(
 }
 
 // Guest swaps and vblanks, counted for the libretro core's run stats
-std::atomic<uint64_t> g_guest_swaps{0}, g_guest_vblanks{0};
+static_assert(sizeof(size_t) == sizeof(uint64_t));
+retro_atomic_size_t g_guest_swaps{0}, g_guest_vblanks{0};
 
 void CommandProcessor::RecordGuestSwap() {
-  g_guest_swaps.fetch_add(1, std::memory_order_relaxed);
+  retro_atomic_fetch_add_size(&g_guest_swaps, 1);
 }
 
 void CommandProcessor::WorkerThreadMain() {

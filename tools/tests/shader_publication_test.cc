@@ -57,6 +57,13 @@ static void translate(void* opaque) {
 int main() {
   for (unsigned fail = 0; fail < 2; ++fail) {
     TestShader shader(fail != 0);
+    CHECK(shader.ucode_storage_index() == UINT32_MAX);
+    CHECK(shader.try_set_ucode_storage_index(0));
+    CHECK(!shader.try_set_ucode_storage_index(0));
+    CHECK(shader.try_set_ucode_storage_index(0x80000000));
+    CHECK(shader.ucode_storage_index() == 0x80000000);
+    shader.set_ucode_storage_index(UINT32_MAX);
+    CHECK(shader.ucode_storage_index() == UINT32_MAX);
     xe::StringBuffer disassembly;
     shader.AnalyzeUcode(disassembly);
     auto* translation = static_cast<TestTranslation*>(shader.GetOrCreateTranslation(0));

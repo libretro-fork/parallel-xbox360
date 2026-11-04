@@ -39,11 +39,9 @@ void LibretroCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   if (!sync_) return;
 
   // Store frame dimensions
-  sync_->frame_width.store(frontbuffer_width ? frontbuffer_width : 1280,
-                           std::memory_order_relaxed);
-  sync_->frame_height.store(frontbuffer_height ? frontbuffer_height : 720,
-                            std::memory_order_relaxed);
-  sync_->frame_count.fetch_add(1, std::memory_order_relaxed);
+  retro_atomic_store_relaxed_int(&sync_->frame_width, frontbuffer_width ? frontbuffer_width : 1280);
+  retro_atomic_store_relaxed_int(&sync_->frame_height, frontbuffer_height ? frontbuffer_height : 720);
+  retro_atomic_fetch_add_size(&sync_->frame_count, 1);
 
   RecordGuestSwap();
 }

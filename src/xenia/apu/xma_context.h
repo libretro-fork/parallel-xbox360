@@ -11,7 +11,7 @@
 #define XENIA_APU_XMA_CONTEXT_H_
 
 #include <array>
-#include <atomic>
+#include <retro_atomic.h>
 #include <mutex>
 #include <queue>
 
@@ -220,14 +220,14 @@ class XmaContext {
 
   uint32_t id() { return id_; }
   uint32_t guest_ptr() { return guest_ptr_; }
-  bool is_allocated() { return is_allocated_.load(std::memory_order_acquire); }
-  bool is_enabled() { return is_enabled_.load(std::memory_order_acquire); }
+  bool is_allocated() { return retro_atomic_load_acquire_int(&is_allocated_); }
+  bool is_enabled() { return retro_atomic_load_acquire_int(&is_enabled_); }
 
   void set_is_allocated(bool is_allocated) {
-    is_allocated_.store(is_allocated, std::memory_order_release);
+    retro_atomic_store_release_int(&is_allocated_, is_allocated);
   }
   void set_is_enabled(bool is_enabled) {
-    is_enabled_.store(is_enabled, std::memory_order_release);
+    retro_atomic_store_release_int(&is_enabled_, is_enabled);
   }
 
  protected:
@@ -241,8 +241,8 @@ class XmaContext {
   uint32_t id_ = 0;
   uint32_t guest_ptr_ = 0;
   xe_mutex lock_;
-  std::atomic<bool> is_allocated_ = false;
-  std::atomic<bool> is_enabled_ = false;
+  retro_atomic_int_t is_allocated_{0};
+  retro_atomic_int_t is_enabled_{0};
 
   // ffmpeg structures
   AVPacket* av_packet_ = nullptr;

@@ -43,10 +43,10 @@ bool SpirvShader::PublishNativeBindings(std::vector<TextureBinding>&& textures,
     }
     return true;
   }
-  if (bindings_setup_entered_.test_and_set(std::memory_order_relaxed)) return false;
+  if (retro_atomic_exchange_int(&bindings_setup_entered_, 1)) return false;
   texture_bindings_ = std::move(textures); sampler_bindings_ = std::move(samplers);
   used_texture_mask_ = used_texture_mask;
-  bindings_ready_.store(true,std::memory_order_release);
+  retro_atomic_store_release_int(&bindings_ready_, 1);
   return true;
 }
 

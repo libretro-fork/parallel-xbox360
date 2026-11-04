@@ -12,10 +12,12 @@ case $(uname -s) in
  ;;
 esac
 out=${TEST_BUILD_DIR:-"$root/build/tests/shader-publication"}
-archive=${CORE_ARCHIVE:-"$root/build/make/$platform/core.a"}
+objects=${CORE_OBJECTS:-"$root/build/make/$platform/objects.rsp"}
+source=${TEST_SOURCE:-"$root/tools/tests/shader_publication_test.cc"}
 mkdir -p "$out"
-# Uses the actual static Make core archive; build that platform first.
-${CXX:-c++} -O2 -std=c++20 -DNDEBUG -DXENIA_LIBRETRO -DRETRO_ATOMIC_FORCE_GCC_NEW \
+# Uses the actual Make link inputs, including the C handoff objects.
+cd "$root"
+${CXX:-c++} -O2 -std=c++20 -Wno-attributes -DNDEBUG -DXENIA_LIBRETRO -DRETRO_ATOMIC_FORCE_GCC_NEW \
  -I"$root" -I"$root/src" -I"$root/third_party/libretro-common/include" -I"$root/third_party/fmt/include" \
- "$root/tools/tests/shader_publication_test.cc" "$archive" $libs -o "$out/test$suffix"
+ "$source" @"$objects" $libs -o "$out/test$suffix"
 "$out/test$suffix"

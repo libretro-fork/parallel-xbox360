@@ -949,7 +949,7 @@ bool VulkanPipelineCache::TranslateAnalyzedShader(
       }
       if (profile) {
         XELOGI(
-            "shader_profiling: {} {:016X} ucode->SPIR-V {:.3f} ms {} B SPIR-V",
+            "shader_profiling: {} {:016X} ucode->SPIR-V/module {:.3f} ms {} B SPIR-V",
             shader.type() == xenos::ShaderType::kVertex ? "vertex" : "pixel",
             shader.ucode_data_hash(),
             std::chrono::duration<double, std::milli>(

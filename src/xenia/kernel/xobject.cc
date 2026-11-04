@@ -58,7 +58,7 @@ XObject::XObject(KernelState* kernel_state, Type type, bool host_object)
 
 XObject::~XObject() {
   assert_true(handles_.empty());
-  assert_zero(pointer_ref_count_);
+  assert_zero(retro_atomic_load_relaxed_int(&pointer_ref_count_));
 
   if (allocated_guest_object_) {
     uint32_t header_addr = guest_object_ptr_ - sizeof(X_OBJECT_HEADER);
@@ -89,10 +89,10 @@ bool XObject::ReleaseHandle() {
          X_STATUS_SUCCESS;
 }
 
-void XObject::Retain() { ++pointer_ref_count_; }
+void XObject::Retain() { retro_atomic_fetch_add_int(&pointer_ref_count_, 1); }
 
 void XObject::Release() {
-  if (--pointer_ref_count_ == 0) {
+  if (retro_atomic_fetch_sub_int(&pointer_ref_count_, 1) == 1) {
     delete this;
   }
 }
@@ -404,7 +404,7 @@ bool CooperativeWaiterFifo::HasWaiters() {
 }
 
 void XObject::WakeCooperativeWaiters() {
-  cooperative_signal_epoch_.fetch_add(1);
+  retro_atomic_fetch_add_int(&cooperative_signal_epoch_, 1);
   // Wake only the CPUs that can act on this signal instead of every CPU with
   // any blocked thread - broadcast wakes on every semaphore release were most
   // of some titles' kernel time (Eternal Sonata: 69% of CPU in futex wakes

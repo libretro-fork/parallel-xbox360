@@ -180,7 +180,7 @@ X_STATUS XmaDecoder::Setup(kernel::KernelState* kernel_state) {
   register_file_[XmaRegister::NextContextIndex] = 1;
   context_bitmap_.Resize(kContextCount);
 
-  worker_running_ = true;
+  retro_atomic_store_release_int(&worker_running_, 1);
   work_event_ = xe::threading::Event::CreateAutoResetEvent(false);
   assert_not_null(work_event_);
   worker_thread_ =
@@ -203,14 +203,14 @@ X_STATUS XmaDecoder::Setup(kernel::KernelState* kernel_state) {
 }
 
 void XmaDecoder::WorkerThreadMain() {
-  while (worker_running_) {
+  while (retro_atomic_load_acquire_int(&worker_running_)) {
     // Okay, let's loop through XMA contexts to find ones we need to decode!
     bool did_work = false;
     for (uint32_t n = 0; n < kContextCount; n++) {
       did_work = contexts_[n]->Work() || did_work;
     }
 
-    if (paused_) {
+    if (retro_atomic_load_acquire_int(&paused_)) {
       pause_fence_.Signal();
       resume_fence_.Wait();
     }
@@ -223,13 +223,13 @@ void XmaDecoder::WorkerThreadMain() {
 }
 
 void XmaDecoder::Shutdown() {
-  worker_running_ = false;
+  retro_atomic_store_release_int(&worker_running_, 0);
 
   if (work_event_) {
     work_event_->Set();
   }
 
-  if (paused_) {
+  if (retro_atomic_load_acquire_int(&paused_)) {
     Resume();
   }
 
@@ -399,19 +399,19 @@ void XmaDecoder::WriteRegister(uint32_t addr, uint32_t value) {
 }
 
 void XmaDecoder::Pause() {
-  if (paused_) {
+  if (retro_atomic_load_acquire_int(&paused_)) {
     return;
   }
-  paused_ = true;
+  retro_atomic_store_release_int(&paused_, 1);
 
   pause_fence_.Wait();
 }
 
 void XmaDecoder::Resume() {
-  if (!paused_) {
+  if (!retro_atomic_load_acquire_int(&paused_)) {
     return;
   }
-  paused_ = false;
+  retro_atomic_store_release_int(&paused_, 0);
 
   resume_fence_.Signal();
 }

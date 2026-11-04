@@ -10,7 +10,7 @@
 #ifndef XENIA_APU_XMA_DECODER_H_
 #define XENIA_APU_XMA_DECODER_H_
 
-#include <atomic>
+#include <retro_atomic.h>
 #include <mutex>
 #include <queue>
 
@@ -47,7 +47,7 @@ class XmaDecoder {
   uint32_t ReadRegister(uint32_t addr);
   void WriteRegister(uint32_t addr, uint32_t value);
 
-  bool is_paused() const { return paused_.load(std::memory_order_acquire); }
+  bool is_paused() const { return retro_atomic_load_acquire_int(&paused_); }
   void Pause();
   void Resume();
 
@@ -76,11 +76,11 @@ class XmaDecoder {
   Memory* memory_ = nullptr;
   cpu::Processor* processor_ = nullptr;
 
-  std::atomic<bool> worker_running_ = {false};
+  retro_atomic_int_t worker_running_{0};
   kernel::object_ref<kernel::XHostThread> worker_thread_;
   std::unique_ptr<xe::threading::Event> work_event_ = nullptr;
 
-  std::atomic<bool> paused_ = false;
+  retro_atomic_int_t paused_{0};
   xe::threading::Fence pause_fence_;   // Signaled when worker paused.
   xe::threading::Fence resume_fence_;  // Signaled when resume requested.
 

@@ -10,7 +10,7 @@
 #ifndef LIBRETRO_GRAPHICS_SYSTEM_H
 #define LIBRETRO_GRAPHICS_SYSTEM_H
 
-#include <atomic>
+#include <retro_atomic.h>
 
 #include "xenia/gpu/command_processor.h"
 #include "xenia/gpu/null/null_graphics_system.h"
@@ -22,9 +22,9 @@ namespace libretro_gpu {
 // Shared state between the GPU command processor thread and the
 // libretro frontend thread (retro_run).
 struct FrameSyncState {
-  std::atomic<uint32_t> frame_width{1280};
-  std::atomic<uint32_t> frame_height{720};
-  std::atomic<uint64_t> frame_count{0};
+  retro_atomic_int_t frame_width{1280};
+  retro_atomic_int_t frame_height{720};
+  retro_atomic_size_t frame_count{0};
 };
 
 class LibretroCommandProcessor : public CommandProcessor {

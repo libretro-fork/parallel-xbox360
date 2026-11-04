@@ -10,7 +10,7 @@
 #ifndef XENIA_GPU_SPIRV_SHADER_H_
 #define XENIA_GPU_SPIRV_SHADER_H_
 
-#include <atomic>
+#include <retro_atomic.h>
 #include <mutex>
 #include <vector>
 
@@ -70,7 +70,7 @@ class SpirvShader : public Shader {
   // a pipeline creation thread), so a draw-thread reader that sees this true
   // (acquire) is guaranteed the bindings are fully written and immutable.
   bool bindings_ready() const {
-    return bindings_ready_.load(std::memory_order_acquire);
+    return retro_atomic_load_acquire_int(&bindings_ready_);
   }
   std::mutex& resource_bindings_mutex() { return resource_bindings_mutex_; }
   // The caller holds resource_bindings_mutex through generation/publication.
@@ -84,9 +84,9 @@ class SpirvShader : public Shader {
  private:
   friend class SpirvShaderTranslator;
 
-  std::atomic_flag bindings_setup_entered_ = ATOMIC_FLAG_INIT;
+  retro_atomic_int_t bindings_setup_entered_{0};
   std::mutex resource_bindings_mutex_;
-  std::atomic<bool> bindings_ready_{false};
+  retro_atomic_int_t bindings_ready_{0};
   std::vector<TextureBinding> texture_bindings_;
   std::vector<SamplerBinding> sampler_bindings_;
   uint32_t used_texture_mask_ = 0;

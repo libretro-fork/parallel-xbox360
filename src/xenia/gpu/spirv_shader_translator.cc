@@ -1366,8 +1366,7 @@ void SpirvShaderTranslator::PostTranslation() {
     return;
   }
   SpirvShader* spirv_shader = dynamic_cast<SpirvShader*>(&translation.shader());
-  if (spirv_shader && !spirv_shader->bindings_setup_entered_.test_and_set(
-                          std::memory_order_relaxed)) {
+  if (spirv_shader && !retro_atomic_exchange_int(&spirv_shader->bindings_setup_entered_, 1)) {
     spirv_shader->texture_bindings_.clear();
     spirv_shader->texture_bindings_.reserve(texture_bindings_.size());
     for (const TextureBinding& translator_binding : texture_bindings_) {
@@ -1395,7 +1394,7 @@ void SpirvShaderTranslator::PostTranslation() {
     // Publish the bindings to draw-thread readers (GetGuestShader)
     // after they are fully written, so a PS translated on a creation thread is
     // only consulted once its bindings are complete.
-    spirv_shader->bindings_ready_.store(true, std::memory_order_release);
+    retro_atomic_store_release_int(&spirv_shader->bindings_ready_, 1);
   }
 }
 

@@ -10,6 +10,7 @@
 #ifndef XENIA_APU_AUDIO_MEDIA_PLAYER_H_
 #define XENIA_APU_AUDIO_MEDIA_PLAYER_H_
 
+#include "libretro/core_atomic_float.h"
 #include "xenia/apu/audio_driver.h"
 #include "xenia/apu/audio_system.h"
 #include "xenia/apu/xmp_state.h"
@@ -52,7 +53,7 @@ class AudioMediaPlayer {
   bool IsLastSongInPlaylist() const;
 
   X_STATUS SetVolume(float volume);
-  const std::atomic<float>* GetVolume() const { return &volume_; }
+  float GetVolume() const { return xe_atomic_float_load(&volume_); }
 
   void SetPlaybackMode(XmpApp::PlaybackMode playback_mode) {
     playback_mode_ = playback_mode;
@@ -121,7 +122,7 @@ class AudioMediaPlayer {
   XmpApp::PlaybackFlags playback_flags_ = XmpApp::PlaybackFlags::kDefault;
   PlaybackController playback_controller_ = PlaybackController::kGame;
   XmpClient xmp_client_ = XmpClient::kGame;
-  std::atomic<float> volume_ = 0.0f;
+  retro_atomic_int_t volume_{0};
   uint32_t dash_init_state = 0;
 
   std::unordered_map<uint32_t, std::unique_ptr<XmpApp::Playlist>> playlists_;
@@ -139,7 +140,7 @@ class AudioMediaPlayer {
   kernel::KernelState* kernel_state_ = nullptr;
 
   xe::global_critical_region global_critical_region_;
-  std::atomic<bool> worker_running_ = {false};
+  retro_atomic_int_t worker_running_{0};
   std::unique_ptr<threading::Thread> worker_thread_;
   xe::threading::Fence resume_fence_;  // Signaled when resume requested.
   xe::threading::Fence processing_end_fence_;

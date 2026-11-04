@@ -49,7 +49,7 @@ namespace apu {
 AudioSystem::AudioSystem(cpu::Processor* processor)
     : memory_(processor->memory()),
       processor_(processor),
-      worker_running_(false) {
+      worker_running_(0) {
   pause_gate_.reset(xe_pause_gate_new());
   if (!pause_gate_) throw std::bad_alloc();
   queued_frames_ = std::clamp(cvars::apu_max_queued_frames,
@@ -79,7 +79,7 @@ X_STATUS AudioSystem::Setup(kernel::KernelState* kernel_state) {
     return result;
   }
 
-  worker_running_ = true;
+  retro_atomic_store_release_int(&worker_running_, 1);
   worker_thread_ =
       kernel::object_ref<kernel::XHostThread>(new kernel::XHostThread(
           kernel_state, 128 * 1024, 0,
@@ -104,7 +104,7 @@ void AudioSystem::WorkerThreadMain() {
   size_t next_client = 0;
   // Output queue space and driver credits drive callbacks. No host clock,
   // deadline or timed sleep may limit production during fast-forward.
-  while (worker_running_) {
+  while (retro_atomic_load_acquire_int(&worker_running_)) {
     xe::threading::WaitHandle* handles[kMaximumClientCount + 1];
     size_t indices[kMaximumClientCount + 1];
     size_t count = 0, client_index, i;
@@ -128,7 +128,7 @@ void AudioSystem::WorkerThreadMain() {
     handles[count++] = pending_work_event_.get();
     auto result = xe::threading::WaitAny(handles, count, true);
     if (result.first != xe::threading::WaitResult::kSuccess ||
-        result.second + 1 == count || !worker_running_) continue;
+        result.second + 1 == count || !retro_atomic_load_acquire_int(&worker_running_)) continue;
     client_index = indices[result.second];
     if (is_paused()) {
       client_semaphores_[client_index]->Release(1, nullptr);
@@ -156,7 +156,7 @@ void AudioSystem::WorkerThreadMain() {
                           xe::countof(args));
     }
   }
-  worker_running_ = false;
+  retro_atomic_store_release_int(&worker_running_, 0);
 
   // TODO(benvanik): call module API to kill?
 }
@@ -175,7 +175,7 @@ int AudioSystem::FindFreeClient() {
 void AudioSystem::Initialize() {}
 
 void AudioSystem::StopWorker() {
-  worker_running_ = false;
+  retro_atomic_store_release_int(&worker_running_, 0);
   pending_work_event_->Set();
   // A paused worker waits for the resume.
   xe_pause_gate_stop(pause_gate_.get());
@@ -252,9 +252,9 @@ X_STATUS AudioSystem::RegisterClient(uint32_t callback, uint32_t callback_arg,
   clients_[index].callback_arg = callback_arg;
   clients_[index].wrapped_callback_arg = ptr;
   clients_[index].in_use = true;
-  clients_[index].frames_submitted.store(0);
-  clients_[index].frames_processed.store(0);
-  clients_[index].frames_dropped.store(0);
+  retro_atomic_store_relaxed_int(&clients_[index].frames_submitted, 0);
+  retro_atomic_store_relaxed_int(&clients_[index].frames_processed, 0);
+  retro_atomic_store_relaxed_int(&clients_[index].frames_dropped, 0);
 
   // Wake the worker to include this client in the output readiness scan.
   pending_work_event_->Set();
@@ -287,7 +287,7 @@ void AudioSystem::SubmitFrame(size_t index, float* samples) {
     // callback will never fire, causing the semaphore to leak.
     if (index < kMaximumClientCount && clients_[index].driver) {
       static float silence[apu::AudioDriver::kFrameSamplesMax] = {0};
-      clients_[index].frames_dropped++;
+      retro_atomic_fetch_add_int(&clients_[index].frames_dropped, 1);
       (clients_[index].driver)->SubmitFrame(silence);
     } else if (index < kMaximumClientCount) {
       // Tick the semaphore so the worker doesn't stall on a dead client.
@@ -295,8 +295,8 @@ void AudioSystem::SubmitFrame(size_t index, float* samples) {
     }
     return;
   }
-  clients_[index].frames_submitted++;
-  clients_[index].frames_processed++;
+  retro_atomic_fetch_add_int(&clients_[index].frames_submitted, 1);
+  retro_atomic_fetch_add_int(&clients_[index].frames_processed, 1);
   (clients_[index].driver)->SubmitFrame(samples);
 }
 
@@ -310,9 +310,9 @@ bool AudioSystem::GetClientPerformance(size_t index,
     return false;
   }
 
-  out_perf->frames_submitted = clients_[index].frames_submitted.load();
-  out_perf->frames_processed = clients_[index].frames_processed.load();
-  out_perf->frames_dropped = clients_[index].frames_dropped.load();
+  out_perf->frames_submitted = static_cast<uint32_t>(retro_atomic_load_relaxed_int(&clients_[index].frames_submitted));
+  out_perf->frames_processed = static_cast<uint32_t>(retro_atomic_load_relaxed_int(&clients_[index].frames_processed));
+  out_perf->frames_dropped = static_cast<uint32_t>(retro_atomic_load_relaxed_int(&clients_[index].frames_dropped));
   return true;
 }
 
@@ -333,9 +333,9 @@ void AudioSystem::UnregisterClient(size_t index) {
     clients_[index].callback_arg = 0;
     clients_[index].wrapped_callback_arg = 0;
     clients_[index].in_use = false;
-    clients_[index].frames_submitted.store(0);
-    clients_[index].frames_processed.store(0);
-    clients_[index].frames_dropped.store(0);
+    retro_atomic_store_relaxed_int(&clients_[index].frames_submitted, 0);
+    retro_atomic_store_relaxed_int(&clients_[index].frames_processed, 0);
+    retro_atomic_store_relaxed_int(&clients_[index].frames_dropped, 0);
   }
 
   // Wait for any in-flight callback; can't hold clients_mutex_ (callback

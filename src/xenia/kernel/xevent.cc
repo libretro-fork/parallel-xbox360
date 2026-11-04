@@ -99,7 +99,7 @@ int32_t XEvent::Pulse(uint32_t priority_increment, bool wait) {
   }
   if (manual_reset_) {
     // Releases every waiter parked right now. Must precede the wake below.
-    pulse_epoch_.fetch_add(1);
+    retro_atomic_fetch_add_int(&pulse_epoch_, 1);
   }
   {
     std::lock_guard<std::mutex> lock(state_lock_);
