@@ -18,7 +18,7 @@ static void big_endian(float *destination, float sample) {
 static int check(unsigned channels, unsigned out_channels, int be, float volume) {
    size_t i, offset, count, chunk;
    unsigned c;
-   float center, low, left, right;
+   float center, low, left, right, seed;
    for (i = 0; i < FRAMES; ++i) {
       for (c = 0; c < channels; ++c) {
          if (be) big_endian(input + c * FRAMES + i, value(i, c));
@@ -56,6 +56,22 @@ static int check(unsigned channels, unsigned out_channels, int be, float volume)
                channels, out_channels, be, (double)volume, (unsigned long)chunk);
          return 0;
       }
+      for (i=0;i<FRAMES*out_channels;++i) output[1+i]=0.25f+(float)(i%13)/16.0f;
+      for (offset=0;offset<FRAMES;offset+=count) {
+         count=FRAMES-offset;
+         if (count>chunk) count=chunk;
+         xe_audio_mix_borrowed(output+1+offset*out_channels,input,FRAMES,
+               offset,count,channels,out_channels,be,volume);
+      }
+      for (i=0;i<FRAMES*out_channels;++i) {
+         seed=0.25f+(float)(i%13)/16.0f;
+         if (output[1+i]!=seed+expected[i]) {
+            fprintf(stderr,"borrowed mix mismatch: %u -> %u BE=%d chunk=%lu sample=%lu\n",
+                  channels,out_channels,be,(unsigned long)chunk,(unsigned long)i);
+            return 0;
+         }
+      }
+      if (output[0]!=1234.0f || output[FRAMES*out_channels+1]!=1234.0f) return 0;
    }
    return 1;
 }

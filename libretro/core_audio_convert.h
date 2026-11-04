@@ -10,6 +10,10 @@ extern "C" {
 void xe_audio_convert(float *out, const float *in, size_t total_frames,
       size_t offset, size_t count, unsigned channels, unsigned output_channels,
       int sequential_be, float volume);
+/* Same matrix and rounding, accumulated directly into owned mix storage. */
+void xe_audio_mix_borrowed(float *out,const float *in,size_t total_frames,
+      size_t offset,size_t count,unsigned channels,unsigned output_channels,
+      int sequential_be,float volume);
 #ifdef __cplusplus
 }
 #endif

@@ -128,3 +128,81 @@ void xe_audio_convert(float *out, const float *in, size_t total_frames,
       }
    }
 }
+/* Add directly from a borrowed packet into the final mix, without staging. */
+void xe_audio_mix_borrowed(float *out,const float *in,size_t total_frames,
+      size_t offset,size_t count,unsigned channels,unsigned output_channels,
+      int sequential_be,float volume) {
+   size_t i=0,c;
+   float fl,fr,fc,lfe,sl,sr,left,right,value;
+   const float *frame;
+   if (sequential_be && output_channels==2) {
+#ifdef XE_AUDIO_SSE
+      __m128 gain=_mm_set1_ps(0.707106781f),half=_mm_set1_ps(0.5f);
+      __m128 vl,vr,vc,vlf,vsl,vsr,lo,hi;
+      for (;i+4<=count;i+=4) {
+         vl=read_be4(in+offset+i); vr=read_be4(in+total_frames+offset+i);
+         vc=_mm_mul_ps(read_be4(in+2*total_frames+offset+i),gain);
+         vlf=_mm_mul_ps(read_be4(in+3*total_frames+offset+i),half);
+         vsl=_mm_mul_ps(read_be4(in+4*total_frames+offset+i),gain);
+         vsr=_mm_mul_ps(read_be4(in+5*total_frames+offset+i),gain);
+         vl=_mm_add_ps(vl,_mm_add_ps(vc,_mm_add_ps(vsl,vlf)));
+         vr=_mm_add_ps(vr,_mm_add_ps(vc,_mm_add_ps(vsr,vlf)));
+         if (volume!=1.0f) { vl=_mm_mul_ps(vl,_mm_set1_ps(volume));vr=_mm_mul_ps(vr,_mm_set1_ps(volume)); }
+         lo=_mm_unpacklo_ps(vl,vr);hi=_mm_unpackhi_ps(vl,vr);
+         _mm_storeu_ps(out+i*2,_mm_add_ps(_mm_loadu_ps(out+i*2),lo));
+         _mm_storeu_ps(out+i*2+4,_mm_add_ps(_mm_loadu_ps(out+i*2+4),hi));
+      }
+#elif defined(XE_AUDIO_NEON)
+      float32x4_t gain=vdupq_n_f32(0.707106781f),half=vdupq_n_f32(0.5f);
+      float32x4_t vl,vr,vc,vlf,vsl,vsr;
+      float32x4x2_t pair;
+      for (;i+4<=count;i+=4) {
+         vl=read_be4(in+offset+i);vr=read_be4(in+total_frames+offset+i);
+         vc=vmulq_f32(read_be4(in+2*total_frames+offset+i),gain);
+         vlf=vmulq_f32(read_be4(in+3*total_frames+offset+i),half);
+         vsl=vmulq_f32(read_be4(in+4*total_frames+offset+i),gain);
+         vsr=vmulq_f32(read_be4(in+5*total_frames+offset+i),gain);
+         vl=vaddq_f32(vl,vaddq_f32(vc,vaddq_f32(vsl,vlf)));
+         vr=vaddq_f32(vr,vaddq_f32(vc,vaddq_f32(vsr,vlf)));
+         if (volume!=1.0f) {vl=vmulq_f32(vl,vdupq_n_f32(volume));vr=vmulq_f32(vr,vdupq_n_f32(volume));}
+         pair=vzipq_f32(vl,vr);
+         vst1q_f32(out+i*2,vaddq_f32(vld1q_f32(out+i*2),pair.val[0]));
+         vst1q_f32(out+i*2+4,vaddq_f32(vld1q_f32(out+i*2+4),pair.val[1]));
+      }
+#endif
+      for (;i<count;++i) {
+         fl=read_be(in+offset+i);fr=read_be(in+total_frames+offset+i);
+         fc=read_be(in+2*total_frames+offset+i)*0.707106781f;
+         lfe=read_be(in+3*total_frames+offset+i)*0.5f;
+         sl=read_be(in+4*total_frames+offset+i)*0.707106781f;
+         sr=read_be(in+5*total_frames+offset+i)*0.707106781f;
+         left=fl+(fc+(sl+lfe));right=fr+(fc+(sr+lfe));
+         if (volume!=1.0f) {left*=volume;right*=volume;}
+         out[i*2]+=left;out[i*2+1]+=right;
+      }
+   } else if (sequential_be) {
+      for (;i<count;++i) for(c=0;c<6;++c) {
+         value=read_be(in+c*total_frames+offset+i);
+         out[i*6+c]+=volume!=1.0f?value*volume:value;
+      }
+   } else if (channels==output_channels) {
+      for (;i<count*channels;++i) {
+         value=in[offset*channels+i];
+         out[i]+=volume!=1.0f?value*volume:value;
+      }
+   } else if (channels==2) {
+      for (;i<count;++i) for(c=0;c<2;++c) {
+         value=in[(offset+i)*2+c];
+         out[i*6+c]+=volume!=1.0f?value*volume:value;
+      }
+   } else {
+      for (;i<count;++i) {
+         frame=in+(offset+i)*6;
+         fc=frame[2]*0.7071f;
+         left=frame[0]+fc+frame[4]*0.7071f;
+         right=frame[1]+fc+frame[5]*0.7071f;
+         if (volume!=1.0f) {left*=volume;right*=volume;}
+         out[i*2]+=left;out[i*2+1]+=right;
+      }
+   }
+}

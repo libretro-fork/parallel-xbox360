@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Experimental frontend-driven audio handoff borrows native and 48-kHz media submission blocks until consumption, eliminating per-port sample rings and converting directly into the final float batch. Initial host queue credits and the configurable APU queue depth are removed; only the remainder of a native quantum carries between frontend intervals. Offline tests cover consecutive mixed samples, immediate source reuse and shutdown cancellation. Gameplay cadence remains under investigation; the generic audio backend and media decoder preparation have not yet been removed.
+
 - XMA decoding preserves unread PCM when compressed input runs out and preserves the guest consumer's latest read cursor during decoder writeback. Removed a starvation workaround that moved the write cursor without decoding samples. Offline tests reproduce the data loss before the fix and verify identical PCM across 24 ring and streaming-refill configurations afterward. The broader Tekken gameplay audio regression remains under investigation.
 
 - Empty render-target collections now preserve Vulkan framebuffers and D3D12 bindings instead of tearing down warm state without reclaiming anything. Ownership is inspected before allocating a retirement batch or invalidating bindings; actual orphan targets still retire after GPU completion. This removes avoidable collection churn; gameplay frame pacing and audio cadence still need runtime verification.

@@ -1020,8 +1020,6 @@ static void apply_core_options(void) {
 /* ================================================================== */
 static void update_audio(void) {
     size_t frames, frame_samples, i;
-    if (!core_state.audio_batch_cb && !core_state.audio_cb && !s_audio_float.batch &&
-        !(s_audio_channels == 6 && (s_audio_multi.batch_int16 || s_audio_multi.batch_float))) return;
     frames = xe_audio_cadence_next(&s_audio_cadence,
         (unsigned)core_state.audio_sample_rate, core_state.output_fps);
     frame_samples = frames * s_audio_channels;
@@ -1031,11 +1029,11 @@ static void update_audio(void) {
     }
     /* The mixer writes into the final float output buffer. Muting still drains
      * guest audio; it cannot leave queued samples to play after unmuting. */
-    if (xe_audio_registry_mix(s_audio_registry, core_state.audio_float_buffer, frame_samples) &&
-        xenia_emulator && xenia_emulator->audio_system())
-        xenia_emulator->audio_system()->NotifyOutputSpace();
+    xe_audio_registry_mix(s_audio_registry, core_state.audio_float_buffer, frame_samples);
     if (!core_state.audio_enabled)
         memset(core_state.audio_float_buffer, 0, frame_samples * sizeof(float));
+    if (!core_state.audio_batch_cb && !core_state.audio_cb && !s_audio_float.batch &&
+        !(s_audio_channels == 6 && (s_audio_multi.batch_int16 || s_audio_multi.batch_float))) return;
     if ((s_audio_channels == 6 && s_audio_multi.batch_float) || s_audio_float.batch) {
         xe_audio_samples_clamp(core_state.audio_float_buffer, frame_samples);
         if (s_audio_channels == 6 && s_audio_multi.batch_float)
@@ -1504,6 +1502,7 @@ static std::condition_variable s_pause_cv;
 static bool s_pause_watchdog_stop = false;
 static retro_atomic_int_t s_guest_paused;
 static retro_atomic_64_t s_last_run_ms;
+static retro_atomic_int_t s_run_active;
 
 static int64_t steady_ms(void) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1538,7 +1537,7 @@ static void pause_watchdog_start(void) {
         std::unique_lock<std::mutex> lock(s_pause_mutex);
         while (!s_pause_watchdog_stop) {
             s_pause_cv.wait_for(lock, std::chrono::milliseconds(25));
-            if (!s_pause_watchdog_stop && game_loaded && !retro_atomic_load_acquire_int(&s_guest_paused) &&
+            if (!s_pause_watchdog_stop && game_loaded && !retro_atomic_load_acquire_int(&s_run_active) && !retro_atomic_load_acquire_int(&s_guest_paused) &&
                 steady_ms() - retro_atomic_load_acquire_64(&s_last_run_ms) > 100)
                 guest_set_paused(true);
         }
@@ -2023,6 +2022,7 @@ static void run_stats_end(std::chrono::steady_clock::time_point run_start, doubl
 }
 
 RETRO_API void retro_run(void) {
+    retro_atomic_store_release_int(&s_run_active, 1);
     if (xe_libretro_take_title_stop())
         xenia_stop_emulator();
     {
@@ -2082,6 +2082,8 @@ RETRO_API void retro_run(void) {
     }
 
     run_stats_end(run_start, video_ms);
+    retro_atomic_store_release_64(&s_last_run_ms, steady_ms());
+    retro_atomic_store_release_int(&s_run_active, 0);
 }
 
 RETRO_API void retro_cheat_reset(void) {}

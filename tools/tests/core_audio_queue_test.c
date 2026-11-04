@@ -90,16 +90,16 @@ static int stream_test(unsigned ch) {
 }
 
 static int full_test(unsigned ch, int cancel) {
-  float data[3072 * 6];
+  float data[4096 * 6];
   sthread_t *thread;
   size_t count, i;
   int success;
   channels = ch;
   queue = xe_audio_queue_new(ch); if (!queue) return 0;
-  count = 3072 * ch;
+  count = 4096 * ch;
   for (i = 0; i < count; ++i) data[i] = sample(i);
-  if (!xe_audio_queue_can_write_frames(queue, 3072) ||
-      xe_audio_queue_can_write_frames(queue, 3073) ||
+  if (!xe_audio_queue_can_write_frames(queue, 4096) ||
+      xe_audio_queue_can_write_frames(queue, 4097) ||
       xe_audio_queue_can_write_frames(queue, SIZE_MAX) ||
       xe_audio_queue_can_write_frames(NULL, 1)) return 0;
   if (xe_audio_queue_write(queue, data, count) != count) return 0;
@@ -190,6 +190,6 @@ int main(void) {
   if (!matrix_test(2, 0) || !matrix_test(6, 0) ||
       !matrix_test(2, 1) || !matrix_test(6, 1)) return 7;
   retro_eventcount_free(&completion);
-  puts("PASS: stereo/5.1 whole-frame wrap, 64ms bound, readiness and cancellation");
+  puts("PASS: stereo/5.1 whole-frame wrap, storage bound, readiness and cancellation");
   return 0;
 }

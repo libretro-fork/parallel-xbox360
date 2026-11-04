@@ -17,8 +17,9 @@ namespace libretro {
 LibretroAudioDriver::LibretroAudioDriver(LibretroAudioSystem* system,
                                          xe::threading::Semaphore* semaphore,
                                          uint32_t frequency, uint32_t channels,
-                                         bool need_format_conversion)
-    : group_(system ? system->group() : nullptr),
+                                         bool need_format_conversion,
+                                         retro_atomic_int_t* processed)
+    : system_(system), processed_(processed), group_(system ? system->group() : nullptr),
       registry_required_(system != nullptr),
       semaphore_(semaphore),
       frequency_(frequency ? frequency : 48000),
@@ -36,8 +37,14 @@ LibretroAudioDriver::~LibretroAudioDriver() {
 
 bool LibretroAudioDriver::Initialize() {
   if (ring_) return true;
-  ring_.reset(registry_required_ ? xe_audio_group_queue_new(group_)
-                                : xe_audio_queue_new(out_channels_));
+  const size_t maximum_frames = frequency_ == 48000 ? channel_samples_ :
+      (size_t(channel_samples_) * 48000 + frequency_ - 1) / frequency_ + 1;
+  borrowed_output_ = registry_required_ && frequency_ == 48000;
+  if (borrowed_output_)
+    ring_.reset(xe_audio_group_queue_new_borrowed(group_, channel_samples_, FrameConsumed, this));
+  else
+    ring_.reset(registry_required_ ? xe_audio_group_queue_new_packet(group_,maximum_frames,FrameConsumed,this)
+                                  : xe_audio_queue_new(out_channels_));
   if (!ring_) {
     ring_.reset();
     return false;
@@ -47,6 +54,16 @@ bool LibretroAudioDriver::Initialize() {
 }
 
 void LibretroAudioDriver::Shutdown() { xe_audio_queue_stop(ring_.get()); }
+
+void LibretroAudioDriver::FrameConsumed(void* context, int consumed) {
+  LibretroAudioDriver* driver = static_cast<LibretroAudioDriver*>(context);
+  if (consumed) {
+    if (driver->processed_) retro_atomic_fetch_add_int(driver->processed_, 1);
+  } else {
+    if (driver->semaphore_) driver->semaphore_->Release(1, nullptr);
+    if (driver->processed_ && driver->system_) driver->system_->NotifyOutputSpace();
+  }
+}
 
 void LibretroAudioDriver::Resample(const float* in, size_t frames) {
   const size_t ch = out_channels_;
@@ -79,6 +96,11 @@ bool LibretroAudioDriver::CanSubmitFrame() const {
 }
 
 void LibretroAudioDriver::SubmitFrame(float* samples) {
+  if (borrowed_output_) {
+    xe_audio_queue_submit_borrowed(ring_.get(), samples, channel_samples_, channels_,
+        channels_ == 6 && need_format_conversion_, xe_audio_queue_get_volume(ring_.get()));
+    return;
+  }
   if (frequency_ != 48000) {
     SubmitFrameResampled(samples);
     return;
@@ -87,7 +109,7 @@ void LibretroAudioDriver::SubmitFrame(float* samples) {
     xe_audio_queue_write_converted(ring_.get(), samples, channel_samples_,
         channels_, channels_ == 6 && need_format_conversion_, xe_audio_queue_get_volume(ring_.get()));
   }
-  if (semaphore_) semaphore_->Release(1, nullptr);
+  xe_audio_queue_finish_packet(ring_.get());
 }
 
 void LibretroAudioDriver::SubmitFrameResampled(float* samples) {
@@ -144,10 +166,7 @@ void LibretroAudioDriver::SubmitFrameResampled(float* samples) {
       Resample(prepared, frames);
   }
 
-  // Release the semaphore so Xenia's audio worker can continue
-  if (semaphore_) {
-    semaphore_->Release(1, nullptr);
-  }
+  xe_audio_queue_finish_packet(ring_.get());
 }
 
 void LibretroAudioDriver::Pause() { xe_audio_queue_pause(ring_.get(), 1); }
@@ -158,7 +177,7 @@ void LibretroAudioDriver::SetVolume(float volume) { xe_audio_queue_volume(ring_.
 
 LibretroAudioSystem::LibretroAudioSystem(cpu::Processor* processor, xe_audio_registry* registry)
     : AudioSystem(processor) {
-  group_.reset(xe_audio_group_new(registry));
+  group_.reset(xe_audio_group_new_frontend(registry));
 }
 
 LibretroAudioSystem::~LibretroAudioSystem() = default;
@@ -176,7 +195,8 @@ X_STATUS LibretroAudioSystem::CreateDriver(size_t index,
                                             xe::threading::Semaphore* semaphore,
                                             AudioDriver** out_driver) {
   // An audio client: 5.1, big-endian, channel after channel, at 48 kHz.
-  auto driver = new LibretroAudioDriver(this, semaphore, 48000, 6, true);
+  auto driver = new LibretroAudioDriver(this, semaphore, 48000, 6, true,
+      &clients_[index].frames_processed);
   if (!driver->Initialize()) {
     delete driver;
     return X_STATUS_UNSUCCESSFUL;

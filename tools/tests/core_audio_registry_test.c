@@ -150,14 +150,14 @@ static void blocked_write(void *opaque) {
 static int root_cancel_test(void) {
   struct blocked jobs[8];
   sthread_t *threads[8];
-  float samples[3072 * 6];
+  float samples[4096 * 6];
   unsigned i;
   int success = 1;
   memset(jobs, 0, sizeof(jobs)); memset(samples, 0, sizeof(samples));
   registry = xe_audio_registry_new(6); if (!registry) return 0;
   for (i = 0; i < 8; ++i) {
     jobs[i].queue = xe_audio_registry_queue_new(registry);
-    if (!jobs[i].queue || xe_audio_queue_write(jobs[i].queue, samples, 3072 * 6) != 3072 * 6) return 0;
+    if (!jobs[i].queue || xe_audio_queue_write(jobs[i].queue, samples, 4096 * 6) != 4096 * 6) return 0;
     threads[i] = sthread_create(blocked_write, &jobs[i]); if (!threads[i]) return 0;
     if (!wait_flag(&jobs[i].started)) return 0;
   }
@@ -221,7 +221,7 @@ static int group_cancel_test(void) {
   xe_audio_queue *next_queue;
   struct blocked job;
   sthread_t *thread;
-  float samples[3072 * 6], output[6];
+  float samples[4096 * 6], output[6];
   unsigned i;
   int success;
   memset(&job, 0, sizeof(job));
@@ -230,8 +230,8 @@ static int group_cancel_test(void) {
   job.queue = xe_audio_group_queue_new(old);
   next_queue = xe_audio_group_queue_new(next);
   if (!job.queue || !next_queue) return 0;
-  for (i = 0; i < 3072 * 6; ++i) samples[i] = 1.0f;
-  xe_audio_queue_write(job.queue, samples, 3072 * 6);
+  for (i = 0; i < 4096 * 6; ++i) samples[i] = 1.0f;
+  xe_audio_queue_write(job.queue, samples, 4096 * 6);
   thread = sthread_create(blocked_write, &job); if (!thread || !wait_flag(&job.started)) return 0;
   xe_audio_group_free(old);
   success = wait_flag(&job.finished);

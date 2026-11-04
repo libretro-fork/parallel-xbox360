@@ -35,24 +35,30 @@ class LibretroAudioDriver : public AudioDriver {
   // upstream's SDL driver takes them.
   LibretroAudioDriver(LibretroAudioSystem* system,
                       xe::threading::Semaphore* semaphore, uint32_t frequency,
-                      uint32_t channels, bool need_format_conversion);
+                      uint32_t channels, bool need_format_conversion,
+                      retro_atomic_int_t* processed = nullptr);
   ~LibretroAudioDriver() override;
 
   bool Initialize() override;
   void Shutdown() override;
 
   bool CanSubmitFrame() const override;
+  bool WaitForFrame() override { return xe_audio_queue_wait_request(ring_.get()) != 0; }
   void SubmitFrame(float* samples) override;
   void Pause() override;
   void Resume() override;
   void SetVolume(float volume) override;
 
  private:
+  static void FrameConsumed(void* context, int consumed);
   void Resample(const float* in, size_t frames);
   XE_NOINLINE void SubmitFrameResampled(float* samples);
 
+  LibretroAudioSystem* system_ = nullptr;
+  retro_atomic_int_t* processed_ = nullptr;
   xe_audio_group* group_ = nullptr;
   bool registry_required_ = false;
+  bool borrowed_output_ = false;
   xe::threading::Semaphore* semaphore_ = nullptr;
   uint32_t frequency_ = 48000;
   uint32_t channels_ = 6;

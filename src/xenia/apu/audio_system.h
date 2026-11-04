@@ -31,11 +31,6 @@ class XmaDecoder;
 
 class AudioSystem {
  public:
-  // TODO(gibbed): respect XAUDIO2_MAX_QUEUED_BUFFERS somehow (ie min(64,
-  // XAUDIO2_MAX_QUEUED_BUFFERS))
-  static constexpr size_t kMinimumQueuedFrames = 4;
-  static constexpr size_t kMaximumQueuedFrames = 64;
-
   virtual ~AudioSystem();
 
   virtual std::string name() const = 0;
@@ -95,7 +90,7 @@ class AudioSystem {
   Memory* memory_ = nullptr;
   cpu::Processor* processor_ = nullptr;
   std::unique_ptr<XmaDecoder> xma_decoder_;
-  uint32_t queued_frames_;
+
 
   retro_atomic_int_t worker_running_{0};
   kernel::object_ref<kernel::XHostThread> worker_thread_;
@@ -110,6 +105,7 @@ class AudioSystem {
     uint32_t callback_arg = 0;
     uint32_t wrapped_callback_arg = 0;
     bool in_use = false;
+    retro_atomic_int_t retiring{0};
     retro_atomic_int_t frames_submitted{0};
     retro_atomic_int_t frames_processed{0};
     retro_atomic_int_t frames_dropped{0};

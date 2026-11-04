@@ -32,6 +32,7 @@ class AudioDriver {
 
   // The worker checks capacity before invoking one guest render callback.
   virtual bool CanSubmitFrame() const { return true; }
+  virtual bool WaitForFrame() = 0;
   virtual void SubmitFrame(float* samples) = 0;
   virtual void Pause() = 0;
   virtual void Resume() = 0;

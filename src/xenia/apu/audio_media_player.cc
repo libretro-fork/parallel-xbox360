@@ -265,15 +265,12 @@ void AudioMediaPlayer::Play() {
   auto result =
       ProcessAudioLoop(this, driver_.get(), formatContext, codecContext, 0);
 
+  // An ended media stream must not hold the frontend's next sample request.
+  driver_->Pause();
+
   // We need to stop playback only if it wasn't
   if (result != ProcessAudioResult::ForcedFinish) {
     Stop(true, true);
-  }
-
-  // We're waiting for dangling samples to finish playing.
-  if (result == ProcessAudioResult::Successful) {
-    xe::threading::Wait(driver_semaphore_.get(), true,
-                        std::chrono::milliseconds(500));
   }
 
   // Cleanup after work
@@ -317,12 +314,10 @@ void AudioMediaPlayer::Stop(bool change_state, bool force) {
     return;
   }
 
-  if (driver_ && IsPaused()) {
-    driver_->Resume();
-  }
-
   state_ = XmpApp::State::kIdle;
   active_song_ = nullptr;
+  if (driver_) driver_->Pause();
+  resume_fence_.Signal();
 
   if (!force) {
     // Reachable from the guest XMP shim, so on a fiber this must park rather
@@ -515,7 +510,14 @@ void AudioMediaPlayer::OnStateChanged() {
 
 void AudioMediaPlayer::ProcessAudioBuffer(std::vector<float>* buffer) {
   while (buffer->size() >= xe::apu::AudioDriver::kFrameSamplesMax) {
-    xe::threading::Wait(driver_semaphore_.get(), true);
+    while (IsPaused() && IsSongLoaded() &&
+        retro_atomic_load_acquire_int(&worker_running_)) resume_fence_.Wait();
+    if (!driver_->WaitForFrame()) {
+      if (IsPaused() && IsSongLoaded() &&
+          retro_atomic_load_acquire_int(&worker_running_)) continue;
+      buffer->clear();
+      break;
+    }
 
     if (!IsSongLoaded()) {
       buffer->clear();
@@ -544,23 +546,14 @@ bool AudioMediaPlayer::SetupDriver(uint32_t sample_rate, uint32_t channels) {
   DeleteDriver();
 
   std::unique_lock<xe_mutex> guard(driver_mutex_);
-  driver_semaphore_ = xe::threading::Semaphore::Create(
-      AudioSystem::kMaximumQueuedFrames, AudioSystem::kMaximumQueuedFrames);
-
-  if (!driver_semaphore_) {
-    return false;
-  }
-
   driver_ = std::unique_ptr<AudioDriver>(audio_system_->CreateDriver(
-      driver_semaphore_.get(), sample_rate, channels, false));
+      nullptr, sample_rate, channels, false));
 
   if (!driver_) {
-    driver_semaphore_.reset();
     return false;
   }
 
   if (!driver_->Initialize()) {
-    driver_semaphore_.reset();
     driver_->Shutdown();
     driver_.reset();
     return false;
@@ -572,10 +565,6 @@ bool AudioMediaPlayer::SetupDriver(uint32_t sample_rate, uint32_t channels) {
 void AudioMediaPlayer::DeleteDriver() {
   std::unique_lock<xe_mutex> guard(driver_mutex_);
   if (driver_) {
-    if (driver_semaphore_) {
-      driver_semaphore_.reset();
-    }
-
     driver_->Shutdown();
     driver_.reset();
   }

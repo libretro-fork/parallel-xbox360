@@ -36,13 +36,6 @@
 // and let the normal AudioSystem handling take it, to prevent duplicate
 // implementations. They can be found in xboxkrnl_audio_xma.cc
 
-DEFINE_uint32(apu_max_queued_frames, 8,
-              "Allows changing max buffered audio frames to reduce audio "
-              "delay. Lowering this value might cause performance issues. "
-              "Value range: [4-64]",
-              "APU");
-UPDATE_from_uint32(apu_max_queued_frames, 2024, 8, 31, 20, 64);
-
 namespace xe {
 namespace apu {
 
@@ -52,12 +45,8 @@ AudioSystem::AudioSystem(cpu::Processor* processor)
       worker_running_(0) {
   pause_gate_.reset(xe_pause_gate_new());
   if (!pause_gate_) throw std::bad_alloc();
-  queued_frames_ = std::clamp(cvars::apu_max_queued_frames,
-                              static_cast<uint32_t>(kMinimumQueuedFrames),
-                              static_cast<uint32_t>(kMaximumQueuedFrames));
-
   for (size_t i = 0; i < kMaximumClientCount; ++i) {
-    client_semaphores_[i] = xe::threading::Semaphore::Create(0, queued_frames_);
+    client_semaphores_[i] = xe::threading::Semaphore::Create(0, 1);
   }
   pending_work_event_ = xe::threading::Event::CreateAutoResetEvent(false);
   assert_not_null(pending_work_event_);
@@ -163,7 +152,7 @@ void AudioSystem::WorkerThreadMain() {
 int AudioSystem::FindFreeClient() {
   for (int i = 0; i < kMaximumClientCount; i++) {
     auto& client = clients_[i];
-    if (!client.in_use) {
+    if (!client.in_use && !retro_atomic_load_acquire_int(&client.retiring)) {
       return i;
     }
   }
@@ -229,8 +218,6 @@ X_STATUS AudioSystem::RegisterClient(uint32_t callback, uint32_t callback_arg,
   }
 
   auto client_semaphore = client_semaphores_[index].get();
-  auto ret = client_semaphore->Release(queued_frames_, nullptr);
-  assert_true(ret);
 
   AudioDriver* driver;
   auto result = CreateDriver(index, client_semaphore, &driver);
@@ -281,21 +268,9 @@ void AudioSystem::SubmitFrame(size_t index, float* samples) {
         index, index < kMaximumClientCount ? clients_[index].in_use : false,
         index < kMaximumClientCount ? (void*)clients_[index].driver : nullptr);
 
-    // Submit silence instead of dropping the frame to maintain the callback
-    // chain.  If we don't submit anything, the audio driver's OnBufferEnd
-    // callback will never fire, causing the semaphore to leak.
-    if (index < kMaximumClientCount && clients_[index].driver) {
-      static float silence[apu::AudioDriver::kFrameSamplesMax] = {0};
-      retro_atomic_fetch_add_int(&clients_[index].frames_dropped, 1);
-      (clients_[index].driver)->SubmitFrame(silence);
-    } else if (index < kMaximumClientCount) {
-      // Tick the semaphore so the worker doesn't stall on a dead client.
-      client_semaphores_[index]->Release(1, nullptr);
-    }
     return;
   }
   retro_atomic_fetch_add_int(&clients_[index].frames_submitted, 1);
-  retro_atomic_fetch_add_int(&clients_[index].frames_processed, 1);
   (clients_[index].driver)->SubmitFrame(samples);
 }
 
@@ -325,6 +300,8 @@ void AudioSystem::UnregisterClient(size_t index) {
     XELOGI(
         "AudioSystem::UnregisterClient: index={}, driver={:p}", index,
         index < kMaximumClientCount ? (void*)clients_[index].driver : nullptr);
+    if (index >= kMaximumClientCount || !clients_[index].in_use) return;
+    retro_atomic_store_release_int(&clients_[index].retiring,1);
     driver_to_destroy = clients_[index].driver;
     // Leak wrapped_callback_arg: in-flight callback may hold this pointer.
     clients_[index].driver = nullptr;
@@ -353,6 +330,7 @@ void AudioSystem::UnregisterClient(size_t index) {
                                       std::chrono::milliseconds(0));
   } while (wait_result == xe::threading::WaitResult::kSuccess);
   assert_true(wait_result == xe::threading::WaitResult::kTimeout);
+  retro_atomic_store_release_int(&clients_[index].retiring,0);
 }
 
 bool AudioSystem::Save(ByteStream* stream) {
@@ -408,8 +386,6 @@ bool AudioSystem::Restore(ByteStream* stream) {
     client.in_use = true;
 
     auto client_semaphore = client_semaphores_[id].get();
-    auto ret = client_semaphore->Release(queued_frames_, nullptr);
-    assert_true(ret);
 
     AudioDriver* driver = nullptr;
     auto status = CreateDriver(id, client_semaphore, &driver);

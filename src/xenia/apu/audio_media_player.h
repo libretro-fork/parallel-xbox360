@@ -148,7 +148,6 @@ class AudioMediaPlayer {
   // Driver part - This should be integrated into audio_system, but it isn't
   // really compatible with it.
   std::unique_ptr<AudioDriver> driver_ = nullptr;
-  std::unique_ptr<xe::threading::Semaphore> driver_semaphore_ = {};
   xe_mutex driver_mutex_ = {};
 
   bool SetupDriver(uint32_t sample_rate, uint32_t channels);
