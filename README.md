@@ -6,6 +6,8 @@ This repository follows xenia-edge and adds the libretro frontend in `libretro/`
 
 ## Savestate work in progress
 
+Audio/XMA pause requests use acknowledged common gates with bounded waits. Content teardown releases the decoder contexts and their retained packet buffers after joining the decoder worker.
+
 Frontend savestate callbacks remain disabled. Native tests cover bounded state I/O, memory allocation metadata, six guest CPUs restored into fresh libco continuations, and acknowledged worker/timer pauses. In-flight HLE calls and APCs are rejected rather than replayed. Restartable kernel waits, GPU contents, complete audio decoder history and whole-machine validation still need implementation before states can be used for gameplay.
 
 ## Downloads

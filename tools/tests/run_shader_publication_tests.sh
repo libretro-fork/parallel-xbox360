@@ -19,5 +19,6 @@ mkdir -p "$out"
 cd "$root"
 ${CXX:-c++} -O2 -std=c++20 -Wno-attributes -DNDEBUG -DXENIA_LIBRETRO -DRETRO_ATOMIC_FORCE_GCC_NEW \
  -I"$root" -I"$root/src" -I"$root/third_party/libretro-common/include" -I"$root/third_party/fmt/include" \
+ -I"$root/third_party/ffmpeg-xenia" -I"$root/third_party/FFmpeg" \
  "$source" @"$objects" $libs -o "$out/test$suffix"
 "$out/test$suffix"

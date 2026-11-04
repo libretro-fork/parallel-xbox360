@@ -109,8 +109,7 @@ void AudioSystem::WorkerThreadMain() {
     size_t indices[kMaximumClientCount + 1];
     size_t count = 0, client_index, i;
     if (is_paused()) {
-      pause_fence_.Signal();
-      xe_pause_gate_wait(pause_gate_.get());
+      xe_pause_gate_wait_index(pause_gate_.get(), 0);
       continue;
     }
     {
@@ -430,27 +429,29 @@ bool AudioSystem::Restore(ByteStream* stream) {
 }
 
 void AudioSystem::Pause() {
-  if (is_paused()) {
-    return;
-  }
+  if (!PauseForState(2000000)) XELOGE("AudioSystem: worker pause timed out");
+}
+
+bool AudioSystem::PauseForState(int64_t timeout_us) {
+  if (timeout_us < 0 || (worker_thread_ &&
+      kernel::XThread::IsInThread(worker_thread_.get()))) return false;
   xe_pause_gate_set(pause_gate_.get(), 1);
-
-  // Kind of a hack, but it works.
-  pending_work_event_->Set();
-  pause_fence_.Wait();
-
-  xma_decoder_->Pause();
+  if (pending_work_event_) pending_work_event_->Set();
+  if (retro_atomic_load_acquire_int(&worker_running_) &&
+      !xe_pause_gate_wait_workers(pause_gate_.get(), 1, timeout_us)) {
+    xe_pause_gate_set(pause_gate_.get(), 0);
+    return false;
+  }
+  if (xma_decoder_ && !xma_decoder_->PauseForState(timeout_us)) {
+    xe_pause_gate_set(pause_gate_.get(), 0);
+    return false;
+  }
+  return true;
 }
 
 void AudioSystem::Resume() {
-  if (!is_paused()) {
-    return;
-  }
+  if (xma_decoder_) xma_decoder_->Resume();
   xe_pause_gate_set(pause_gate_.get(), 0);
-
-
-
-  xma_decoder_->Resume();
 }
 
 }  // namespace apu

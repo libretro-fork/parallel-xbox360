@@ -77,6 +77,7 @@ class AudioSystem {
 
   bool is_paused() const { return xe_pause_gate_is_paused(pause_gate_.get()) != 0; }
   void Pause();
+  bool PauseForState(int64_t timeout_us);
   void Resume();
 
  protected:
@@ -126,7 +127,6 @@ class AudioSystem {
 
   std::unique_ptr<xe_pause_gate, decltype(&xe_pause_gate_free)> pause_gate_{
       nullptr, &xe_pause_gate_free};
-  threading::Fence pause_fence_;
 };
 
 }  // namespace apu

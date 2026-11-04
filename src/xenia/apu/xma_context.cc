@@ -41,7 +41,11 @@ namespace apu {
 
 XmaContext::XmaContext() = default;
 
-XmaContext::~XmaContext() {}
+XmaContext::~XmaContext() {
+  // All codec implementations borrow packet data from this shared owner.
+  // av_packet_free releases the retained preallocated AVBufferRef as well.
+  av_packet_free(&av_packet_);
+}
 
 void XmaContext::DumpRaw(AVFrame* frame, int id) {
   FILE* outfile =

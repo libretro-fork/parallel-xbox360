@@ -11,8 +11,7 @@
 #define XENIA_APU_XMA_DECODER_H_
 
 #include <retro_atomic.h>
-#include <mutex>
-#include <queue>
+#include "libretro/core_pause_gate.h"
 
 #include "xenia/apu/xma_context.h"
 #include "xenia/apu/xma_register_file.h"
@@ -47,8 +46,10 @@ class XmaDecoder {
   uint32_t ReadRegister(uint32_t addr);
   void WriteRegister(uint32_t addr, uint32_t value);
 
-  bool is_paused() const { return retro_atomic_load_acquire_int(&paused_); }
+  bool is_paused() const { return xe_pause_gate_is_paused(pause_gate_.get()) != 0; }
   void Pause();
+  /* Synchronous decoder callers must already be quiescent. */
+  bool PauseForState(int64_t timeout_us);
   void Resume();
 
   void SignalWork() {
@@ -80,14 +81,13 @@ class XmaDecoder {
   kernel::object_ref<kernel::XHostThread> worker_thread_;
   std::unique_ptr<xe::threading::Event> work_event_ = nullptr;
 
-  retro_atomic_int_t paused_{0};
-  xe::threading::Fence pause_fence_;   // Signaled when worker paused.
-  xe::threading::Fence resume_fence_;  // Signaled when resume requested.
+  std::unique_ptr<xe_pause_gate, decltype(&xe_pause_gate_free)> pause_gate_{
+      nullptr, &xe_pause_gate_free};
 
   XmaRegisterFile register_file_;
 
   static const uint32_t kContextCount = 320;
-  XmaContext* contexts_[kContextCount];
+  XmaContext* contexts_[kContextCount] = {};
   BitMap context_bitmap_;
 
   uint32_t context_data_first_ptr_ = 0;

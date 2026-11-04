@@ -60,10 +60,11 @@ int XmaContextMaster::Setup(uint32_t id, Memory* memory, uint32_t guest_ptr) {
 
   // Allocate ffmpeg stuff:
   av_packet_ = av_packet_alloc();
-  assert_not_null(av_packet_);
+  if (!av_packet_) return 1;
   // chrispy: preallocate this buffer so that ffmpeg isn't reallocating it for
   // every packet, these allocations were causing RtlSubsegmentInitialize
   av_packet_->buf = av_buffer_alloc(128 * 1024);
+  if (!av_packet_->buf) return 1;
   // find the XMA2 audio decoder
   av_codec_ = avcodec_find_decoder(AV_CODEC_ID_XMAFRAMES);
   if (!av_codec_) {

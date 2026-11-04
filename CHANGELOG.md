@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Audio and XMA worker pauses use common atomic gates and acknowledged boundaries instead of pause/resume fences. State requests time out and unwind instead of waiting indefinitely; an idle dedicated XMA worker is explicitly awakened. Decoder shutdown now deletes all 320 contexts after joining the worker, and all three FFmpeg-backed implementations release their retained packet buffers. Failed packet/context setup is cleaned up rather than dereferencing failed allocations.
+
 - Savestate groundwork now uses bounded, allocation-free state cursors and borrowed text views. Native tests round-trip virtual/physical allocation metadata and six running guest CPUs into fresh libco continuations. Kernel records carry checked lengths; required object-save failures stop the operation. Timer and GPU pause requests receive explicit worker acknowledgements, without native thread suspension or timer cancellation spin polling. Scheduler hazard diagnostics use fixed atomic slots instead of a mutex/hash set. Frontend savestate callbacks remain disabled until GPU, audio and whole-machine restoration are complete.
 
 - Frontend warning/error forwarding now uses fixed C89 line storage instead of growing strings, substring copies and prefix erases. Ignored log levels skip payload copies; long warnings stream in bounded chunks. Core-option diagnostics no longer concatenate a temporary string. Playlist path parsing borrows text slices, and patch-option hashing consumes existing strings in parts while preserving option keys.

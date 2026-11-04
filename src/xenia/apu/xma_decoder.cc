@@ -8,6 +8,7 @@
  */
 
 #include "xenia/apu/xma_decoder.h"
+#include <new>
 
 #include "xenia/apu/xma_context.h"
 #include "xenia/apu/xma_context_fake.h"
@@ -85,9 +86,12 @@ namespace xe {
 namespace apu {
 
 XmaDecoder::XmaDecoder(cpu::Processor* processor)
-    : memory_(processor->memory()), processor_(processor) {}
+    : memory_(processor->memory()), processor_(processor) {
+  pause_gate_.reset(xe_pause_gate_new());
+  if (!pause_gate_) throw std::bad_alloc();
+}
 
-XmaDecoder::~XmaDecoder() = default;
+XmaDecoder::~XmaDecoder() { Shutdown(); }
 
 void av_log_callback(void* avcl, int level, const char* fmt, va_list va) {
   if (!cvars::ffmpeg_verbose && level > AV_LOG_WARNING) {
@@ -151,6 +155,7 @@ X_STATUS XmaDecoder::Setup(kernel::KernelState* kernel_state) {
   // register.
   context_data_first_ptr_ = memory()->SystemHeapAlloc(
       sizeof(XMA_CONTEXT_DATA) * kContextCount, 256, kSystemHeapPhysical);
+  if (!context_data_first_ptr_) return X_STATUS_NO_MEMORY;
   context_data_last_ptr_ =
       context_data_first_ptr_ + (sizeof(XMA_CONTEXT_DATA) * kContextCount - 1);
   register_file_[XmaRegister::ContextArrayAddress] =
@@ -174,7 +179,8 @@ X_STATUS XmaDecoder::Setup(kernel::KernelState* kernel_state) {
 
     uint32_t guest_ptr = context_data_first_ptr_ + i * sizeof(XMA_CONTEXT_DATA);
     if (contexts_[i]->Setup(i, memory(), guest_ptr)) {
-      assert_always();
+      Shutdown();
+      return X_STATUS_UNSUCCESSFUL;
     }
   }
   register_file_[XmaRegister::NextContextIndex] = 1;
@@ -204,16 +210,14 @@ X_STATUS XmaDecoder::Setup(kernel::KernelState* kernel_state) {
 
 void XmaDecoder::WorkerThreadMain() {
   while (retro_atomic_load_acquire_int(&worker_running_)) {
+    if (!xe_pause_gate_wait_index(pause_gate_.get(), 0)) break;
     // Okay, let's loop through XMA contexts to find ones we need to decode!
     bool did_work = false;
     for (uint32_t n = 0; n < kContextCount; n++) {
       did_work = contexts_[n]->Work() || did_work;
     }
 
-    if (retro_atomic_load_acquire_int(&paused_)) {
-      pause_fence_.Signal();
-      resume_fence_.Wait();
-    }
+    if (is_paused()) continue;
 
     if (did_work) {
       continue;
@@ -224,19 +228,23 @@ void XmaDecoder::WorkerThreadMain() {
 
 void XmaDecoder::Shutdown() {
   retro_atomic_store_release_int(&worker_running_, 0);
+  xe_pause_gate_stop(pause_gate_.get());
 
   if (work_event_) {
     work_event_->Set();
-  }
-
-  if (retro_atomic_load_acquire_int(&paused_)) {
-    Resume();
   }
 
   if (worker_thread_) {
     // Wait for work thread.
     xe::threading::Wait(worker_thread_->thread(), false);
     worker_thread_.reset();
+  }
+
+  // Decoder objects own packet buffers and codec history. Release them only
+  // after their sole worker has stopped, including partially completed setup.
+  for (uint32_t i = 0; i < kContextCount; ++i) {
+    delete contexts_[i];
+    contexts_[i] = nullptr;
   }
 
   if (context_data_first_ptr_) {
@@ -399,21 +407,25 @@ void XmaDecoder::WriteRegister(uint32_t addr, uint32_t value) {
 }
 
 void XmaDecoder::Pause() {
-  if (retro_atomic_load_acquire_int(&paused_)) {
-    return;
-  }
-  retro_atomic_store_release_int(&paused_, 1);
+  if (!PauseForState(2000000)) XELOGE("XmaDecoder: worker pause timed out");
+}
 
-  pause_fence_.Wait();
+bool XmaDecoder::PauseForState(int64_t timeout_us) {
+  if (timeout_us < 0 || (worker_thread_ &&
+      kernel::XThread::IsInThread(worker_thread_.get()))) return false;
+  xe_pause_gate_set(pause_gate_.get(), 1);
+  SignalWork();
+  // Without a decoder worker, the controller has already stopped synchronous
+  // guest callers. No native thread exists to acknowledge this gate.
+  if (!cvars::use_dedicated_xma_thread ||
+      !retro_atomic_load_acquire_int(&worker_running_) ||
+      xe_pause_gate_wait_workers(pause_gate_.get(), 1, timeout_us)) return true;
+  Resume();
+  return false;
 }
 
 void XmaDecoder::Resume() {
-  if (!retro_atomic_load_acquire_int(&paused_)) {
-    return;
-  }
-  retro_atomic_store_release_int(&paused_, 0);
-
-  resume_fence_.Signal();
+  xe_pause_gate_set(pause_gate_.get(), 0);
 }
 
 }  // namespace apu
