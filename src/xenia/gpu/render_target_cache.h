@@ -678,6 +678,13 @@ class RenderTargetCache {
   void GetResolveCopyRectanglesToDump(
       uint32_t base, uint32_t row_length, uint32_t rows, uint32_t pitch,
       std::vector<ResolveCopyDumpRectangle>& rectangles_out) const;
+  // The visitor borrows one stack rectangle at a time; false stops the walk.
+  void VisitResolveCopyRectangles(
+      uint32_t base, uint32_t row_length, uint32_t rows, uint32_t pitch,
+      bool (*visitor)(void*, const ResolveCopyDumpRectangle*),
+      void* context) const;
+  static bool ScanResolveRectangle(void* context,
+                                  const ResolveCopyDumpRectangle* rectangle);
 
   // True if everything owning the resolve source region is native scale, in
   // which case the resolve can be done at 1x1 into shared memory instead of

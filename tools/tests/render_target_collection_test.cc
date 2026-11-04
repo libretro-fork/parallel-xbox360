@@ -5,6 +5,17 @@
 #include "libretro/core_gpu_retire.h"
 #include <cstdio>
 #include <cstdlib>
+#include <new>
+static bool count_query_allocations;
+static size_t query_allocations;
+void* operator new(size_t size) {
+  void* allocation = std::malloc(size ? size : 1);
+  if (!allocation) throw std::bad_alloc();
+  if (count_query_allocations) ++query_allocations;
+  return allocation;
+}
+void operator delete(void* allocation) noexcept { std::free(allocation); }
+void operator delete(void* allocation, size_t) noexcept { std::free(allocation); }
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x); std::exit(1); } } while (0)
 namespace xe { namespace gpu {
 class RenderTargetCollectionTest final : public RenderTargetCache {
@@ -19,7 +30,7 @@ class RenderTargetCollectionTest final : public RenderTargetCache {
   static void Release(void* target) { delete static_cast<Target*>(target); }
  public:
   RenderTargetCollectionTest(const RegisterFile& registers, const Memory& memory)
-      : RenderTargetCache(registers,memory,nullptr,1,1) { InitializeCommon(); }
+      : RenderTargetCache(registers,memory,nullptr,2,2) { InitializeCommon(); }
   Path GetPath() const override { return Path::kHostRenderTargets; }
   uint32_t GetMaxRenderTargetWidth() const override { return 16384; }
   uint32_t GetMaxRenderTargetHeight() const override { return 16384; }
@@ -168,6 +179,74 @@ class RenderTargetCollectionTest final : public RenderTargetCache {
     xe_gpu_retire_collect(&retirement_,42);
     CHECK(render_targets_.empty() && destroyed_ == created_);
   }
+  void RunResolveQueries() {
+    RenderTargetKey native, scaled;
+    native.key = 0;
+    native.pitch_tiles_at_32bpp = 32;
+    native.scale_native = 1;
+    scaled = native;
+    scaled.scale_native = 0;
+    scaled.base_tiles = 16;
+    CHECK(GetOrCreateRenderTarget(native));
+    CHECK(GetOrCreateRenderTarget(scaled));
+    ownership_ranges_.clear();
+    ownership_ranges_.emplace(0,OwnershipRange(8,native,{},{}));
+    ownership_ranges_.emplace(8,OwnershipRange(16,{},{},{}));
+    ownership_ranges_.emplace(16,OwnershipRange(24,scaled,{},{}));
+    ownership_ranges_.emplace(24,OwnershipRange(32,{},{},{}));
+    ownership_ranges_.emplace(32,OwnershipRange(xenos::kEdramTileCount,native,{},{}));
+    std::vector<ResolveCopyDumpRectangle> rectangles;
+    unsigned results = 0;
+    for (unsigned i = 0; i < 10000; ++i) {
+      draw_util::ResolveInfo info = {};
+      info.rb_copy_control.copy_src_select = (i & 8) ? 4 : 0;
+      draw_util::ResolveEdramInfo& edram = info.IsCopyingDepth()
+          ? info.depth_edram_info : info.color_edram_info;
+      edram.base_tiles = i % xenos::kEdramTileCount;
+      edram.pitch_tiles = 32;
+      edram.msaa_samples = xenos::MsaaSamples((i >> 4) % 3);
+      edram.format_is_64bpp = (i >> 6) & 1;
+      info.coordinate_info.width_div_8 = ((i >> 2) % 8 + 1) * 10;
+      info.height_div_8 = (i % 4 + 1) * 2;
+      uint32_t base, width, rows, pitch;
+      info.GetCopyEdramTileSpan(base,width,rows,pitch);
+      GetResolveCopyRectanglesToDump(base,width,rows,pitch,rectangles);
+      bool expected_native = !rectangles.empty();
+      uint64_t tiles = 0;
+      DirectResolveEligibility expected = rectangles.empty()
+          ? DirectResolveEligibility::kNoOwnership
+          : DirectResolveEligibility::kEligible;
+      for (const auto& rectangle : rectangles) {
+        RenderTargetKey key = rectangle.render_target->key();
+        expected_native &= key.scale_native != 0;
+        if (key.is_depth != uint32_t(info.IsCopyingDepth()) ||
+            key.msaa_samples != edram.msaa_samples ||
+            uint32_t(key.Is64bpp()) != edram.format_is_64bpp)
+          expected = DirectResolveEligibility::kSourceLayoutMismatch;
+        tiles += rectangle.GetTileCount(width);
+      }
+      if (expected == DirectResolveEligibility::kEligible &&
+          tiles != uint64_t(width)*rows)
+        expected = DirectResolveEligibility::kPartialOwnership;
+      count_query_allocations = true;
+      bool actual_native = IsResolveSourceNativeOnly(base,width,rows,pitch);
+      DirectResolveEligibility actual = GetDirectResolveEligibility(info,
+          draw_util::ResolveCopyShaderIndex::kFast32bpp1x2xMSAA);
+      count_query_allocations = false;
+      CHECK(actual_native == expected_native && actual == expected);
+      CHECK(query_allocations == 0);
+      results |= 1u << unsigned(actual);
+    }
+    CHECK(results & (1u << unsigned(DirectResolveEligibility::kEligible)));
+    CHECK(results & (1u << unsigned(DirectResolveEligibility::kNoOwnership)));
+    CHECK(results & (1u << unsigned(DirectResolveEligibility::kSourceLayoutMismatch)));
+    CHECK(results & (1u << unsigned(DirectResolveEligibility::kPartialOwnership)));
+    ownership_ranges_.clear();
+    ownership_ranges_.emplace(0,OwnershipRange(xenos::kEdramTileCount,{},{},{}));
+    ClearCache();
+    xe_gpu_retire_collect(&retirement_,42);
+    CHECK(destroyed_ == created_);
+  }
 };
 } }
 int main() {
@@ -176,6 +255,8 @@ int main() {
   xe::gpu::RenderTargetCollectionTest test(registers,memory);
   test.Run();
   test.RunReuse();
+  test.RunResolveQueries();
   std::puts("PASS: ownership/fence lifetime; 20000 moving EDRAM bases reuse four images without map growth; incompatible shapes remain distinct");
+  std::puts("PASS: 10000 resolve cases match collected-rectangle semantics with zero query allocations");
   return 0;
 }

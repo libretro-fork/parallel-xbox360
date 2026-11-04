@@ -1,6 +1,7 @@
 /* C89: submitted GPU references stay alive; dependency order and shutdown. */
 #include "libretro/core_gpu_retire.h"
 #include "libretro/core_gpu_resolve.h"
+#include "libretro/core_gpu_resolve_scan.h"
 #include <stdio.h>
 #include <stdlib.h>
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"FAIL line %u\n",(unsigned)__LINE__); exit(1); } } while (0)
@@ -91,6 +92,16 @@ int main(void)
    unsigned frame, expected;
    xe_gpu_surface_choice choice = {0};
    int a, b;
+   xe_gpu_resolve_scan scan = {0};
+   scan.required = XE_GPU_RESOLVE_REQUIRE_NATIVE;
+   CHECK(xe_gpu_resolve_scan_add(&scan,3,1,4));
+   CHECK(!xe_gpu_resolve_scan_add(&scan,3,0,2));
+   CHECK(scan.found && scan.tiles == 6);
+   scan.required = XE_GPU_RESOLVE_REQUIRE_LAYOUT;
+   scan.invalid = 0;
+   scan.wanted_layout = 3;
+   CHECK(xe_gpu_resolve_scan_add(&scan,3,0,4));
+   CHECK(!xe_gpu_resolve_scan_add(&scan,2,1,4));
    test_fixed_pool();
    test_scaled_views();
    CHECK(xe_gpu_surface_recent(2, UINT64_MAX, 4));

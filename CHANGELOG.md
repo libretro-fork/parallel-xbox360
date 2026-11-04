@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Native-scale and direct-resolve eligibility checks now visit borrowed ownership rectangles instead of allocating temporary vectors for each query. Stack-only C89 classification preserves ownership, layout and coverage checks and stops at the first disqualifying source. The pre-change implementation fails the allocation regression; 10,000 cases match the collected-rectangle results with zero query allocations. Gameplay frame-time gains have not been measured.
+
 - Vulkan and D3D12 target reuse avoids creating another GPU image when only an unused surface's EDRAM address changes. Reuses existing cache nodes and descriptors, protects all authoritative EDRAM owners and recent/bound targets, and preserves Vulkan framebuffers by stable attachment identity. Cold-resource destruction is spread across actual GPU frames using preallocated retirement metadata. Offline reuse/lifetime tests pass. The tester reports 12 minutes of Tekken Tag Tournament 2 gameplay with VRAM stabilizing around 9-11 GB instead of climbing toward 32 GB; minor frame-time fluctuations remain under investigation. Audio scheduling is unchanged from the audio-fixed release.
 
 - Vulkan's non-sparse scaled-resolve fallback now reserves one coherent backing buffer at initialization instead of accumulating overlapping buffers or relabeling live storage. Borrowed ranges share the original backing bytes without copies or per-request allocation; this fallback reserves 2 GiB at 2x2 or 8 GiB at 4x4 scaling. Sparse-capable devices retain demand commitment. Range arithmetic rejects overflow and out-of-bounds aligned accesses. Fixed two leaked image views when render-target descriptor allocation fails.
