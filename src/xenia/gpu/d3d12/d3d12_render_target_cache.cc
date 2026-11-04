@@ -955,6 +955,12 @@ bool D3D12RenderTargetCache::Initialize() {
 }
 
 void D3D12RenderTargetCache::Shutdown(bool from_destructor) {
+  // The command processor has completed GPU work before cache destruction.
+  xe_gpu_retire_collect(&retired_resources_, UINT64_MAX);
+  DestroyAllRenderTargets(true);
+  render_target_gc_ = {};
+  render_target_allocation_generation_ = 0;
+  assert_zero(render_target_allocated_bytes_);
   ui::d3d12::util::ReleaseAndNull(resolve_rov_clear_64bpp_pipeline_);
   ui::d3d12::util::ReleaseAndNull(resolve_rov_clear_32bpp_pipeline_);
   ui::d3d12::util::ReleaseAndNull(resolve_rov_clear_root_signature_);
@@ -1029,7 +1035,51 @@ void D3D12RenderTargetCache::Shutdown(bool from_destructor) {
   }
 }
 
+D3D12RenderTargetCache::D3D12RenderTarget::~D3D12RenderTarget() {
+  cache_.render_target_allocated_bytes_ -= allocation_size_;
+}
+
+void D3D12RenderTargetCache::ReleaseRenderTarget(void* target) {
+  delete static_cast<D3D12RenderTarget*>(target);
+}
+
+void D3D12RenderTargetCache::RetireCachedRenderTarget(RenderTarget* target) {
+  auto* d3d12_target = static_cast<D3D12RenderTarget*>(target);
+  const bool queued = xe_gpu_retire_append(&retired_resources_,
+      &d3d12_target->retirement, command_processor_.GetCurrentSubmission() - 1,
+      ReleaseRenderTarget, d3d12_target) != 0;
+  assert_true(queued);
+}
+
+bool D3D12RenderTargetCache::RetireUnusedRenderTargets() {
+  if (command_processor_.submission_open()) return false;
+  InvalidateCommandListRenderTargets();
+  std::memset(current_command_list_render_targets_, 0,
+              sizeof(current_command_list_render_targets_));
+  // Preserve all EDRAM owners. Descriptors retire with their resource, after
+  // the last submitted command list that may reference either has completed.
+  RenderTargetCache::ClearCache();
+  xe_gpu_retire_collect(&retired_resources_,
+                       command_processor_.GetCompletedSubmission());
+  return true;
+}
+
+void D3D12RenderTargetCache::ClearCache() {
+  RetireUnusedRenderTargets();
+}
+
+void D3D12RenderTargetCache::CollectUnusedRenderTargets(uint64_t frame) {
+  if (xe_gpu_cache_gc_due(&render_target_gc_, frame,
+          render_target_allocated_bytes_, UINT64_C(512) << 20,
+          render_target_allocation_generation_) && RetireUnusedRenderTargets()) {
+    xe_gpu_cache_gc_commit(&render_target_gc_, frame,
+        render_target_allocation_generation_, 120);
+  }
+}
+
 void D3D12RenderTargetCache::CompletedSubmissionUpdated() {
+  xe_gpu_retire_collect(&retired_resources_,
+                       command_processor_.GetCompletedSubmission());
   if (edram_snapshot_restore_pool_) {
     edram_snapshot_restore_pool_->Reclaim(
         command_processor_.GetCompletedSubmission());
@@ -1938,10 +1988,16 @@ RenderTargetCache::RenderTarget* D3D12RenderTargetCache::CreateRenderTarget(
   device->CreateShaderResourceView(resource.Get(), &srv_desc,
                                    descriptor_srv.GetHandle());
 
-  return new D3D12RenderTarget(
-      key, resource.Get(), std::move(descriptor_draw),
+  const uint64_t allocation_size =
+      xe_d3d12_allocation_info(device, 0, 1, &resource_desc).SizeInBytes;
+  if (!allocation_size || allocation_size == UINT64_MAX) return nullptr;
+  auto* target = new D3D12RenderTarget(
+      *this, allocation_size, key, resource.Get(), std::move(descriptor_draw),
       std::move(descriptor_load_separate), std::move(descriptor_srv),
       std::move(descriptor_srv_stencil), resource_state);
+  render_target_allocated_bytes_ += allocation_size;
+  ++render_target_allocation_generation_;
+  return target;
 }
 
 bool D3D12RenderTargetCache::IsHostDepthEncodingDifferent(

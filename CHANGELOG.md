@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- D3D12 now also retires orphan host render targets using the shared C89 submission queue and the same allocation-triggered collection policy as Vulkan. Resource and descriptor destruction waits for existing submission completion; CPU binding snapshots are invalidated. No extra GPU wait, readback or release logging is added.
+
 - Paused guest CPU workers now park on a C89 libretro-common eventcount gate and wake directly on resume or shutdown, replacing repeated 2 ms sleeps. Guest time resumes before workers are released. Other scheduler timing and pause detection remain under audit.
 
 - Vulkan now periodically retires cached render targets that no longer own EDRAM data, instead of retaining them until an explicit cache clear. Framebuffers retire before their image views after the last submitted GPU use; no device-idle wait, sleep or pixel copy is added. Render passes remain alive for asynchronous pipeline compilation. Active EDRAM owners are preserved, so this is not a hard cap on total VRAM.

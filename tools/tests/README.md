@@ -1093,6 +1093,8 @@ SDK builds are not available in this validation environment.
 
 ### GPU resource retirement
 
+Both Vulkan and D3D12 use this shared C89 retirement queue. D3D12 retains resource descriptors until their last submitted GPU use completes and clears its CPU binding snapshot before retiring orphan targets. The queue tests cover lifecycle policy; retail rendering and peak VRAM require gameplay validation.
+
 bash tools/tests/run_gpu_retire_tests.sh checks dependency-order destruction,
 completed versus in-flight submissions, callbacks freeing their own nodes,
 200,000 deferred retirements, final quiescent drain and frame/generation-based

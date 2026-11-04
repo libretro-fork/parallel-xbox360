@@ -103,6 +103,8 @@ class D3D12CommandProcessor final : public CommandProcessor {
     return deferred_command_list_;
   }
 
+  bool submission_open() const { return submission_open_; }
+
   uint64_t GetCurrentSubmission() const {
     return completion_timeline_->GetUpcomingSubmission();
   }

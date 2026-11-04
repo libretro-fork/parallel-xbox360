@@ -4078,6 +4078,7 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
     // so it can't sit staged indefinitely.
     FlushMemexportStagingReadback();
     EvictOldReadbackStaging();
+    render_target_cache_->CollectUnusedRenderTargets(frame_current_);
 
     if (cache_clear_requested_ && AwaitAllQueueOperationsCompletion()) {
       cache_clear_requested_ = false;

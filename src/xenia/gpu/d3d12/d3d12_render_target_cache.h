@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "libretro/core_gpu_retire.h"
 #include "xenia/base/assert.h"
 #include "xenia/gpu/d3d12/d3d12_shared_memory.h"
 #include "xenia/gpu/d3d12/d3d12_texture_cache.h"
@@ -66,6 +67,8 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   bool Initialize();
   void Shutdown(bool from_destructor = false);
 
+  void ClearCache() override;
+  void CollectUnusedRenderTargets(uint64_t frame);
   void CompletedSubmissionUpdated();
   void BeginSubmission();
 
@@ -244,6 +247,7 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
     // tile ownership transfers in floating-point formats, and to distinguish
     // between two -1 representations in snorm formats).
     D3D12RenderTarget(
+        D3D12RenderTargetCache& cache, uint64_t allocation_size,
         RenderTargetKey key, ID3D12Resource* resource,
         ui::d3d12::D3D12CpuDescriptorPool::Descriptor&& descriptor_draw,
         ui::d3d12::D3D12CpuDescriptorPool::Descriptor&&
@@ -252,12 +256,17 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
         ui::d3d12::D3D12CpuDescriptorPool::Descriptor&& descriptor_srv_stencil,
         D3D12_RESOURCE_STATES resource_state)
         : RenderTarget(key),
+          cache_(cache),
+          allocation_size_(allocation_size),
           resource_(resource),
           descriptor_draw_(std::move(descriptor_draw)),
           descriptor_load_separate_(std::move(descriptor_load_separate)),
           descriptor_srv_(std::move(descriptor_srv)),
           descriptor_srv_stencil_(std::move(descriptor_srv_stencil)),
           resource_state_(resource_state) {}
+
+    ~D3D12RenderTarget() override;
+    xe_gpu_retire_node retirement = {};
 
     ID3D12Resource* resource() const { return resource_.Get(); }
     const ui::d3d12::D3D12CpuDescriptorPool::Descriptor& descriptor_draw()
@@ -301,6 +310,8 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
     }
 
    private:
+    D3D12RenderTargetCache& cache_;
+    uint64_t allocation_size_;
     Microsoft::WRL::ComPtr<ID3D12Resource> resource_;
     ui::d3d12::D3D12CpuDescriptorPool::Descriptor descriptor_draw_;
     ui::d3d12::D3D12CpuDescriptorPool::Descriptor descriptor_load_separate_;
@@ -580,6 +591,14 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   const RenderTarget* const*
       current_command_list_render_targets_[1 + xenos::kMaxColorRenderTargets];
   bool are_current_command_list_render_targets_valid_ = false;
+
+  static void ReleaseRenderTarget(void* target);
+  void RetireCachedRenderTarget(RenderTarget* target) override;
+  bool RetireUnusedRenderTargets();
+  xe_gpu_retire_queue retired_resources_ = {};
+  xe_gpu_cache_gc render_target_gc_ = {};
+  uint64_t render_target_allocated_bytes_ = 0;
+  uint64_t render_target_allocation_generation_ = 0;
 
   // Temporary storage for descriptors used in PerformTransfersAndResolveClears
   // and DumpRenderTargets.
