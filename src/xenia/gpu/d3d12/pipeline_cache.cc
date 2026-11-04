@@ -243,7 +243,7 @@ void PipelineCache::InitializeShaderStorage(
 
   uint32_t storage_index = storage_writer_.storage_index() + 1;
 
-  std::vector<PipelineStoredDescription> pipeline_stored_descriptions;
+  PipelineStorageRecords pipeline_stored_descriptions(nullptr, xe_file_records_close);
   if (!storage_writer_.InitializeShaderStorage(
           cache_root, title_id, pipeline_config,
           // Shader load callback.
@@ -269,7 +269,8 @@ void PipelineCache::InitializeShaderStorage(
   pipeline_storage_file_flush_needed_ = false;
 
   // Create the pipelines.
-  if (!pipeline_stored_descriptions.empty()) {
+  const size_t pipeline_record_count = xe_file_records_count(pipeline_stored_descriptions.get());
+  if (pipeline_record_count != 0) {
     uint64_t pipeline_creation_start_ = xe::Clock::QueryHostTickCount();
 
     // Launch additional creation threads to use all cores to create
@@ -280,7 +281,7 @@ void PipelineCache::InitializeShaderStorage(
     }
     size_t creation_thread_original_count = creation_queue_.thread_count();
     creation_queue_.SetThreadCount(std::max(
-        std::min(pipeline_stored_descriptions.size(), logical_processor_count) -
+        std::min(pipeline_record_count, logical_processor_count) -
             size_t(1),
         creation_thread_original_count));
 
@@ -291,8 +292,11 @@ void PipelineCache::InitializeShaderStorage(
     size_t pipelines_ps_not_found = 0;
     size_t pipelines_ps_translation_missing = 0;
     size_t pipelines_root_sig_failed = 0;
-    for (const PipelineStoredDescription& pipeline_stored_description :
-         pipeline_stored_descriptions) {
+    PipelineStoredDescription pipeline_stored_description;
+    size_t record_index;
+    for (record_index = 0; record_index < pipeline_record_count; ++record_index) {
+      if (!xe_file_records_read(pipeline_stored_descriptions.get(), record_index,
+                               &pipeline_stored_description, sizeof(pipeline_stored_description))) break;
       const PipelineDescription& pipeline_description =
           pipeline_stored_description.description;
       // TODO(Triang3l): On Vulkan, skip pipelines requiring unsupported device
@@ -417,7 +421,7 @@ void PipelineCache::InitializeShaderStorage(
     XELOGI(
         "Pipeline cache loaded: {} created, {} already exist, {} total stored",
         pipelines_created, pipelines_already_exist,
-        pipeline_stored_descriptions.size());
+        pipeline_record_count);
     if (pipelines_vs_not_found || pipelines_vs_translation_missing ||
         pipelines_ps_not_found || pipelines_ps_translation_missing ||
         pipelines_root_sig_failed) {

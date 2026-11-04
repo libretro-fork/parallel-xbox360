@@ -96,3 +96,65 @@ int xe_file_blob_open(xe_file_blob *blob, const char *path) {
   blob->data = (const uint8_t *)blob->storage;
   return 1;
 }
+
+struct xe_file_records {
+  xe_file *file;
+  const uint8_t *mapping;
+  uint8_t *window;
+  uint64_t start;
+  size_t record_size, count, window_records, window_first, window_count;
+};
+void xe_file_records_close(xe_file_records *records) {
+  if (!records) return;
+  xe_file_close(records->file);
+  free(records->window);
+  free(records);
+}
+xe_file_records *xe_file_records_open(const char *path, uint64_t start, size_t record_size) {
+  xe_file_records *records;
+  uint64_t size;
+  if (!record_size) return NULL;
+  records = (xe_file_records *)calloc(1, sizeof(*records));
+  if (!records) return NULL;
+  records->file = xe_file_open(path);
+  if (!records->file) { xe_file_records_close(records); return NULL; }
+  size = xe_file_size(records->file);
+  if (start > size || size > SIZE_MAX) { xe_file_records_close(records); return NULL; }
+  records->start = start; records->record_size = record_size;
+  records->count = (size_t)((size - start) / record_size);
+  if (!records->count) return records;
+  records->mapping = xe_file_view(records->file, start, records->count * record_size);
+  if (records->mapping) return records;
+  records->window_records = 65536 / record_size;
+  if (!records->window_records) records->window_records = 1;
+  if (records->window_records > records->count) records->window_records = records->count;
+  records->window = (uint8_t *)malloc(records->window_records * record_size);
+  if (!records->window) { xe_file_records_close(records); return NULL; }
+  return records;
+}
+size_t xe_file_records_count(const xe_file_records *records) { return records ? records->count : 0; }
+size_t xe_file_records_stride(const xe_file_records *records) { return records ? records->record_size : 0; }
+const uint8_t *xe_file_records_get(xe_file_records *records, size_t index) {
+  size_t first, count;
+  if (!records || index >= records->count) return NULL;
+  if (records->mapping) return records->mapping + index * records->record_size;
+  if (index < records->window_first || index - records->window_first >= records->window_count) {
+    first = index - index % records->window_records;
+    count = records->count - first;
+    if (count > records->window_records) count = records->window_records;
+    records->window_count = 0;
+    if (!xe_file_read(records->file, records->start + first * records->record_size,
+          records->window, count * records->record_size)) return NULL;
+    records->window_first = first; records->window_count = count;
+  }
+  return records->window + (index - records->window_first) * records->record_size;
+}
+
+int xe_file_records_read(xe_file_records *records, size_t index, void *out, size_t size) {
+  const uint8_t *bytes;
+  if (!records || !out || size != records->record_size) return 0;
+  bytes = xe_file_records_get(records, index);
+  if (!bytes) return 0;
+  memcpy(out, bytes, size);
+  return 1;
+}

@@ -1093,6 +1093,26 @@ and Vulkan/D3D12 interface/lifetime fixtures. Those lifecycle fixtures do not
 boot a retail game or prove visual output across all titles. macOS and Android
 SDK builds are not available in this validation environment.
 
+### Bounded pipeline-description records
+
+Run bash tools/tests/run_file_records_tests.sh (SANITIZER= under MSYS2).
+The C89 fixture checks a 1 MiB synthetic short-read VFS, a 64 KiB request bound,
+read-call counts excluding per-record I/O, exactly one sequential seek,
+window reuse, random access, I/O failures without stale-row publication,
+output bounds, incomplete tails, empty snapshots and native borrowed mappings.
+run_cache_file_tests.sh also checks the production C89 record validator:
+unaligned stored hashes, valid/corrupt prefixes, stride/field bounds, sink and
+I/O failures, writer/reader sharing, append while mapped, fixed snapshot count,
+and successful repair after closing the view. Linux uses ASan/UBSan; MSVC
+helper/driver builds use /TC /MD /O2 /W4 /WX.
+
+Both GPU backends now replay from this reader. Their existing nontrivial C++
+descriptor types are decoded into one reusable object; raw mapped bytes are
+never treated as live C++ objects. This remaining control-record copy is not
+claimed to be zero-copy. Queued jobs reference owned pipeline entries, not the
+reused descriptor or file window. Retail cache replay/performance still needs
+validation; the core lifecycle fixtures use synthetic failed content.
+
 ### Mapped file blobs
 
 Run bash tools/tests/run_file_tests.sh (SANITIZER= under MSYS2).

@@ -2499,7 +2499,7 @@ void VulkanPipelineCache::InitializeShaderStorage(
 
   uint32_t storage_index = storage_writer_.storage_index() + 1;
 
-  std::vector<PipelineStoredDescription> pipeline_stored_descriptions;
+  PipelineStorageRecords pipeline_stored_descriptions(nullptr, xe_file_records_close);
   if (!storage_writer_.InitializeShaderStorage(
           cache_root, title_id, pipeline_config,
           // Shader load callback.
@@ -2578,7 +2578,8 @@ void VulkanPipelineCache::InitializeShaderStorage(
   xe_file_blob_close(&pipeline_cache_data);
 
   // Create pipelines from stored descriptions.
-  if (!pipeline_stored_descriptions.empty()) {
+  const size_t pipeline_record_count = xe_file_records_count(pipeline_stored_descriptions.get());
+  if (pipeline_record_count != 0) {
     uint64_t pipeline_creation_start = xe::Clock::QueryHostTickCount();
 
     size_t pipelines_created = 0;
@@ -2591,8 +2592,11 @@ void VulkanPipelineCache::InitializeShaderStorage(
     size_t pipelines_layout_failed = 0;
     size_t pipelines_requirements_not_met = 0;
 
-    for (const PipelineStoredDescription& pipeline_stored_description :
-         pipeline_stored_descriptions) {
+    PipelineStoredDescription pipeline_stored_description;
+    size_t record_index;
+    for (record_index = 0; record_index < pipeline_record_count; ++record_index) {
+      if (!xe_file_records_read(pipeline_stored_descriptions.get(), record_index,
+                               &pipeline_stored_description, sizeof(pipeline_stored_description))) break;
       const PipelineDescription& pipeline_description =
           pipeline_stored_description.description;
 
@@ -2754,7 +2758,7 @@ void VulkanPipelineCache::InitializeShaderStorage(
 
     XELOGI("Pipeline cache: {} created, {} already exist, {} total in {} ms",
            pipelines_created, pipelines_already_exist,
-           pipeline_stored_descriptions.size(),
+           pipeline_record_count,
            (xe::Clock::QueryHostTickCount() - pipeline_creation_start) * 1000 /
                xe::Clock::QueryHostTickFrequency());
 

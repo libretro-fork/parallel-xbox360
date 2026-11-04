@@ -2,6 +2,8 @@
 #include "core_cache_file.h"
 #include <errno.h>
 #include <limits.h>
+#include <string.h>
+#include <encodings/xxh3.h>
 
 RFILE *xe_cache_file_open(const char *path) {
    RFILE *file;
@@ -83,4 +85,26 @@ int xe_cache_file_repair(RFILE *file, uint64_t length) {
          filestream_truncate(file, (int64_t)length) < 0) return 0;
    return filestream_seek(file, (int64_t)length,
          RETRO_VFS_SEEK_POSITION_START) >= 0;
+}
+
+int xe_cache_records_validate(xe_file_records *records, size_t record_size,
+      size_t hash_offset, size_t payload_offset, size_t payload_size,
+      xe_cache_record_sink sink, void *opaque, size_t *valid_count) {
+   size_t index, count;
+   uint64_t expected;
+   const uint8_t *row;
+   if (valid_count) *valid_count = 0;
+   if (!records || !valid_count || record_size != xe_file_records_stride(records) || hash_offset > record_size ||
+         sizeof(expected) > record_size - hash_offset || payload_offset > record_size ||
+         payload_size > record_size - payload_offset) return 0;
+   count = xe_file_records_count(records);
+   for (index = 0; index < count; ++index) {
+      row = xe_file_records_get(records, index);
+      if (!row) return 0;
+      memcpy(&expected, row + hash_offset, sizeof(expected));
+      if (xxh3_64(row + payload_offset, payload_size, 0) != expected) return 1;
+      if (sink && !sink(opaque, row, record_size)) return 0;
+      ++*valid_count;
+   }
+   return 1;
 }

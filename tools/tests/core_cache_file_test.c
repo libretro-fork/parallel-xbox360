@@ -3,6 +3,8 @@
 #include <string.h>
 #include <errno.h>
 #include "core_cache_file.h"
+#include "core_file.h"
+#include <encodings/xxh3.h>
 #ifdef XE_TEST_SHADER_STORAGE
 #include <encodings/xxh3.h>
 extern uint64_t xe_test_shader_entries(RFILE *file, unsigned *entries);
@@ -36,6 +38,7 @@ static int64_t RETRO_CALLCONV seek_file(struct retro_vfs_file_handle *file, int6
 static int64_t RETRO_CALLCONV read_file(struct retro_vfs_file_handle *file, void *out, uint64_t size) {
    size_t n = size > 7 ? 7 : (size_t)size;
    (void)file;
+   if (fault == 7) { errno = EIO; return -1; }
    if (position >= length) return 0;
    if (interrupted) { interrupted = 0; errno = EINTR; return -1; }
    if (n > length - position) n = length - position;
@@ -58,6 +61,54 @@ static int64_t RETRO_CALLCONV truncate_file(struct retro_vfs_file_handle *file, 
    if (fault == 2 || size < 0 || size > (int64_t)sizeof(storage)) return -1;
    length = (size_t)size; return 0;
 }
+static unsigned sink_calls;
+static int sink_reject;
+static int accept_row(void *opaque, const uint8_t *row, size_t size) {
+   (void)opaque; (void)row;
+   ++sink_calls;
+   return size == 48 && !sink_reject;
+}
+static int validation_test(const char *path) {
+   uint8_t rows[3][48], prefix[3] = {'P', 'S', 'O'};
+   uint64_t hash;
+   unsigned r, i;
+   size_t valid;
+   RFILE *file;
+   xe_file_records *records;
+   for (r = 0; r < 3; ++r) {
+      for (i = 8; i < 48; ++i) rows[r][i] = (uint8_t)(r * 13 + i * 37);
+      hash = xxh3_64(rows[r] + 8, 40, 0); memcpy(rows[r], &hash, sizeof(hash));
+   }
+   file = xe_cache_file_open(path);
+   if (!file || !xe_cache_file_repair(file, 0) || xe_cache_file_write(prefix, 1, 3, file) != 3 ||
+       xe_cache_file_write(rows, 48, 3, file) != 3 || filestream_flush(file)) return 0;
+   filestream_close(file);
+   records = xe_file_records_open(path, 3, 48); if (!records) return 0;
+   sink_calls = 0; sink_reject = 0;
+   if (!xe_cache_records_validate(records, 48, 0, 8, 40, accept_row, NULL, &valid) || valid != 3 || sink_calls != 3) return 0;
+   if (xe_cache_records_validate(records, 49, 0, 8, 40, accept_row, NULL, &valid) || valid ||
+       xe_cache_records_validate(records, 48, SIZE_MAX, 8, 40, accept_row, NULL, &valid) ||
+       xe_cache_records_validate(records, 48, 0, 8, SIZE_MAX, accept_row, NULL, &valid) || sink_calls != 3) return 0;
+   sink_reject = 1; sink_calls = 0;
+   if (xe_cache_records_validate(records, 48, 0, 8, 40, accept_row, NULL, &valid) || valid || sink_calls != 1) return 0;
+   sink_reject = 0; xe_file_records_close(records);
+   rows[1][0] ^= 0x80;
+   file = xe_cache_file_open(path);
+   if (!file || !xe_cache_file_repair(file, 3) || xe_cache_file_write(rows, 48, 3, file) != 3 || filestream_flush(file)) return 0;
+   filestream_close(file);
+   records = xe_file_records_open(path, 3, 48); if (!records) return 0;
+   sink_calls = 0;
+   if (!xe_cache_records_validate(records, 48, 0, 8, 40, accept_row, NULL, &valid) || valid != 1 || sink_calls != 1) return 0;
+   xe_file_records_close(records);
+   if (!strcmp(path, "cache://pipeline")) {
+      records = xe_file_records_open(path, 3, 48); if (!records) return 0;
+      fault = 7;
+      if (xe_cache_records_validate(records, 48, 0, 8, 40, accept_row, NULL, &valid) || valid) return 0;
+      fault = 0; xe_file_records_close(records);
+   }
+   return 1;
+}
+
 int main(int argc, char **argv) {
    struct retro_vfs_interface iface;
    struct retro_vfs_interface_info info;
@@ -66,6 +117,7 @@ int main(int argc, char **argv) {
    uint32_t words[1057];
    unsigned char encoded[1057 * 4];
    RFILE *file;
+   xe_file_records *snapshot;
 #ifdef XE_TEST_SHADER_STORAGE
    unsigned entries;
    uint64_t hash;
@@ -107,6 +159,7 @@ int main(int argc, char **argv) {
       }
    }
    fault = 0; filestream_close(file);
+   if (!validation_test("cache://pipeline")) return 33;
    info.iface = NULL; filestream_vfs_init(&info);
    file = xe_cache_file_open(argv[1]); if (!file || !xe_cache_file_repair(file, 0)) return 15;
    if (xe_cache_file_write(data, 1, 100, file) != 100) return 16;
@@ -128,6 +181,15 @@ int main(int argc, char **argv) {
           encoded[i * 4 + 2] != (unsigned char)(words[i] >> 8) ||
           encoded[i * 4 + 3] != (unsigned char)words[i]) return 24;
    }
+   if (filestream_flush(file)) return 29;
+   snapshot = xe_file_records_open(argv[1], 0, 4);
+   if (!snapshot || xe_file_records_count(snapshot) != 1057 ||
+       !xe_file_records_get(snapshot, 1056)) return 30;
+   if (filestream_seek(file, 0, RETRO_VFS_SEEK_POSITION_END) < 0 ||
+       !xe_cache_file_write_be32(file, words, 1057) || filestream_flush(file) ||
+       xe_file_records_count(snapshot) != 1057 || !xe_file_records_get(snapshot, 1056)) return 32;
+   xe_file_records_close(snapshot);
+   if (!xe_cache_file_repair(file, 64)) return 31;
    filestream_close(file);
 #ifdef XE_TEST_SHADER_STORAGE
    file = xe_cache_file_open(argv[1]);
@@ -147,6 +209,7 @@ int main(int argc, char **argv) {
        xe_test_shader_entries(file, &entries) != 20 + sizeof(encoded) || entries != 1) return 28;
    filestream_close(file);
 #endif
+   if (!validation_test(argv[1])) return 34;
    remove(argv[1]);
    puts("PASS: VFS short/EINTR transfers, repair/append position, errors, no truncating retry, bounds and native reopen");
    return 0;

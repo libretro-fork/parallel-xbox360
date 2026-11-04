@@ -13,6 +13,8 @@
 #include <condition_variable>
 #include <cstdint>
 #include "libretro/core_cache_file.h"
+#include "libretro/core_file.h"
+#include <memory>
 #include <file/file_path.h>
 #include <cstring>
 #include <deque>
@@ -175,6 +177,8 @@ XEPACKEDSTRUCT(PipelineStorageFileHeader, {
   uint32_t version_swapped;
 });
 
+using PipelineStorageRecords = std::unique_ptr<xe_file_records, decltype(&xe_file_records_close)>;
+
 // Template class for shader and pipeline storage management.
 // TPipelineStoredDescription is the API-specific pipeline description type.
 template <typename TPipelineStoredDescription>
@@ -212,7 +216,14 @@ class ShaderStorageWriter {
       const std::filesystem::path& cache_root, uint32_t title_id,
       const PipelineStorageConfig& pipeline_config,
       ShaderLoadCallback load_shader, TranslateCallback translate_shaders,
-      std::vector<TPipelineStoredDescription>& pipeline_descriptions_out) {
+      PipelineStorageRecords& pipeline_descriptions_out) {
+    pipeline_descriptions_out.reset();
+    std::set<std::pair<uint64_t, uint64_t>> translations_needed;
+    struct RecordContext {
+      TPipelineStoredDescription desc;
+      std::set<std::pair<uint64_t, uint64_t>>* translations;
+    } record_context;
+    record_context.translations = &translations_needed;
     cache_root_ = cache_root;
     title_id_ = title_id;
 
@@ -246,54 +257,40 @@ class ShaderStorageWriter {
     const uint32_t pipeline_storage_version_swapped =
         xe::byte_swap(pipeline_config.version);
     PipelineStorageFileHeader pipeline_header;
+    size_t pipeline_description_count = 0;
     if (xe_cache_file_read(&pipeline_header, sizeof(pipeline_header), 1,
               pipeline_storage_file_) &&
         pipeline_header.magic == kPipelineStorageMagic &&
         pipeline_header.magic_api == pipeline_config.api_magic &&
         pipeline_header.version_swapped == pipeline_storage_version_swapped) {
-      // Valid header, read pipeline descriptions.
-      if (filestream_seek(pipeline_storage_file_, 0, RETRO_VFS_SEEK_POSITION_END) < 0) {
+      // Validate raw bytes through a mapping or bounded reusable VFS window.
+      // Close this view before repairing the file (required by Windows mappings).
+      PipelineStorageRecords records(xe_file_records_open(
+          xe::path_to_utf8(pipeline_storage_file_path).c_str(), sizeof(pipeline_header),
+          sizeof(TPipelineStoredDescription)), xe_file_records_close);
+      if (!records) return CloseStorageFilesAfterInitializationFailure();
+      if (!xe_cache_records_validate(records.get(), sizeof(TPipelineStoredDescription),
+          offsetof(TPipelineStoredDescription, description_hash),
+          offsetof(TPipelineStoredDescription, description),
+          sizeof(TPipelineStoredDescription::description),
+          [](void* opaque, const uint8_t* bytes, size_t size) -> int {
+            RecordContext* context = static_cast<RecordContext*>(opaque);
+            std::memcpy(static_cast<void*>(&context->desc), bytes, size);
+            const auto& desc = context->desc.description;
+            context->translations->emplace(desc.vertex_shader_hash, desc.vertex_shader_modification);
+            if (desc.pixel_shader_hash)
+              context->translations->emplace(desc.pixel_shader_hash, desc.pixel_shader_modification);
+            return 1;
+          }, &record_context, &pipeline_description_count)) {
         return CloseStorageFilesAfterInitializationFailure();
       }
-      int64_t pipeline_storage_told_end =
-          filestream_tell(pipeline_storage_file_);
-      if (pipeline_storage_told_end < 0) {
-        return CloseStorageFilesAfterInitializationFailure();
-      }
-      size_t pipeline_storage_told_count =
-          size_t(pipeline_storage_told_end >= int64_t(sizeof(pipeline_header))
-                     ? (uint64_t(pipeline_storage_told_end) -
-                        sizeof(pipeline_header)) /
-                           sizeof(TPipelineStoredDescription)
-                     : 0);
-      if (pipeline_storage_told_count) {
-        if (filestream_seek(pipeline_storage_file_,
-                             int64_t(sizeof(pipeline_header)), RETRO_VFS_SEEK_POSITION_START) < 0) {
-        return CloseStorageFilesAfterInitializationFailure();
-      }
-        pipeline_descriptions_out.resize(pipeline_storage_told_count);
-        pipeline_descriptions_out.resize(
-            xe_cache_file_read(pipeline_descriptions_out.data(),
-                  sizeof(TPipelineStoredDescription),
-                  pipeline_storage_told_count, pipeline_storage_file_));
-        // Validate each description's hash.
-        size_t valid_count = 0;
-        for (size_t i = 0; i < pipeline_descriptions_out.size(); ++i) {
-          const TPipelineStoredDescription& desc = pipeline_descriptions_out[i];
-          if (XXH3_64bits(&desc.description, sizeof(desc.description)) !=
-              desc.description_hash) {
-            break;
-          }
-          ++valid_count;
-        }
-        pipeline_descriptions_out.resize(valid_count);
-      }
+      records.reset();
       // Truncate to last valid description.
       if (!xe_cache_file_repair(
           pipeline_storage_file_,
           uint64_t(sizeof(pipeline_header) +
                    sizeof(TPipelineStoredDescription) *
-                       pipeline_descriptions_out.size()))) {
+                       pipeline_description_count))) {
         return CloseStorageFilesAfterInitializationFailure();
       }
     } else {
@@ -366,18 +363,18 @@ class ShaderStorageWriter {
     }
     XELOGI("Loaded {} shaders from storage", shaders_loaded);
 
-    // Collect shader translations needed from pipeline descriptions.
-    std::set<std::pair<uint64_t, uint64_t>> translations_needed;
-    for (const TPipelineStoredDescription& desc : pipeline_descriptions_out) {
-      translations_needed.emplace(desc.description.vertex_shader_hash,
-                                  desc.description.vertex_shader_modification);
-      if (desc.description.pixel_shader_hash) {
-        translations_needed.emplace(desc.description.pixel_shader_hash,
-                                    desc.description.pixel_shader_modification);
-      }
-    }
+    // Reopen the validated prefix only after repair/header output is visible.
+    if (filestream_flush(pipeline_storage_file_) != 0)
+      return CloseStorageFilesAfterInitializationFailure();
+    PipelineStorageRecords records(xe_file_records_open(
+        xe::path_to_utf8(pipeline_storage_file_path).c_str(), sizeof(pipeline_header),
+        sizeof(TPipelineStoredDescription)), xe_file_records_close);
+    if (!records || xe_file_records_count(records.get()) != pipeline_description_count)
+      return CloseStorageFilesAfterInitializationFailure();
+
+    // Translation keys were collected during validation, avoiding another file pass.
     XELOGI("Loaded {} pipeline descriptions, {} shader translations needed",
-           pipeline_descriptions_out.size(), translations_needed.size());
+           pipeline_description_count, translations_needed.size());
 
     // Translate shaders (callback handles parallel translation).
     if (!translations_needed.empty() && translate_shaders) {
@@ -390,6 +387,7 @@ class ShaderStorageWriter {
         xe::threading::Thread::Create({}, [this]() { WriteThread(); });
     if (!storage_write_thread_) return CloseStorageFilesAfterInitializationFailure();
     storage_write_thread_->set_name("Shader Storage Writer");
+    pipeline_descriptions_out = std::move(records);
 
     return true;
   }

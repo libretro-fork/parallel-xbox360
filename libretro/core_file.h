@@ -25,6 +25,16 @@ typedef struct xe_file_blob {
 } xe_file_blob;
 int xe_file_blob_open(xe_file_blob *blob, const char *path);
 void xe_file_blob_close(xe_file_blob *blob);
+/* Fixed-record snapshot. Borrowed bytes expire at the next get or close.
+ * Native files map directly; other VFS inputs reuse a bounded 64 KiB window
+ * (or one record when larger). Trailing incomplete records are ignored. */
+typedef struct xe_file_records xe_file_records;
+xe_file_records *xe_file_records_open(const char *path, uint64_t start, size_t record_size);
+size_t xe_file_records_count(const xe_file_records *records);
+size_t xe_file_records_stride(const xe_file_records *records);
+const uint8_t *xe_file_records_get(xe_file_records *records, size_t index);
+int xe_file_records_read(xe_file_records *records, size_t index, void *out, size_t size);
+void xe_file_records_close(xe_file_records *records);
 #ifdef __cplusplus
 }
 #endif
