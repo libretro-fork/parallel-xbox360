@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <memory>
+#include "libretro/core_file_span.h"
 #include <string_view>
 
 #include "xenia/base/platform.h"
@@ -45,8 +46,10 @@ class MappedMemory {
   // The mapping is still backed by the object the slice was created from, a
   // slice is not owning.
   std::unique_ptr<MappedMemory> Slice(size_t offset, size_t length) {
+    if (!xe_file_span_range(size_, 0, offset, length, nullptr) ||
+        (!data_ && (offset || length))) return nullptr;
     return std::unique_ptr<MappedMemory>(
-        new MappedMemory(data() + offset, length));
+        new MappedMemory(data_ ? data() + offset : nullptr, length));
   }
 
   uint8_t* data() const { return reinterpret_cast<uint8_t*>(data_); }

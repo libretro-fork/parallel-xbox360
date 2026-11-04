@@ -19,6 +19,9 @@ construction/serialization timing. Finish other builds before measuring;
 `BUILD_ONLY=1` prepares executables without timing. Results, machine/compiler
 settings and limits are in `spv_operands_bench_results.txt`. These are synthetic
 storage timings, not whole-shader compilation or gameplay measurements.
+
+`run_file_span_tests.sh` checks C89 mapped ranges against an independent wide-integer oracle, destination guards, overflow, overlap and logical-tail clamping. Its C++ bridge exercises the production `MappedMemory::Slice` method and verifies that valid views borrow the exact backing bytes. Linux defaults to ASan/UBSan; MinGW uses `SANITIZER=`.
+
 ## Owned libretro-common primitives and codecs
 
 `core_audio_registry_test.c` checks a reader deliberately paused with a lease,

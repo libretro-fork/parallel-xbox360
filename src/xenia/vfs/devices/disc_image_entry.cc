@@ -44,8 +44,10 @@ std::unique_ptr<MappedMemory> DiscImageEntry::OpenMapped(
     return nullptr;
   }
 
-  size_t real_offset = data_offset_ + offset;
-  size_t real_length = length ? std::min(length, data_size_) : data_size_;
+  size_t real_offset, real_length;
+  if (!mmap_ || !xe_file_span_slice(mmap_->size(), data_offset_, data_size_,
+                                   offset, length, &real_offset, &real_length))
+    return nullptr;
   return mmap_->Slice(real_offset, real_length);
 }
 
