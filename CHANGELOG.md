@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Restore the native audio callback schedule that sustained gameplay testing confirmed has clean sound. Frontend consumption no longer interrupts callback deadlines. This compatibility fix retains host-timed pumping while a deterministic replacement remains unfinished; VRAM growth and its associated stalls remain separate unresolved issues.
+
 - XMA decoding preserves unread PCM when compressed input runs out and preserves the guest consumer's latest read cursor during decoder writeback. Removed a starvation workaround that moved the write cursor without decoding samples. Offline tests reproduce the data loss before the fix and verify identical PCM across 24 ring and streaming-refill configurations afterward. The broader Tekken gameplay audio regression remains under investigation.
 
 - Empty render-target collections now preserve Vulkan framebuffers and D3D12 bindings instead of tearing down warm state without reclaiming anything. Ownership is inspected before allocating a retirement batch or invalidating bindings; actual orphan targets still retire after GPU completion. This removes avoidable collection churn; gameplay frame pacing and audio cadence still need runtime verification.

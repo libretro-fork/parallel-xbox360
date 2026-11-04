@@ -35,6 +35,8 @@ class AudioSystem {
   // XAUDIO2_MAX_QUEUED_BUFFERS))
   static constexpr size_t kMinimumQueuedFrames = 4;
   static constexpr size_t kMaximumQueuedFrames = 64;
+  static constexpr uint32_t kAudioPumpInterval = 5333u;
+  static constexpr uint32_t kAudioIntervalSlack = 400u;
 
   virtual ~AudioSystem();
 
@@ -110,6 +112,7 @@ class AudioSystem {
     uint32_t callback_arg = 0;
     uint32_t wrapped_callback_arg = 0;
     bool in_use = false;
+    uint64_t next_pump_us = 0;
     retro_atomic_int_t frames_submitted{0};
     retro_atomic_int_t frames_processed{0};
     retro_atomic_int_t frames_dropped{0};

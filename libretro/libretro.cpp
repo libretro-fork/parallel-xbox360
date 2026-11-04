@@ -1031,9 +1031,7 @@ static void update_audio(void) {
     }
     /* The mixer writes into the final float output buffer. Muting still drains
      * guest audio; it cannot leave queued samples to play after unmuting. */
-    if (xe_audio_registry_mix(s_audio_registry, core_state.audio_float_buffer, frame_samples) &&
-        xenia_emulator && xenia_emulator->audio_system())
-        xenia_emulator->audio_system()->NotifyOutputSpace();
+    xe_audio_registry_mix(s_audio_registry, core_state.audio_float_buffer, frame_samples);
     if (!core_state.audio_enabled)
         memset(core_state.audio_float_buffer, 0, frame_samples * sizeof(float));
     if ((s_audio_channels == 6 && s_audio_multi.batch_float) || s_audio_float.batch) {

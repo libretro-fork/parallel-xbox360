@@ -8,6 +8,7 @@
  */
 
 #include "xenia/apu/audio_system.h"
+#include <limits>
 
 #include "xenia/apu/apu_flags.h"
 #include "xenia/apu/audio_driver.h"
@@ -101,39 +102,86 @@ void AudioSystem::WorkerThreadMain() {
   // Initialize driver and ringbuffer.
   Initialize();
 
-  size_t next_client = 0;
-  // Output queue space and driver credits drive callbacks. No host clock,
-  // deadline or timed sleep may limit production during fast-forward.
+  // Compatibility baseline: restore the pre-446c545f callback schedule while
+  // guest time is still host-driven. This is not a hardware mixer clock.
   while (retro_atomic_load_acquire_int(&worker_running_)) {
-    xe::threading::WaitHandle* handles[kMaximumClientCount + 1];
-    size_t indices[kMaximumClientCount + 1];
-    size_t count = 0, client_index, i;
     if (is_paused()) {
       xe_pause_gate_wait_index(pause_gate_.get(), 0);
       continue;
     }
+    const uint64_t now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+
+    size_t client_index = kMaximumClientCount;
+    uint64_t earliest_pump_us = std::numeric_limits<uint64_t>::max();
     {
       std::lock_guard<std::mutex> clients_lock(clients_mutex_);
-      for (i = 0; i < kMaximumClientCount; ++i) {
-        client_index = (next_client + i) % kMaximumClientCount;
-        if (!clients_[client_index].in_use || !clients_[client_index].driver ||
-            !clients_[client_index].driver->CanSubmitFrame()) continue;
-        handles[count] = client_semaphores_[client_index].get();
-        indices[count++] = client_index;
+
+      for (size_t i = 0; i < kMaximumClientCount; ++i) {
+        if (!clients_[i].in_use ||
+            clients_[i].next_pump_us >= earliest_pump_us) {
+          continue;
+        }
+        earliest_pump_us = clients_[i].next_pump_us;
+        client_index = i;
+      }
+
+      if (client_index != kMaximumClientCount) {
+        const double scalar = xe::Clock::guest_time_scalar();
+        const uint64_t min_us =
+            scalar > 0.0 ? static_cast<uint64_t>(kAudioPumpInterval / scalar)
+                         : kAudioPumpInterval;
+        // Counted from the deadline, so a late pump is made up and the host
+        // queue absorbs the stall, until it falls further behind than the
+        // queue holds.
+        uint64_t next_pump_us = earliest_pump_us + min_us;
+        if (now > earliest_pump_us + min_us * queued_frames_) {
+          next_pump_us = now + min_us;
+        }
+        clients_[client_index].next_pump_us = next_pump_us;
       }
     }
-    // The control event covers registration, output consumption, pause and
-    // shutdown. Its stored signal closes the scan-to-wait wakeup window.
-    handles[count++] = pending_work_event_.get();
-    auto result = xe::threading::WaitAny(handles, count, true);
-    if (result.first != xe::threading::WaitResult::kSuccess ||
-        result.second + 1 == count || !retro_atomic_load_acquire_int(&worker_running_)) continue;
-    client_index = indices[result.second];
-    if (is_paused()) {
-      client_semaphores_[client_index]->Release(1, nullptr);
+
+    // No clients yet: park until one registers or we're told to stop.
+    if (client_index == kMaximumClientCount) {
+      xe::threading::Wait(pending_work_event_.get(), true);
+
       continue;
     }
-    next_client = (client_index + 1) % kMaximumClientCount;
+
+    // Pace to kAudioIntervalSlack ahead of the deadline.
+    const uint64_t wake_target_us = earliest_pump_us > kAudioIntervalSlack
+                                        ? earliest_pump_us - kAudioIntervalSlack
+                                        : 0;
+    if (wake_target_us > now) {
+      const std::chrono::milliseconds timeout((wake_target_us - now) / 1000);
+      auto result =
+          xe::threading::Wait(pending_work_event_.get(), true, timeout);
+      if (result == xe::threading::WaitResult::kSuccess) {
+
+        continue;
+      }
+
+      const uint64_t now_precise = static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now().time_since_epoch())
+              .count());
+      if (wake_target_us > now_precise) {
+        xe::threading::NanoSleepPrecise((wake_target_us - now_precise) * 1000);
+      }
+    }
+
+    if (is_paused() || !retro_atomic_load_acquire_int(&worker_running_)) continue;
+
+    // Submit only if the host has a free output slot; otherwise drop (the host
+    // queue is full, so it is already well buffered).
+    if (xe::threading::Wait(client_semaphores_[client_index].get(), false,
+                            std::chrono::milliseconds(0)) !=
+        xe::threading::WaitResult::kSuccess) {
+      continue;
+    }
 
     // UnregisterClient waits on this after clearing in_use.
     std::lock_guard<std::mutex> cb_lk(clients_[client_index].callback_mutex);
@@ -251,6 +299,7 @@ X_STATUS AudioSystem::RegisterClient(uint32_t callback, uint32_t callback_arg,
   clients_[index].callback_arg = callback_arg;
   clients_[index].wrapped_callback_arg = ptr;
   clients_[index].in_use = true;
+  clients_[index].next_pump_us = 0;
   retro_atomic_store_relaxed_int(&clients_[index].frames_submitted, 0);
   retro_atomic_store_relaxed_int(&clients_[index].frames_processed, 0);
   retro_atomic_store_relaxed_int(&clients_[index].frames_dropped, 0);
@@ -332,6 +381,7 @@ void AudioSystem::UnregisterClient(size_t index) {
     clients_[index].callback_arg = 0;
     clients_[index].wrapped_callback_arg = 0;
     clients_[index].in_use = false;
+    clients_[index].next_pump_us = 0;
     retro_atomic_store_relaxed_int(&clients_[index].frames_submitted, 0);
     retro_atomic_store_relaxed_int(&clients_[index].frames_processed, 0);
     retro_atomic_store_relaxed_int(&clients_[index].frames_dropped, 0);
@@ -406,6 +456,7 @@ bool AudioSystem::Restore(ByteStream* stream) {
     client.wrapped_callback_arg = stream->Read<uint32_t>();
 
     client.in_use = true;
+    client.next_pump_us = 0;
 
     auto client_semaphore = client_semaphores_[id].get();
     auto ret = client_semaphore->Release(queued_frames_, nullptr);
