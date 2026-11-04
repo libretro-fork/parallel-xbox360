@@ -12,23 +12,19 @@
 #ifndef LIBRETRO_HID_H
 #define LIBRETRO_HID_H
 
-#include <atomic>
-#include <chrono>
 #include <cstdint>
-#include <deque>
 #include <memory>
-#include <mutex>
 #include <vector>
 
 #include "libretro.h"
+#include "core_input_mailbox.h"
 #include "xenia/hid/input_driver.h"
 
 namespace xe {
 namespace hid {
 namespace libretro_hid {
 
-// Cached per-port state written by libretro frontend thread
-// and read by Xenia guest threads.
+// Frontend-owned polling scratch; guest readers use immutable C89 snapshots.
 struct LibretroControllerState {
   // Digital buttons (native libretro RETRO_DEVICE_JOYPAD bits)
   int16_t buttons[16] = {};
@@ -44,17 +40,6 @@ struct LibretroControllerState {
   bool connected = false;
   // Monotonically increasing packet counter
   uint32_t packet_number = 0;
-};
-
-// What GetKeystroke hands out for a port: the VK_PAD_* keys that went down,
-// up or repeat since the title last asked, made from the polled state the
-// way XInput makes them from the controller's
-struct LibretroKeystrokeState {
-  std::deque<X_INPUT_KEYSTROKE> queue;
-  // The keys held at the last poll, and when each one was pressed or last
-  // repeated
-  std::vector<uint16_t> held;
-  std::vector<std::chrono::steady_clock::time_point> next_repeat;
 };
 
 class LibretroInputDriver final : public InputDriver {
@@ -80,7 +65,7 @@ class LibretroInputDriver final : public InputDriver {
 
   // Called from libretro frontend thread (retro_run) to update
   // the cached controller state for all ports.
-  void UpdateFromLibretro(retro_input_state_t input_state_cb);
+  void UpdateFromLibretro(retro_input_state_t input_state_cb, double fps);
 
   // Set the rumble callback obtained from the frontend.
   void SetRumbleCallback(retro_set_rumble_state_t cb);
@@ -89,9 +74,8 @@ class LibretroInputDriver final : public InputDriver {
   void SetPortDevice(unsigned port, unsigned device);
 
  private:
-  std::mutex state_mutex_;
+  xe_input_mailbox* input_ = nullptr;
   LibretroControllerState states_[kMaxPorts];
-  LibretroKeystrokeState keystrokes_[kMaxPorts];
   void UpdateKeystrokes(size_t port);
   retro_set_rumble_state_t rumble_cb_ = nullptr;
   // Tracks which ports the frontend has assigned a device to.

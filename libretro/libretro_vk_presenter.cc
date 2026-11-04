@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <mutex>
 #include <vector>
 
 #include "xenia/base/logging.h"
@@ -138,7 +137,9 @@ void libretro_vk_set_shared_queue_lock(void (*lock)(void* user),
     auto& queue = *s_shared_device->queue_families()
                        [s_shared_device->queue_family_graphics_compute()]
                            .queues[0];
-    std::lock_guard<std::recursive_mutex> guard(queue.mutex);
+    // Installed by context_reset before title workers start. Repeated resets
+    // must not rewrite callbacks while a submission may read them.
+    if (queue.external_lock) return;
     queue.external_lock = lock;
     queue.external_unlock = unlock;
     queue.external_lock_user = user;

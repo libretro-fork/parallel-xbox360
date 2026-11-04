@@ -51,7 +51,8 @@ void libretro_vk_destroy_shared_device();
 bool libretro_vk_shared_device_active();
 
 // RetroArch's queue lock, when the device has one queue for both: Xenia
-// takes it around its own submissions to that queue.
+// takes it around its own submissions to that queue. Install once during
+// context_reset, before title workers start; callbacks remain immutable.
 void libretro_vk_set_shared_queue_lock(void (*lock)(void* user),
                                        void (*unlock)(void* user),
                                        void* user);

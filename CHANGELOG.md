@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Input polling no longer shares a mutex with guest state/keystroke reads. A C89 mailbox lends immutable pinned snapshots, keeps keystrokes in a bounded multi-reader queue and delivers atomic motor pairs on the frontend thread. Held-key repeat follows frontend progress instead of host wall time. Input handoff storage is fixed at creation; cold device-enumeration metadata remains C++. Shared Vulkan queue callbacks are installed once before title workers start, without a redundant setup mutex; required submission synchronization remains.
+
 - Native audio callbacks now follow frontend output capacity instead of host-clock deadlines and timed sleeps, allowing production to accelerate during fast-forward. Whole-batch capacity checks keep the 64 ms bound without requesting callbacks into a full queue. Pause/resume uses the common C89 gate; media-player idle polling is replaced by its existing work fence. Fast-forward audibility and reported Tekken frame-time regressions still need loaded-game verification.
 
 - Serial guest I/O submission uses libretro-common MPSC handoff without a queue mutex or internal queue-node allocation. FIFO batches and stop/join-before-cancel ordering are preserved; request/closure allocations and the concurrent I/O pool remain.

@@ -45,7 +45,7 @@ frontend expansion. `core_input_driver_test.c` uses the minimal C++ bridge in
 `core_input_driver_bridge.cc` to exercise the actual `LibretroInputDriver`:
 frontend polling, guest-state marshalling, small movements, endpoints, trigger
 levels and digital fallback. Compile its driver and bridge as C++20 and the
-test/`core_input_analog.c` as C89. It needs no emulator, GPU or game.
+test/`core_input_analog.c`, `core_input_mailbox.c` and `core_audio_cadence.c` as C89. It needs no emulator, GPU or game.
 
 `core_run_cadence_test.c` and `core_audio_format_test.c` use the native loader
 in `core_test_module.h` on Windows or POSIX (`-ldl`). Both run against the
@@ -1225,3 +1225,5 @@ their eventcount gate is freed; tests introduce no polling sleeps.
 `run_io_mailbox_tests.sh` exercises the production C89 serial I/O mailbox with six producers and 196,608 messages in eight reusable nodes per producer. It checks FIFO across pending/incoming batches, per-producer order and immediate node reuse, followed by 24,576 messages freed by the consumer while producers continue publishing. Default Linux builds enable ASan/UBSan; native MSVC and MinGW runs are also supported. This verifies handoff ownership, not retail I/O throughput or bounded request admission.
 
 Native audio queue tests also cover complete-batch readiness at the exact 3,072-frame/64 ms limit, one-frame overflow, SIZE_MAX/null/stopped inputs, consumer-driven wakeup and stop cancellation without a periodic writer timeout. These tests exercise queue production and readiness, not loaded-game audio callbacks or Tekken frame pacing.
+
+`run_input_mailbox_tests.sh` exercises the C89 input handoffs: six readers and 200,000 coherent publications, monotonic packets, a paused pinned reader, all 16 snapshot slots pinned, multi-reader keystrokes, 64-event oldest overflow, disconnect clearing, 400/100 ms frontend repeats and atomic rumble pairs. Linux enables ASan/UBSan by default. `run_input_driver_bench.sh` builds the actual old/current C++ adapters behind a minimal C ABI, validates mapping/hotplug/keystrokes/rumble (plus frontend callback reentry in the new adapter), then runs serial forward/reverse read/poll comparisons against `446c545f`. Set `INPUT_DRIVER_VERIFY_ONLY=1 SANITIZER=-fsanitize=address,undefined` for sanitizer interop checks without performance measurements. Synthetic uncontended results and their limits are recorded in `input_mailbox_bench_results.txt`; they do not establish retail FPS or full-system input latency.

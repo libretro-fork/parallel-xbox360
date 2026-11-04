@@ -2,12 +2,12 @@
 #include "libretro_hid.h"
 #include "core_input_analog.h"
 using xe::hid::libretro_hid::LibretroInputDriver;
-extern "C" void* xe_test_input_new() { return new LibretroInputDriver(nullptr, 0); }
+extern "C" void* xe_test_input_new() { return new LibretroInputDriver(); }
 extern "C" void xe_test_input_free(void* driver) {
   delete static_cast<LibretroInputDriver*>(driver);
 }
 extern "C" void xe_test_input_update(void* driver, retro_input_state_t callback) {
-  static_cast<LibretroInputDriver*>(driver)->UpdateFromLibretro(callback);
+  static_cast<LibretroInputDriver*>(driver)->UpdateFromLibretro(callback, 60.0);
 }
 extern "C" unsigned xe_test_input_read(void* driver, xe_input_analog* out) {
   xe::hid::X_INPUT_STATE state;

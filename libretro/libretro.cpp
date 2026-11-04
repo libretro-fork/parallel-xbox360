@@ -2055,7 +2055,7 @@ RETRO_API void retro_run(void) {
 
     // Feed libretro input state into Xenia's HID system
     if (lr_input_driver && core_state.input_state_cb)
-        lr_input_driver->UpdateFromLibretro(core_state.input_state_cb);
+        lr_input_driver->UpdateFromLibretro(core_state.input_state_cb, core_state.output_fps);
 
     if (xenia_emulator && xenia_emulator->kernel_state())
         xenia_emulator->kernel_state()->xam_state()->AdvanceUiNotifications(core_state.output_fps);

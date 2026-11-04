@@ -1,0 +1,110 @@
+Input adapter benchmark, 4 November 2026
+Baseline: 446c545f, actual libretro_hid.cc/.h from git archive.
+Candidate: pinned C89 snapshots, fixed keystroke storage and frontend rumble.
+Host: Windows, AMD Ryzen 9 9950X3D. No process affinity pinning.
+C89 driver, minimal C++ ABI bridge to the actual adapter. MSVC /O2 /MD; MinGW GCC 16.2 /O3 -mavx.
+Serial old/new/new/old order; five batches per process, 1,000,000 reads and 50,000 polls per batch.
+Rumble/hotplug/key/mapping validation precedes timing. Frontend callback reentry is validated on the candidate.
+All timings are ns/call. Uncontended synthetic cases, not retail FPS, end-to-end latency or multi-reader throughput.
+Poll cases use each implementation's repeat clock, so generated repeat event counts need not match.
+The irreducible candidate read includes immutable-slot pin/release atomics plus guest-format stores; no hardware-limit claim.
+
+MSVC
+old read_ns median 13.223
+old poll_ns median 209.012
+old pass 1
+read_ns 12.932
+poll_ns 202.206
+read_ns 12.984
+poll_ns 199.506
+read_ns 12.963
+poll_ns 199.204
+read_ns 14.062
+poll_ns 200.490
+read_ns 13.938
+poll_ns 200.622
+old pass 2
+read_ns 15.941
+poll_ns 237.228
+read_ns 13.292
+poll_ns 217.032
+read_ns 13.823
+poll_ns 219.428
+read_ns 12.976
+poll_ns 215.876
+read_ns 13.153
+poll_ns 215.818
+new read_ns median 8.718
+new poll_ns median 194.501
+new pass 1
+read_ns 8.997
+poll_ns 179.072
+read_ns 8.981
+poll_ns 184.680
+read_ns 8.951
+poll_ns 174.728
+read_ns 8.963
+poll_ns 169.908
+read_ns 8.973
+poll_ns 190.184
+new pass 2
+read_ns 8.458
+poll_ns 198.818
+read_ns 8.484
+poll_ns 199.160
+read_ns 8.459
+poll_ns 199.172
+read_ns 8.460
+poll_ns 199.232
+read_ns 8.462
+poll_ns 199.198
+
+MinGW
+old read_ns median 16.319
+old poll_ns median 207.513
+old pass 1
+read_ns 19.405
+poll_ns 203.496
+read_ns 16.391
+poll_ns 202.734
+read_ns 16.329
+poll_ns 202.976
+read_ns 16.310
+poll_ns 204.860
+read_ns 16.235
+poll_ns 203.548
+old pass 2
+read_ns 16.378
+poll_ns 210.166
+read_ns 16.287
+poll_ns 210.666
+read_ns 16.299
+poll_ns 210.990
+read_ns 16.278
+poll_ns 210.932
+read_ns 16.562
+poll_ns 210.534
+new read_ns median 9.674
+new poll_ns median 147.762
+new pass 1
+read_ns 9.618
+poll_ns 159.260
+read_ns 9.639
+poll_ns 171.082
+read_ns 9.619
+poll_ns 159.338
+read_ns 9.617
+poll_ns 159.516
+read_ns 10.177
+poll_ns 148.586
+new pass 2
+read_ns 9.772
+poll_ns 146.938
+read_ns 9.714
+poll_ns 143.962
+read_ns 9.678
+poll_ns 138.320
+read_ns 9.669
+poll_ns 138.244
+read_ns 9.717
+poll_ns 138.064

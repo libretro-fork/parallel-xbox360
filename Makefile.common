@@ -325,3 +325,5 @@ SOURCES_C += libretro/core_spv_operands.c
 SOURCES_C += libretro/core_file_blocks.c
 
 SOURCES_C += libretro/core_io_mailbox.c
+
+SOURCES_C += libretro/core_input_mailbox.c
