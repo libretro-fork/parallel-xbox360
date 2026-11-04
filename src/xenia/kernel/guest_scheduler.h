@@ -12,6 +12,7 @@
 
 #include "libretro/core_pause_gate.h"
 #include "libretro/core_io_mailbox.h"
+#include "libretro/core_address_table.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -19,7 +20,6 @@
 #include <memory>
 #include <mutex>
 #include <queue>
-#include <unordered_set>
 #include <vector>
 
 #include "xenia/base/threading.h"
@@ -49,7 +49,8 @@ class GuestScheduler {
 
   // The libretro core's pause: no guest fiber is dispatched while paused (one
   // running keeps going until it yields).
-  void SetPaused(bool paused) { xe_pause_gate_set(pause_gate_, paused); }
+  void SetPaused(bool paused);
+  bool WaitUntilPaused(int64_t timeout_us);
   bool paused() const { return xe_pause_gate_is_paused(pause_gate_) != 0; }
 
   // True if the cooperative scheduler is active (gated by the cvar).
@@ -338,9 +339,8 @@ class GuestScheduler {
   // A fiber yielding while it holds the recursive global lock lets a
   // co-resident fiber re-enter it, silently breaking mutual exclusion. Each
   // distinct yield stack is logged once, then the check goes cold.
-  std::atomic<bool> global_lock_hazard_saturated_{false};
-  std::mutex global_lock_hazard_mutex_;
-  std::unordered_set<uint64_t> global_lock_hazard_stacks_;
+  retro_atomic_int_t global_lock_hazard_saturated_{0};
+  retro_atomic_64_t global_lock_hazard_stacks_[32];
 
   std::atomic<bool> started_{false};
   std::atomic<bool> shutting_down_{false};

@@ -27,8 +27,8 @@ namespace xe {
 namespace kernel {
 
 // Host object: the loader owns module handles, not the title's namespace.
-UserModule::UserModule(KernelState* kernel_state)
-    : XModule(kernel_state, ModuleType::kUserModule, true) {}
+UserModule::UserModule(KernelState* kernel_state, bool restoring)
+    : XModule(kernel_state, ModuleType::kUserModule, true, restoring) {}
 
 UserModule::~UserModule() { Unload(); }
 
@@ -420,8 +420,8 @@ bool UserModule::Save(ByteStream* stream) {
     return false;
   }
 
-  // A lot of the information stored on this class can be reconstructed at
-  // runtime.
+  stream->Write<uint32_t>(guest_xex_header_);
+  stream->Write<bool>(is_attached_);
 
   return true;
 }
@@ -429,20 +429,27 @@ bool UserModule::Save(ByteStream* stream) {
 object_ref<UserModule> UserModule::Restore(KernelState* kernel_state,
                                            ByteStream* stream,
                                            const std::string_view path) {
-  auto module = new UserModule(kernel_state);
+  auto module = new UserModule(kernel_state, true);
 
   // XModule::Save took care of this earlier...
   // TODO: Find a nicer way to represent that here.
   if (!module->RestoreObject(stream)) {
     return nullptr;
   }
+  const uint32_t saved_header = stream->Read<uint32_t>();
+  const bool saved_attached = stream->Read<bool>();
 
   auto result = module->LoadFromFile(path);
+  if (result == X_STATUS_PENDING) result = module->LoadContinue();
   if (XFAILED(result)) {
     XELOGD("UserModule::Restore LoadFromFile({}) FAILED - code {:08X}", path,
            result);
     return nullptr;
   }
+  if (module->guest_xex_header_ && module->guest_xex_header_ != saved_header)
+    module->memory()->SystemHeapFree(module->guest_xex_header_);
+  module->guest_xex_header_ = saved_header;
+  module->is_attached_ = saved_attached;
 
   if (!kernel_state->RegisterUserModule(retain_object(module))) {
     // Already loaded?

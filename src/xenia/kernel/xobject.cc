@@ -112,9 +112,12 @@ X_STATUS XObject::Delete() {
 bool XObject::SaveObject(ByteStream* stream) {
   stream->Write<uint32_t>(allocated_guest_object_);
   stream->Write<uint32_t>(guest_object_ptr_);
+  stream->Write<bool>(host_object_);
+  stream->Write(std::string_view(name_));
+  stream->Write<uint32_t>(priority_increment());
 
   stream->Write(uint32_t(handles_.size()));
-  stream->Write(&handles_[0], handles_.size() * sizeof(X_HANDLE));
+  stream->Write(handles_.data(), handles_.size() * sizeof(X_HANDLE));
 
   return true;
 }
@@ -122,14 +125,23 @@ bool XObject::SaveObject(ByteStream* stream) {
 bool XObject::RestoreObject(ByteStream* stream) {
   allocated_guest_object_ = stream->Read<uint32_t>() > 0;
   guest_object_ptr_ = stream->Read<uint32_t>();
+  host_object_ = stream->Read<bool>();
+  name_.assign(stream->ReadStringView());
+  set_priority_increment(stream->Read<uint32_t>());
 
-  handles_.resize(stream->Read<uint32_t>());
-  stream->Read(&handles_[0], handles_.size() * sizeof(X_HANDLE));
+  const uint32_t count = stream->Read<uint32_t>();
+  if (count > stream->remaining() / sizeof(X_HANDLE)) return false;
+  handles_.resize(count);
+  stream->Read(handles_.data(), handles_.size() * sizeof(X_HANDLE));
 
   // Restore our pointer to our handles in the object table.
   for (size_t i = 0; i < handles_.size(); i++) {
-    kernel_state_->object_table()->RestoreHandle(handles_[i], this);
+    if (kernel_state_->object_table()->RestoreHandle(handles_[i], this) != X_STATUS_SUCCESS)
+      return false;
   }
+  if (!name_.empty() && !handles_.empty() &&
+      kernel_state_->object_table()->AddNameMapping(name_, handles_[0]) != X_STATUS_SUCCESS)
+    return false;
 
   return true;
 }

@@ -22,6 +22,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "libretro/core_pause_gate.h"
 
 #include "xenia/base/math.h"
 #include "xenia/base/ring_buffer.h"
@@ -233,8 +234,9 @@ class CommandProcessor {
   void LogRegisterSets(uint32_t base_register_index, const uint32_t* values,
                        uint32_t n_values);
 
-  bool is_paused() const { return paused_; }
+  bool is_paused() const { return xe_pause_gate_is_paused(pause_gate_.get()) != 0; }
   void Pause();
+  bool PauseForState(int64_t timeout_us);
   void Resume();
 
   bool Save(ByteStream* stream);
@@ -692,7 +694,7 @@ class CommandProcessor {
   // screenshot can be saved beside it when the frame closes.
   std::filesystem::path trace_frame_file_path_;
 
-  std::atomic<bool> worker_running_;
+  retro_atomic_int_t worker_running_;
   kernel::object_ref<kernel::XHostThread> worker_thread_;
 
   std::queue<std::function<void()>> pending_fns_;
@@ -710,7 +712,7 @@ class CommandProcessor {
   uint32_t read_ptr_writeback_ptr_ = 0;
 
   std::unique_ptr<xe::threading::Event> write_ptr_index_event_;
-  std::atomic<uint32_t> write_ptr_index_;
+  retro_atomic_int_t write_ptr_index_;
 
   uint64_t bin_select_ = 0xFFFFFFFFull;
   uint64_t bin_mask_ = 0xFFFFFFFFull;
@@ -722,7 +724,7 @@ class CommandProcessor {
   // 0 if unknown (loaded immediately, embedded in the command buffer).
   uint32_t active_vertex_shader_ucode_address_ = 0;
 
-  bool paused_ = false;
+  std::unique_ptr<xe_pause_gate, decltype(&xe_pause_gate_free)> pause_gate_{nullptr, xe_pause_gate_free};
 
   // By default (such as for tools), post-processing is disabled.
   // "Desired" is for the external thread managing the post-processing effect.

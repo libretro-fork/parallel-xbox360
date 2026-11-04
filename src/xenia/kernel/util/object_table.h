@@ -46,6 +46,9 @@ class ObjectTable {
 
   bool Save(ByteStream* stream);
   bool Restore(ByteStream* stream);
+  // Borrow each unique object without a temporary vector, refcount churn or
+  // table lock. All table producers must be quiescent for the entire visit.
+  bool VisitQuiescent(bool (*visit)(XObject*, void*), void* context) const;
 
   // Restores a XObject reference with a handle. Mainly for internal use - do
   // not use.

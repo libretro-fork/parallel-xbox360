@@ -15,6 +15,7 @@ static retro_atomic_64_t slots[KEYS];
 static size_t indices[WORKERS][KEYS];
 static unsigned ids[WORKERS];
 static retro_atomic_int_t ready, start;
+static retro_atomic_int_t published[KEYS];
 static uint64_t key(unsigned i) {
    return i ? UINT64_C(0x7fffabcd00000000) + i : 0;
 }
@@ -26,7 +27,11 @@ static void worker(void *opaque) {
    for (k = 0; k < 1000; ++k) {
       for (i = 0; i < KEYS; ++i) {
          j = (i + id * 17) % KEYS;
-         slot = xe_address_table_intern(slots, KEYS, key(j));
+         {
+            int inserted = xe_address_table_insert(slots, KEYS, key(j), &slot);
+            CHECK(inserted >= 0);
+            if (inserted) retro_atomic_fetch_add_int(&published[j], 1);
+         }
          CHECK(slot < KEYS);
          CHECK((uint64_t)retro_atomic_load_relaxed_64(&slots[slot]) == key(j));
          if (!k) indices[id][j] = slot;
@@ -48,6 +53,7 @@ int main(void) {
    retro_atomic_store_release_int(&start, 1);
    for (i = 0; i < WORKERS; ++i) sthread_join(threads[i]);
    for (j = 0; j < KEYS; ++j) {
+      CHECK(retro_atomic_load_acquire_int(&published[j]) == 1);
       CHECK(!seen[indices[0][j]]++);
       for (i = 1; i < WORKERS; ++i) CHECK(indices[i][j] == indices[0][j]);
    }

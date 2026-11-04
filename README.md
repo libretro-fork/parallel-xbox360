@@ -4,6 +4,10 @@ A [libretro](https://www.libretro.com/) core of [Xenia Edge](https://github.com/
 
 This repository follows xenia-edge and adds the libretro frontend in `libretro/` plus owned shader and build paths. It holds the core only; upstream's standalone UI, packaging and CI are not part of it (the paths are listed in `.upstream-excluded`). The version the core reports is upstream's, with the upstream commit it is merged to (`upstream.version`). The core is currently on xenia-edge commit 8dc77b0 of 7 October 2026.
 
+## Savestate work in progress
+
+Frontend savestate callbacks remain disabled. Native tests cover bounded state I/O, memory allocation metadata, six guest CPUs restored into fresh libco continuations, and acknowledged worker/timer pauses. In-flight HLE calls and APCs are rejected rather than replayed. Restartable kernel waits, GPU contents, complete audio decoder history and whole-machine validation still need implementation before states can be used for gameplay.
+
 ## Downloads
 
 Frontend warning/error forwarding uses reusable fixed storage, including for fragmented and long log lines; it does not allocate strings per line.

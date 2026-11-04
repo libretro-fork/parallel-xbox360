@@ -20,18 +20,19 @@ namespace xe {
 namespace kernel {
 
 XModule::XModule(KernelState* kernel_state, ModuleType module_type,
-                 bool host_object)
-    : XObject(kernel_state, kObjectType, host_object),
+                 bool host_object, bool restoring)
+    : XObject(restoring ? nullptr : kernel_state, kObjectType, host_object),
       module_type_(module_type),
       processor_module_(nullptr),
       hmodule_ptr_(0) {
+  if (restoring) kernel_state_ = kernel_state;
   // Loader data (HMODULE)
   hmodule_ptr_ = memory()->SystemHeapAlloc(sizeof(X_LDR_DATA_TABLE_ENTRY));
 
   // Hijack the checksum field to store our kernel object handle.
   auto ldr_data =
       memory()->TranslateVirtual<X_LDR_DATA_TABLE_ENTRY*>(hmodule_ptr_);
-  ldr_data->checksum = handle();
+  ldr_data->checksum = restoring ? 0 : handle();
 }
 
 XModule::~XModule() {
@@ -94,7 +95,7 @@ object_ref<XModule> XModule::Restore(KernelState* kernel_state,
     return nullptr;
   }
 
-  auto path = stream->Read<std::string>();
+  const auto path = stream->ReadStringView();
   auto hmodule_ptr = stream->Read<uint32_t>();
 
   // Can only save user modules at the moment, so just redirect.
@@ -106,6 +107,9 @@ object_ref<XModule> XModule::Restore(KernelState* kernel_state,
 
   XELOGD("XModule {:08X} ({})", module->handle(), module->path());
 
+  // Construction/loading needed temporary guest loader storage. The memory
+  // chunk restores the saved allocation after all host modules are rebuilt.
+  module->memory()->SystemHeapFree(module->hmodule_ptr_);
   module->hmodule_ptr_ = hmodule_ptr;
   return module;
 }

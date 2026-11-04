@@ -39,7 +39,7 @@ class Function;
 }  // namespace cpu
 namespace kernel {
 
-constexpr fourcc_t kThreadSaveSignature = make_fourcc("THRD");
+constexpr fourcc_t kThreadSaveSignature = make_fourcc("TH02");
 
 class XEvent;
 
@@ -452,6 +452,9 @@ class XThread : public XObject, public cpu::Thread {
   X_STATUS Terminate(int exit_code);
 
   virtual void Execute();
+  // Fresh host/libco continuation for a serialized guest block or export.
+  void ExecuteRestored(uint32_t pc);
+  void ActivateRestored();
 
   virtual void Reenter(uint32_t address);
 

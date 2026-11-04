@@ -15,43 +15,46 @@
 
 namespace xe {
 
-ByteStream::ByteStream(uint8_t* data, size_t data_length, size_t offset)
-    : data_(data), data_length_(data_length), offset_(offset) {}
+ByteStream::ByteStream(uint8_t* data, size_t data_length, size_t offset,
+                       bool measuring)
+    : cursor_{data, data_length, 0, measuring ? 1 : 0} {
+  set_offset(offset);
+}
 
 ByteStream::~ByteStream() = default;
 
 void ByteStream::Advance(size_t num_bytes) {
-  assert_true(offset_ + num_bytes <= data_length_);
-  offset_ += num_bytes;
+  if (!xe_state_advance(&cursor_, num_bytes)) throw ByteStreamError{};
 }
 
 void ByteStream::Read(uint8_t* buf, size_t len) {
-  assert_true(offset_ + len <= data_length_);
-  std::memcpy(buf, data_ + offset_, len);
-  Advance(len);
+  if (!xe_state_read(&cursor_, buf, len)) throw ByteStreamError{};
 }
 
 void ByteStream::Write(const uint8_t* buf, size_t len) {
-  assert_true(offset_ + len <= data_length_);
-  std::memcpy(data_ + offset_, buf, len);
-  Advance(len);
+  if (!xe_state_write(&cursor_, buf, len)) throw ByteStreamError{};
+}
+
+template <>
+bool ByteStream::Read() {
+  static_assert(sizeof(bool) == sizeof(uint8_t));
+  const uint8_t value = Read<uint8_t>();
+  if (value > 1) throw ByteStreamError{};
+  return value != 0;
 }
 
 template <>
 std::string ByteStream::Read() {
-  std::string str;
-  uint32_t len = Read<uint32_t>();
-  str.resize(len);
-  Read(reinterpret_cast<uint8_t*>(&str[0]), len);
-  return str;
+  return std::string(ReadStringView());
 }
 
 template <>
 std::u16string ByteStream::Read() {
   std::u16string str;
   size_t len = Read<uint32_t>();
+  if (len > remaining() / sizeof(char16_t)) throw ByteStreamError{};
   str.resize(len);
-  Read(reinterpret_cast<uint8_t*>(&str[0]), len * 2);
+  Read(str.data(), len * sizeof(char16_t));
   return str;
 }
 

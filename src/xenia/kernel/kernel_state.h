@@ -54,7 +54,7 @@ namespace kernel {
 
 class SocketIoContext;
 
-constexpr fourcc_t kKernelSaveSignature = make_fourcc("KRNL");
+constexpr fourcc_t kKernelSaveSignature = make_fourcc("KR02");
 
 static constexpr const uint16_t kBaseKernelBuildVersion = 1888;
 

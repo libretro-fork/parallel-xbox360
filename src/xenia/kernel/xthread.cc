@@ -23,6 +23,7 @@
 #include "xenia/base/profiling.h"
 #include "xenia/base/threading.h"
 #include "xenia/cpu/processor.h"
+#include "xenia/cpu/backend/backend.h"
 #include "xenia/emulator.h"
 #include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/kernel_state.h"
@@ -827,6 +828,7 @@ void XThread::Reenter(uint32_t address) {
   // Must unwind through all frames between here and Execute().
   // No user APC routine frame survives the unwind.
   user_apc_depth_ = 0;
+  thread_state_->context()->checkpoint_export_pc = 0;
 #if !XE_PLATFORM_WIN32
   // Throw a C++ exception that unwinds through JIT frames (using DWARF
   // .eh_frame info) and host frames (using compiler-generated DWARF),
@@ -836,6 +838,49 @@ void XThread::Reenter(uint32_t address) {
   reentry_address_ = address;
   std::longjmp(reentry_jmp_buf_, 1);
 #endif
+}
+
+void XThread::ExecuteRestored(uint32_t pc) {
+  auto* context = thread_state_->context();
+  kernel_state()->processor()->backend()->SetGuestRoundingMode(context, context->fpscr.value & 7);
+  for (auto& mutant : pending_mutant_acquires_) {
+    uint64_t timeout = 0;
+    if (mutant->Wait(0, 0, 0, &timeout) != X_STATUS_SUCCESS) {
+      Exit(X_STATUS_UNSUCCESSFUL);
+      return;
+    }
+  }
+  pending_mutant_acquires_.clear();
+  // Only guest addresses are restored. Host return addresses and libco stacks
+  // belong to this run and are rebuilt by normal guest execution.
+  uint32_t next = pc;
+  while (next) {
+#if XE_PLATFORM_WIN32
+    if (setjmp(reentry_jmp_buf_) != 0) next = reentry_address_;
+    else {
+      kernel_state()->processor()->ExecuteRaw(thread_state_, next);
+      next = 0;
+    }
+#else
+    try {
+      kernel_state()->processor()->ExecuteRaw(thread_state_, next);
+      next = 0;
+    } catch (const FiberReentryException& reentry) {
+      next = reentry.address;
+    }
+#endif
+  }
+  Exit(static_cast<int>(context->r[3]));
+}
+
+void XThread::ActivateRestored() {
+  if (!thread_state_) return;
+  X_KPCR* pcr = memory()->TranslateVirtual<X_KPCR*>(pcr_address_);
+  pcr->host_stash = reinterpret_cast<uint64_t>(thread_state_->context());
+  if (fiber_ && guest_object<X_KTHREAD>()->thread_state != KTHREAD_STATE_TERMINATED) {
+    kernel_state()->guest_scheduler()->EnsureStarted();
+    kernel_state()->guest_scheduler()->MarkReady(this);
+  }
 }
 
 void XThread::EnterCriticalRegion() {
@@ -1379,8 +1424,12 @@ X_STATUS XThread::Delay(uint32_t processor_mode, uint32_t alertable,
 
 struct ThreadSavedState {
   uint32_t thread_id;
-  bool is_main_thread;  // Is this the main thread?
-  bool is_running;
+  uint32_t is_main_thread;
+  uint32_t is_running;
+  uint32_t has_run;
+  uint32_t terminated;
+  XThread::CreationParams creation;
+  int32_t priority, base_priority, boost_amount;
 
   uint32_t apc_head;
   uint32_t tls_static_address;
@@ -1405,6 +1454,9 @@ struct ThreadSavedState {
     uint8_t xer_ov;
     uint8_t xer_so;
     uint8_t vscr_sat;
+    uint64_t msr;
+    uint32_t vrsave;
+    vec128_t vscr;
     uint32_t pc;
   } context;
 };
@@ -1418,7 +1470,21 @@ bool XThread::Save(ByteStream* stream) {
   XELOGD("XThread {:08X} serializing...", handle());
 
   uint32_t pc = 0;
-  if (running_) {
+  if (fiber_) {
+    // The controller must have all dispatch CPUs acknowledged and all borrowed
+    // host I/O retired; no stack walking or host-thread suspension is needed.
+    if (!kernel_state_->guest_scheduler()->WaitUntilPaused(0) || user_mode_ ||
+        in_user_apc() || guest_object<X_KTHREAD>()->executing_kernel_apc) return false;
+    if (scheduler_links_.has_run) {
+      const auto* context = thread_state_->context();
+      // Restarting an arbitrary HLE call can repeat mutations performed
+      // before its wait. Such calls need explicit restartable state rather
+      // than treating an export entry point as an ordinary guest PC.
+      if (context->checkpoint_export_pc) return false;
+      pc = context->last_safepoint_pc;
+      if (!pc) return false;
+    }
+  } else if (running_) {
     pc = emulator()->processor()->StepToGuestSafePoint(thread_id_);
     if (!pc) {
       XELOGE("XThread {:08X} failed to save: could not step to a safe point!",
@@ -1435,10 +1501,16 @@ bool XThread::Save(ByteStream* stream) {
   stream->Write(kThreadSaveSignature);
   stream->Write(thread_name_);
 
-  ThreadSavedState state;
+  ThreadSavedState state = {};
   state.thread_id = thread_id_;
   state.is_main_thread = main_thread_;
   state.is_running = running_;
+  state.has_run = fiber_ ? scheduler_links_.has_run : running_;
+  state.terminated = guest_object<X_KTHREAD>()->thread_state == KTHREAD_STATE_TERMINATED;
+  state.creation = creation_params_;
+  state.priority = priority_;
+  state.base_priority = base_priority_;
+  state.boost_amount = boost_amount_;
   state.tls_static_address = tls_static_address_;
   state.tls_dynamic_address = tls_dynamic_address_;
   state.tls_total_size = tls_total_size_;
@@ -1448,7 +1520,7 @@ bool XThread::Save(ByteStream* stream) {
   state.stack_alloc_base = stack_alloc_base_;
   state.stack_alloc_size = stack_alloc_size_;
 
-  if (running_) {
+  if (thread_state_) {
     // Context information
     auto context = thread_state_->context();
     state.context.lr = context->lr;
@@ -1469,6 +1541,9 @@ bool XThread::Save(ByteStream* stream) {
     state.context.xer_ov = context->xer_ov;
     state.context.xer_so = context->xer_so;
     state.context.vscr_sat = context->vscr_sat;
+    state.context.msr = context->msr;
+    state.context.vrsave = context->vrsave;
+    state.context.vscr = context->vscr_vec;
     state.context.pc = pc;
   }
 
@@ -1494,13 +1569,19 @@ object_ref<XThread> XThread::Restore(KernelState* kernel_state,
 
   XELOGD("XThread {:08X}", thread->handle());
 
-  thread->thread_name_ = stream->Read<std::string>();
+  thread->thread_name_.assign(stream->ReadStringView());
 
   ThreadSavedState state;
   stream->Read(&state, sizeof(ThreadSavedState));
+  if (state.is_main_thread > 1 || state.is_running > 1 ||
+      state.has_run > 1 || state.terminated > 1) return nullptr;
   thread->thread_id_ = state.thread_id;
   thread->main_thread_ = state.is_main_thread;
   thread->running_ = state.is_running;
+  thread->creation_params_ = state.creation;
+  thread->priority_ = state.priority;
+  thread->base_priority_ = state.base_priority;
+  thread->boost_amount_ = state.boost_amount;
   thread->tls_static_address_ = state.tls_static_address;
   thread->tls_dynamic_address_ = state.tls_dynamic_address;
   thread->tls_total_size_ = state.tls_total_size;
@@ -1517,7 +1598,7 @@ object_ref<XThread> XThread::Restore(KernelState* kernel_state,
       new cpu::ThreadState(kernel_state->processor(), thread->thread_id_,
                            thread->stack_base_, thread->pcr_address_);
 
-  if (state.is_running) {
+  {
     auto context = thread->thread_state_->context();
     context->kernel_state = kernel_state;
     context->lr = state.context.lr;
@@ -1538,9 +1619,38 @@ object_ref<XThread> XThread::Restore(KernelState* kernel_state,
     context->xer_ov = state.context.xer_ov;
     context->xer_so = state.context.xer_so;
     context->vscr_sat = state.context.vscr_sat;
+    context->msr = state.context.msr;
+    context->vrsave = state.context.vrsave;
+    context->vscr_vec = state.context.vscr;
 
-    // Always retain when starting - the thread owns itself until exited.
-    thread->RetainHandle();
+    if (GuestScheduler::enabled()) {
+      thread->fiber_exit_event_ = xe::threading::Event::CreateManualResetEvent(state.terminated);
+      if (!thread->fiber_exit_event_) return nullptr;
+      if (!state.terminated) {
+        if (state.has_run && (!state.context.pc || (state.context.pc & 3))) return nullptr;
+        // RestoreObject recovered the saved handle counts, including this
+        // live thread's execution handle. Retaining again would leak it.
+        thread->Retain();
+        xe::threading::Fiber::CreationParameters params;
+        params.stack_size = 16_MiB;
+        thread->fiber_ = xe::threading::Fiber::Create(params, [thread, state]() {
+          thread->kernel_state_->guest_scheduler()->ExitIfTerminated();
+          thread->running_ = true;
+          if (!state.has_run) {
+            thread->Execute();
+            return;
+          }
+          thread->ExecuteRestored(state.context.pc);
+        });
+        if (!thread->fiber_) return nullptr;
+        thread->scheduler_links_.profiler_log = xe::Profiler::CreateThreadLog(thread->thread_name_.c_str());
+      }
+      thread->emulator()->processor()->OnThreadCreated(thread->handle(), thread->thread_state_, thread);
+      return object_ref<XThread>(thread);
+    }
+    if (!state.is_running) return object_ref<XThread>(thread);
+
+    // The saved handle table already includes the execution handle.
 
     xe::threading::Thread::CreationParameters params;
     params.create_suspended = true;  // Not done restoring yet.

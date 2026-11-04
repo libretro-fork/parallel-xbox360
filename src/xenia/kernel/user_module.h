@@ -35,7 +35,7 @@ constexpr fourcc_t kEXESignature = make_fourcc('M', 'Z', 0, 0);
 
 class UserModule : public XModule {
  public:
-  UserModule(KernelState* kernel_state);
+  UserModule(KernelState* kernel_state, bool restoring = false);
   ~UserModule() override;
 
   const std::string& path() const override { return path_; }

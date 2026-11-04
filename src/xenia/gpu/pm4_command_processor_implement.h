@@ -914,7 +914,7 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_WAIT_REG_MEM(
         // counter updates rapidly
         ReturnFromWait();
 
-        if (!worker_running_) {
+        if (!retro_atomic_load_acquire_int(&worker_running_)) {
           // Short-circuited exit.
           return false;
         }

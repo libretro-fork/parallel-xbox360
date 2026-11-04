@@ -31,6 +31,7 @@ DECLARE_int64(a64_max_stackpoints);
 DECLARE_bool(a64_enable_host_guest_stack_synchronization);
 
 DECLARE_bool(log_safepoint_pc);
+DECLARE_bool(guest_scheduler);
 
 namespace xe {
 namespace cpu {
@@ -1045,12 +1046,22 @@ void A64Emitter::CallExtern(const hir::Instr* instr, const Function* function) {
     auto extern_function = static_cast<const GuestFunction*>(function);
     if (extern_function->extern_handler()) {
       undefined = false;
+      if (cvars::guest_scheduler) {
+        ldr(w9, ptr(GetContextReg(), static_cast<int32_t>(offsetof(ppc::PPCContext, checkpoint_export_pc))));
+        str(w9, ptr(sp, StackLayout::GUEST_RESERVED));
+        mov(w9, function->address());
+        str(w9, ptr(GetContextReg(), static_cast<int32_t>(offsetof(ppc::PPCContext, checkpoint_export_pc))));
+      }
       // GuestToHostThunk: x0=target, x1=arg0
       mov(x0, reinterpret_cast<uint64_t>(extern_function->extern_handler()));
       ldr(x1, ptr(GetContextReg(), static_cast<int32_t>(offsetof(
                                        ppc::PPCContext, kernel_state))));
       ldr(x9, BackendCtxPtr(thunk_offset));
       blr(x9);
+      if (cvars::guest_scheduler) {
+        ldr(w9, ptr(sp, StackLayout::GUEST_RESERVED));
+        str(w9, ptr(GetContextReg(), static_cast<int32_t>(offsetof(ppc::PPCContext, checkpoint_export_pc))));
+      }
     }
   }
   if (undefined) {
@@ -1208,7 +1219,9 @@ void A64Emitter::EmitPreemptCheck(uint32_t guest_address) {
   // The thunk returns in Fpu, while the hot path may hold a VMX mode.
   const FPCRMode held_mode = fpcr_mode_;
   Label& do_yield =
-      AddToTail([&after, flag_offset, held_mode](A64Emitter& e, Label&) {
+      AddToTail([&after, flag_offset, held_mode, guest_address](A64Emitter& e, Label&) {
+        e.mov(e.w9, guest_address);
+        e.str(e.w9, ptr(e.GetContextReg(), static_cast<int32_t>(offsetof(ppc::PPCContext, last_safepoint_pc))));
         e.strb(e.wzr, ptr(e.x20, flag_offset));
         // Null until the scheduler starts, and a stale flag can reach here
         // after it shuts down, so check before calling.

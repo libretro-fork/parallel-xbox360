@@ -225,6 +225,7 @@ static double CalibrateTicksPerUs() {
 GuestScheduler::GuestScheduler(KernelState* kernel_state)
     : kernel_state_(kernel_state), pause_gate_(xe_pause_gate_new()) {
   if (!pause_gate_) throw std::bad_alloc();
+  xe_address_table_init(global_lock_hazard_stacks_, 32);
   io_mailbox_ = xe_io_mailbox_new();
   if (!io_mailbox_) {
     xe_pause_gate_free(pause_gate_);
@@ -239,6 +240,25 @@ GuestScheduler::~GuestScheduler() {
 }
 
 bool GuestScheduler::enabled() { return cvars::guest_scheduler; }
+
+void GuestScheduler::SetPaused(bool paused) {
+  xe_pause_gate_set(pause_gate_, paused);
+  if (!paused) return;
+  // Only the CPU's idle fiber acknowledges, after all guest values have been
+  // spilled. Wake idle CPUs too; a paused CPU must not wait for guest work.
+  std::lock_guard<std::mutex> lock(lock_);
+  for (Cpu& cpu : cpus_) {
+    if (cpu.current_thread)
+      cpu.current_thread->thread_state()->context()->preempt_requested = 1;
+    if (cpu.ready_event) cpu.ready_event->Set();
+  }
+}
+
+bool GuestScheduler::WaitUntilPaused(int64_t timeout_us) {
+  if (!started_.load()) return paused();
+  return xe_pause_gate_wait_workers(pause_gate_, (1u << kMaxCpus) - 1,
+                                    timeout_us) != 0;
+}
 
 int GuestScheduler::DispatchCpuOf(uint8_t guest_cpu) const {
   // Wrap rather than fold to 0: an out-of-range guest CPU is already unusual,
@@ -919,7 +939,7 @@ void GuestScheduler::ReportGlobalLockHazard() {
       kernel_state_->processor() ? kernel_state_->processor()->stack_walker()
                                  : nullptr;
   if (!stack_walker) {
-    if (!global_lock_hazard_saturated_.exchange(true)) {
+    if (!retro_atomic_exchange_int(&global_lock_hazard_saturated_, 1)) {
       XELOGW(
           "GuestScheduler: fiber tid={:08X} '{}' yielded while holding the "
           "global critical region (no stack walker to name the shim).",
@@ -935,15 +955,16 @@ void GuestScheduler::ReportGlobalLockHazard() {
   if (!frame_count) {
     return;
   }
-  {
-    std::lock_guard<std::mutex> lock(global_lock_hazard_mutex_);
-    if (!global_lock_hazard_stacks_.insert(stack_hash).second) {
-      return;  // Already reported.
-    }
-    if (global_lock_hazard_stacks_.size() >= kMaxReports) {
-      global_lock_hazard_saturated_.store(true, std::memory_order_relaxed);
-    }
+  size_t stack_index;
+  const int inserted = xe_address_table_insert(global_lock_hazard_stacks_,
+      kMaxReports, stack_hash, &stack_index);
+  if (inserted < 0) {
+    retro_atomic_store_relaxed_int(&global_lock_hazard_saturated_, 1);
+    return;
   }
+  if (!inserted) return;
+  if (stack_index + 1 == kMaxReports)
+    retro_atomic_store_relaxed_int(&global_lock_hazard_saturated_, 1);
 
   cpu::StackFrame frames[kMaxFrames] = {};
   stack_walker->ResolveStack(frame_pcs, frames, frame_count);
@@ -971,7 +992,7 @@ void GuestScheduler::YieldToScheduler() {
   if (!OnDispatchThread("YieldToScheduler")) {
     return;
   }
-  if (!global_lock_hazard_saturated_.load(std::memory_order_relaxed) &&
+  if (!retro_atomic_load_relaxed_int(&global_lock_hazard_saturated_) &&
       xe::global_critical_region::is_held_by_current_thread()) {
     ReportGlobalLockHazard();
   }
@@ -1123,9 +1144,9 @@ void GuestScheduler::PostHostCall(std::function<void()> fn,
   auto* call = new BlockingCall;
   call->message.context = call;
   call->fn = std::move(fn);
+  xe_pause_gate_work_begin(pause_gate_);
   if (!EnqueueBlockingCall(call, call_class)) {
-    call->fn();
-    delete call;
+    RunBlockingCall(call);
   }
 }
 
@@ -1146,10 +1167,19 @@ bool GuestScheduler::CurrentThreadIsBlockingCallWorker() {
 }
 
 void GuestScheduler::RunBlockingCall(BlockingCall* call) {
+  const bool previous_worker = t_in_blocking_call;
   t_in_blocking_call = true;
-  call->fn();
-  t_in_blocking_call = false;
+  try {
+    call->fn();
+  } catch (...) {
+    t_in_blocking_call = previous_worker;
+    delete call;
+    xe_pause_gate_work_end(pause_gate_);
+    throw;
+  }
+  t_in_blocking_call = previous_worker;
   delete call;
+  xe_pause_gate_work_end(pause_gate_);
 }
 
 void GuestScheduler::IoWorkerLoop() {
@@ -1535,7 +1565,7 @@ void GuestScheduler::RunLoop(int cpu_index) {
   XELOGI("GuestScheduler: CPU {} dispatch loop started", cpu_index);
 
   while (!shutting_down_.load()) {
-    if (!xe_pause_gate_wait(pause_gate_)) break;
+    if (!xe_pause_gate_wait_index(pause_gate_, static_cast<unsigned>(cpu_index))) break;
     if (cpu_index == 0) {
       ReportStatsIfDue();
     }

@@ -89,6 +89,8 @@ X_STATUS ObjectTable::FindFreeSlot(uint32_t* out_slot, bool host) {
 
 bool ObjectTable::Resize(uint32_t new_capacity, bool host) {
   uint32_t capacity = host ? host_table_capacity_ : table_capacity_;
+  if (new_capacity == capacity) return true;
+  if (!new_capacity || new_capacity > UINT32_MAX / sizeof(ObjectTableEntry)) return false;
   uint32_t new_size = new_capacity * sizeof(ObjectTableEntry);
   uint32_t old_size = capacity * sizeof(ObjectTableEntry);
   auto new_table = reinterpret_cast<ObjectTableEntry*>(
@@ -449,16 +451,38 @@ bool ObjectTable::Save(ByteStream* stream) {
   return true;
 }
 
+bool ObjectTable::VisitQuiescent(bool (*visit)(XObject*, void*), void* context) const {
+  if (!visit) return false;
+  for (unsigned host = 0; host < 2; ++host) {
+    const ObjectTableEntry* entries = host ? host_table_ : table_;
+    const uint32_t capacity = host ? host_table_capacity_ : table_capacity_;
+    for (uint32_t slot = 0; slot < capacity; ++slot) {
+      XObject* object = entries[slot].object;
+      if (!object || object->handles().empty()) continue;
+      const X_HANDLE base = host ? XObject::kHandleHostBase :
+          (object->type() == XObject::Type::Socket ? 0 : XObject::kHandleBase);
+      if (object->handle() != (base | (slot << 2)))
+        continue;
+      if (!visit(object, context)) return false;
+    }
+  }
+  return true;
+}
+
 bool ObjectTable::Restore(ByteStream* stream) {
-  Resize(stream->Read<uint32_t>(), true);
-  for (uint32_t i = 0; i < host_table_capacity_; i++) {
+  const uint32_t host_count = stream->Read<uint32_t>();
+  if (host_count > stream->remaining() / sizeof(int32_t) || !Resize(host_count, true))
+    return false;
+  for (uint32_t i = 0; i < host_count; i++) {
     auto& entry = host_table_[i];
     // entry.object = nullptr;
     entry.handle_ref_count = stream->Read<int32_t>();
   }
 
-  Resize(stream->Read<uint32_t>(), false);
-  for (uint32_t i = 0; i < table_capacity_; i++) {
+  const uint32_t guest_count = stream->Read<uint32_t>();
+  if (guest_count > stream->remaining() / sizeof(int32_t) || !Resize(guest_count, false))
+    return false;
+  for (uint32_t i = 0; i < guest_count; i++) {
     auto& entry = table_[i];
     // entry.object = nullptr;
     entry.handle_ref_count = stream->Read<int32_t>();
@@ -471,9 +495,9 @@ X_STATUS ObjectTable::RestoreHandle(X_HANDLE handle, XObject* object) {
   const bool is_host_object = XObject::is_handle_host_object(handle);
   uint32_t slot = GetHandleSlot(handle, is_host_object);
   uint32_t capacity = is_host_object ? host_table_capacity_ : table_capacity_;
-  assert_true(capacity >= slot);
+  if (slot >= capacity || !object || (handle & 3)) return X_STATUS_INVALID_HANDLE;
 
-  if (capacity >= slot) {
+  if (slot < capacity) {
     auto& entry = is_host_object ? host_table_[slot] : table_[slot];
     entry.object = object;
     object->Retain();

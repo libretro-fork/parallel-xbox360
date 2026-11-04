@@ -498,7 +498,7 @@ object_ref<XFile> XFile::Restore(KernelState* kernel_state,
     return nullptr;
   }
 
-  auto abs_path = stream->Read<std::string>();
+  const auto abs_path = stream->ReadStringView();
   uint64_t position = stream->Read<uint64_t>();
   auto access = stream->Read<uint32_t>();
   auto is_directory = stream->Read<bool>();

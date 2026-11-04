@@ -141,6 +141,7 @@ class StackLayout {
   // Three qwords above the argument home area, so unlike GUEST_SCRATCH they
   // survive a call. Used where rsp must stay put for the unwind info.
   static constexpr size_t GUEST_PREEMPT_SAVE = 32;
+  static constexpr size_t GUEST_CHECKPOINT_PC = 56;
 
   // when profiling is on, this stores the nanosecond time at the start of the
   // function

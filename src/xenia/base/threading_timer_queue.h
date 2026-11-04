@@ -10,8 +10,9 @@
 #ifndef XENIA_BASE_THREADING_TIMER_QUEUE_H_
 #define XENIA_BASE_THREADING_TIMER_QUEUE_H_
 
-#include <atomic>
+#include <retro_atomic.h>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 
@@ -24,6 +25,8 @@ class TimerQueue;
 
 // Called after timer users stop, before a core DLL is unloaded.
 void ShutdownTimerQueue();
+bool PauseTimerQueueForState(int64_t timeout_us);
+void ResumeTimerQueueFromState();
 
 struct TimerQueueWaitItem {
   using clock = std::chrono::steady_clock;
@@ -36,7 +39,9 @@ struct TimerQueueWaitItem {
         parent_queue_(parent_queue),
         due_(due),
         interval_(interval),
-        state_(State::kIdle) {}
+        state_(static_cast<int>(State::kIdle)) {}
+  TimerQueueWaitItem(const TimerQueueWaitItem&) = delete;
+  TimerQueueWaitItem& operator=(const TimerQueueWaitItem&) = delete;
 
   // Cancel the pending wait item. No callbacks will be running after this call.
   // The function blocks if a callback is running and returns only after the
@@ -50,20 +55,19 @@ struct TimerQueueWaitItem {
   friend TimerQueue;
 
  private:
-  enum class State : uint_least8_t {
+  enum class State : int {
     kIdle = 0,                // Waiting for the due time
     kInCallback,              // Callback is being executed
     kInCallbackSelfDisarmed,  // Callback is being executed and disarmed itself
     kDisarmed                 // Disarmed, waiting for destruction
   };
-  static_assert(std::atomic<State>::is_always_lock_free);
 
   std::function<void(void*)> callback_;
   void* userdata_;
   TimerQueue* parent_queue_;
   clock::time_point due_;
   clock::duration interval_;  // zero if not recurring
-  std::atomic<State> state_;
+  retro_atomic_int_t state_;
 };
 
 std::weak_ptr<TimerQueueWaitItem> QueueTimerOnce(

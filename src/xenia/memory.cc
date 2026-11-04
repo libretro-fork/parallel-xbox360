@@ -1611,24 +1611,24 @@ void Memory::DumpMap() {
 
 bool Memory::Save(ByteStream* stream) {
   XELOGD("Serializing memory...");
-  heaps_.v00000000.Save(stream);
-  heaps_.v40000000.Save(stream);
-  heaps_.v80000000.Save(stream);
-  heaps_.v90000000.Save(stream);
-  heaps_.physical.Save(stream);
-
-  return true;
+  stream->Write<uint32_t>(make_fourcc("MEM2"));
+  // Physical bytes are written once. Aliases retain their independent
+  // allocation/protection tables without duplicating their backing RAM.
+  return heaps_.v00000000.Save(stream) && heaps_.v40000000.Save(stream) &&
+      heaps_.v80000000.Save(stream) && heaps_.v90000000.Save(stream) &&
+      heaps_.physical.Save(stream) && heaps_.v7F000000.Save(stream, false) &&
+      heaps_.vA0000000.Save(stream, false) && heaps_.vC0000000.Save(stream, false) &&
+      heaps_.vE0000000.Save(stream, false);
 }
 
 bool Memory::Restore(ByteStream* stream) {
   XELOGD("Restoring memory...");
-  heaps_.v00000000.Restore(stream);
-  heaps_.v40000000.Restore(stream);
-  heaps_.v80000000.Restore(stream);
-  heaps_.v90000000.Restore(stream);
-  heaps_.physical.Restore(stream);
-
-  return true;
+  if (stream->Read<uint32_t>() != make_fourcc("MEM2")) return false;
+  return heaps_.v00000000.Restore(stream) && heaps_.v40000000.Restore(stream) &&
+      heaps_.v80000000.Restore(stream) && heaps_.v90000000.Restore(stream) &&
+      heaps_.physical.Restore(stream) && heaps_.v7F000000.Restore(stream, false) &&
+      heaps_.vA0000000.Restore(stream, false) && heaps_.vC0000000.Restore(stream, false) &&
+      heaps_.vE0000000.Restore(stream, false);
 }
 
 uint32_t FromPageAccess(xe::memory::PageAccess protect) {
@@ -1743,12 +1743,16 @@ void BaseHeap::DumpMap() {
   }
 }
 
-bool BaseHeap::Save(ByteStream* stream) {
+bool BaseHeap::Save(ByteStream* stream, bool contents) {
   XELOGD("Heap {:08X}-{:08X}", heap_base_, heap_base_ + (heap_size_ - 1));
 
+  stream->Write<uint32_t>(heap_base_);
+  stream->Write<uint32_t>(page_size_);
+  stream->Write<uint32_t>(static_cast<uint32_t>(page_table_.size()));
+  stream->Write(page_table_.data(), page_table_.size() * sizeof(PageEntry));
+  if (!contents) return true;
   for (size_t i = 0; i < page_table_.size(); i++) {
     auto& page = page_table_[i];
-    stream->Write(page.qword);
     if (!page.state) {
       // Unallocated.
       continue;
@@ -1756,64 +1760,75 @@ bool BaseHeap::Save(ByteStream* stream) {
 
     // TODO(DrChat): write compressed with snappy.
     if (page.state & kMemoryAllocationCommit) {
+      if (stream->measuring()) {
+        stream->Advance(page_size_);
+        continue;
+      }
+      // Validate before changing protection; a truncated destination must not
+      // leave a guest page writable when the failed state operation unwinds.
+      stream->Require(page_size_);
       void* addr = TranslateRelative(i * page_size_);
 
       memory::PageAccess old_access;
-      memory::Protect(addr, page_size_, memory::PageAccess::kReadWrite,
-                      &old_access);
+      if (!memory::Protect(addr, page_size_, memory::PageAccess::kReadOnly,
+                           &old_access)) return false;
 
       stream->Write(addr, page_size_);
 
-      memory::Protect(addr, page_size_, old_access, nullptr);
+      if (!memory::Protect(addr, page_size_, old_access, nullptr)) return false;
     }
   }
 
   return true;
 }
 
-bool BaseHeap::Restore(ByteStream* stream) {
+bool BaseHeap::Restore(ByteStream* stream, bool contents) {
   XELOGD("Heap {:08X}-{:08X}", heap_base_, heap_base_ + (heap_size_ - 1));
-
+  if (stream->Read<uint32_t>() != heap_base_ ||
+      stream->Read<uint32_t>() != page_size_ ||
+      stream->Read<uint32_t>() != page_table_.size()) return false;
+  const auto* entries = static_cast<const uint8_t*>(
+      stream->ReadView(page_table_.size() * sizeof(PageEntry)));
+  size_t data_bytes = 0;
+  uint32_t unreserved = 0;
   for (size_t i = 0; i < page_table_.size(); i++) {
-    auto& page = page_table_[i];
-    page.qword = stream->Read<uint64_t>();
-    if (!page.state) {
-      // Unallocated.
-      continue;
-    }
-
-    memory::PageAccess page_access = memory::PageAccess::kNoAccess;
-    if ((page.current_protect & kMemoryProtectRead) &&
-        IsWritableProtect(page.current_protect)) {
-      page_access = memory::PageAccess::kReadWrite;
-    } else if (page.current_protect & kMemoryProtectRead) {
-      page_access = memory::PageAccess::kReadOnly;
-    }
-
-    // Commit the memory if it isn't already. We do not need to reserve any
-    // memory, as the mapping has already taken care of that.
-    if (page.state & kMemoryAllocationCommit) {
-      xe::memory::AllocFixed(TranslateRelative(i * page_size_), page_size_,
-                             memory::AllocationType::kCommit,
-                             memory::PageAccess::kReadWrite);
-    }
-
-    // Now read into memory. We'll set R/W protection first, then set the
-    // protection back to its previous state.
-    // TODO(DrChat): read compressed with snappy.
-    if (page.state & kMemoryAllocationCommit) {
-      void* addr = TranslateRelative(i * page_size_);
-      xe::memory::Protect(addr, page_size_, memory::PageAccess::kReadWrite,
-                          nullptr);
-
-      stream->Read(addr, page_size_);
-
-      xe::memory::Protect(addr, page_size_, page_access, nullptr);
+    PageEntry saved;
+    std::memcpy(&saved, entries + i * sizeof(PageEntry), sizeof(saved));
+    if (saved.reserved || (saved.state &&
+        (!saved.region_page_count || saved.base_address > i ||
+         saved.base_address >= page_table_.size() ||
+         saved.region_page_count > page_table_.size() - saved.base_address ||
+         i - saved.base_address >= saved.region_page_count))) return false;
+    if (!saved.state) ++unreserved;
+    if (contents && (saved.state & kMemoryAllocationCommit)) {
+      if (data_bytes > SIZE_MAX - page_size_) return false;
+      data_bytes += page_size_;
     }
   }
-
+  // All metadata and data bounds are checked before changing this heap.
+  stream->Require(data_bytes);
+  std::memcpy(page_table_.data(), entries, page_table_.size() * sizeof(PageEntry));
+  unreserved_page_count_ = unreserved;
+  for (size_t i = 0; i < page_table_.size(); ++i) {
+    const PageEntry& page = page_table_[i];
+    if (!(page.state & kMemoryAllocationCommit)) continue;
+    if (contents) {
+      if (!CommitHostPages(static_cast<uint32_t>(i), 1,
+                           kMemoryProtectRead | kMemoryProtectWrite)) return false;
+      stream->Read(TranslateRelative(i * page_size_), page_size_);
+    }
+  }
+  // Apply like protections in runs, after every neighbour's metadata is in
+  // place. This also handles hosts whose page is larger than a guest page.
+  for (uint32_t i = 0; i < page_table_.size();) {
+    if (!(page_table_[i].state & kMemoryAllocationCommit)) { ++i; continue; }
+    const uint32_t first = i, protect = page_table_[i].current_protect;
+    do { ++i; } while (i < page_table_.size() &&
+        (page_table_[i].state & kMemoryAllocationCommit) &&
+        page_table_[i].current_protect == protect);
+    if (!ApplyHostProtect(first, i - 1, protect, nullptr)) return false;
+  }
   RebuildFreeBlocks();
-
   return true;
 }
 

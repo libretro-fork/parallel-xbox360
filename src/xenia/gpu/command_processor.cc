@@ -221,10 +221,12 @@ CommandProcessor::CommandProcessor(GraphicsSystem* graphics_system,
       graphics_system_(graphics_system),
       register_file_(graphics_system_->register_file()),
       trace_writer_(graphics_system->memory()->physical_membase()),
-      worker_running_(true),
+      worker_running_(1),
       write_ptr_index_event_(xe::threading::Event::CreateAutoResetEvent(false)),
       write_ptr_index_(0) {
   assert_not_null(write_ptr_index_event_);
+  pause_gate_.reset(xe_pause_gate_new());
+  if (!pause_gate_) throw std::bad_alloc();
   // Parse and cache ZPD mode once.
   cached_zpd_mode_ = ParseZPDMode();
 }
@@ -251,7 +253,7 @@ bool CommandProcessor::Initialize() {
     }
   }
 
-  worker_running_ = true;
+  retro_atomic_store_release_int(&worker_running_, 1);
   worker_thread_ =
       kernel::object_ref<kernel::XHostThread>(new kernel::XHostThread(
           kernel_state_, 128 * 1024, 0,
@@ -275,7 +277,8 @@ void CommandProcessor::Shutdown() {
 
   EndTracing();
 
-  worker_running_ = false;
+  retro_atomic_store_release_int(&worker_running_, 0);
+  xe_pause_gate_stop(pause_gate_.get());
   write_ptr_index_event_->Set();
   worker_thread_->Wait(0, 0, 0, nullptr);
   worker_thread_.reset();
@@ -445,14 +448,14 @@ void CommandProcessor::WorkerThreadMain() {
     return;
   }
 
-  while (worker_running_) {
+  while (retro_atomic_load_acquire_int(&worker_running_)) {
     while (!pending_fns_.empty()) {
       auto fn = std::move(pending_fns_.front());
       pending_fns_.pop();
       fn();
     }
 
-    uint32_t write_ptr_index = write_ptr_index_.load();
+    uint32_t write_ptr_index = static_cast<uint32_t>(retro_atomic_load_acquire_int(&write_ptr_index_));
     if (write_ptr_index == 0xBAADF00D || read_ptr_index_ == write_ptr_index) {
       SCOPE_profile_cpu_i("gpu", "xe::gpu::CommandProcessor::Stall");
       // We've run out of commands to execute.
@@ -475,12 +478,12 @@ void CommandProcessor::WorkerThreadMain() {
           xe::threading::MaybeYield();
         }
         loop_count++;
-        write_ptr_index = write_ptr_index_.load();
-      } while (worker_running_ && pending_fns_.empty() &&
+        write_ptr_index = static_cast<uint32_t>(retro_atomic_load_acquire_int(&write_ptr_index_));
+      } while (retro_atomic_load_acquire_int(&worker_running_) && pending_fns_.empty() &&
                (write_ptr_index == 0xBAADF00D ||
                 read_ptr_index_ == write_ptr_index));
       ReturnFromWait();
-      if (!worker_running_ || !pending_fns_.empty()) {
+      if (!retro_atomic_load_acquire_int(&worker_running_) || !pending_fns_.empty()) {
         continue;
       }
     }
@@ -506,51 +509,57 @@ void CommandProcessor::WorkerThreadMain() {
 }
 
 void CommandProcessor::Pause() {
-  if (paused_) {
-    return;
+  if (!PauseForState(2000000)) XELOGE("GPU worker did not reach its state pause boundary");
+}
+
+bool CommandProcessor::PauseForState(int64_t timeout_us) {
+  if (timeout_us < 0 || kernel::XThread::IsInThread(worker_thread_.get())) return false;
+  if (!worker_thread_ || !retro_atomic_load_acquire_int(&worker_running_)) return false;
+  if (!is_paused()) {
+    xe_pause_gate_set(pause_gate_.get(), 1);
+    const int generation = xe_pause_gate_generation(pause_gate_.get());
+    // Owned by this processor, so timing out never leaves a callback holding
+    // a pointer to a frontend stack fence or a caller's serialization buffer.
+    try {
+      CallInThread([this, generation]() {
+        xe_pause_gate_wait_generation(pause_gate_.get(), 0, generation);
+      });
+    } catch (...) {
+      xe_pause_gate_set(pause_gate_.get(), 0);
+      throw;
+    }
   }
-  paused_ = true;
-
-  threading::Fence fence;
-  CallInThread([&fence]() {
-    fence.Signal();
-    threading::Thread::GetCurrentThread()->Suspend();
-  });
-
-  fence.Wait();
+  if (xe_pause_gate_wait_workers(pause_gate_.get(), 1, timeout_us)) return true;
+  xe_pause_gate_set(pause_gate_.get(), 0);
+  return false;
 }
 
 void CommandProcessor::Resume() {
-  if (!paused_) {
-    return;
-  }
-  paused_ = false;
-
-  worker_thread_->thread()->Resume();
+  xe_pause_gate_set(pause_gate_.get(), 0);
 }
 
 bool CommandProcessor::Save(ByteStream* stream) {
-  assert_true(paused_);
+  if (!is_paused() || !xe_pause_gate_wait_workers(pause_gate_.get(), 1, 0)) return false;
 
   stream->Write<uint32_t>(primary_buffer_ptr_);
   stream->Write<uint32_t>(primary_buffer_size_);
   stream->Write<uint32_t>(read_ptr_index_);
   stream->Write<uint32_t>(read_ptr_update_freq_);
   stream->Write<uint32_t>(read_ptr_writeback_ptr_);
-  stream->Write<uint32_t>(write_ptr_index_.load());
+  stream->Write<uint32_t>(static_cast<uint32_t>(retro_atomic_load_acquire_int(&write_ptr_index_)));
 
   return true;
 }
 
 bool CommandProcessor::Restore(ByteStream* stream) {
-  assert_true(paused_);
+  if (!is_paused() || !xe_pause_gate_wait_workers(pause_gate_.get(), 1, 0)) return false;
 
   primary_buffer_ptr_ = stream->Read<uint32_t>();
   primary_buffer_size_ = stream->Read<uint32_t>();
   read_ptr_index_ = stream->Read<uint32_t>();
   read_ptr_update_freq_ = stream->Read<uint32_t>();
   read_ptr_writeback_ptr_ = stream->Read<uint32_t>();
-  write_ptr_index_.store(stream->Read<uint32_t>());
+  retro_atomic_store_release_int(&write_ptr_index_, static_cast<int>(stream->Read<uint32_t>()));
 
   return true;
 }
@@ -620,7 +629,7 @@ void CommandProcessor::UpdateWritePointer(uint32_t value) {
   XE_UNLIKELY_IF(cvars::log_ringbuffer_kickoff_initiator_bts) {
     LogKickoffInitator(value);
   }
-  write_ptr_index_ = value;
+  retro_atomic_store_release_int(&write_ptr_index_, static_cast<int>(value));
   write_ptr_index_event_->SetBoostPriority();
 }
 

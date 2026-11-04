@@ -47,8 +47,8 @@ object_ref<XSymbolicLink> XSymbolicLink::Restore(KernelState* kernel_state,
     return nullptr;
   }
 
-  auto path = stream->Read<std::string>();
-  auto target = stream->Read<std::string>();
+  const auto path = stream->ReadStringView();
+  const auto target = stream->ReadStringView();
   symlink->Initialize(path, target);
 
   return object_ref<XSymbolicLink>(symlink);

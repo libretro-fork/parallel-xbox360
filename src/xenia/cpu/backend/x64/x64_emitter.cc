@@ -65,6 +65,7 @@ DEFINE_bool(instrument_call_times, false,
 #endif
 
 DECLARE_bool(log_safepoint_pc);
+DECLARE_bool(guest_scheduler);
 
 namespace xe {
 namespace cpu {
@@ -1337,6 +1338,12 @@ void X64Emitter::CallExtern(const hir::Instr* instr, const Function* function) {
     auto extern_function = static_cast<const GuestFunction*>(function);
     if (extern_function->extern_handler()) {
       undefined = false;
+      if (cvars::guest_scheduler) {
+        mov(eax, dword[GetContextReg() + offsetof(ppc::PPCContext, checkpoint_export_pc)]);
+        mov(dword[rsp + StackLayout::GUEST_CHECKPOINT_PC], eax);
+        mov(dword[GetContextReg() + offsetof(ppc::PPCContext, checkpoint_export_pc)],
+            function->address());
+      }
       // rcx = target function
       // rdx = arg0
       // r8  = arg1
@@ -1345,6 +1352,10 @@ void X64Emitter::CallExtern(const hir::Instr* instr, const Function* function) {
       mov(rdx,
           qword[GetContextReg() + offsetof(ppc::PPCContext, kernel_state)]);
       call(backend()->guest_to_host_thunk());
+      if (cvars::guest_scheduler) {
+        mov(ecx, dword[rsp + StackLayout::GUEST_CHECKPOINT_PC]);
+        mov(dword[GetContextReg() + offsetof(ppc::PPCContext, checkpoint_export_pc)], ecx);
+      }
       // rax = host return
     }
   }
@@ -2268,8 +2279,10 @@ void X64Emitter::EmitPreemptCheck(uint32_t guest_address) {
   }
   cmp(byte[GetContextReg() + offsetof(ppc::PPCContext, preempt_requested)], 0);
   Xbyak::Label& do_yield =
-      AddToTail([&restore, &after](X64Emitter& e, Xbyak::Label& tail) {
+      AddToTail([&restore, &after, guest_address](X64Emitter& e, Xbyak::Label& tail) {
         e.L(tail);
+        e.mov(e.dword[e.GetContextReg() + offsetof(ppc::PPCContext, last_safepoint_pc)],
+              guest_address);
         e.mov(e.byte[e.GetContextReg() +
                      offsetof(ppc::PPCContext, preempt_requested)],
               0);

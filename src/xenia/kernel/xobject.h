@@ -200,7 +200,7 @@ class XObject {
   X_HANDLE handle() const { return handles_[0]; }
 
   // Returns all associated handles with this object.
-  std::vector<X_HANDLE> handles() const { return handles_; }
+  const std::vector<X_HANDLE>& handles() const { return handles_; }
   std::vector<X_HANDLE>& handles() { return handles_; }
 
   const std::string& name() const { return name_; }

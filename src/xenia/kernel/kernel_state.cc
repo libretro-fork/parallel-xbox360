@@ -1267,69 +1267,46 @@ bool KernelState::Save(ByteStream* stream) {
   stream->Write(kKernelSaveSignature);
 
   // Save the object table
-  object_table_.Save(stream);
+  if (!object_table_.Save(stream)) return false;
 
-  // Write the TLS allocation bitmap
-  // We save XThreads absolutely first, as they will execute code upon save
-  // (which could modify the kernel state)
-  auto threads = object_table_.GetObjectsByType<XThread>();
-  uint32_t* num_threads_ptr =
-      reinterpret_cast<uint32_t*>(stream->data() + stream->offset());
-  stream->Write(static_cast<uint32_t>(threads.size()));
-
-  size_t num_threads = threads.size();
-  XELOGD("Serializing {} threads...", threads.size());
-  for (auto thread : threads) {
-    if (!thread->is_guest_thread()) {
-      // Don't save host threads. They can be reconstructed on startup.
-      num_threads--;
-      continue;
+  struct SaveVisit {
+    ByteStream* stream;
+    uint32_t count;
+    bool threads;
+  } visit = {stream, 0, true};
+  auto save_object = [](XObject* object, void* context) -> bool {
+    auto* visit = static_cast<SaveVisit*>(context);
+    if (visit->threads) {
+      if (object->type() != XObject::Type::Thread ||
+          !static_cast<XThread*>(object)->is_guest_thread()) return true;
+    } else {
+      if (object->type() == XObject::Type::Thread) return true;
+      const bool user_module = object->type() == XObject::Type::Module &&
+          static_cast<XModule*>(object)->module_type() == XModule::ModuleType::kUserModule;
+      if (object->is_host_object() && !user_module) return true;
+      visit->stream->Write<uint32_t>(static_cast<uint32_t>(object->type()));
     }
-
-    if (!thread->Save(stream)) {
-      XELOGD("Failed to save thread \"{}\"", thread->name());
-      num_threads--;
-    }
-  }
-
-  *num_threads_ptr = static_cast<uint32_t>(num_threads);
-
-  // Save all other objects
-  auto objects = object_table_.GetAllObjects();
-  uint32_t* num_objects_ptr =
-      reinterpret_cast<uint32_t*>(stream->data() + stream->offset());
-  stream->Write(static_cast<uint32_t>(objects.size()));
-
-  size_t num_objects = objects.size();
-  XELOGD("Serializing {} objects...", num_objects);
-  for (auto object : objects) {
-    auto prev_offset = stream->offset();
-
-    // A user module is a host object only to stay out of the title's handle
-    // numbering, so it still saves.
-    bool user_module = object->type() == XObject::Type::Module &&
-                       static_cast<XModule*>(object.get())->module_type() ==
-                           XModule::ModuleType::kUserModule;
-    if ((object->is_host_object() && !user_module) ||
-        object->type() == XObject::Type::Thread) {
-      // Don't save host objects or save XThreads again
-      num_objects--;
-      continue;
-    }
-
-    stream->Write<uint32_t>(static_cast<uint32_t>(object->type()));
-    if (!object->Save(stream)) {
-      XELOGD("Did not save object of type {}",
-             static_cast<uint32_t>(object->type()));
-      assert_always();
-
-      // Revert backwards and overwrite if a save failed.
-      stream->set_offset(prev_offset);
-      num_objects--;
-    }
-  }
-
-  *num_objects_ptr = static_cast<uint32_t>(num_objects);
+    // A missing thread or kernel object is a failed state, never a partial
+    // success with a reduced count and dangling guest handles.
+    const size_t length_offset = visit->stream->offset();
+    visit->stream->Write<uint64_t>(0);
+    const size_t begin = visit->stream->offset();
+    if (!object->Save(visit->stream)) return false;
+    const uint64_t length = visit->stream->offset() - begin;
+    visit->stream->Patch(length_offset, &length, sizeof(length));
+    ++visit->count;
+    return true;
+  };
+  const size_t threads_offset = stream->offset();
+  stream->Write<uint32_t>(0);
+  if (!object_table_.VisitQuiescent(save_object, &visit)) return false;
+  stream->Patch(threads_offset, &visit.count, sizeof(visit.count));
+  const size_t objects_offset = stream->offset();
+  stream->Write<uint32_t>(0);
+  visit.count = 0;
+  visit.threads = false;
+  if (!object_table_.VisitQuiescent(save_object, &visit)) return false;
+  stream->Patch(objects_offset, &visit.count, sizeof(visit.count));
   return true;
 }
 
@@ -1381,20 +1358,17 @@ bool KernelState::Restore(ByteStream* stream) {
   }
 
   // Restore the object table
-  object_table_.Restore(stream);
-
-  // TLS bitmap is now stored per-process in X_KPROCESS structures (in guest
-  // memory) Skip reading old global TLS bitmap if present in old save files
-  auto num_bitmap_entries = stream->Read<uint32_t>();
-  for (uint32_t i = 0; i < num_bitmap_entries; i++) {
-    stream->Read<uint64_t>();  // Discard old data
-  }
+  if (!object_table_.Restore(stream)) return false;
 
   uint32_t num_threads = stream->Read<uint32_t>();
   XELOGD("Loading {} threads...", num_threads);
   for (uint32_t i = 0; i < num_threads; i++) {
-    auto thread = XObject::Restore(this, XObject::Type::Thread, stream);
-    if (!thread) {
+    const uint64_t length = stream->Read<uint64_t>();
+    if (length > stream->remaining()) return false;
+    ByteStream record(static_cast<uint8_t*>(const_cast<void*>(stream->ReadView(static_cast<size_t>(length)))),
+                      static_cast<size_t>(length));
+    auto thread = XObject::Restore(this, XObject::Type::Thread, &record);
+    if (!thread || record.remaining()) {
       // Can't continue the restore or we risk misalignment.
       assert_always();
       return false;
@@ -1405,9 +1379,12 @@ bool KernelState::Restore(ByteStream* stream) {
   XELOGD("Loading {} objects...", num_objects);
   for (uint32_t i = 0; i < num_objects; i++) {
     uint32_t type = stream->Read<uint32_t>();
-
-    auto obj = XObject::Restore(this, XObject::Type(type), stream);
-    if (!obj) {
+    const uint64_t length = stream->Read<uint64_t>();
+    if (length > stream->remaining()) return false;
+    ByteStream record(static_cast<uint8_t*>(const_cast<void*>(stream->ReadView(static_cast<size_t>(length)))),
+                      static_cast<size_t>(length));
+    auto obj = XObject::Restore(this, XObject::Type(type), &record);
+    if (!obj || record.remaining()) {
       // Can't continue the restore or we risk misalignment.
       assert_always();
       return false;

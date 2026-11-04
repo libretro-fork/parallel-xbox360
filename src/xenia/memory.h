@@ -264,8 +264,8 @@ class BaseHeap {
   xe::memory::PageAccess QueryRangeAccess(uint32_t low_address,
                                           uint32_t high_address);
 
-  bool Save(ByteStream* stream);
-  bool Restore(ByteStream* stream);
+  bool Save(ByteStream* stream, bool contents = true);
+  bool Restore(ByteStream* stream, bool contents = true);
 
   void Reset();
 

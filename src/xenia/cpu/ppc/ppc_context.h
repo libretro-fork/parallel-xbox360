@@ -444,11 +444,14 @@ typedef struct alignas(64) PPCContext_s {
   // over.
   uint8_t preempt_requested;
 
-  // Guest address of the last JIT safepoint this fiber executed, recorded only
-  // when log_safepoint_pc is on. A wedged fiber's link register names the last
+  // Guest address of the last JIT safepoint where this fiber yielded (or every
+  // check with log_safepoint_pc). A wedged fiber's link register names the last
   // call it made, which is often nowhere near the loop it is actually stuck in;
   // this names a block it provably reached.
   uint32_t last_safepoint_pc;
+  // Active export stub, restored across nested guest callbacks. Snapshot code
+  // rejects an in-flight HLE call until it has explicit restartable state.
+  uint32_t checkpoint_export_pc;
 
   template <typename T = uint8_t*>
   inline T TranslateVirtual(uint32_t guest_address) XE_RESTRICT const {
