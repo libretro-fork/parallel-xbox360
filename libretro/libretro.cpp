@@ -216,10 +216,10 @@ struct xenia_core_state {
     retro_input_state_t        input_state_cb;
     retro_environment_t        environ_cb;
 
-    int16_t *audio_buffer;
-    float   *audio_float_buffer;
-    size_t   audio_buffer_size;
-    size_t   audio_int16_size;
+    /* 48 kHz / 50 Hz is the largest supported per-run batch (960 frames).
+     * Storage is reused directly by the mixer and frontend format conversion. */
+    int16_t audio_buffer[6 * 1024];
+    float audio_float_buffer[6 * 1024];
     double   audio_sample_rate;
 
     char game_path[4096];
@@ -1024,23 +1024,15 @@ static void apply_core_options(void) {
 /* ================================================================== */
 static void update_audio(void) {
     size_t frames, frame_samples, i;
-    float *resized;
     if (!core_state.audio_batch_cb && !core_state.audio_cb && !s_audio_float.batch &&
         !(s_audio_channels == 6 && (s_audio_multi.batch_int16 || s_audio_multi.batch_float))) return;
     frames = xe_audio_cadence_next(&s_audio_cadence,
         (unsigned)core_state.audio_sample_rate, core_state.output_fps);
     frame_samples = frames * s_audio_channels;
-    if (frame_samples > core_state.audio_buffer_size) {
-        resized = (float *)realloc(core_state.audio_float_buffer,
-                                  frame_samples * sizeof(float));
-        if (!resized) {
-            xenia_log(RETRO_LOG_ERROR, "Failed to grow per-run audio buffer\n");
-            return;
-        }
-        core_state.audio_float_buffer = resized;
-        core_state.audio_buffer_size = frame_samples;
+    if (frame_samples > sizeof(core_state.audio_float_buffer) / sizeof(float)) {
+        xenia_log(RETRO_LOG_ERROR, "Unsupported per-run audio batch size\n");
+        return;
     }
-    if (!core_state.audio_float_buffer) return;
     /* The mixer writes into the final float output buffer. Muting still drains
      * guest audio; it cannot leave queued samples to play after unmuting. */
     xe_audio_registry_mix(s_audio_registry, core_state.audio_float_buffer, frame_samples);
@@ -1056,14 +1048,6 @@ static void update_audio(void) {
         else
             s_audio_float.batch(core_state.audio_float_buffer, frames);
         return;
-    }
-    /* Allocate integer storage only for a frontend which needs this format. */
-    if (frame_samples > core_state.audio_int16_size) {
-        int16_t *integer_buffer = (int16_t *)realloc(core_state.audio_buffer,
-                                                   frame_samples * sizeof(int16_t));
-        if (!integer_buffer) return;
-        core_state.audio_buffer = integer_buffer;
-        core_state.audio_int16_size = frame_samples;
     }
     xe_audio_samples_int16(core_state.audio_buffer, core_state.audio_float_buffer, frame_samples);
     if (s_audio_channels == 6 && s_audio_multi.batch_int16) {
@@ -1714,10 +1698,6 @@ RETRO_API void retro_init(void) {
     xenia_log(RETRO_LOG_INFO, "ParaLLEl Xbox360 libretro core %s, built from commit %s\n",
               XENIA_LIBRETRO_VERSION, XENIA_LIBRETRO_COMMIT);
     core_state.audio_sample_rate  = 48000.0;
-    core_state.audio_buffer_size = 6 * 1024;
-    core_state.audio_int16_size = 0;
-    core_state.audio_buffer = nullptr;
-    core_state.audio_float_buffer = (float *)calloc(core_state.audio_buffer_size, sizeof(float));
     s_audio_float = {};
     s_audio_multi = {};
     memset(core_state.graphics_backend, 0, sizeof(core_state.graphics_backend));
@@ -1735,10 +1715,6 @@ RETRO_API void retro_deinit(void) {
     s_audio_registry = nullptr;
     xe::threading::ShutdownTimerQueue();
 
-    free(core_state.audio_buffer);
-    core_state.audio_buffer = nullptr;
-    free(core_state.audio_float_buffer);
-    core_state.audio_float_buffer = nullptr;
     s_audio_float = {};
     s_audio_multi = {};
 

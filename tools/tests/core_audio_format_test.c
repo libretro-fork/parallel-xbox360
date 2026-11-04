@@ -1,5 +1,6 @@
 /* Float negotiation/fallback and unload contract through the real core ABI.
  * MSVC C89. Args: native core, private system directory, synthetic invalid XEX.
+ * Optional fourth argument: 50 (maximum supported per-run batch).
  * Accepts hardware setup without resetting it; no GPU or guest code runs. */
 #include "core_test_module.h"
 #include <stdio.h>
@@ -11,30 +12,31 @@ typedef void (RETRO_CALLCONV *SetBatch)(retro_audio_sample_batch_t);
 typedef void (RETRO_CALLCONV *Lifecycle)(void);
 typedef bool (RETRO_CALLCONV *LoadGame)(const struct retro_game_info *);
 static const char *system_dir;
+static size_t expected_frames = 800;
 static unsigned mode, pictures, calls[4], bad, float_queries, multi_queries;
 static size_t RETRO_CALLCONV integer_batch(const int16_t *data, size_t frames) {
   size_t i;
-  if (frames != 800) bad = 1;
+  if (frames != expected_frames) bad = 1;
   for (i = 0; i < frames * 2; ++i) if (data[i]) bad = 2;
   ++calls[0]; return frames;
 }
 static size_t RETRO_CALLCONV float_batch(const float *data, size_t frames) {
   size_t i;
-  if (frames != 800) bad = 3;
+  if (frames != expected_frames) bad = 3;
   for (i = 0; i < frames * 2; ++i) if (data[i] != 0.0f) bad = 4;
   ++calls[1]; return frames;
 }
 static size_t RETRO_CALLCONV multi_integer(const int16_t *data, size_t frames,
                                          unsigned channels, unsigned layout) {
   size_t i;
-  if (channels != 6 || layout != 0x60f || frames != 800) bad = 5;
+  if (channels != 6 || layout != 0x60f || frames != expected_frames) bad = 5;
   for (i = 0; i < frames * 6; ++i) if (data[i]) bad = 6;
   ++calls[2]; return frames;
 }
 static size_t RETRO_CALLCONV multi_float(const float *data, size_t frames,
                                        unsigned channels, unsigned layout) {
   size_t i;
-  if (channels != 6 || layout != 0x60f || frames != 800) bad = 7;
+  if (channels != 6 || layout != 0x60f || frames != expected_frames) bad = 7;
   for (i = 0; i < frames * 6; ++i) if (data[i] != 0.0f) bad = 8;
   ++calls[3]; return frames;
 }
@@ -52,6 +54,10 @@ static bool RETRO_CALLCONV environment(unsigned command, void *data) {
   if (command == RETRO_ENVIRONMENT_GET_VARIABLE) {
     struct retro_variable *var = (struct retro_variable *)data;
     var->value = NULL;
+    if (!strcmp(var->key, "xenia_display_refresh")) {
+      var->value = expected_frames == 960 ? "50" : "60";
+      return true;
+    }
     if (!strcmp(var->key, "xenia_audio_channels")) {
       var->value = (mode >= 2 && mode <= 4) || mode == 7 ? "5.1" : "stereo";
       return true;
@@ -87,7 +93,11 @@ int main(int argc, char **argv) {
   LoadGame load;
   struct retro_game_info game;
   unsigned i, j, expected;
-  if (argc != 4) return 10;
+  if (argc != 4 && argc != 5) return 10;
+  if (argc == 5) {
+    if (strcmp(argv[4], "50")) return 10;
+    expected_frames = 960;
+  }
   system_dir = argv[2];
   module = CORE_LOAD(argv[1]); if (!module) return 11;
 #define FIND(function, name) do { symbol = CORE_FIND(module, name); if (!symbol) return 12; memcpy(&function, &symbol, sizeof(function)); } while (0)

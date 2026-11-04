@@ -47,6 +47,8 @@ legacy fallback and callback retirement at unload. It accepts hardware setup
 without resetting the context, so it checks silent cadence and negotiation
 without a GPU or guest title, not game-produced audio correctness. Arguments:
 core library, private system directory and a synthetic invalid XEX file.
+Append 50 to repeat all eight modes at the maximum supported batch of 960
+audio frames per run, including six-channel float and integer output.
 
 `core_ui_queue_test.c` checks headless button policy, frontend-driven close
 timing, active-request lifetime, the 64-request undrained bound, 8,000 completions

@@ -605,43 +605,35 @@ void RenderTargetCache::ClearCache() {
   std::memset(last_update_used_render_targets_, 0,
               sizeof(last_update_used_render_targets_));
   for (auto& transfers : last_update_transfers_) transfers.clear();
-  // Keep only render targets currently owning any EDRAM data.
-  if (!render_targets_.empty()) {
-    std::unordered_set<RenderTargetKey, RenderTargetKey::Hasher>
-        used_render_targets;
-    for (const auto& ownership_range_pair : ownership_ranges_) {
-      const OwnershipRange& ownership_range = ownership_range_pair.second;
-      if (!ownership_range.render_target.IsEmpty()) {
-        used_render_targets.emplace(ownership_range.render_target);
-      }
-      if (!ownership_range.depth_bits_target.IsEmpty()) {
-        used_render_targets.emplace(ownership_range.depth_bits_target);
-      }
-      if (!ownership_range.host_depth_render_target_unorm24.IsEmpty()) {
-        used_render_targets.emplace(
-            ownership_range.host_depth_render_target_unorm24);
-      }
-      if (!ownership_range.host_depth_render_target_float24.IsEmpty()) {
-        used_render_targets.emplace(
-            ownership_range.host_depth_render_target_float24);
-      }
+  // Mark existing objects directly rather than allocating and copying keys into
+  // a temporary ownership set. All four EDRAM representations must survive.
+  for (const auto& entry : render_targets_) {
+    if (entry.second) entry.second->owns_edram_for_collection_ = false;
+  }
+  for (const auto& entry : ownership_ranges_) {
+    const OwnershipRange& range = entry.second;
+    MarkRenderTargetOwned(range.render_target);
+    MarkRenderTargetOwned(range.depth_bits_target);
+    MarkRenderTargetOwned(range.host_depth_render_target_unorm24);
+    MarkRenderTargetOwned(range.host_depth_render_target_float24);
+  }
+  auto it = render_targets_.begin();
+  while (it != render_targets_.end()) {
+    RenderTarget* target = it->second;
+    if (target && target->owns_edram_for_collection_) {
+      ++it;
+    } else {
+      if (target) RetireCachedRenderTarget(target);
+      it = render_targets_.erase(it);
     }
-    if (render_targets_.size() != used_render_targets.size()) {
-      typename decltype(render_targets_)::iterator it_next;
-      for (auto it = render_targets_.begin(); it != render_targets_.end();
-           it = it_next) {
-        it_next = std::next(it);
-        if (!it->second) {
-          render_targets_.erase(it);
-          continue;
-        }
-        if (used_render_targets.find(it->second->key()) ==
-            used_render_targets.end()) {
-          RetireCachedRenderTarget(it->second);
-          render_targets_.erase(it);
-        }
-      }
-    }
+  }
+}
+
+void RenderTargetCache::MarkRenderTargetOwned(const RenderTargetKey& key) {
+  if (key.IsEmpty()) return;
+  const auto it = render_targets_.find(key);
+  if (it != render_targets_.end() && it->second) {
+    it->second->owns_edram_for_collection_ = true;
   }
 }
 

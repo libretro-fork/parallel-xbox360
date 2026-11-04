@@ -4,6 +4,10 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Frontend audio batches now use fixed reusable storage sized for all supported channel and refresh modes. Float mixing writes directly into the final output buffer; integer conversion uses reusable storage, removing lazy integer allocation and per-run buffer growth.
+
+- Render-target collection now marks ownership directly on cached objects, removing its temporary hash set and ownership-key copies in both Vulkan and D3D12. All four EDRAM ownership representations remain protected. Other gameplay allocation paths remain under audit.
+
 - D3D12 now also retires orphan host render targets using the shared C89 submission queue and the same allocation-triggered collection policy as Vulkan. Resource and descriptor destruction waits for existing submission completion; CPU binding snapshots are invalidated. No extra GPU wait, readback or release logging is added.
 
 - Paused guest CPU workers now park on a C89 libretro-common eventcount gate and wake directly on resume or shutdown, replacing repeated 2 ms sleeps. Guest time resumes before workers are released. Other scheduler timing and pause detection remain under audit.

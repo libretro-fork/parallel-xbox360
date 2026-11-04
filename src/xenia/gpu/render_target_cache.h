@@ -401,7 +401,9 @@ class RenderTargetCache {
     RenderTarget(RenderTargetKey key) : key_(key) {}
 
    private:
+    friend class RenderTargetCache;
     RenderTargetKey key_;
+    bool owns_edram_for_collection_ = false;
   };
 
   struct Transfer {
@@ -739,6 +741,8 @@ class RenderTargetCache {
                     const Transfer::Rectangle* resolve_clear_rectangle) const;
 
  private:
+  void MarkRenderTargetOwned(const RenderTargetKey& key);
+
   const RegisterFile& register_file_;
   TraceWriter* trace_writer_;
   uint32_t draw_resolution_scale_x_;
