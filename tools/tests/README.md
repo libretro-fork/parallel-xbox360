@@ -335,6 +335,16 @@ The primitive accepts 1D, 2D, 3D, cube and 2D-array views; execution coverage in
 this fixture is 2D. The live texture stage adds guest coordinate/face conversion, half-texel offsets, signed/gamma treatment, sampler policies and register writes.
 ## Windows GNU compiler and ABI checks
 
+`core_socket_unload_module.cc` exercises the production socket I/O service with
+a pending UDP wait and a wrapper retained until DLL detach. The C89
+`core_socket_unload_test.c` checks 64 shutdown/unload cycles, completion cleanup,
+and actual module removal. `core_socket_worker_test.c` checks 128 cancellation,
+join and retirement rounds, including reentrant removal. Compile its C driver
+and `libretro/core_socket_worker.c` as C89 with `HAVE_THREADS`, linking the
+owned common thread/eventcount implementations. The old static MinGW runner
+reproduces a DLL-unload hang; run that negative control only in a supervised
+test child with a timeout. These tests do not boot a title.
+
 The following fixtures are authored in MSVC-compatible C89. They can also be
 compiled with MinGW-w64 GCC using `-std=c89 -Wall -Wextra -Werror`.
 

@@ -10,7 +10,6 @@
 #include "xenia/kernel/xsocket.h"
 
 #include <cstring>
-#include <thread>
 
 #include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
@@ -25,40 +24,6 @@
 
 namespace xe {
 namespace kernel {
-
-namespace {
-
-// Drives async_wait completions on a worker thread for the process lifetime.
-class IoContextRunner {
- public:
-  IoContextRunner() : work_(asio::make_work_guard(io_context_)) {
-    thread_ = std::thread([this]() {
-      xe::threading::set_name("Xenia Socket I/O");
-      io_context_.run();
-    });
-  }
-  ~IoContextRunner() {
-    work_.reset();
-    io_context_.stop();
-    if (thread_.joinable()) {
-      thread_.join();
-    }
-  }
-  asio::io_context& get() { return io_context_; }
-
- private:
-  asio::io_context io_context_;
-  asio::executor_work_guard<asio::io_context::executor_type> work_;
-  std::thread thread_;
-};
-
-}  // namespace
-
-// Shared io_context for all sockets
-static asio::io_context& GetIoContext() {
-  static IoContextRunner runner;
-  return runner.get();
-}
 
 // Translate socket options to native
 // Note:
@@ -167,16 +132,36 @@ uint32_t AsioErrorToWSAError(const asio::error_code& ec) {
 }
 
 XSocket::XSocket(KernelState* kernel_state)
-    : XObject(kernel_state, kObjectType) {}
+    : XObject(kernel_state, kObjectType),
+      socket_io_(kernel_state ? kernel_state->socket_io_context() : nullptr) {
+  RegisterAsyncIo();
+}
 
 XSocket::XSocket(KernelState* kernel_state, asio::ip::tcp::socket socket)
-    : XObject(kernel_state, kObjectType), tcp_socket_(std::move(socket)) {
+    : XObject(kernel_state, kObjectType),
+      socket_io_(kernel_state ? kernel_state->socket_io_context() : nullptr),
+      tcp_socket_(std::move(socket)) {
+  RegisterAsyncIo();
   af_ = AddressFamily::X_AF_INET;
   type_ = Type::X_SOCK_STREAM;
   proto_ = Protocol::X_IPPROTO_TCP;
 }
 
-XSocket::~XSocket() { Close(); }
+XSocket::~XSocket() {
+  if (socket_io_) socket_io_->Unregister(&io_link_);
+  Close();
+}
+
+void XSocket::RegisterAsyncIo() {
+  if (!socket_io_) return;
+  socket_io_->Register(&io_link_, this,
+      [](void* object) { static_cast<XSocket*>(object)->Close(); },
+      [](void* object) {
+        auto* socket = static_cast<XSocket*>(object);
+        socket->selected_event_flags_ = 0;
+        socket->selected_event_.reset();
+      });
+}
 
 uint64_t XSocket::native_handle() {
   if (tcp_socket_ && tcp_socket_->is_open()) {
@@ -192,6 +177,7 @@ uint64_t XSocket::native_handle() {
 }
 
 X_STATUS XSocket::Initialize(AddressFamily af, Type type, Protocol proto) {
+  if (!io_link_.linked) return X_STATUS_UNSUCCESSFUL;
   af_ = af;
   type_ = type;
   proto_ = proto;
@@ -207,10 +193,10 @@ X_STATUS XSocket::Initialize(AddressFamily af, Type type, Protocol proto) {
     // Use an acceptor for TCP — it supports bind, listen, and accept natively.
     // If Connect() is called later, we transition to a tcp_socket at that
     // point.
-    acceptor_.emplace(GetIoContext());
+    acceptor_.emplace(socket_io_->get());
     acceptor_->open(asio::ip::tcp::v4(), ec);
   } else if (type == Type::X_SOCK_DGRAM) {
-    udp_socket_.emplace(GetIoContext());
+    udp_socket_.emplace(socket_io_->get());
     udp_socket_->open(asio::ip::udp::v4(), ec);
   } else {
     return X_STATUS_INVALID_PARAMETER;
@@ -489,7 +475,7 @@ X_STATUS XSocket::Connect(N_XSOCKADDR* name, int name_len) {
     acceptor_->close(ec);
     acceptor_.reset();
 
-    tcp_socket_.emplace(GetIoContext());
+    tcp_socket_.emplace(socket_io_->get());
     tcp_socket_->open(asio::ip::tcp::v4(), ec);
     if (ec) {
       last_error_ = AsioErrorToWSAError(ec);
@@ -612,7 +598,7 @@ object_ref<XSocket> XSocket::Accept(N_XSOCKADDR* name, int* name_len) {
   asio::error_code ec;
 
   // Accept a new connection
-  asio::ip::tcp::socket new_socket(GetIoContext());
+  asio::ip::tcp::socket new_socket(socket_io_->get());
   asio::ip::tcp::endpoint peer_endpoint;
   RunCooperatively(ec, RetryMode::kReceive,
                    [&]() { acceptor_->accept(new_socket, peer_endpoint, ec); });
@@ -865,9 +851,8 @@ int XSocket::WSAEventSelect(object_ref<XEvent> event, uint32_t flags) {
   const bool want_read = (flags & kReadEvents) != 0;
   const bool want_write = (flags & kWriteEvents) != 0;
 
-  // Capture strong refs so the socket and event outlive any pending wait.
-  auto handler = [self = retain_object(this),
-                  ev = selected_event_](const asio::error_code& wait_ec) {
+  // Socket destruction cancels its wait; only the completion event is retained.
+  auto handler = [ev = selected_event_](const asio::error_code& wait_ec) {
     if (wait_ec) {
       return;  // cancelled or socket closed
     }

@@ -12,6 +12,7 @@
 
 // Asio must be included before Windows headers to avoid macro conflicts
 #include <asio.hpp>
+#include "xenia/kernel/socket_io_context.h"
 
 #include <atomic>
 #include <cstring>
@@ -181,6 +182,10 @@ class XSocket : public XObject {
   // Reads the local or remote address into xenia's own layout. Some hosts lay
   // sockaddr_in out differently.
   X_STATUS QueryName(bool peer, N_XSOCKADDR_IN* name);
+
+  void RegisterAsyncIo();
+  std::shared_ptr<SocketIoContext> socket_io_;
+  xe_socket_link io_link_{};
 
   // Socket storage - either TCP or UDP
   std::optional<asio::ip::tcp::socket> tcp_socket_;

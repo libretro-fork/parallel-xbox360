@@ -51,6 +51,8 @@ class Processor;
 namespace xe {
 namespace kernel {
 
+class SocketIoContext;
+
 constexpr fourcc_t kKernelSaveSignature = make_fourcc("KRNL");
 
 static constexpr const uint16_t kBaseKernelBuildVersion = 1888;
@@ -193,6 +195,7 @@ class KernelState {
   xam::XamState* xam_state() const { return xam_state_.get(); }
 
   GuestScheduler* guest_scheduler() const { return guest_scheduler_.get(); }
+  const std::shared_ptr<SocketIoContext>& socket_io_context() const { return socket_io_context_; }
 
   // Wake boost for a completed file request, NT's IO_DISK_INCREMENT.
   static constexpr uint32_t kIoDiskIncrement = 1;
@@ -480,6 +483,9 @@ class KernelState {
   std::unordered_map<XObject::Type, uint32_t>
       host_object_type_enum_to_guest_object_type_ptr_;
   uint32_t GetKernelGuestGlobals() const { return kernel_guest_globals_; }
+ private:
+  std::shared_ptr<SocketIoContext> socket_io_context_;
+
 };
 
 }  // namespace kernel

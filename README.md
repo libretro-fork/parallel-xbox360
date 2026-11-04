@@ -35,6 +35,8 @@ Fibers use owned libretro-common libco AMD64/ARM64 backends, including direct AM
 
 Content close flushes and joins the logging writer non-alertably before the core DLL can unload. Windows APC delivery cannot release its queue and sinks before the writer exits. Reset and graphics context rebuild share the existing logger; reopening content starts it again.
 
+The kernel owns socket I/O. Closing content cancels live socket waits, joins the I/O worker and releases pending handlers before guest state is destroyed. Closed wrappers retained by retired guest frames keep no running worker or pending I/O context. No socket worker is joined from a process-static DLL destructor.
+
 Each `retro_run` supplies one video callback and one run's audio duration at the declared refresh rate. Fractional sample counts carry forward; audio underruns and a missing mixer produce silence for the remainder. Muting drains audio without adding a backlog. Stereo frontends may use either the batch or per-sample callback.
 
 RetroArch owns the negotiated Vulkan device. The core releases its non-owning wrappers before unload and supplies no late device-destroy callback, so threaded video can destroy a cached device after the core DLL is gone.

@@ -7,6 +7,8 @@
  ******************************************************************************
  */
 
+#include "xenia/kernel/socket_io_context.h"
+
 #include <algorithm>
 #include <atomic>
 #include <ranges>
@@ -71,6 +73,7 @@ KernelState::KernelState(Emulator* emulator)
   shared_kernel_state_ = this;
   processor_ = emulator->processor();
   file_system_ = emulator->file_system();
+  socket_io_context_ = std::make_shared<SocketIoContext>();
   xam_state_ = std::make_unique<xam::XamState>(emulator, this);
   guest_scheduler_ = std::make_unique<GuestScheduler>(this);
   smc_ = std::make_unique<SystemManagementController>();
@@ -101,6 +104,8 @@ KernelState::~KernelState() {
   guest_scheduler_->Shutdown();
   // Guest code may have re-armed one since.
   XTimer::CancelAll();
+  socket_io_context_->Shutdown();
+  XELOGI("KernelState: socket I/O stopped");
   for (auto& dpcs : processor_dpcs_) {
     dpcs.thread.reset();
     dpcs.event.reset();
@@ -122,6 +127,7 @@ KernelState::~KernelState() {
   object_table_.Reset();
 
   xam_state_.reset();
+  socket_io_context_.reset();
 
   assert_true(shared_kernel_state_ == this);
   shared_kernel_state_ = nullptr;
