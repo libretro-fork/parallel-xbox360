@@ -144,7 +144,7 @@ class VulkanTextureCache final : public TextureCache {
                                  xenos::TextureFormat& format_out);
 
   // Scaled resolve buffer management (for use by VulkanRenderTargetCache)
-  // Simple non-overlapping buffer (fallback when sparse binding unavailable)
+  // One coherent address space when sparse binding is unavailable.
   struct ScaledResolveBuffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     xe_vk_allocation allocation = {};
@@ -187,14 +187,10 @@ class VulkanTextureCache final : public TextureCache {
 
   // Returns the base scaled address that the current buffer starts at.
   // For sparse buffers: buffer N starts at N GB (N << 30)
-  // For simple buffers: returns the buffer's range_start_scaled
+  // For the non-sparse backing: zero (the full scaled guest address space).
   uint64_t GetCurrentScaledResolveBufferBaseOffset() const {
     if (sparse_scaled_resolve_supported_) {
       return uint64_t(scaled_resolve_current_buffer_index_) << 30;
-    }
-    if (scaled_resolve_current_buffer_index_ < scaled_resolve_buffers_.size()) {
-      return scaled_resolve_buffers_[scaled_resolve_current_buffer_index_]
-          .range_start_scaled;
     }
     return 0;
   }
@@ -204,8 +200,8 @@ class VulkanTextureCache final : public TextureCache {
   }
 
   const ScaledResolveBuffer* GetScaledResolveBufferInfo(size_t index) const {
-    if (index < scaled_resolve_buffers_.size()) {
-      return &scaled_resolve_buffers_[index];
+    if (index == 0 && scaled_resolve_fallback_.buffer != VK_NULL_HANDLE) {
+      return &scaled_resolve_fallback_;
     }
     return nullptr;
   }
@@ -429,6 +425,7 @@ class VulkanTextureCache final : public TextureCache {
 
   // Sparse scaled resolve helper functions
   bool InitializeSparseScaledResolve();
+  bool InitializeScaledResolveFallback();
   void ShutdownSparseScaledResolve();
   size_t GetScaledResolveSparseBufferCount() const;
   std::array<size_t, 2> GetPossibleScaledResolveBufferIndices(
@@ -551,7 +548,7 @@ class VulkanTextureCache final : public TextureCache {
   std::pair<const SamplerParameters, Sampler>* sampler_used_last_ = nullptr;
 
   // Scaled resolve buffer storage (simple non-overlapping, fallback path)
-  std::vector<ScaledResolveBuffer> scaled_resolve_buffers_;
+  ScaledResolveBuffer scaled_resolve_fallback_;
   // Current scaled resolve range tracking
   uint64_t scaled_resolve_current_range_start_scaled_ = 0;
   uint64_t scaled_resolve_current_range_length_scaled_ = 0;

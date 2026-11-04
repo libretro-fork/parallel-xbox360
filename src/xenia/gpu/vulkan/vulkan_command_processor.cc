@@ -5668,6 +5668,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     primitive_processor_->BeginFrame();
 
     texture_cache_->BeginFrame();
+    render_target_cache_->SetResourceFrame(frame_current_);
   }
 
   return true;

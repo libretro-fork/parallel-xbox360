@@ -8,6 +8,7 @@
  */
 
 #include "xenia/gpu/render_target_cache.h"
+#include "libretro/core_gpu_retire.h"
 
 #include <cmath>
 #include <cstdio>
@@ -601,7 +602,7 @@ void RenderTargetCache::ClearCache() {
   if (PrepareRenderTargetCollection()) CollectPreparedRenderTargets();
 }
 
-bool RenderTargetCache::PrepareRenderTargetCollection() {
+void RenderTargetCache::MarkRenderTargetOwnership() {
   // Mark without touching bindings, allocating storage, or retiring resources.
   for (const auto& entry : render_targets_) {
     if (entry.second) entry.second->owns_edram_for_collection_ = false;
@@ -612,6 +613,18 @@ bool RenderTargetCache::PrepareRenderTargetCollection() {
     MarkRenderTargetOwned(range.depth_bits_target);
     MarkRenderTargetOwned(range.host_depth_render_target_unorm24);
     MarkRenderTargetOwned(range.host_depth_render_target_float24);
+  }
+}
+
+bool RenderTargetCache::PrepareRenderTargetCollection(unsigned retain_frames) {
+  MarkRenderTargetOwnership();
+  if (retain_frames) {
+    for (const auto& entry : render_targets_) {
+      if (entry.second && xe_gpu_surface_recent(resource_frame_,
+              entry.second->last_use_frame_, retain_frames)) {
+        entry.second->owns_edram_for_collection_ = true;
+      }
+    }
   }
   for (const auto& entry : render_targets_) {
     if (!entry.second || !entry.second->owns_edram_for_collection_) return true;
@@ -1813,8 +1826,21 @@ RenderTargetCache::RenderTarget* RenderTargetCache::GetOrCreateRenderTarget(
   RenderTarget* render_target;
   if (it_rt != render_targets_.end()) {
     render_target = it_rt->second;
+  } else if ((render_target = FindReusableRenderTarget(key)) != nullptr) {
+    // Extracting and rekeying keeps the existing map node and image storage.
+    // The size is unchanged, so insertion cannot require a bucket rehash.
+    auto node = render_targets_.extract(render_target->key());
+    assert_false(node.empty());
+    node.key() = key;
+    render_target->key_ = key;
+    render_targets_.insert(std::move(node));
+    RebindRenderTarget(*render_target);
   } else {
     render_target = CreateRenderTarget(key);
+    if (render_target) {
+      assert_not_zero(next_resource_identity_);
+      render_target->identity_ = next_resource_identity_++;
+    }
     uint32_t width = key.GetWidth();
     uint32_t height =
         GetRenderTargetHeight(key.pitch_tiles_at_32bpp, key.msaa_samples);
@@ -1836,7 +1862,29 @@ RenderTargetCache::RenderTarget* RenderTargetCache::GetOrCreateRenderTarget(
     // Insert even if failed to create, not to try to create again.
     render_targets_.emplace(key, render_target);
   }
+  if (render_target) render_target->last_use_frame_ = resource_frame_;
   return render_target;
+}
+
+RenderTargetCache::RenderTarget* RenderTargetCache::FindReusableRenderTarget(
+    RenderTargetKey key) {
+  xe_gpu_surface_choice choice = {};
+  key.base_tiles = 0;
+  MarkRenderTargetOwnership();
+  for (const auto& entry : render_targets_) {
+    RenderTarget* target = entry.second;
+    if (!target) continue;
+    RenderTargetKey shape = target->key();
+    shape.base_tiles = 0;
+    bool protected_content = target->owns_edram_for_collection_;
+    for (uint32_t i = 0; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
+      protected_content |= last_update_used_render_targets_[i] == target ||
+                           last_update_accumulated_render_targets_[i] == target;
+    }
+    xe_gpu_surface_consider(&choice, target, key.key, shape.key,
+        resource_frame_, target->last_use_frame_, protected_content);
+  }
+  return static_cast<RenderTarget*>(choice.resource);
 }
 
 bool RenderTargetCache::IsTransferValueConverted7e3And8888(

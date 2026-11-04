@@ -4,6 +4,10 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan and D3D12 target reuse avoids creating another GPU image when only an unused surface's EDRAM address changes. Reuses existing cache nodes and descriptors, protects all authoritative EDRAM owners and recent/bound targets, and preserves Vulkan framebuffers by stable attachment identity. Cold-resource destruction is spread across actual GPU frames using preallocated retirement metadata. Offline reuse/lifetime tests pass. The tester reports 12 minutes of Tekken Tag Tournament 2 gameplay with VRAM stabilizing around 9-11 GB instead of climbing toward 32 GB; minor frame-time fluctuations remain under investigation. Audio scheduling is unchanged from the audio-fixed release.
+
+- Vulkan's non-sparse scaled-resolve fallback now reserves one coherent backing buffer at initialization instead of accumulating overlapping buffers or relabeling live storage. Borrowed ranges share the original backing bytes without copies or per-request allocation; this fallback reserves 2 GiB at 2x2 or 8 GiB at 4x4 scaling. Sparse-capable devices retain demand commitment. Range arithmetic rejects overflow and out-of-bounds aligned accesses. Fixed two leaked image views when render-target descriptor allocation fails.
+
 - Restore the native audio callback schedule that sustained gameplay testing confirmed has clean sound. Frontend consumption no longer interrupts callback deadlines. This compatibility fix retains host-timed pumping while a deterministic replacement remains unfinished; VRAM growth and its associated stalls remain separate unresolved issues.
 
 - XMA decoding preserves unread PCM when compressed input runs out and preserves the guest consumer's latest read cursor during decoder writeback. Removed a starvation workaround that moved the write cursor without decoding samples. Offline tests reproduce the data loss before the fix and verify identical PCM across 24 ring and streaming-refill configurations afterward. The broader Tekken gameplay audio regression remains under investigation.

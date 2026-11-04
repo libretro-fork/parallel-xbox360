@@ -154,6 +154,7 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   }
 
   RenderTarget* CreateRenderTarget(RenderTargetKey key) override;
+  void RebindRenderTarget(RenderTarget& target) override;
 
   bool IsHostDepthEncodingDifferent(
       xenos::DepthRenderTargetFormat format) const override;
@@ -594,8 +595,9 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
 
   static void ReleaseRenderTarget(void* target);
   void RetireCachedRenderTarget(RenderTarget* target) override;
-  bool RetireUnusedRenderTargets();
+  bool RetireUnusedRenderTargets(unsigned retain_frames = 0);
   xe_gpu_retire_queue retired_resources_ = {};
+  xe_gpu_retire_budget retirement_budget_ = {};
   xe_gpu_cache_gc render_target_gc_ = {};
   uint64_t render_target_allocated_bytes_ = 0;
   uint64_t render_target_allocation_generation_ = 0;
