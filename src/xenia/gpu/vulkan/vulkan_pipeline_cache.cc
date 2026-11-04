@@ -11,6 +11,9 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include "libretro/core_file.h"
+#include "libretro/core_cache_file.h"
 #include <cstring>
 #include <set>
 
@@ -2542,21 +2545,11 @@ void VulkanPipelineCache::InitializeShaderStorage(
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
 
-  // Try to load existing VkPipelineCache data.
-  std::vector<uint8_t> pipeline_cache_data;
-  if (FILE* cache_file =
-          xe::filesystem::OpenFile(vk_pipeline_cache_path_, "rb")) {
-    xe::filesystem::Seek(cache_file, 0, SEEK_END);
-    int64_t cache_size = xe::filesystem::Tell(cache_file);
-    if (cache_size > 0) {
-      pipeline_cache_data.resize(size_t(cache_size));
-      xe::filesystem::Seek(cache_file, 0, SEEK_SET);
-      pipeline_cache_data.resize(fread(pipeline_cache_data.data(), 1,
-                                       pipeline_cache_data.size(), cache_file));
-    }
-    fclose(cache_file);
-    XELOGI("Loaded {} bytes of VkPipelineCache data",
-           pipeline_cache_data.size());
+  // Keep mapped/VFS-owned bytes alive until pipeline-cache creation returns.
+  xe_file_blob pipeline_cache_data = {};
+  if (xe_file_blob_open(&pipeline_cache_data,
+                       xe::path_to_utf8(vk_pipeline_cache_path_).c_str())) {
+    XELOGI("Loaded {} bytes of VkPipelineCache data", pipeline_cache_data.size);
   }
 
   // Recreate the VkPipelineCache with the loaded data.
@@ -2567,9 +2560,9 @@ void VulkanPipelineCache::InitializeShaderStorage(
   VkPipelineCacheCreateInfo pipeline_cache_create_info = {};
   pipeline_cache_create_info.sType =
       VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-  pipeline_cache_create_info.initialDataSize = pipeline_cache_data.size();
+  pipeline_cache_create_info.initialDataSize = pipeline_cache_data.size;
   pipeline_cache_create_info.pInitialData =
-      pipeline_cache_data.empty() ? nullptr : pipeline_cache_data.data();
+      pipeline_cache_data.data;
   if (dfn.vkCreatePipelineCache(device, &pipeline_cache_create_info, nullptr,
                                 &vk_pipeline_cache_) != VK_SUCCESS) {
     XELOGW(
@@ -2581,6 +2574,8 @@ void VulkanPipelineCache::InitializeShaderStorage(
     dfn.vkCreatePipelineCache(device, &pipeline_cache_create_info, nullptr,
                               &vk_pipeline_cache_);
   }
+
+  xe_file_blob_close(&pipeline_cache_data);
 
   // Create pipelines from stored descriptions.
   if (!pipeline_stored_descriptions.empty()) {
@@ -2797,15 +2792,21 @@ void VulkanPipelineCache::ShutdownShaderStorage() {
     if (dfn.vkGetPipelineCacheData(device, vk_pipeline_cache_, &cache_size,
                                    nullptr) == VK_SUCCESS &&
         cache_size > 0) {
-      std::vector<uint8_t> cache_data(cache_size);
-      if (dfn.vkGetPipelineCacheData(device, vk_pipeline_cache_, &cache_size,
-                                     cache_data.data()) == VK_SUCCESS) {
-        if (FILE* cache_file =
-                xe::filesystem::OpenFile(vk_pipeline_cache_path_, "wb")) {
-          fwrite(cache_data.data(), 1, cache_size, cache_file);
-          fclose(cache_file);
-          XELOGI("Saved {} bytes of VkPipelineCache data", cache_size);
+      // The driver writes directly into its final serialization buffer.
+      uint8_t* cache_data = (uint8_t*)malloc(cache_size);
+      if (cache_data) {
+        if (dfn.vkGetPipelineCacheData(device, vk_pipeline_cache_, &cache_size,
+                                      cache_data) == VK_SUCCESS) {
+          RFILE* cache_file = filestream_open(
+              xe::path_to_utf8(vk_pipeline_cache_path_).c_str(),
+              RETRO_VFS_FILE_ACCESS_WRITE, 0);
+          if (cache_file) {
+            if (xe_cache_file_write(cache_data, 1, cache_size, cache_file) == cache_size)
+              XELOGI("Saved {} bytes of VkPipelineCache data", cache_size);
+            filestream_close(cache_file);
+          }
         }
+        free(cache_data);
       }
     }
   }

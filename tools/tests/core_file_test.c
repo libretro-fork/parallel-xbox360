@@ -48,6 +48,7 @@ int main(int argc, char **argv) {
   struct retro_vfs_interface iface;
   struct retro_vfs_interface_info info;
   xe_file *file;
+  xe_file_blob blob;
   FILE *output;
   const void *view;
   unsigned char buffer[259];
@@ -78,6 +79,17 @@ int main(int argc, char **argv) {
   if (!xe_file_read(file, 106, buffer, 3) || memcmp(buffer, data + 106, 3)) return 14;
   xe_file_close(file);
   if (closes != 1) return 8;
+  memset(&blob, 0, sizeof(blob));
+  if (!xe_file_blob_open(&blob, "content://archive") || blob.size != sizeof(data) ||
+      !blob.storage || memcmp(blob.data, data, sizeof(data))) return 16;
+  if (xe_file_blob_open(&blob, "content://archive")) return 17;
+  xe_file_blob_close(&blob); xe_file_blob_close(&blob);
+  if (blob.data || blob.owner || blob.storage || blob.size) return 18;
+  for (fault = 1; fault <= 2; ++fault) {
+    if (xe_file_blob_open(&blob, "content://archive") ||
+        blob.data || blob.owner || blob.storage || blob.size) return 19;
+  }
+  fault = 0;
   info.iface = NULL; filestream_vfs_init(&info);
   output = fopen(argv[1], "wb");
   if (!output) return 9;
@@ -91,6 +103,13 @@ int main(int argc, char **argv) {
       !xe_file_read(file, 7, buffer, 3) || memcmp(buffer, data + 7, 3)) return 15;
   printf("PASS: VFS short reads, seek elision, errors, bounds and native %s\n", view ? "mapping" : "fallback");
   xe_file_close(file);
+  if (!xe_file_blob_open(&blob, argv[1]) || blob.size != sizeof(data) ||
+      memcmp(blob.data, data, sizeof(data))) return 20;
+  if (xe_file_view(blob.owner, 0, blob.size) && blob.storage) return 21;
+  xe_file_blob_close(&blob);
+  output = fopen(argv[1], "wb"); if (!output || fclose(output)) return 22;
+  if (!xe_file_blob_open(&blob, argv[1]) || blob.data || blob.storage || blob.size) return 23;
+  xe_file_blob_close(&blob);
   remove(argv[1]);
   return 0;
 }

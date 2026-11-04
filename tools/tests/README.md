@@ -1093,6 +1093,16 @@ and Vulkan/D3D12 interface/lifetime fixtures. Those lifecycle fixtures do not
 boot a retail game or prove visual output across all titles. macOS and Android
 SDK builds are not available in this validation environment.
 
+### Mapped file blobs
+
+Run bash tools/tests/run_file_tests.sh (SANITIZER= under MSYS2).
+The C89 fixture exercises native mapping, exact-allocation VFS fallback,
+short reads, EOF/error cleanup, refusing to reopen an owned blob, repeated
+close, empty files and borrowed-data bounds. Linux runs ASan/UBSan; native
+MSVC builds the helper and driver with /TC /MD /O2 /W4 /WX. The Vulkan load
+owner is retained until vkCreatePipelineCache returns; these component tests
+do not validate a retail driver's cache compatibility or title performance.
+
 ### Persistent shader-cache VFS
 
 Run bash tools/tests/run_cache_file_tests.sh (SANITIZER= under MSYS2).

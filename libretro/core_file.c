@@ -71,3 +71,28 @@ int xe_file_read(xe_file *file, uint64_t offset, void *out, size_t size) {
   }
   return 1;
 }
+
+void xe_file_blob_close(xe_file_blob *blob) {
+  if (!blob) return;
+  free(blob->storage);
+  xe_file_close(blob->owner);
+  memset(blob, 0, sizeof(*blob));
+}
+int xe_file_blob_open(xe_file_blob *blob, const char *path) {
+  uint64_t length;
+  if (!blob || blob->owner || blob->storage || blob->data || blob->size) return 0;
+  blob->owner = xe_file_open(path);
+  if (!blob->owner) return 0;
+  length = xe_file_size(blob->owner);
+  if (length > SIZE_MAX) { xe_file_blob_close(blob); return 0; }
+  blob->size = (size_t)length;
+  if (!length) return 1;
+  blob->data = xe_file_view(blob->owner, 0, blob->size);
+  if (blob->data) return 1;
+  blob->storage = malloc(blob->size);
+  if (!blob->storage || !xe_file_read(blob->owner, 0, blob->storage, blob->size)) {
+    xe_file_blob_close(blob); return 0;
+  }
+  blob->data = (const uint8_t *)blob->storage;
+  return 1;
+}

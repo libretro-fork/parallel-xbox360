@@ -84,4 +84,3 @@ int xe_cache_file_repair(RFILE *file, uint64_t length) {
    return filestream_seek(file, (int64_t)length,
          RETRO_VFS_SEEK_POSITION_START) >= 0;
 }
-

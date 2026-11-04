@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan driver-cache loading now borrows an immutable native file mapping, retaining its owner through pipeline-cache creation. VFS backends without mappings use one exact C89 allocation with complete-read validation; partial blobs are discarded. Removed the load/save byte vectors and remaining stdio from this path; the driver serializes directly into its final save buffer.
+
 - Shared Vulkan/D3D12 shader and pipeline persistence now uses libretro-common VFS for reads, writes, directories and checked repair/append positioning. Short and interrupted transfers are handled without an extra staging allocation. Shader records are checked against remaining file length before resizing microcode storage, and persistent endian encoding uses fixed 4 KiB C89 scratch instead of a growable vector. On-disk layouts and hashes remain unchanged.
 
 - Native 48 kHz guest audio now converts byte order, channel layout and volume directly into owned queue spans using MSVC C89 code. This removes the intermediate converted block and queue copy, and folds volume into conversion. SSE/NEON stereo downmix retains the existing matrix and operation order. Non-48-kHz media conversion remains separate; whole-frame wrap publication and shutdown cancellation are preserved.
