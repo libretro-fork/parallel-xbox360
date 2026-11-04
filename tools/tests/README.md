@@ -1090,3 +1090,21 @@ build, audio format/cadence, repeated invalid-content close, APC interruption,
 and Vulkan/D3D12 interface/lifetime fixtures. Those lifecycle fixtures do not
 boot a retail game or prove visual output across all titles. macOS and Android
 SDK builds are not available in this validation environment.
+
+### GPU resource retirement
+
+bash tools/tests/run_gpu_retire_tests.sh checks dependency-order destruction,
+completed versus in-flight submissions, callbacks freeing their own nodes,
+200,000 deferred retirements, final quiescent drain and frame/generation-based
+collection cadence including 64-bit overflow. Linux defaults to ASan/UBSan; use
+SANITIZER= under MSYS2 MinGW. Native MSVC uses /TC /W4 /WX with
+libretro/core_gpu_retire.c and tools/tests/core_gpu_retire_test.c.
+
+The intrusive queue allocates nothing and belongs to the command-processor
+thread. Framebuffers precede orphan images in the queue. Existing EDRAM
+ownership selection retains all ownership representations, while render
+passes remain cached because CPU pipeline jobs have a separate lifetime from
+GPU submissions. The threshold triggers collection rather than promising a
+hard VRAM bound. The captured retail slowdown used 4x rendering, about
+30.2 GiB dedicated plus 2.0 GiB shared GPU memory and failed image allocations;
+reproducing visual output and peak memory for that title remains necessary.

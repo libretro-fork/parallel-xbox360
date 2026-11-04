@@ -10,6 +10,7 @@
 #ifndef XENIA_GPU_VULKAN_VULKAN_RENDER_TARGET_CACHE_H_
 #define XENIA_GPU_VULKAN_VULKAN_RENDER_TARGET_CACHE_H_
 
+#include "libretro/core_gpu_retire.h"
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -108,6 +109,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   bool Initialize(uint32_t shared_memory_binding_count);
   void Shutdown(bool from_destructor = false);
   void ClearCache() override;
+  void CollectUnusedRenderTargets(uint64_t frame);
 
   void CompletedSubmissionUpdated();
   void EndSubmission();
@@ -390,6 +392,8 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
               descriptor_set_index_transfer_source) {}
     ~VulkanRenderTarget();
 
+    xe_gpu_retire_node retirement = {};
+    uint64_t allocation_size = 0;
     VkImage image() const { return image_; }
 
     VkImageView view_depth_color() const { return view_depth_color_; }
@@ -683,6 +687,23 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
 
   std::unordered_map<FramebufferKey, Framebuffer, FramebufferKey::Hasher>
       framebuffers_;
+
+  // Container ownership is C++ interop; scheduling and fence retirement are C89.
+  struct RetiredFramebuffers {
+    xe_gpu_retire_node retirement = {};
+    const ui::vulkan::VulkanDevice* device;
+    decltype(framebuffers_) framebuffers;
+    explicit RetiredFramebuffers(const ui::vulkan::VulkanDevice* d) : device(d) {}
+    ~RetiredFramebuffers();
+  };
+  static void ReleaseFramebuffers(void* objects);
+  static void ReleaseRenderTarget(void* target);
+  void RetireCachedRenderTarget(RenderTarget* target) override;
+  bool RetireUnusedRenderTargets();
+  xe_gpu_retire_queue retired_resources_ = {};
+  xe_gpu_cache_gc render_target_gc_ = {};
+  uint64_t render_target_allocated_bytes_ = 0;
+  uint64_t render_target_allocation_generation_ = 0;
 
   // Set 0 - EDRAM storage buffer, set 1 - source depth sampled image (and
   // unused stencil from the transfer descriptor set), HostDepthStoreConstants

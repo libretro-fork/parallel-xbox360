@@ -598,6 +598,13 @@ void RenderTargetCache::DestroyAllRenderTargets(bool shutting_down) {
 void RenderTargetCache::ShutdownCommon() { DestroyAllRenderTargets(true); }
 
 void RenderTargetCache::ClearCache() {
+  // No draw may retain an orphan through the CPU binding snapshots either.
+  ResetAccumulatedRenderTargets();
+  std::memset(last_update_accumulated_render_targets_, 0,
+              sizeof(last_update_accumulated_render_targets_));
+  std::memset(last_update_used_render_targets_, 0,
+              sizeof(last_update_used_render_targets_));
+  for (auto& transfers : last_update_transfers_) transfers.clear();
   // Keep only render targets currently owning any EDRAM data.
   if (!render_targets_.empty()) {
     std::unordered_set<RenderTargetKey, RenderTargetKey::Hasher>
@@ -630,7 +637,7 @@ void RenderTargetCache::ClearCache() {
         }
         if (used_render_targets.find(it->second->key()) ==
             used_render_targets.end()) {
-          delete it->second;
+          RetireCachedRenderTarget(it->second);
           render_targets_.erase(it);
         }
       }

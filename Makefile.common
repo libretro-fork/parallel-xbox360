@@ -315,3 +315,5 @@ SOURCES_C += $(addprefix third_party/libretro-common/,formats/xml/rxml.c hash/lr
  compat/compat_strcasestr.c compat/compat_posix_string.c compat/fopen_utf8.c \
  rthreads/rthreads.c rthreads/retro_eventcount.c rthreads/retro_asym_eventcount.c \
  rthreads/retro_procbarrier.c)
+
+SOURCES_C += libretro/core_gpu_retire.c

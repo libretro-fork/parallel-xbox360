@@ -607,6 +607,9 @@ class RenderTargetCache {
                                  xenos::MsaaSamples msaa_samples) const;
 
   virtual RenderTarget* CreateRenderTarget(RenderTargetKey key) = 0;
+  // ClearCache may retire an orphan until submitted GPU references complete.
+  // Shutdown's DestroyAllRenderTargets is called only after GPU quiescence.
+  virtual void RetireCachedRenderTarget(RenderTarget* target) { delete target; }
 
   // Whether depth buffer is encoded differently on the host, thus after
   // aliasing naively, precision may be lost - host depth must only be

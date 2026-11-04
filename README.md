@@ -39,6 +39,8 @@ The kernel owns socket I/O. Closing content cancels live socket waits, joins the
 
 Each `retro_run` supplies one video callback and one run's audio duration at the declared refresh rate. Fractional sample counts carry forward; audio underruns and a missing mixer produce silence for the remainder. Muting drains audio without adding a backlog. Stereo frontends may use either the batch or per-sample callback.
 
+Vulkan collects orphan host render targets above 512 MiB after new allocations, with 120 guest frames between collections. This threshold controls reclamation attempts, not a hard VRAM cap: active EDRAM owners and resources still used by GPU submissions remain alive. Framebuffer/image retirement uses a C89 queue without an extra GPU wait; render passes remain cached for async pipeline jobs. This addresses a source of runtime retention; the Tekken Tag Tournament 2 slowdown still needs a gameplay retest.
+
 The frontend controls presentation cadence. Guest vblank interrupts consume requests from `retro_run`; the core has no host swap limiter or Frame Wait polling option. The audio handoff has no queue-driven time-stretch or drift correction. Non-48-kHz media streams receive fixed sample-rate conversion to the 48-kHz output rate, preserving their duration.
 
 RetroArch owns the negotiated Vulkan device. The core releases its non-owning wrappers before unload and supplies no late device-destroy callback, so threaded video can destroy a cached device after the core DLL is gone.

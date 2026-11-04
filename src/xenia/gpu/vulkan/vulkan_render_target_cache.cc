@@ -8,6 +8,7 @@
  */
 
 #include "xenia/gpu/vulkan/vulkan_render_target_cache.h"
+#include <new>
 
 #include <cstddef>
 #include <cstdint>
@@ -881,11 +882,22 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
 
+  // Shutdown is GPU-quiescent. Drop framebuffer references before image views,
+  // including deferred batches, while descriptor pools are still alive.
+  xe_gpu_retire_collect(&retired_resources_, UINT64_MAX);
+  {
+    RetiredFramebuffers live(command_processor_.GetVulkanDevice());
+    live.framebuffers.swap(framebuffers_);
+  }
+
   // Destroy all render targets before the descriptor set pool is destroyed -
   // may happen if shutting down the VulkanRenderTargetCache by destroying it,
   // so ShutdownCommon is called by the RenderTargetCache destructor, when it's
   // already too late.
   DestroyAllRenderTargets(true);
+  render_target_gc_ = {};
+  render_target_allocation_generation_ = 0;
+  assert_zero(render_target_allocated_bytes_);
 
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
                                          resolve_fsi_clear_64bpp_pipeline_);
@@ -1000,31 +1012,64 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
   }
 }
 
-void VulkanRenderTargetCache::ClearCache() {
-  const ui::vulkan::VulkanDevice* const vulkan_device =
-      command_processor_.GetVulkanDevice();
-  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
-  const VkDevice device = vulkan_device->device();
-
-  // Framebuffer objects must be destroyed because they reference views of
-  // attachment images, which may be removed by the common ClearCache.
+VulkanRenderTargetCache::RetiredFramebuffers::~RetiredFramebuffers() {
+  const auto& dfn = device->functions();
+  const VkDevice handle = device->device();
+  for (const auto& entry : framebuffers)
+    dfn.vkDestroyFramebuffer(handle, entry.second.framebuffer, nullptr);
+}
+void VulkanRenderTargetCache::ReleaseFramebuffers(void* objects) {
+  delete static_cast<RetiredFramebuffers*>(objects);
+}
+void VulkanRenderTargetCache::ReleaseRenderTarget(void* target) {
+  delete static_cast<VulkanRenderTarget*>(target);
+}
+void VulkanRenderTargetCache::RetireCachedRenderTarget(RenderTarget* target) {
+  auto* vulkan_target = static_cast<VulkanRenderTarget*>(target);
+  const bool queued = xe_gpu_retire_append(&retired_resources_,
+      &vulkan_target->retirement, command_processor_.GetCurrentSubmission() - 1,
+      ReleaseRenderTarget, vulkan_target) != 0;
+  assert_true(queued);
+}
+bool VulkanRenderTargetCache::RetireUnusedRenderTargets() {
+  if (command_processor_.submission_open()) return false;
+  auto* batch = new (std::nothrow) RetiredFramebuffers(
+      command_processor_.GetVulkanDevice());
+  if (!batch) return false;
+  // Render passes remain cached: asynchronous pipeline jobs may still use
+  // them on the CPU, independently of completed GPU submissions.
+  // Retire framebuffers before their views/images. The queue preserves this
+  // order even when an entire batch becomes complete at once.
+  batch->framebuffers.swap(framebuffers_);
+  const bool queued = xe_gpu_retire_append(&retired_resources_,
+      &batch->retirement, command_processor_.GetCurrentSubmission() - 1,
+      ReleaseFramebuffers, batch) != 0;
+  assert_true(queued);
   last_update_framebuffer_ = VK_NULL_HANDLE;
-  for (const auto& framebuffer_pair : framebuffers_) {
-    dfn.vkDestroyFramebuffer(device, framebuffer_pair.second.framebuffer,
-                             nullptr);
-  }
-  framebuffers_.clear();
-
   last_update_render_pass_ = VK_NULL_HANDLE;
-  for (const auto& render_pass_pair : render_passes_) {
-    dfn.vkDestroyRenderPass(device, render_pass_pair.second, nullptr);
-  }
-  render_passes_.clear();
-
+  last_update_framebuffer_pitch_tiles_at_32bpp_ = 0;
+  std::memset(last_update_framebuffer_attachments_, 0,
+              sizeof(last_update_framebuffer_attachments_));
   RenderTargetCache::ClearCache();
+  xe_gpu_retire_collect(&retired_resources_, command_processor_.GetCompletedSubmission());
+  return true;
+}
+void VulkanRenderTargetCache::ClearCache() {
+  RetireUnusedRenderTargets();
+}
+void VulkanRenderTargetCache::CollectUnusedRenderTargets(uint64_t frame) {
+  // Bound orphan retention without clearing every frame and recompiling/rebinding
+  // the same transient surfaces. EDRAM owners are always retained by ClearCache.
+  if (xe_gpu_cache_gc_due(&render_target_gc_, frame,
+          render_target_allocated_bytes_, UINT64_C(512) << 20,
+          render_target_allocation_generation_) && RetireUnusedRenderTargets()) {
+    xe_gpu_cache_gc_commit(&render_target_gc_, frame,
+        render_target_allocation_generation_, 120);
+  }
 }
 
 void VulkanRenderTargetCache::CompletedSubmissionUpdated() {
+  xe_gpu_retire_collect(&retired_resources_, command_processor_.GetCompletedSubmission());
   SCOPE_profile_cpu_f("gpu");
   if (transfer_vertex_buffer_pool_) {
     transfer_vertex_buffer_pool_->Reclaim(
@@ -1913,6 +1958,7 @@ VulkanRenderTargetCache::VulkanRenderTarget::~VulkanRenderTarget() {
           ? *render_target_cache_.descriptor_set_pool_sampled_image_x2_
           : *render_target_cache_.descriptor_set_pool_sampled_image_;
   descriptor_set_pool.Free(descriptor_set_index_transfer_source_);
+  render_target_cache_.render_target_allocated_bytes_ -= allocation_size;
   if (view_color_transfer_separate_ != VK_NULL_HANDLE) {
     dfn.vkDestroyImageView(device, view_color_transfer_separate_, nullptr);
   }
@@ -2001,9 +2047,11 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
   }
   VkImage image;
   VkDeviceMemory memory;
+  VkDeviceSize allocation_size = 0;
   if (!ui::vulkan::util::CreateDedicatedAllocationImage(
           vulkan_device, image_create_info,
-          ui::vulkan::util::MemoryPurpose::kDeviceLocal, image, memory)) {
+          ui::vulkan::util::MemoryPurpose::kDeviceLocal, image, memory,
+          nullptr, &allocation_size)) {
     XELOGE(
         "VulkanRenderTarget: Failed to create a {}x{} {}xMSAA {} render target "
         "image",
@@ -2155,10 +2203,14 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
   dfn.vkUpdateDescriptorSets(device, key.is_depth ? 2 : 1, descriptor_set_write,
                              0, nullptr);
 
-  return new VulkanRenderTarget(key, *this, image, memory, view_depth_color,
+  auto* target = new VulkanRenderTarget(key, *this, image, memory, view_depth_color,
                                 view_depth_stencil, view_stencil,
                                 view_color_transfer_separate,
                                 descriptor_set_index_transfer_source);
+  target->allocation_size = allocation_size;
+  render_target_allocated_bytes_ += allocation_size;
+  ++render_target_allocation_generation_;
+  return target;
 }
 
 bool VulkanRenderTargetCache::IsHostDepthEncodingDifferent(
