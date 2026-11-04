@@ -113,7 +113,7 @@ else
 DEFINES += -DRETRO_ATOMIC_FORCE_GCC_NEW
 endif
 COMMIT := $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
-DEFINES += -DXENIA_LIBRETRO_VERSION='"$(VERSION)"' -DXENIA_LIBRETRO_COMMIT='"$(COMMIT)"'
+LIBRETRO_VERSION_DEFINES := -DXENIA_LIBRETRO_VERSION='"$(VERSION)"' -DXENIA_LIBRETRO_COMMIT='"$(COMMIT)"'
 WARNINGS := -Wno-switch -Wno-attributes -Wno-deprecated-register -Wno-deprecated-volatile \
  -Wno-deprecated-enum-enum-conversion -Wno-absolute-value -Wno-deprecated-literal-operator \
  -Wno-nontrivial-memcall -Wno-character-conversion -Wno-unknown-warning-option
@@ -221,6 +221,12 @@ export MAKE_BUILD_SIGNATURE := $(CC)|$(CXX)|$(BASE_FLAGS)|$(CPPFLAGS)|$(CFLAGS)|
 $(BUILD_DIR)/config: FORCE $(CODEGEN)
 	@$(CODEGEN) signature "$@"
 $(OBJECTS): Makefile Makefile.common $(BUILD_DIR)/config | generated shaders
+# Metadata is consumed only by the frontend adapter, not every core object.
+$(BUILD_DIR)/libretro-version: export MAKE_BUILD_SIGNATURE := $(LIBRETRO_VERSION_DEFINES)
+$(BUILD_DIR)/libretro-version: FORCE $(CODEGEN)
+	@$(CODEGEN) signature "$@"
+$(BUILD_DIR)/obj/libretro/libretro.cpp.o: CPPFLAGS += $(LIBRETRO_VERSION_DEFINES)
+$(BUILD_DIR)/obj/libretro/libretro.cpp.o: $(BUILD_DIR)/libretro-version
 
 $(BUILD_DIR)/obj/%.c.o: %.c
 	@mkdir -p "$(@D)"

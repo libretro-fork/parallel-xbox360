@@ -119,6 +119,7 @@ Patch data and raw SPIR-V/DXIL built-in shaders
 are included in the repository; a native C89 tool embeds them during the build.
 Linux, Android and macOS builds do not require Python or a shader compiler.
 Linux builds enable POSIX/GNU declarations for the selected libretro-common C sources.
+Version/commit definitions are tracked separately for the frontend adapter, so metadata changes do not invalidate unrelated emulator or dependency objects.
 D3D12 primitive-expansion geometry shaders are generated directly as DXIL.
 Render-target dumps, direct resolves and EDRAM ownership transfers also emit
 DXIL directly. Host-depth pixel shaders, including float24 conversion and

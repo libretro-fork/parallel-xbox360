@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Static Make builds track frontend version/commit definitions separately, avoiding a full emulator/dependency rebuild when only build identification changes. Reported core metadata remains current.
+
 - Removed per-call host timestamps and diagnostic atomics from offloaded guest I/O. These ran even with statistics disabled; completion, guest drive timing and worker ordering are unchanged. Scheduler statistics still report dispatch and ready-list behavior.
 
 - Synchronous guest I/O events now return to the reuse pool only after both the waiting caller and the signaling worker retire. This prevents an early `done` observation from recycling an event before a late completion signal. The handoff uses common C89 atomics and no additional allocation.
