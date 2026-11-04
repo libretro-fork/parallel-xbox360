@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Empty render-target collections now preserve Vulkan framebuffers and D3D12 bindings instead of tearing down warm state without reclaiming anything. Ownership is inspected before allocating a retirement batch or invalidating bindings; actual orphan targets still retire after GPU completion. This removes avoidable collection churn; gameplay frame pacing and audio cadence still need runtime verification.
+
 - XMA assembles compressed frames directly in reusable FFmpeg-owned packet storage in all three decoder modes. Removed the unused 128 KiB packet allocation and separate frame array per context; packet references now own the actual payload. Capacity includes worst-case bit alignment, decoder padding is cleared after each payload, and legacy split-frame lengths are checked before copying. C89 layout tests cover every supported bit length/alignment; native tests exercise decoder silence, retained views and pause/shutdown. Frontend savestates remain unfinished.
 
 - Thread checkpoint records now preserve the remaining delay for direct KeDelayExecutionThread calls and retain the continuation when saved again before first dispatch. Nested HLE calls remain rejected; delay restoration validates borrowed import metadata without cache locks or symbol creation while producers are quiescent. Continuation records use fixed C89 storage, and debugger cleanup erases zombie records in place without a temporary vector. Relative-delay conversion avoids signed overflow at INT64_MIN. Fixed an ambiguous ARM assembler stack-offset overload in checkpoint tracking. Frontend savestates remain disabled while other kernel waits and GPU/audio state are unfinished.

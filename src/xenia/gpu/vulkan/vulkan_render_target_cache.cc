@@ -1033,6 +1033,7 @@ void VulkanRenderTargetCache::RetireCachedRenderTarget(RenderTarget* target) {
 }
 bool VulkanRenderTargetCache::RetireUnusedRenderTargets() {
   if (command_processor_.submission_open()) return false;
+  if (!PrepareRenderTargetCollection()) return true;
   auto* batch = new (std::nothrow) RetiredFramebuffers(
       command_processor_.GetVulkanDevice());
   if (!batch) return false;
@@ -1050,7 +1051,7 @@ bool VulkanRenderTargetCache::RetireUnusedRenderTargets() {
   last_update_framebuffer_pitch_tiles_at_32bpp_ = 0;
   std::memset(last_update_framebuffer_attachments_, 0,
               sizeof(last_update_framebuffer_attachments_));
-  RenderTargetCache::ClearCache();
+  CollectPreparedRenderTargets();
   xe_gpu_retire_collect(&retired_resources_, command_processor_.GetCompletedSubmission());
   return true;
 }

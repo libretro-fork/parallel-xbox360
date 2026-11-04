@@ -613,6 +613,11 @@ class RenderTargetCache {
   // Shutdown's DestroyAllRenderTargets is called only after GPU quiescence.
   virtual void RetireCachedRenderTarget(RenderTarget* target) { delete target; }
 
+  // Command-processor ownership only. Inspect before invalidating backend
+  // bindings: a collection with no orphan must leave the warm caches intact.
+  bool PrepareRenderTargetCollection();
+  void CollectPreparedRenderTargets();
+
   // Whether depth buffer is encoded differently on the host, thus after
   // aliasing naively, precision may be lost - host depth must only be
   // overwritten if the new guest value is different than the current host depth
@@ -741,6 +746,7 @@ class RenderTargetCache {
                     const Transfer::Rectangle* resolve_clear_rectangle) const;
 
  private:
+  friend class RenderTargetCollectionTest;
   void MarkRenderTargetOwned(const RenderTargetKey& key);
 
   const RegisterFile& register_file_;

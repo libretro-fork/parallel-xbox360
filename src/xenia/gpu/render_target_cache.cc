@@ -598,15 +598,11 @@ void RenderTargetCache::DestroyAllRenderTargets(bool shutting_down) {
 void RenderTargetCache::ShutdownCommon() { DestroyAllRenderTargets(true); }
 
 void RenderTargetCache::ClearCache() {
-  // No draw may retain an orphan through the CPU binding snapshots either.
-  ResetAccumulatedRenderTargets();
-  std::memset(last_update_accumulated_render_targets_, 0,
-              sizeof(last_update_accumulated_render_targets_));
-  std::memset(last_update_used_render_targets_, 0,
-              sizeof(last_update_used_render_targets_));
-  for (auto& transfers : last_update_transfers_) transfers.clear();
-  // Mark existing objects directly rather than allocating and copying keys into
-  // a temporary ownership set. All four EDRAM representations must survive.
+  if (PrepareRenderTargetCollection()) CollectPreparedRenderTargets();
+}
+
+bool RenderTargetCache::PrepareRenderTargetCollection() {
+  // Mark without touching bindings, allocating storage, or retiring resources.
   for (const auto& entry : render_targets_) {
     if (entry.second) entry.second->owns_edram_for_collection_ = false;
   }
@@ -617,6 +613,20 @@ void RenderTargetCache::ClearCache() {
     MarkRenderTargetOwned(range.host_depth_render_target_unorm24);
     MarkRenderTargetOwned(range.host_depth_render_target_float24);
   }
+  for (const auto& entry : render_targets_) {
+    if (!entry.second || !entry.second->owns_edram_for_collection_) return true;
+  }
+  return false;
+}
+
+void RenderTargetCache::CollectPreparedRenderTargets() {
+  // No draw may retain an orphan through the CPU binding snapshots either.
+  ResetAccumulatedRenderTargets();
+  std::memset(last_update_accumulated_render_targets_, 0,
+              sizeof(last_update_accumulated_render_targets_));
+  std::memset(last_update_used_render_targets_, 0,
+              sizeof(last_update_used_render_targets_));
+  for (auto& transfers : last_update_transfers_) transfers.clear();
   auto it = render_targets_.begin();
   while (it != render_targets_.end()) {
     RenderTarget* target = it->second;

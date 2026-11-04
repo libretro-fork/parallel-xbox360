@@ -1053,12 +1053,13 @@ void D3D12RenderTargetCache::RetireCachedRenderTarget(RenderTarget* target) {
 
 bool D3D12RenderTargetCache::RetireUnusedRenderTargets() {
   if (command_processor_.submission_open()) return false;
+  if (!PrepareRenderTargetCollection()) return true;
   InvalidateCommandListRenderTargets();
   std::memset(current_command_list_render_targets_, 0,
               sizeof(current_command_list_render_targets_));
   // Preserve all EDRAM owners. Descriptors retire with their resource, after
   // the last submitted command list that may reference either has completed.
-  RenderTargetCache::ClearCache();
+  CollectPreparedRenderTargets();
   xe_gpu_retire_collect(&retired_resources_,
                        command_processor_.GetCompletedSubmission());
   return true;
