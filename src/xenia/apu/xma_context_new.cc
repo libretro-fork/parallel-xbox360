@@ -50,10 +50,7 @@ int XmaContextNew::Setup(uint32_t id, Memory* memory, uint32_t guest_ptr) {
   guest_ptr_ = guest_ptr;
 
   // Allocate ffmpeg stuff:
-  av_packet_ = av_packet_alloc();
-  if (!av_packet_) return 1;
-  av_packet_->buf = av_buffer_alloc(128 * 1024);
-  if (!av_packet_->buf) return 1;
+  if (!AllocateFramePacket()) return 1;
 
   // find the XMA2 audio decoder
   av_codec_ = avcodec_find_decoder(AV_CODEC_ID_XMAFRAMES);
@@ -584,7 +581,7 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
                      (kBitsPerPacket - kBitsPerPacketHeader) * 2);
   stream.SetOffset(relative_offset - kBitsPerPacketHeader);
 
-  xma_frame_.fill(0);
+  std::memset(xma_frame_, 0, kFrameCapacity);
 
   XELOGAPU(
       "XmaContext {}: Reading Frame {}/{} (size: {}) From Packet "
@@ -593,13 +590,16 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
       packet_info.current_frame_size_, packet_index,
       current_input_packet_count);
 
-  const uint32_t padding_start = static_cast<uint8_t>(
-      stream.Copy(xma_frame_.data() + 1, packet_info.current_frame_size_));
+  const uint32_t padding_start = static_cast<uint32_t>(stream.offset_bits() & 7);
+  if (!PreparePacket(packet_info.current_frame_size_, padding_start)) {
+    data->error_status = 4;
+    return;
+  }
+  stream.Copy(xma_frame_ + 1, packet_info.current_frame_size_);
 
   raw_frame_.fill(0);
 
   PrepareDecoder(data->sample_rate, bool(data->is_stereo));
-  PreparePacket(packet_info.current_frame_size_, padding_start);
   if (DecodePacket(av_context_, av_packet_, av_frame_)) {
     // dump_raw(av_frame_, id());
     ConvertFrame(reinterpret_cast<const uint8_t**>(&av_frame_->data),
@@ -966,16 +966,13 @@ int XmaContextNew::PrepareDecoder(int sample_rate, bool is_two_channel) {
   return 0;
 }
 
-void XmaContextNew::PreparePacket(const uint32_t frame_size,
+bool XmaContextNew::PreparePacket(const uint32_t frame_size,
                                   const uint32_t frame_padding) {
-  av_packet_->data = xma_frame_.data();
-  av_packet_->size =
-      static_cast<int>(1 + ((frame_padding + frame_size) / 8) +
-                       (((frame_padding + frame_size) % 8) ? 1 : 0));
-
-  auto padding_end = av_packet_->size * 8 - (8 + frame_padding + frame_size);
-  assert_true(padding_end < 8);
-  xma_frame_[0] = ((frame_padding & 7) << 5) | ((padding_end & 7) << 2);
+  xe_xma_packet_span packet;
+  if (!xe_xma_packet_layout(frame_size, frame_padding, kFrameCapacity, &packet) ||
+      !SetFramePacketSize(packet.size)) return false;
+  xma_frame_[0] = packet.header;
+  return true;
 }
 
 bool XmaContextNew::DecodePacket(AVCodecContext* av_context,

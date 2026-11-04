@@ -10,10 +10,9 @@
 #ifndef XENIA_APU_XMA_CONTEXT_H_
 #define XENIA_APU_XMA_CONTEXT_H_
 
-#include <array>
 #include <retro_atomic.h>
 #include <mutex>
-#include <queue>
+#include "libretro/core_xma_packet.h"
 
 #include "xenia/memory.h"
 #include "xenia/xbox.h"
@@ -231,6 +230,13 @@ class XmaContext {
   }
 
  protected:
+  // One control byte plus a 32767-bit frame starting at any bit alignment.
+  static constexpr uint32_t kFrameCapacity = XE_XMA_PACKET_CAPACITY;
+  bool AllocateFramePacket();
+  bool SetFramePacketSize(uint32_t size);
+  // Borrowed from av_packet_->buf; byte0 holds bit offsets. The packet owns
+  // both the assembly storage and the codec's required read padding.
+  uint8_t* xma_frame_ = nullptr;
   static void DumpRaw(AVFrame* frame, int id);
   // Convert sample format and swap bytes
   static void ConvertFrame(const uint8_t** samples, bool is_two_channel,

@@ -59,12 +59,7 @@ int XmaContextMaster::Setup(uint32_t id, Memory* memory, uint32_t guest_ptr) {
   guest_ptr_ = guest_ptr;
 
   // Allocate ffmpeg stuff:
-  av_packet_ = av_packet_alloc();
-  if (!av_packet_) return 1;
-  // chrispy: preallocate this buffer so that ffmpeg isn't reallocating it for
-  // every packet, these allocations were causing RtlSubsegmentInitialize
-  av_packet_->buf = av_buffer_alloc(128 * 1024);
-  if (!av_packet_->buf) return 1;
+  if (!AllocateFramePacket()) return 1;
   // find the XMA2 audio decoder
   av_codec_ = avcodec_find_decoder(AV_CODEC_ID_XMAFRAMES);
   if (!av_codec_) {
@@ -422,16 +417,28 @@ void XmaContextMaster::Decode(XMA_CONTEXT_DATA* data) {
       stream.SetOffset(packet_idx * kBitsPerPacket + 32);
 
       if (split_frame_len_ > xma::kMaxFrameLength) {
+        if (split_frame_len_partial_ >= 15 || split_frame_padding_start_ > 7) {
+          data->parser_error_status = 4;
+          return;
+        }
         // TODO write CopyPeekMethod
         auto offset = stream.offset_bits();
         stream.Copy(
-            xma_frame_.data() + 1 +
+            xma_frame_ + 1 +
                 ((split_frame_len_partial_ + split_frame_padding_start_) / 8),
             15 - split_frame_len_partial_);
         stream.SetOffset(offset);
-        BitStream slen(xma_frame_.data() + 1, 15 + split_frame_padding_start_);
+        BitStream slen(xma_frame_ + 1, 15 + split_frame_padding_start_);
         slen.Advance(split_frame_padding_start_);
         split_frame_len_ = static_cast<int>(slen.Read(15));
+      }
+
+      xe_xma_packet_span checked_frame;
+      if (split_frame_len_partial_ > split_frame_len_ ||
+          !xe_xma_packet_layout(split_frame_len_, split_frame_padding_start_,
+              kFrameCapacity, &checked_frame)) {
+        data->parser_error_status = 4;
+        return;
       }
 
       if (frame_count > 0) {
@@ -440,7 +447,7 @@ void XmaContextMaster::Decode(XMA_CONTEXT_DATA* data) {
       }
 
       auto offset = stream.Copy(
-          xma_frame_.data() + 1 +
+          xma_frame_ + 1 +
               ((split_frame_len_partial_ + split_frame_padding_start_) / 8),
           split_frame_len_ - split_frame_len_partial_);
       assert_true(offset ==
@@ -509,15 +516,19 @@ void XmaContextMaster::Decode(XMA_CONTEXT_DATA* data) {
         // assert_always();
         split_frame_len_ = xma::kMaxFrameLength + 1;
       }
+      if (split_frame_len_ < 15) {
+        data->parser_error_status = 4;
+        return;
+      }
       assert_true(frame_is_split ==
                   (split_frame_len_ > split_frame_len_partial_));
 
       // TODO fix bitstream copy
-      std::memset(xma_frame_.data(), 0, xma_frame_.size());
+      std::memset(xma_frame_, 0, kFrameCapacity);
 
       {
         auto offset =
-            stream.Copy(xma_frame_.data() + 1,
+            stream.Copy(xma_frame_ + 1,
                         std::min(split_frame_len_, split_frame_len_partial_));
         assert_true(offset < 8);
         split_frame_padding_start_ = static_cast<uint8_t>(offset);
@@ -547,16 +558,10 @@ void XmaContextMaster::Decode(XMA_CONTEXT_DATA* data) {
       }
     }
 
-    av_packet_->data = xma_frame_.data();
-    av_packet_->size = static_cast<int>(
-        1 + ((split_frame_padding_start_ + split_frame_len_) / 8) +
-        (((split_frame_padding_start_ + split_frame_len_) % 8) ? 1 : 0));
-
-    auto padding_end = av_packet_->size * 8 -
-                       (8 + split_frame_padding_start_ + split_frame_len_);
-    assert_true(padding_end < 8);
-    xma_frame_[0] =
-        ((split_frame_padding_start_ & 7) << 5) | ((padding_end & 7) << 2);
+    xe_xma_packet_span packet_span;
+    if (!xe_xma_packet_layout(split_frame_len_, split_frame_padding_start_,
+          kFrameCapacity, &packet_span) || !SetFramePacketSize(packet_span.size)) return;
+    xma_frame_[0] = packet_span.header;
 
     split_frame_len_ = 0;
     split_frame_len_partial_ = 0;

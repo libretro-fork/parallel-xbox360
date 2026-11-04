@@ -11,9 +11,6 @@
 #define XENIA_APU_XMA_CONTEXT_MASTER_H_
 
 #include <array>
-#include <atomic>
-#include <mutex>
-#include <queue>
 #include <tuple>
 
 #include "xenia/apu/xma_context.h"
@@ -82,8 +79,6 @@ class XmaContextMaster : public XmaContext {
   uint32_t split_frame_len_ = 0;
   uint32_t split_frame_len_partial_ = 0;
   uint8_t split_frame_padding_start_ = 0;
-  // first byte contains bit offset information
-  std::array<uint8_t, 1 + 4096> xma_frame_;
 
   // uint8_t* current_frame_ = nullptr;
   // conversion buffer for 2 channel frame

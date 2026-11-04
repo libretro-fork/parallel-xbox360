@@ -47,6 +47,32 @@ XmaContext::~XmaContext() {
   av_packet_free(&av_packet_);
 }
 
+bool XmaContext::AllocateFramePacket() {
+  AVPacket* packet;
+  if (av_packet_) return true;
+  packet = av_packet_alloc();
+  if (!packet) return false;
+  if (av_new_packet(packet, kFrameCapacity) < 0) {
+    av_packet_free(&packet);
+    return false;
+  }
+  av_packet_ = packet;
+  xma_frame_ = packet->data;
+  std::memset(xma_frame_, 0, kFrameCapacity);
+  packet->size = 0;
+  return true;
+}
+
+bool XmaContext::SetFramePacketSize(uint32_t size) {
+  if (!av_packet_ || !size || size > kFrameCapacity) return false;
+  // Clear immediately after the actual payload, including after a large frame
+  // is followed by a smaller one. FFmpeg bit readers may read this padding.
+  std::memset(xma_frame_ + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+  av_packet_->data = xma_frame_;
+  av_packet_->size = static_cast<int>(size);
+  return true;
+}
+
 void XmaContext::DumpRaw(AVFrame* frame, int id) {
   FILE* outfile =
       xe::filesystem::OpenFile(fmt::format("out{}.raw", id).c_str(), "ab");

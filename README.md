@@ -239,3 +239,5 @@ Kernel completion-event reuse uses 64 fixed atomic ownership slots. A completed 
 ## License
 
 BSD, as Xenia. See [LICENSE](LICENSE).
+
+XMA compressed-frame assembly writes directly into one reusable FFmpeg-owned packet per context. The 4098-byte capacity includes maximum frame bit alignment; FFmpeg padding follows the actual payload. All three modes share this storage policy, and retained packet references cover the actual data. This removes redundant packet backing and inline frame arrays; decoded PCM conversion and guest output-ring copies remain.
