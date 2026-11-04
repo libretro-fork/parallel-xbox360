@@ -43,8 +43,7 @@ DEFINE_uint32(
 DEFINE_bool(
     guest_scheduler_stats, false,
     "Log guest scheduler counters once a second: blocked-waiter re-poll rate, "
-    "fiber switches, yields, and how long offloaded blocking calls queue "
-    "behind the single I/O worker.",
+    "fiber switches, yields and ready-list wait times.",
     "Kernel");
 
 namespace xe {
@@ -1123,7 +1122,6 @@ void GuestScheduler::PostHostCall(std::function<void()> fn,
 
 bool GuestScheduler::EnqueueBlockingCall(BlockingCall* call,
                                          BlockingCallClass call_class) {
-  call->queued_ns = Clock::host_tick_count_raw();
   if (call_class == BlockingCallClass::kConcurrent) {
     return EnqueuePoolCall(call);
   }
@@ -1144,17 +1142,9 @@ bool GuestScheduler::CurrentThreadIsBlockingCallWorker() {
 }
 
 void GuestScheduler::RunBlockingCall(BlockingCall* call) {
-  uint64_t started = Clock::host_tick_count_raw();
   t_in_blocking_call = true;
   call->fn();
   t_in_blocking_call = false;
-  uint64_t finished = Clock::host_tick_count_raw();
-  // Raw ticks, converted only at report time.
-  uint64_t queued_for = started - call->queued_ns;
-  stats_.io_calls.fetch_add(1, std::memory_order_relaxed);
-  stats_.io_queue_ns.fetch_add(queued_for, std::memory_order_relaxed);
-  stats_.io_run_ns.fetch_add(finished - started, std::memory_order_relaxed);
-  AccumulateMax(stats_.io_queue_max_ns, queued_for);
   delete call;
 }
 
@@ -1184,7 +1174,6 @@ void GuestScheduler::StartPoolWorkerLocked() {
   thread->set_name(std::string("Guest I/O ") +
                    std::to_string(io_pool_threads_.size()));
   io_pool_threads_.push_back(std::move(thread));
-  io_pool_size_.store(io_pool_threads_.size(), std::memory_order_relaxed);
   io_started_.store(true);
 }
 
@@ -1218,7 +1207,6 @@ void GuestScheduler::IoPoolWorkerLoop() {
     BlockingCall* call = io_pool_queue_.front();
     io_pool_queue_.pop();
     ++io_pool_busy_;
-    AccumulateMax(stats_.io_peak_inflight, io_pool_busy_);
     lock.unlock();
     RunBlockingCall(call);
     lock.lock();
@@ -1709,11 +1697,6 @@ void GuestScheduler::ReportStatsIfDue() {
   uint64_t rw_ticks = take(stats_.ready_wait_ticks);
   uint64_t rw_count = take(stats_.ready_wait_count);
   uint64_t rw_max = take(stats_.ready_wait_max_ticks);
-  uint64_t io_calls = take(stats_.io_calls);
-  uint64_t io_queue = take(stats_.io_queue_ns);
-  uint64_t io_run = take(stats_.io_run_ns);
-  uint64_t io_queue_max = take(stats_.io_queue_max_ns);
-  uint64_t io_peak = take(stats_.io_peak_inflight);
   double ticks_per_us = ticks_per_us_ > 0.0 ? ticks_per_us_ : 1.0;
   auto to_us = [ticks_per_us](uint64_t ticks) {
     return uint64_t(double(ticks) / ticks_per_us);
@@ -1722,13 +1705,10 @@ void GuestScheduler::ReportStatsIfDue() {
       "GuestScheduler: repolls {}/s (rereadied {}), idle wakes {}, switches "
       "{}, skipped yields {}, yields down {} (starvation "
       "{}), background {} windows {} picks, ready wait avg "
-      "{} us max {} us | io {} calls, queued avg {} us max {} us, ran avg "
-      "{} us, pool {} threads peak {} in flight",
+      "{} us max {} us",
       repolls, rereadied, idle_wakes, switches, skipped_yields, yield_downs,
       starved, bg_windows, bg_picks, rw_count ? to_us(rw_ticks / rw_count) : 0,
-      to_us(rw_max), io_calls, io_calls ? to_us(io_queue / io_calls) : 0,
-      to_us(io_queue_max), io_calls ? to_us(io_run / io_calls) : 0,
-      io_pool_size_.load(std::memory_order_relaxed), io_peak);
+      to_us(rw_max));
 }
 
 // Names what a fiber is parked on, for the no-progress dump.

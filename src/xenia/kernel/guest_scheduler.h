@@ -355,13 +355,8 @@ class GuestScheduler {
   // Heap-owned, deleted by the worker after running.
   struct BlockingCall {
     std::function<void()> fn;
-    // Raw host ticks when queued, for the I/O wait-time counter.
-    uint64_t queued_ns = 0;
   };
-  // Cheap counters for the costs this scheduler adds on a mobile SoC: how
-  // often parked waiters force a dispatch CPU awake, and how long offloaded
-  // blocking calls queue behind an I/O worker. Reported by
-  // ReportStatsIfDue when guest_scheduler_stats is set.
+  // Dispatch counters reported when guest_scheduler_stats is set.
   struct Stats {
     std::atomic<uint64_t> repolls{0};         // RereadyBlocked passes
     std::atomic<uint64_t> rereadied{0};       // waiters actually re-readied
@@ -378,17 +373,11 @@ class GuestScheduler {
     std::atomic<uint64_t> ready_wait_ticks{0};
     std::atomic<uint64_t> ready_wait_count{0};
     std::atomic<uint64_t> ready_wait_max_ticks{0};
-    std::atomic<uint64_t> io_calls{0};
-    std::atomic<uint64_t> io_queue_ns{0};  // time queued before the worker ran
-    std::atomic<uint64_t> io_run_ns{0};    // time inside the blocking call
-    std::atomic<uint64_t> io_queue_max_ns{0};
-    // Most pool workers inside a call at once. Queue wait cannot show this.
-    // An idle worker takes a call immediately, so it stays low either way.
-    std::atomic<uint64_t> io_peak_inflight{0};
+
   };
   Stats stats_;
   uint64_t stats_last_report_ms_ = 0;
-  // Calibrated in EnsureStarted, used to render the raw-tick I/O counters.
+  // Calibrated in EnsureStarted, used to render ready-list wait times.
   double ticks_per_us_ = 0.0;
   void ReportStatsIfDue();
 
@@ -408,8 +397,6 @@ class GuestScheduler {
   std::vector<std::unique_ptr<xe::threading::Thread>> io_pool_threads_;
   // Pool workers currently inside a call, under io_pool_lock_.
   size_t io_pool_busy_ = 0;
-  // Mirrors io_pool_threads_.size() so the stats report skips io_pool_lock_.
-  std::atomic<size_t> io_pool_size_{0};
 };
 
 }  // namespace kernel

@@ -37,7 +37,7 @@ Content close flushes and joins the logging writer non-alertably before the core
 
 The kernel owns socket I/O. Closing content cancels live socket waits, joins the I/O worker and releases pending handlers before guest state is destroyed. Closed wrappers retained by retired guest frames keep no running worker or pending I/O context. No socket worker is joined from a process-static DLL destructor.
 
-Synchronous guest I/O events are recycled only after both the waiting caller and signaling worker retire. A C89 common-atomic pair prevents a late completion signal from reaching a reused event; its state is confined to private host I/O events. The existing guest I/O queues, call allocations and worker-pool growth remain to be replaced.
+Synchronous guest I/O events are recycled only after both the waiting caller and signaling worker retire. A C89 common-atomic pair prevents a late completion signal from reaching a reused event; its state is confined to private host I/O events. Offloaded calls carry no host queue/run timestamps or I/O diagnostic counters. The existing guest I/O queues, call allocations and worker-pool growth remain to be replaced.
 
 Each `retro_run` supplies one video callback and one run's audio duration at the declared refresh rate. Fractional sample counts carry forward; audio underruns and a missing mixer produce silence for the remainder. Muting drains audio without adding a backlog. Stereo frontends may use either the batch or per-sample callback.
 
