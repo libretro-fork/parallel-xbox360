@@ -45,13 +45,16 @@ class PipelinePublishOrder {
   // waits for earlier publication, never grows or drops a pipeline.
   size_t NextSequence() { return xe_pipeline_order_reserve(order_.get()); }
 
-  void Publish(size_t sequence, T value) {
+  template <typename... Args>
+  void Publish(size_t sequence, Args&&... args) {
+    static_assert(std::is_nothrow_constructible<T, Args&&...>::value);
     if (!sequence) {
+      T value(std::forward<Args>(args)...);
       store_(opaque_, value);
       return;
     }
     void* slot = xe_pipeline_order_payload(order_.get(), sequence);
-    new (slot) T(std::move(value));
+    new (slot) T(std::forward<Args>(args)...);
     xe_pipeline_order_complete(order_.get(), sequence);
   }
 

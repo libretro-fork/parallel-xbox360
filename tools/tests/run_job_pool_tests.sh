@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+out=${TEST_BUILD_DIR:-"$root/build/tests/job-pool-$(uname -s)"}
+mkdir -p "$out"
+exe=job-pool-test
+case $(uname -s) in MINGW*|MSYS*|CYGWIN*) exe=job-pool-test.exe ;; esac
+san=${SANITIZER--fsanitize=address,undefined}
+${CC:-cc} -std=c89 -Wall -Wextra -Werror -O1 -g \
+  -DHAVE_THREADS -DHAVE_THREAD_STORAGE $san \
+  -I"$root" -I"$root/third_party/libretro-common/include" \
+  "$root/libretro/core_job_pool.c" "$root/tools/tests/core_job_pool_test.c" \
+  "$root/third_party/libretro-common/rthreads/rthreads.c" \
+  "$root/third_party/libretro-common/rthreads/retro_eventcount.c" \
+  -pthread -o "$out/$exe"
+"$out/$exe"
+
+for f in "$root/libretro/core_job_pool.c" "$root/libretro/core_pipeline_order.c" \
+  "$root/third_party/libretro-common/rthreads/rthreads.c" \
+  "$root/third_party/libretro-common/rthreads/retro_eventcount.c"; do
+ ${CC:-cc} -std=c89 -O1 -g $san -DHAVE_THREADS -DHAVE_THREAD_STORAGE \
+   -I"$root/third_party/libretro-common/include" -I"$root/libretro" \
+   -c "$f" -o "$out/$(basename "$f" .c).o"
+done
+${CXX:-c++} -std=c++20 -O1 -g $san \
+  -I"$root" -I"$root/src" -I"$root/third_party/libretro-common/include" \
+  "$root/tools/tests/core_job_pool_bridge.cc" "$out/core_job_pool.o" \
+  "$out/core_pipeline_order.o" "$out/rthreads.o" "$out/retro_eventcount.o" \
+  -pthread -o "$out/bridge-$exe"
+"$out/bridge-$exe"

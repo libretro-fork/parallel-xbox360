@@ -10,282 +10,170 @@
 #ifndef XENIA_GPU_PIPELINE_CREATION_QUEUE_H_
 #define XENIA_GPU_PIPELINE_CREATION_QUEUE_H_
 
-#include <condition_variable>
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <memory>
-#include <mutex>
-#include <queue>
-#include <string>
+#include <new>
+#include <type_traits>
 #include <utility>
-#include <vector>
-
-#include "xenia/base/assert.h"
-#include "xenia/base/threading.h"
+#include <rthreads/rthreads.h>
+#include "libretro/core_job_pool.h"
 #include "xenia/gpu/pipeline_publish_order.h"
 
 namespace xe {
 namespace gpu {
 
-// Asynchronous pipeline creation, shared by the backends: the request queue,
-// the creation threads, the publish ordering and the completion handshake. The
-// backend supplies the request, the handle creating it produces, the state a
-// creation thread needs to do the work, and the two functions that create and
-// store one pipeline.
+// C++ object/callback lifetime glue; request storage, worker ownership, parking
+// and completion accounting live in the C89 pool.
 template <typename TRequest, typename THandle, typename TThreadContext>
 class PipelineCreationQueue {
  public:
   using Publication = std::pair<TRequest, THandle>;
-  // Creates one pipeline, returning a null handle if it failed. Runs on a
-  // creation thread, with that thread's context.
   using Creator = std::function<THandle(const TRequest&, TThreadContext*)>;
-  // Swaps a created pipeline - or a failure, a null handle - into its entry.
-  // Called in queue order, under the publish order's lock, never the queue's.
   using Store = std::function<void(const TRequest&, THandle)>;
-  // The state one creation thread builds and owns for its lifetime.
   using ContextFactory = std::function<std::unique_ptr<TThreadContext>()>;
 
-  // Prepares the queue. Call it even with no creation threads - the storage
-  // warm-up may start some later.
+  ~PipelineCreationQueue() {
+    xe_job_pool_free(pool_);
+    slock_free(callback_lock_);
+  }
   void Initialize(const char* thread_name, Creator creator, Store store,
                   ContextFactory context_factory) {
-    thread_name_ = thread_name;
+    // Reinitialization follows Shutdown; release the previous cold owners.
+    xe_job_pool_free(pool_);
+    pool_ = nullptr;
+    slock_free(callback_lock_);
+    callback_lock_ = nullptr;
+    completion_callback_ = nullptr;
+    static_assert(alignof(Request) <= alignof(std::max_align_t));
+    static_assert(std::is_nothrow_move_constructible<TRequest>::value);
+    static_assert(std::is_nothrow_destructible<TRequest>::value);
     creator_ = std::move(creator);
     store_ = std::move(store);
+    context_factory_ = std::move(context_factory);
     publish_order_.Initialize([](void* opaque, Publication& publication) {
       auto* self = static_cast<PipelineCreationQueue*>(opaque);
       self->store_(publication.first, publication.second);
     }, this);
-    context_factory_ = std::move(context_factory);
-    threads_busy_ = 0;
-    completion_set_event_ = false;
-    threads_shutdown_from_ = SIZE_MAX;
-    completion_event_ = xe::threading::Event::CreateManualResetEvent(true);
-    assert_not_null(completion_event_);
+    callback_lock_ = slock_new();
+    if (!callback_lock_) throw std::bad_alloc();
+    pool_ = xe_job_pool_new(4096, sizeof(Request), thread_name, &Run, &Discard,
+        &NewContext, &FreeContext, &Idle, this);
+    if (!pool_) throw std::bad_alloc();
   }
 
-  // Stop/join workers, then let the backend destroy unpublished handles in
-  // place. No temporary return container or publication copy is needed.
+  // Preserve the backend's stop/join-before-destruction order. Queued requests
+  // are cancelled; completed but unpublished handles are destroyed in place.
   template <typename F>
   void Shutdown(F&& discard) {
+    if (!pool_) return;
     SetThreadCount(0);
-    completion_event_.reset();
-    {
-      std::lock_guard<std::mutex> lock(lock_);
-      queue_ = {};
-      completion_callback_ = nullptr;
-      completion_set_event_ = false;
-    }
+    slock_lock(callback_lock_);
+    completion_callback_ = nullptr;
+    xe_job_pool_arm_idle(pool_, 0);
+    slock_unlock(callback_lock_);
+    xe_job_pool_clear(pool_);
     publish_order_.Reset([&](Publication& publication) {
       discard(publication.first, publication.second);
     });
   }
-
-  bool has_threads() const { return !threads_.empty(); }
-  size_t thread_count() const { return threads_.size(); }
-
-  // Grows or shrinks the pool. Shrink with the queue drained - a thread only
-  // leaves between requests, so anything still queued would be stranded.
+  bool has_threads() const { return thread_count() != 0; }
+  size_t thread_count() const { return xe_job_pool_threads(pool_); }
   void SetThreadCount(size_t count) {
-    if (count < threads_.size()) {
-      {
-        std::lock_guard<std::mutex> lock(lock_);
-        threads_shutdown_from_ = count;
-      }
-      cond_.notify_all();
-      while (threads_.size() > count) {
-        xe::threading::Wait(threads_.back().get(), false);
-        threads_.pop_back();
-      }
-      // So threads can be added again later.
-      std::lock_guard<std::mutex> lock(lock_);
-      threads_shutdown_from_ = SIZE_MAX;
-      return;
-    }
-    while (threads_.size() < count) {
-      size_t thread_index = threads_.size();
-      std::unique_ptr<xe::threading::Thread> thread =
-          xe::threading::Thread::Create(
-              {}, [this, thread_index]() { ThreadMain(thread_index); });
-      assert_not_null(thread);
-      thread->set_name(thread_name_);
-      threads_.push_back(std::move(thread));
-    }
+    if (!pool_ && !count) return;
+    if (!xe_job_pool_set_threads(pool_, count)) throw std::bad_alloc();
   }
-
-  // Queues a pipeline the game is drawing now - it is stored once every request
-  // queued before it has been.
-  void Push(TRequest request) { PushRequest(std::move(request), true); }
-
-  // Queues one nothing is drawing yet (the storage warm-up), stored as soon as
-  // it is built.
-  void PushUnordered(TRequest request) {
-    PushRequest(std::move(request), false);
-  }
-
-  // Whether anything is queued or being created.
-  bool IsBusy() {
-    if (threads_.empty()) {
-      return false;
-    }
-    std::lock_guard<std::mutex> lock(lock_);
-    return IsBusyLocked();
-  }
-
-  // Wakes a creation thread without waiting for it.
-  void Notify() { cond_.notify_one(); }
-
-  // Blocks until everything queued has been created.
+  void Push(const TRequest& request) { PushRequest(request, true); }
+  void Push(TRequest&& request) { PushRequest(std::move(request), true); }
+  void PushUnordered(const TRequest& request) { PushRequest(request, false); }
+  void PushUnordered(TRequest&& request) { PushRequest(std::move(request), false); }
+  bool IsBusy() { return has_threads() && xe_job_pool_busy(pool_); }
+  void Notify() { xe_job_pool_notify(pool_); }
   void AwaitCompletion() {
-    if (threads_.empty()) {
-      return;
-    }
-    bool await;
-    {
-      std::lock_guard<std::mutex> lock(lock_);
-      await = IsBusyLocked();
-      if (await) {
-        completion_event_->Reset();
-        completion_set_event_ = true;
+    if (has_threads()) xe_job_pool_await(pool_);
+  }
+  void TakeCompletionCallback(std::function<void()>& callback) {
+    slock_lock(callback_lock_);
+    if (xe_job_pool_busy(pool_)) {
+      completion_callback_ = std::move(callback);
+      callback = nullptr;
+      if (!ArmCompletion(this)) {
+        callback = std::move(completion_callback_);
+        completion_callback_ = nullptr;
       }
     }
-    if (await) {
-      cond_.notify_one();
-      xe::threading::Wait(completion_event_.get(), false);
-    }
+    slock_unlock(callback_lock_);
   }
-
-  // Takes the callback to invoke when everything queued has been created, and
-  // leaves it with the caller if there is nothing to wait for.
-  void TakeCompletionCallback(std::function<void()>& callback) {
-    std::lock_guard<std::mutex> lock(lock_);
-    if (!IsBusyLocked()) {
-      return;
-    }
-    completion_callback_ = std::move(callback);
-    callback = nullptr;
-  }
-
-  // Creates whatever is queued on the calling thread, with a context of its
-  // own. For the storage warm-up, which has a thread to spare.
   void DrainOnCallingThread(TThreadContext* context) {
-    while (CreateOneQueued(context)) {
-    }
+    while (xe_job_pool_run_one(pool_, context)) {}
   }
 
  private:
-  bool IsBusyLocked() const { return !queue_.empty() || threads_busy_ != 0; }
-
-  void PushRequest(TRequest request, bool ordered) {
-    // One producer. Reserve before taking the worker queue lock: waiting for
-    // a reusable publication slot must not prevent workers dequeuing jobs.
-    const size_t sequence = ordered ? publish_order_.NextSequence() : 0;
-    {
-      std::lock_guard<std::mutex> lock(lock_);
-      queue_.emplace(sequence, std::move(request));
-    }
-    cond_.notify_one();
-  }
-
-  // Creates the next queued pipeline, or returns false with nothing queued.
-  bool CreateOneQueued(TThreadContext* context) {
-    TRequest request;
+  struct Request {
     size_t sequence;
-    {
-      std::lock_guard<std::mutex> lock(lock_);
-      if (queue_.empty()) {
-        return false;
-      }
-      // Busy until the pipeline is created rather than just dequeued: other
-      // threads must be able to take requests, but must not report completion
-      // while this one is still building.
-      sequence = queue_.front().first;
-      request = std::move(queue_.front().second);
-      queue_.pop();
-      ++threads_busy_;
+    TRequest request;
+    template <typename U>
+    Request(size_t value, U&& input) noexcept
+        : sequence(value), request(std::forward<U>(input)) {
+      static_assert(std::is_nothrow_constructible<TRequest, U&&>::value);
     }
-    THandle handle = creator_(request, context);
-    // Published even when creation failed: the order has to advance past a
-    // failure, or everything queued after it waits on it forever.
-    publish_order_.Publish(sequence, {std::move(request), handle});
-    std::unique_lock<std::mutex> lock(lock_);
-    --threads_busy_;
-    SignalCompletionLocked(lock);
-    return true;
+  };
+  template <typename U>
+  void PushRequest(U&& request, bool ordered) {
+    // The GPU thread (or paused initialization) is the sole producer. Wait for
+    // reusable storage without holding any lock a compilation worker needs.
+    size_t sequence = ordered ? publish_order_.NextSequence() : 0;
+    void* slot = xe_job_pool_begin(pool_);
+    new (slot) Request(sequence, std::forward<U>(request));
+    xe_job_pool_commit(pool_);
   }
-
-  // Called by an idle thread with the lock held, which it drops around the
-  // callback.
-  void SignalCompletionLocked(std::unique_lock<std::mutex>& lock) {
-    if (IsBusyLocked()) {
-      return;
-    }
-    if (completion_set_event_) {
-      // Blocking mode.
-      completion_set_event_ = false;
-      completion_event_->Set();
-    }
-    if (completion_callback_) {
-      // Non-blocking mode.
-      auto callback = std::move(completion_callback_);
-      completion_callback_ = nullptr;
-      lock.unlock();
-      callback();
-      lock.lock();
-    }
+  static void Run(void* opaque, void* payload, void* context) {
+    auto* self = static_cast<PipelineCreationQueue*>(opaque);
+    auto* job = static_cast<Request*>(payload);
+    THandle handle = self->creator_(job->request,
+                                    static_cast<TThreadContext*>(context));
+    if (job->sequence)
+      self->publish_order_.Publish(job->sequence, std::move(job->request), handle);
+    else
+      self->store_(job->request, handle);
+    job->~Request();
   }
-
-  void ThreadMain(size_t thread_index) {
-    std::unique_ptr<TThreadContext> context =
-        context_factory_ ? context_factory_() : nullptr;
-    for (;;) {
-      {
-        std::unique_lock<std::mutex> lock(lock_);
-        // A thread being shut down stops taking work, leaving the rest of the
-        // queue to whoever is left.
-        if (thread_index >= threads_shutdown_from_ || queue_.empty()) {
-          // Also the path a thread woken only to report completion takes.
-          SignalCompletionLocked(lock);
-          if (thread_index >= threads_shutdown_from_) {
-            return;
-          }
-          cond_.wait(lock);
-          continue;
-        }
-      }
-      CreateOneQueued(context.get());
-    }
+  static void Discard(void*, void* payload) {
+    static_cast<Request*>(payload)->~Request();
   }
-
-  std::string thread_name_;
+  static void* NewContext(void* opaque) {
+    auto* self = static_cast<PipelineCreationQueue*>(opaque);
+    return self->context_factory_ ? self->context_factory_().release() : nullptr;
+  }
+  static void FreeContext(void*, void* context) {
+    delete static_cast<TThreadContext*>(context);
+  }
+  static bool ArmCompletion(PipelineCreationQueue* self) {
+    xe_job_pool_arm_idle(self->pool_, 1);
+    if (xe_job_pool_busy(self->pool_)) return true;
+    xe_job_pool_arm_idle(self->pool_, 0);
+    return false;
+  }
+  static void Idle(void* opaque) {
+    auto* self = static_cast<PipelineCreationQueue*>(opaque);
+    std::function<void()> callback;
+    slock_lock(self->callback_lock_);
+    if (self->completion_callback_ && !ArmCompletion(self)) {
+      callback = std::move(self->completion_callback_);
+      self->completion_callback_ = nullptr;
+    }
+    slock_unlock(self->callback_lock_);
+    if (callback) callback();
+  }
   Creator creator_;
   Store store_;
   ContextFactory context_factory_;
-
-  std::mutex lock_;
-  std::condition_variable cond_;
-  // Pipelines are never evicted - games have a finite set that should all stay
-  // cached - so this holds nothing but requests waiting for a thread. FIFO, so
-  // they build in the order the game first drew them.
-  std::queue<std::pair<size_t, TRequest>> queue_;
   PipelinePublishOrder<Publication> publish_order_;
-  // Threads that have taken a request but not finished creating it. Guarded by
-  // lock_.
-  size_t threads_busy_ = 0;
-  // Manual-reset event set when the queue drains, for a blocking wait. Whether
-  // it is wanted is guarded by lock_.
-  std::unique_ptr<xe::threading::Event> completion_event_;
-  bool completion_set_event_ = false;
-  // Invoked instead when the wait is non-blocking. Guarded by lock_.
   std::function<void()> completion_callback_;
-  // Threads with this index or above leave as soon as they are idle. Guarded
-  // by lock_, notify_all cond_ when set.
-  size_t threads_shutdown_from_ = SIZE_MAX;
-  std::vector<std::unique_ptr<xe::threading::Thread>> threads_;
+  slock_t* callback_lock_ = nullptr;
+  xe_job_pool* pool_ = nullptr;
 };
 
 }  // namespace gpu
 }  // namespace xe
-
 #endif  // XENIA_GPU_PIPELINE_CREATION_QUEUE_H_
