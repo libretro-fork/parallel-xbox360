@@ -10,17 +10,15 @@
 #ifndef XENIA_GPU_SHADER_STORAGE_H_
 #define XENIA_GPU_SHADER_STORAGE_H_
 
-#include <condition_variable>
 #include <cstdint>
 #include "libretro/core_cache_file.h"
+#include "libretro/core_cache_writer.h"
 #include "libretro/core_file.h"
 #include <memory>
 #include <file/file_path.h>
 #include <cstring>
-#include <deque>
 #include <filesystem>
 #include <functional>
-#include <mutex>
 #include <set>
 #include <vector>
 
@@ -381,12 +379,11 @@ class ShaderStorageWriter {
       translate_shaders(translations_needed);
     }
 
-    // Start the write thread.
-    storage_write_thread_shutdown_ = false;
-    storage_write_thread_ =
-        xe::threading::Thread::Create({}, [this]() { WriteThread(); });
-    if (!storage_write_thread_) return CloseStorageFilesAfterInitializationFailure();
-    storage_write_thread_->set_name("Shader Storage Writer");
+    // ConfigurePipeline / EndSubmission are the sole GPU-thread producer.
+    // Keep file writes off that thread; bound all pending record storage.
+    storage_writer_ = xe_cache_writer_new(sizeof(TPipelineStoredDescription),
+        16384, &WriteRecord, this);
+    if (!storage_writer_) return CloseStorageFilesAfterInitializationFailure();
     pipeline_descriptions_out = std::move(records);
 
     return true;
@@ -394,23 +391,10 @@ class ShaderStorageWriter {
 
   // Shutdown storage: stops write thread, closes files.
   void ShutdownShaderStorage() {
-    if (storage_write_thread_) {
-      {
-        std::lock_guard<std::mutex> lock(storage_write_request_lock_);
-        storage_write_thread_shutdown_ = true;
-      }
-      storage_write_request_cond_.notify_one();
-      xe::threading::Wait(storage_write_thread_.get(), false);
-      storage_write_thread_.reset();
-    }
-
-    {
-      std::lock_guard<std::mutex> lock(storage_write_request_lock_);
-      storage_write_shader_queue_.clear();
-      storage_write_pipeline_queue_.clear();
-      storage_write_flush_shaders_ = false;
-      storage_write_flush_pipelines_ = false;
-    }
+    // The command processor has stopped producing. Drain before shader owners
+    // or storage files are released; no frontend/GPU progress is needed here.
+    xe_cache_writer_free(storage_writer_);
+    storage_writer_ = nullptr;
 
     if (pipeline_storage_file_) {
       filestream_close(pipeline_storage_file_);
@@ -433,43 +417,17 @@ class ShaderStorageWriter {
   uint32_t title_id() const { return title_id_; }
 
   void QueueShaderWrite(const Shader* shader) {
-    if (!shader_storage_file_) {
-      return;
-    }
-    {
-      std::lock_guard<std::mutex> lock(storage_write_request_lock_);
-      storage_write_shader_queue_.push_back(shader);
-    }
-    storage_write_request_cond_.notify_one();
+    xe_cache_writer_submit(storage_writer_, 1, &shader, sizeof(shader));
   }
 
   void QueuePipelineWrite(const TPipelineStoredDescription& description) {
-    if (!pipeline_storage_file_) {
-      return;
-    }
-    {
-      std::lock_guard<std::mutex> lock(storage_write_request_lock_);
-      storage_write_pipeline_queue_.push_back(description);
-    }
-    storage_write_request_cond_.notify_one();
+    xe_cache_writer_submit(storage_writer_, 2, &description, sizeof(description));
   }
 
   void RequestFlush(bool flush_shaders, bool flush_pipelines) {
-    bool need_notify = false;
-    {
-      std::lock_guard<std::mutex> lock(storage_write_request_lock_);
-      if (flush_shaders) {
-        storage_write_flush_shaders_ = true;
-        need_notify = true;
-      }
-      if (flush_pipelines) {
-        storage_write_flush_pipelines_ = true;
-        need_notify = true;
-      }
-    }
-    if (need_notify) {
-      storage_write_request_cond_.notify_one();
-    }
+    if (flush_shaders || flush_pipelines)
+      xe_cache_writer_submit(storage_writer_,
+          4 | (flush_shaders ? 1 : 0) | (flush_pipelines ? 2 : 0), nullptr, 0);
   }
 
  private:
@@ -480,79 +438,34 @@ class ShaderStorageWriter {
     return false;
   }
 
-  void WriteThread() {
-    ShaderStoredHeader shader_header;
-    std::memset(&shader_header, 0, sizeof(shader_header));
-
-    bool flush_shaders = false;
-    bool flush_pipelines = false;
-
-    while (true) {
-      if (flush_shaders) {
-        flush_shaders = false;
-        assert_not_null(shader_storage_file_);
-        filestream_flush(shader_storage_file_);
+  static void WriteRecord(void* opaque, unsigned kind,
+                          const void* data, size_t size) {
+    auto* self = static_cast<ShaderStorageWriter*>(opaque);
+    if (kind & 4) {
+      if ((kind & 1) && filestream_flush(self->shader_storage_file_) != 0)
+        XELOGE("Failed to flush shader storage");
+      if ((kind & 2) && filestream_flush(self->pipeline_storage_file_) != 0)
+        XELOGE("Failed to flush pipeline storage");
+    } else if (kind == 1 && size == sizeof(const Shader*)) {
+      const Shader* shader;
+      std::memcpy(&shader, data, sizeof(shader));
+      ShaderStoredHeader header;
+      std::memset(&header, 0, sizeof(header));
+      header.ucode_data_hash = shader->ucode_data_hash();
+      header.ucode_dword_count = shader->ucode_dword_count();
+      header.type = shader->type();
+      if (xe_cache_file_write(&header, sizeof(header), 1,
+                              self->shader_storage_file_) != 1) {
+        XELOGE("Failed to write shader header to storage");
+      } else if (header.ucode_dword_count &&
+          !xe_cache_file_write_be32(self->shader_storage_file_,
+              shader->ucode_dwords(), header.ucode_dword_count)) {
+        XELOGE("Failed to write shader ucode to storage");
       }
-      if (flush_pipelines) {
-        flush_pipelines = false;
-        assert_not_null(pipeline_storage_file_);
-        filestream_flush(pipeline_storage_file_);
-      }
-
-      const Shader* shader = nullptr;
-      TPipelineStoredDescription pipeline_description;
-      bool write_pipeline = false;
-      {
-        std::unique_lock<std::mutex> lock(storage_write_request_lock_);
-        if (storage_write_thread_shutdown_) {
-          return;
-        }
-        if (!storage_write_shader_queue_.empty()) {
-          shader = storage_write_shader_queue_.front();
-          storage_write_shader_queue_.pop_front();
-        } else if (storage_write_flush_shaders_) {
-          storage_write_flush_shaders_ = false;
-          flush_shaders = true;
-        }
-        if (!storage_write_pipeline_queue_.empty()) {
-          std::memcpy(&pipeline_description,
-                      &storage_write_pipeline_queue_.front(),
-                      sizeof(pipeline_description));
-          storage_write_pipeline_queue_.pop_front();
-          write_pipeline = true;
-        } else if (storage_write_flush_pipelines_) {
-          storage_write_flush_pipelines_ = false;
-          flush_pipelines = true;
-        }
-        if (!shader && !write_pipeline && !flush_shaders && !flush_pipelines) {
-          storage_write_request_cond_.wait(lock);
-          continue;
-        }
-      }
-
-      if (shader) {
-        shader_header.ucode_data_hash = shader->ucode_data_hash();
-        shader_header.ucode_dword_count = shader->ucode_dword_count();
-        shader_header.type = shader->type();
-        assert_not_null(shader_storage_file_);
-        if (xe_cache_file_write(&shader_header, sizeof(shader_header), 1,
-                   shader_storage_file_) != 1) {
-          XELOGE("Failed to write shader header to storage");
-        } else if (shader_header.ucode_dword_count) {
-          if (!xe_cache_file_write_be32(shader_storage_file_, shader->ucode_dwords(),
-                                        shader_header.ucode_dword_count)) {
-            XELOGE("Failed to write shader ucode to storage");
-          }
-        }
-      }
-
-      if (write_pipeline) {
-        assert_not_null(pipeline_storage_file_);
-        if (xe_cache_file_write(&pipeline_description, sizeof(pipeline_description), 1,
-                   pipeline_storage_file_) != 1) {
-          XELOGE("Failed to write pipeline description to storage");
-        }
-      }
+    } else if (kind == 2 && size == sizeof(TPipelineStoredDescription)) {
+      // Write the owned queue slot directly; no temporary C++ descriptor copy.
+      if (xe_cache_file_write(data, size, 1, self->pipeline_storage_file_) != 1)
+        XELOGE("Failed to write pipeline description to storage");
     }
   }
 
@@ -563,14 +476,7 @@ class ShaderStorageWriter {
   RFILE* shader_storage_file_ = nullptr;
   RFILE* pipeline_storage_file_ = nullptr;
 
-  std::unique_ptr<xe::threading::Thread> storage_write_thread_;
-  std::mutex storage_write_request_lock_;
-  std::condition_variable storage_write_request_cond_;
-  std::deque<const Shader*> storage_write_shader_queue_;
-  std::deque<TPipelineStoredDescription> storage_write_pipeline_queue_;
-  bool storage_write_flush_shaders_ = false;
-  bool storage_write_flush_pipelines_ = false;
-  bool storage_write_thread_shutdown_ = false;
+  xe_cache_writer* storage_writer_ = nullptr;
 };
 
 }  // namespace gpu

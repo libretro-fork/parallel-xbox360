@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan/D3D12 shader persistence now uses a preallocated C89 libretro-common SPSC queue and file worker instead of growing C++ deques, mutexes and condition variables. Pipeline records write directly from queue slots, flush requests retain FIFO order, and content close drains pending records before closing files or releasing shaders. Queue exhaustion applies bounded backpressure instead of dropping cache entries; ordinary writes remain asynchronous.
+
 - Shared Vulkan/D3D12 pipeline-description loading no longer slurps the cache into a vector. A C89 record reader borrows native mapped bytes or reuses a bounded 64 KiB VFS window. Hash validation and translation-key collection share one pass; only the validated prefix is repaired and replayed. Existing C++ descriptor objects are decoded one at a time, and queued pipeline jobs retain owned cache entries rather than borrowed file bytes.
 
 - Removed Vulkan Memory Allocator and replaced its texture-cache image/buffer paths with a bespoke MSVC C89 block heap. Cold probes warm separate optimal-image and linear-resource blocks; suballocation metadata is reserved once, spans coalesce without array shifts, and generation-tagged handles reject stale frees. Required dedicated allocations, memory-type restrictions and bind-failure rollback are retained. Ordinary oversized blocks are reused and redundant empty blocks are released. Backing growth on exhaustion and required dedicated allocation still need further work toward allocation-free gameplay.
