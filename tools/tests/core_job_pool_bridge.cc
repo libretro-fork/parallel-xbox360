@@ -12,18 +12,20 @@ struct Input {
 struct CopyInput {
   size_t id;
   unsigned copies, moves;
-  explicit CopyInput(size_t value) : id(value), copies(0), moves(0) {}
+  const CopyInput* identity;
+  explicit CopyInput(size_t value) : id(value), copies(0), moves(0), identity(this) {}
   CopyInput(const CopyInput& value) noexcept
-      : id(value.id), copies(value.copies + 1), moves(value.moves) {}
+      : id(value.id), copies(value.copies + 1), moves(value.moves), identity(this) {}
   CopyInput(CopyInput&& value) noexcept
-      : id(value.id), copies(value.copies), moves(value.moves + 1) {}
+      : id(value.id), copies(value.copies), moves(value.moves + 1), identity(this) {}
 };
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL adapter line %u\n", unsigned(__LINE__)); std::abort(); } } while (0)
 int main() {
   size_t expected = 0, callbacks = 0, discarded = 0;
   {
     xe::gpu::PipelineCreationQueue<Input, size_t, unsigned> uninitialized;
-    uninitialized.Shutdown([](const Input&, size_t) { std::abort(); });
+    uninitialized.Shutdown([&](const Input&, size_t) { ++discarded; });
+    CHECK(discarded == 0);
   }
   {
     xe::gpu::PipelineCreationQueue<Input, size_t, unsigned> queue;
@@ -90,17 +92,17 @@ int main() {
     CHECK(expected == first + 100 && discarded == 0);
   }
   {
-    size_t next = 0;
+    size_t next = 0, unexpected = 0;
     unsigned seen[1000] = {};
     xe::gpu::PipelineCreationQueue<CopyInput, size_t, unsigned> queue;
     queue.Initialize("Copy budget",
         [](const CopyInput& input, unsigned*) {
-          CHECK(input.copies == 1 && input.moves == 0);
+          CHECK(input.copies == 1 && input.moves == 0 && input.identity == &input);
           return input.id + 1;
         }, [&](const CopyInput& input, size_t handle) {
-          CHECK(handle == input.id + 1 && input.copies == 1);
+          CHECK(handle == input.id + 1 && input.copies == 1 && input.identity == &input);
           if (input.id < 1000) {
-            CHECK(input.id == next++ && input.moves == 1);
+            CHECK(input.id == next++ && input.moves == 0);
           } else {
             CHECK(input.id < 2000 && input.moves == 0);
             seen[input.id - 1000] = 1;
@@ -117,9 +119,42 @@ int main() {
       queue.PushUnordered(input);
     }
     queue.AwaitCompletion();
-    queue.Shutdown([](const CopyInput&, size_t) { std::abort(); });
-    CHECK(next == 1000);
+    queue.Shutdown([&](const CopyInput&, size_t) { ++unexpected; });
+    CHECK(next == 1000 && unexpected == 0);
     for (size_t i = 0; i < 1000; ++i) CHECK(seen[i] == 1);
+  }
+  {
+    slock_t* blocked = slock_new();
+    slock_t* state_lock = slock_new();
+    scond_t* changed = scond_new();
+    unsigned ordered_stored = 0, warm_stored = 0, unexpected = 0;
+    CHECK(blocked && state_lock && changed);
+    slock_lock(blocked);
+    xe::gpu::PipelineCreationQueue<Input, size_t, unsigned> queue;
+    queue.Initialize("Independent warmup", [&](const Input& input, unsigned*) {
+      if (!input.id) { slock_lock(blocked); slock_unlock(blocked); }
+      return input.id + 1;
+    }, [&](const Input& input, size_t handle) {
+      CHECK(handle == input.id + 1 && input.owned);
+      slock_lock(state_lock);
+      if (input.id) ordered_stored = 1;
+      else { CHECK(ordered_stored); warm_stored = 1; }
+      scond_signal(changed);
+      slock_unlock(state_lock);
+    }, {});
+    queue.SetThreadCount(2);
+    queue.PushUnordered(Input(0));
+    queue.Push(Input(1));
+    slock_lock(state_lock);
+    while (!ordered_stored)
+      CHECK(scond_wait_timeout(changed, state_lock, 5000000));
+    CHECK(!warm_stored);
+    slock_unlock(state_lock);
+    slock_unlock(blocked);
+    queue.AwaitCompletion();
+    queue.Shutdown([&](const Input&, size_t) { ++unexpected; });
+    CHECK(warm_stored && !unexpected);
+    scond_free(changed); slock_free(state_lock); slock_free(blocked);
   }
   std::puts("PASS: production creation queue ordered moves, failed creation, caller drain, context ownership, callbacks, cancellation and reuse");
 }

@@ -11,6 +11,7 @@
 #define JOBS 14000
 struct job { unsigned id, check; unsigned char bytes[47]; };
 struct state {
+   xe_job_pool *pool;
    retro_atomic_int_t seen[JOBS], processed, created, freed, discarded, helped, idle;
 };
 struct context { struct state *state; unsigned magic; };
@@ -32,7 +33,7 @@ static void free_context(void *opaque, void *value)
    free(context);
    retro_atomic_fetch_add_int(&state->freed, 1);
 }
-static void run(void *opaque, void *payload, void *value)
+static void run(void *opaque, void *payload, void *value, uint64_t lease)
 {
    struct state *state = (struct state *)opaque;
    struct job *job = (struct job *)payload;
@@ -46,6 +47,8 @@ static void run(void *opaque, void *payload, void *value)
    CHECK(retro_atomic_fetch_add_int(&state->seen[job->id], 1) == 0);
    memset(job, 0xcc, sizeof(*job));
    retro_atomic_fetch_add_int(&state->processed, 1);
+   CHECK(xe_job_pool_finish(state->pool, lease));
+   CHECK(!xe_job_pool_finish(state->pool, lease));
 }
 static void discard(void *opaque, void *payload)
 {
@@ -69,6 +72,37 @@ static void submit(xe_job_pool *pool, unsigned id)
       job->bytes[i] = (unsigned char)(id + i);
    xe_job_pool_commit(pool);
 }
+struct held_state { xe_job_pool *pool; struct job *views[8]; uint64_t leases[8]; unsigned count; };
+static void hold(void *opaque, void *payload, void *context, uint64_t lease)
+{
+   struct held_state *state = (struct held_state *)opaque;
+   (void)context;
+   CHECK(state->count < 8);
+   state->views[state->count] = (struct job *)payload;
+   state->leases[state->count++] = lease;
+}
+static void discard_held(void *opaque, void *payload) { (void)opaque; (void)payload; }
+static void held_test(void)
+{
+   struct held_state state;
+   unsigned i;
+   memset(&state, 0, sizeof(state));
+   state.pool = xe_job_pool_new(4, sizeof(struct job), "Held views", hold,
+         discard_held, NULL, NULL, NULL, &state);
+   CHECK(state.pool);
+   for (i = 0; i < 4; ++i) submit(state.pool, i);
+   for (i = 0; i < 4; ++i) CHECK(xe_job_pool_run_one(state.pool, NULL));
+   CHECK(!xe_job_pool_run_one(state.pool, NULL) && xe_job_pool_busy(state.pool));
+   for (i = 0; i < 4; ++i) CHECK(state.views[i]->id == i);
+   CHECK(xe_job_pool_finish(state.pool, state.leases[0]));
+   submit(state.pool, 4);
+   CHECK(!xe_job_pool_finish(state.pool, state.leases[0]));
+   for (i = 1; i < 4; ++i) CHECK(state.views[i]->id == i);
+   CHECK(xe_job_pool_run_one(state.pool, NULL));
+   for (i = 4; i > 0; --i) CHECK(xe_job_pool_finish(state.pool, state.leases[i]));
+   CHECK(!xe_job_pool_busy(state.pool));
+   xe_job_pool_free(state.pool);
+}
 int main(void)
 {
    struct state *state = (struct state *)calloc(1, sizeof(*state));
@@ -87,6 +121,7 @@ int main(void)
       pool = xe_job_pool_new((size_t)2 << round, sizeof(struct job), "Test jobs",
             run, discard, new_context, free_context, idle, state);
       CHECK(pool && xe_job_pool_threads(pool) == 0);
+      state->pool = pool;
       CHECK(xe_job_pool_set_threads(pool, 2));
       CHECK(retro_atomic_load_acquire_int(&state->created) == 2);
       xe_job_pool_arm_idle(pool, 1);
@@ -120,6 +155,7 @@ int main(void)
       CHECK(retro_atomic_load_acquire_int(&state->created) == 9 &&
             retro_atomic_load_acquire_int(&state->freed) == 9);
    }
+   held_test();
    free(state);
    puts("PASS: bounded SPMC jobs, exact-once ownership, context lifetime, growth/shrink, caller drain, idle waits and cancellation");
    return 0;

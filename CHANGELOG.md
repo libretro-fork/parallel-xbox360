@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Ordered pipeline results now retain a borrowed request slot rather than moving the request into a second full-size buffer. Checked leases keep the original object alive until store/discard, and shutdown retires completed results before clearing unclaimed requests. Warm-up publication remains independent. Added held-slot, stale-release, object-identity and mixed warm-up/gameplay tests plus a reproducible metadata handoff benchmark.
+
 - Vulkan/D3D12 compilation requests now use a fixed 4,096-slot C89 pool with atomic worker claims and direct in-slot consumption. Removed the shared C++ request queue, thread vector, mutex/condition variable and completion event. Common rthreads park idle workers and wake one per submission; callback locking is only armed for an actual completion callback. Worker contexts are ready before configuration returns, the 4 MiB stack budget is preserved, and shutdown still stops/joins workers before cancelling queued requests or destroying retained pipeline handles. Backend allocations and deferred-destruction containers remain further work.
 
 - Ordered async Vulkan/D3D12 pipeline publication now uses 4,096 reusable C89 slots instead of allocating C++ map entries and taking a publication mutex. Completion workers hand off through common atomics while stores remain serialized in draw order, including failed creations. Saturated reservations wait outside the worker request lock. After workers join, each backend destroys unpublished handles and retained CPU objects directly in their slots without a shutdown vector. The request queue and deferred-destruction containers remain separate allocation/threading work.

@@ -27,19 +27,22 @@ namespace gpu {
 // and completion accounting live in the C89 pool.
 template <typename TRequest, typename THandle, typename TThreadContext>
 class PipelineCreationQueue {
+  struct Request;
  public:
-  using Publication = std::pair<TRequest, THandle>;
+  using Publication = std::pair<Request*, THandle>;
   using Creator = std::function<THandle(const TRequest&, TThreadContext*)>;
   using Store = std::function<void(const TRequest&, THandle)>;
   using ContextFactory = std::function<std::unique_ptr<TThreadContext>()>;
 
   ~PipelineCreationQueue() {
+    ReleasePending();
     xe_job_pool_free(pool_);
     slock_free(callback_lock_);
   }
   void Initialize(const char* thread_name, Creator creator, Store store,
                   ContextFactory context_factory) {
     // Reinitialization follows Shutdown; release the previous cold owners.
+    ReleasePending();
     xe_job_pool_free(pool_);
     pool_ = nullptr;
     slock_free(callback_lock_);
@@ -53,7 +56,8 @@ class PipelineCreationQueue {
     context_factory_ = std::move(context_factory);
     publish_order_.Initialize([](void* opaque, Publication& publication) {
       auto* self = static_cast<PipelineCreationQueue*>(opaque);
-      self->store_(publication.first, publication.second);
+      self->store_(publication.first->request, publication.second);
+      self->Release(publication.first);
     }, this);
     callback_lock_ = slock_new();
     if (!callback_lock_) throw std::bad_alloc();
@@ -72,10 +76,11 @@ class PipelineCreationQueue {
     completion_callback_ = nullptr;
     xe_job_pool_arm_idle(pool_, 0);
     slock_unlock(callback_lock_);
-    xe_job_pool_clear(pool_);
     publish_order_.Reset([&](Publication& publication) {
-      discard(publication.first, publication.second);
+      discard(publication.first->request, publication.second);
+      Release(publication.first);
     });
+    xe_job_pool_clear(pool_);
   }
   bool has_threads() const { return thread_count() != 0; }
   size_t thread_count() const { return xe_job_pool_threads(pool_); }
@@ -110,11 +115,11 @@ class PipelineCreationQueue {
 
  private:
   struct Request {
-    size_t sequence;
+    uint64_t sequence_or_lease;
     TRequest request;
     template <typename U>
     Request(size_t value, U&& input) noexcept
-        : sequence(value), request(std::forward<U>(input)) {
+        : sequence_or_lease(value), request(std::forward<U>(input)) {
       static_assert(std::is_nothrow_constructible<TRequest, U&&>::value);
     }
   };
@@ -127,16 +132,36 @@ class PipelineCreationQueue {
     new (slot) Request(sequence, std::forward<U>(request));
     xe_job_pool_commit(pool_);
   }
-  static void Run(void* opaque, void* payload, void* context) {
+  void Release(Request* job) {
+    uint64_t lease = job->sequence_or_lease;
+    job->~Request();
+    xe_job_pool_finish(pool_, lease);
+  }
+  void ReleasePending() {
+    if (!pool_) return;
+    xe_job_pool_set_threads(pool_, 0);
+    slock_lock(callback_lock_);
+    completion_callback_ = nullptr;
+    xe_job_pool_arm_idle(pool_, 0);
+    slock_unlock(callback_lock_);
+    publish_order_.Reset([this](Publication& publication) {
+      Release(publication.first);
+    });
+  }
+  static void Run(void* opaque, void* payload, void* context, uint64_t lease) {
     auto* self = static_cast<PipelineCreationQueue*>(opaque);
     auto* job = static_cast<Request*>(payload);
+    size_t sequence = size_t(job->sequence_or_lease);
+    job->sequence_or_lease = lease;
     THandle handle = self->creator_(job->request,
-                                    static_cast<TThreadContext*>(context));
-    if (job->sequence)
-      self->publish_order_.Publish(job->sequence, std::move(job->request), handle);
-    else
+                                  static_cast<TThreadContext*>(context));
+    // Publication owns the borrowed request until store/discard. No access to
+    // job is allowed after either path releases its lease.
+    if (sequence) self->publish_order_.Publish(sequence, job, handle);
+    else {
       self->store_(job->request, handle);
-    job->~Request();
+      self->Release(job);
+    }
   }
   static void Discard(void*, void* payload) {
     static_cast<Request*>(payload)->~Request();

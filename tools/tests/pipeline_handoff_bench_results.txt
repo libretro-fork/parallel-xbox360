@@ -1,0 +1,22 @@
+Pipeline handoff observations, 2026-11-04
+Host: AMD Ryzen 9 9950X3D, 16 cores / 32 logical processors, Windows.
+Baseline: 8ce2f22a. Current: borrowed worker-slot request lifetime.
+Fixtures: tools/tests/core_pipeline_handoff_bench.cc and core_pipeline_bench_profile.c.
+Five 100000-job timed batches after 20000 warm-up jobs; compiler O3 (MinGW GCC16.2) or O2 (MSVC19.44). No driver compilation, I/O, guest execution or affinity pinning. Two order-reversed passes. Common runtime allocations are not captured; live bytes count only requested allocations from the two core C modules. No module allocation occurred during the timed batches. These are coordination microbenchmarks, not gameplay results or formal hardware-limit measurements.
+
+Requested live bytes (one worker):
+8-byte model: baseline 230344, current 230344.
+80-byte model: baseline 885704, current 558024 (327680 bytes / 320 KiB less).
+Six-worker values add 200 bytes to both versions.
+
+Median ns/job, first/reversed pass:
+MinGW 8-byte/1 worker: baseline 159.0/160.6, current 150.3/153.2.
+MinGW 80-byte/1 worker: baseline 166.9/164.9, current 161.4/151.3.
+MinGW 8-byte/6 workers: baseline 546.0/527.5, current 505.9/513.2.
+MinGW 80-byte/6 workers: baseline 522.1/516.1, current 548.2/520.2.
+MSVC 8-byte/1 worker: baseline 334.4/303.8, current 298.5/285.6.
+MSVC 80-byte/1 worker: baseline 331.4/315.4, current 293.5/273.2.
+MSVC 8-byte/6 workers: baseline 700.3/634.7, current 727.1/676.7.
+MSVC 80-byte/6 workers: baseline 687.0/600.1, current 495.0/513.4.
+
+Sample ranges overlap in several six-worker cases, including the small MSVC model where medians were slower. Do not claim a universal throughput win. Storage reduction and object-transfer removal are the established structural changes. Further controlled profiling (including common MSVC atomic-load cost) and representative game measurements remain necessary.

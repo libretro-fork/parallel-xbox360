@@ -74,7 +74,6 @@ int xe_job_pool_run_one(xe_job_pool *pool, void *context)
 {
    uint64_t position, sequence;
    size_t slot;
-   int before;
    if (!pool) return 0;
    for (;;) {
       position = (uint64_t)retro_atomic_load_acquire_64(&pool->tail);
@@ -87,7 +86,19 @@ int xe_job_pool_run_one(xe_job_pool *pool, void *context)
       if (retro_atomic_cas_64(&pool->tail, (int64_t)position,
                (int64_t)(position + 1))) break;
    }
-   pool->run(pool->opaque, pool->payloads + slot * pool->stride, context);
+   pool->run(pool->opaque, pool->payloads + slot * pool->stride, context, position);
+   /* The callback owns the lease; it may have released/reused the slot already. */
+   return 1;
+}
+int xe_job_pool_finish(xe_job_pool *pool, uint64_t position)
+{
+   size_t slot;
+   int before;
+   if (!pool) return 0;
+   slot = (size_t)position & (pool->capacity - 1);
+   if ((uint64_t)retro_atomic_load_acquire_64(&pool->sequences[slot]) != position + 1 ||
+         (int64_t)((uint64_t)retro_atomic_load_acquire_64(&pool->tail) - position) <= 0)
+      return 0;
    retro_atomic_store_release_64(&pool->sequences[slot],
          (int64_t)(position + pool->capacity));
    retro_eventcount_notify(&pool->space);
