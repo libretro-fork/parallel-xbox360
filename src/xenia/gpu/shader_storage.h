@@ -103,12 +103,11 @@ XEPACKEDSTRUCT(ShaderStorageFileHeader, {
   uint32_t version_swapped;
 });
 
-// Validates the shader storage file header. Returns true if valid.
-inline bool ValidateShaderStorageHeader(RFILE* file,
+// Header status: 1 valid, 0 incompatible/incomplete, -1 I/O failure.
+inline int ValidateShaderStorageHeader(RFILE* file,
                                         ShaderStorageFileHeader& header_out) {
-  if (!xe_cache_file_read(&header_out, sizeof(header_out), 1, file)) {
-    return false;
-  }
+  int status = xe_cache_file_read_header(file, &header_out, sizeof(header_out));
+  if (status != 1) return status;
   return header_out.magic == kShaderStorageMagic &&
          xe::byte_swap(header_out.version_swapped) ==
              ShaderStoredHeader::kVersion;
@@ -250,8 +249,11 @@ class ShaderStorageWriter {
         xe::byte_swap(pipeline_config.version);
     PipelineStorageFileHeader pipeline_header;
     size_t pipeline_description_count = 0;
-    if (xe_cache_file_read(&pipeline_header, sizeof(pipeline_header), 1,
-              pipeline_storage_file_) &&
+    int pipeline_header_status = xe_cache_file_read_header(
+        pipeline_storage_file_, &pipeline_header, sizeof(pipeline_header));
+    if (pipeline_header_status < 0)
+      return CloseStorageFilesAfterInitializationFailure();
+    if (pipeline_header_status == 1 &&
         pipeline_header.magic == kPipelineStorageMagic &&
         pipeline_header.magic_api == pipeline_config.api_magic &&
         pipeline_header.version_swapped == pipeline_storage_version_swapped) {
@@ -323,7 +325,11 @@ class ShaderStorageWriter {
     // Load shaders from storage.
     size_t shaders_loaded = 0;
     ShaderStorageFileHeader shader_header;
-    if (ValidateShaderStorageHeader(shader_storage_file_, shader_header)) {
+    int shader_header_status =
+        ValidateShaderStorageHeader(shader_storage_file_, shader_header);
+    if (shader_header_status < 0)
+      return CloseStorageFilesAfterInitializationFailure();
+    if (shader_header_status == 1) {
       uint64_t shader_storage_valid_bytes = ReadShaderEntries(
           xe::path_to_utf8(shader_storage_file_path).c_str(),
           [&](xenos::ShaderType type, const uint32_t* ucode_dwords,

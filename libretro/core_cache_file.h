@@ -11,6 +11,9 @@ extern "C" {
  * writer starts. Existing files are never retried with a truncating open. */
 RFILE *xe_cache_file_open(const char *path);
 size_t xe_cache_file_read(void *out, size_t size, size_t count, RFILE *file);
+/* At position zero: 1 complete, 0 shorter file, -1 I/O/argument failure.
+ * A failed read must not be treated as permission to replace a cache. */
+int xe_cache_file_read_header(RFILE *file, void *out, size_t size);
 size_t xe_cache_file_write(const void *data, size_t size, size_t count, RFILE *file);
 /* Encode host words to persistent guest-endian bytes using fixed scratch. */
 int xe_cache_file_write_be32(RFILE *file, const uint32_t *words, size_t count);

@@ -163,6 +163,7 @@ int main(int argc, char **argv) {
    struct retro_vfs_interface_info info;
    unsigned char data[100], copy[102];
    unsigned i, before;
+   size_t preserved_length;
    uint32_t words[1057];
    unsigned char encoded[1057 * 4];
    RFILE *file;
@@ -208,6 +209,21 @@ int main(int argc, char **argv) {
       }
    }
    fault = 0; filestream_close(file);
+   file = xe_cache_file_open("cache://pipeline");
+   if (!file || filestream_seek(file, 0, RETRO_VFS_SEEK_POSITION_START) < 0) return 41;
+   before = truncates; preserved_length = length; fault = 7;
+   if (xe_cache_file_read_header(file, copy, 8) != -1 || truncates != before || length != preserved_length) return 42;
+   fault = 0;
+   if (filestream_seek(file, 0, RETRO_VFS_SEEK_POSITION_START) < 0 ||
+         xe_cache_file_read_header(file, copy, 8) != 1 || memcmp(copy, data, 8)) return 43;
+   if (xe_cache_file_read_header(file, copy, 8) != -1 ||
+         xe_cache_file_read_header(NULL, copy, 8) != -1) return 44;
+   if (filestream_seek(file, 0, RETRO_VFS_SEEK_POSITION_START) < 0 ||
+         xe_cache_file_read_header(file, copy, sizeof(copy)) != 0 ||
+         filestream_tell(file) != 0 || truncates != before || length != preserved_length) return 45;
+   interrupted = 1;
+   if (xe_cache_file_read_header(file, copy, 8) != 1 || memcmp(copy, data, 8)) return 46;
+   filestream_close(file);
    if (!validation_test("cache://pipeline")) return 33;
    if (!writer_file_test("cache://pipeline")) return 35;
 #ifdef XE_TEST_SHADER_STORAGE
@@ -224,7 +240,7 @@ int main(int argc, char **argv) {
    memcpy(storage + 28, &hash, 8);
    interrupted = 1;
    if (xe_test_shader_entries_path("cache://pipeline", &entries) != 40 || entries != 2) return 37;
-   before = truncates; fault = 7;
+   before = truncates; preserved_length = length; fault = 7;
    if (xe_test_shader_entries_path("cache://pipeline", &entries) != UINT64_MAX ||
          entries || truncates != before || length != 40) return 38;
    fault = 0; storage[8] ^= 1;

@@ -33,6 +33,15 @@ size_t xe_cache_file_read(void *out, size_t size, size_t count, RFILE *file) {
    return done / size;
 }
 
+int xe_cache_file_read_header(RFILE *file, void *out, size_t size) {
+   int64_t length;
+   if (!file || !out || !size || filestream_tell(file) != 0) return -1;
+   length = filestream_get_size(file);
+   if (length < 0) return -1;
+   if ((uint64_t)length < size) return 0;
+   return xe_cache_file_read(out, size, 1, file) == 1 ? 1 : -1;
+}
+
 size_t xe_cache_file_write(const void *data, size_t size, size_t count, RFILE *file) {
    size_t total, done = 0, request;
    int64_t got;
