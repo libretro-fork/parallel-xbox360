@@ -404,22 +404,20 @@ static void xenia_log(enum retro_log_level level, const char *fmt, ...) {
 // tester sends has them; the whole log goes to xenia.log in the save
 // directory. The logger writes a line in pieces - its "!> f:... " prefix, the
 // text, a newline - from its one writer thread, so they are put together here.
+#include "libretro/core_log_line.h"
 class RetroLogSink final : public xe::LogSink {
 public:
     void Write(const char *buf, size_t size) override {
-        line_.append(buf, size);
-        size_t end;
-        while ((end = line_.find('\n')) != std::string::npos) {
-            const std::string line = line_.substr(0, end);
-            line_.erase(0, end + 1);
-            if (line.size() > 1 && line[1] == '>' && (line[0] == '!' || line[0] == 'w'))
-                xenia_log(line[0] == '!' ? RETRO_LOG_ERROR : RETRO_LOG_WARN, "%s\n", line.c_str() + 3);
-        }
+        xe_log_line_write(&line_, buf, size, Emit, nullptr);
     }
     void Flush() override {}
 
 private:
-    std::string line_;
+    static void Emit(void *, int severity, const char *text, size_t size, int newline) {
+        xenia_log(severity == 2 ? RETRO_LOG_ERROR : RETRO_LOG_WARN,
+                  "%.*s%s", (int)size, text, newline ? "\n" : "");
+    }
+    xe_log_line line_ = {};
 };
 
 /* ================================================================== */
@@ -1787,12 +1785,12 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
     // Every core option's value, once, as standalone dumps its config: a
     // tester's log then says what the core was asked to do
     {
-        std::string dump;
+        xenia_log(RETRO_LOG_INFO, "core options:\n");
         for (const auto *d = option_defs_us; d->key; ++d) {
             const char *value = opt_get(d->key);
-            dump += std::string("\n  ") + d->key + " = " + (value ? value : "(default)");
+            xenia_log(RETRO_LOG_INFO, "  %s = %s\n", d->key,
+                      value ? value : "(default)");
         }
-        xenia_log(RETRO_LOG_INFO, "core options:%s\n", dump.c_str());
     }
 
     // The backend is the Graphics API option's (NNshi), not whatever video

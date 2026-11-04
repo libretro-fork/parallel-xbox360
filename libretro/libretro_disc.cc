@@ -13,6 +13,7 @@
 #include <cstring>
 #include <fstream>
 #include <mutex>
+#include <string_view>
 #include <vector>
 
 #include "xenia/base/filesystem.h"
@@ -140,7 +141,7 @@ retro_disk_control_ext_callback s_callback = {
     get_image_label,
 };
 
-bool has_extension(const std::string& path, const char* ext) {
+bool has_extension(std::string_view path, const char* ext) {
   const size_t n = std::strlen(ext);
   if (path.size() < n) return false;
   for (size_t i = 0; i < n; ++i) {
@@ -169,7 +170,7 @@ std::string load(const char* path) {
   std::vector<std::string> paths;
   if (has_extension(path, ".m3u")) {
     // One disc a line, relative to the .m3u's folder; # starts a comment.
-    const std::filesystem::path m3u = xe::to_path(std::string(path));
+    const std::filesystem::path m3u = xe::to_path(std::string_view(path));
     std::ifstream file(m3u);
     std::string line;
     while (std::getline(file, line)) {
@@ -181,7 +182,7 @@ std::string load(const char* path) {
       if (start == 0 && line.size() >= 3 &&
           std::memcmp(line.data(), "\xEF\xBB\xBF", 3) == 0)
         start = 3;
-      std::filesystem::path disc = xe::to_path(line.substr(start));
+      std::filesystem::path disc = xe::to_path(std::string_view(line).substr(start));
       if (disc.is_relative()) disc = m3u.parent_path() / disc;
       paths.push_back(xe::path_to_utf8(disc));
     }

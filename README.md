@@ -6,6 +6,8 @@ This repository follows xenia-edge and adds the libretro frontend in `libretro/`
 
 ## Downloads
 
+Frontend warning/error forwarding uses reusable fixed storage, including for fragmented and long log lines; it does not allocate strings per line.
+
 The buildbot configuration covers Windows, Linux (x86_64, arm64) and Android (arm64-v8a, x86_64). The [Actions workflow](https://github.com/libretro-fork/parallel-xbox360/actions/workflows/libretro.yml) also includes macOS on Apple Silicon. Successful runs publish build artifacts when Actions is enabled.
 
 - **Windows:** `parallel_xbox360_libretro.dll`, whose MSVC builds need the Visual C++ 2015-2022 runtime (GNU Make/MinGW builds link their compiler runtimes statically).

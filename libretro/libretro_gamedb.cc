@@ -106,10 +106,10 @@ Unlock unlock_for(const fs::path &root, uint32_t title_id) {
 static std::vector<xe::patcher::PatchSourceFile> s_files;
 static std::vector<PatchOption> s_options;
 
-static uint32_t fnv1a(const std::string &text) {
-  uint32_t h = 2166136261u;
-  for (unsigned char c : text) {
-    h ^= c;
+static uint32_t fnv1a(const char *text, size_t size, uint32_t h) {
+  size_t i;
+  for (i = 0; i < size; ++i) {
+    h ^= (unsigned char)text[i];
     h *= 16777619u;
   }
   return h;
@@ -141,8 +141,11 @@ const std::vector<PatchOption> &find_patches(uint32_t title_id,
       // Keyed by file and patch name, so an update that adds or reorders
       // patches keeps each one's setting
       // "zpatch": sorted after every other option in the .opt file (NNshi)
-      snprintf(key, sizeof(key), "xenia_zpatch_%08x",
-               fnv1a(s_files[f].filename + "/" + list[i].name));
+      uint32_t hash = fnv1a(s_files[f].filename.data(),
+                            s_files[f].filename.size(), 2166136261u);
+      hash = fnv1a("/", 1, hash);
+      hash = fnv1a(list[i].name.data(), list[i].name.size(), hash);
+      snprintf(key, sizeof(key), "xenia_zpatch_%08x", hash);
       option.key = key;
       option.label = list[i].name;
       if (s_files.size() > 1)
