@@ -22,6 +22,8 @@ storage timings, not whole-shader compilation or gameplay measurements.
 
 `run_file_span_tests.sh` checks C89 mapped ranges against an independent wide-integer oracle, destination guards, overflow, overlap and logical-tail clamping. Its C++ bridge exercises the production `MappedMemory::Slice` method and verifies that valid views borrow the exact backing bytes. Linux defaults to ASan/UBSan; MinGW uses `SANITIZER=`.
 
+`run_file_blocks_tests.sh` exercises the production C89 extent owner and reader: byte-oracle reads across gaps/overlap/fragment changes, whole-request preflight before writes, direct destination pointers, short/error/oversized callback responses, overflow, missing coverage, allocation failure and ownership cleanup. The 64-adjacent-extent control retains one metadata record and makes one backing read; transfer-time allocator counts stay unchanged. This is a component call/storage check, not a retail disk-throughput or RSS benchmark.
+
 ## Owned libretro-common primitives and codecs
 
 `core_audio_registry_test.c` checks a reader deliberately paused with a lease,

@@ -231,8 +231,6 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
       uint32_t block_index = dir_entry.data_block;
       size_t remaining_size = xe::round_up(dir_entry.length, 0x800);
 
-      size_t last_record = -1;
-      size_t last_offset = -1;
       while (remaining_size) {
         constexpr size_t BLOCK_SIZE = 0x800;
 
@@ -242,16 +240,8 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
         block_index++;
         remaining_size -= BLOCK_SIZE;
 
-        if (offset - last_offset == BLOCK_SIZE) {
-          // Consecutive, so append to last entry.
-          entry->block_list_[last_record].length += BLOCK_SIZE;
-          last_offset = offset;
-          continue;
-        }
-
-        entry->block_list_.push_back({file_index, offset, BLOCK_SIZE});
-        last_record = entry->block_list_.size() - 1;
-        last_offset = offset;
+        int added = xe_file_blocks_append(&entry->block_list_, file_index, offset, BLOCK_SIZE);
+        if (added != 1) return added < 0 ? Result::kOutOfMemory : Result::kDamagedFile;
       }
     }
   }

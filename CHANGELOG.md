@@ -4,6 +4,10 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- STFS directory and hash blocks are borrowed from the read-only mapping rather than copied. Truncated blocks and invalid parent indices fail loading with a damaged-file error; hash views are cleared before replacing the backing mapping.
+
+- STFS/SVOD extent metadata now uses owned C89 storage, coalescing adjacent ranges only within the same backing file during load. Reads preflight the full requested metadata span and mapped STFS ranges/SVOD fragment presence, then issue merged reads directly into the final buffer without staging or read-path allocation. Missing coverage fails before data reads; actual short I/O reports its valid prefix. Raw STFS block-count validation is preserved.
+
 - Hardened borrowed mapped slices and ISO/STFS reads against overflow and backing-range overreads. ISO mapping lengths now clamp to the remaining logical file. Missing SVOD fragments and short/incomplete container reads return errors rather than throwing or reporting success with incomplete data.
 
 - Raw SPIR-V instructions now keep four operand words/flags inline in C89 storage, replacing two growing vectors and combining larger payloads into one allocation. Common instructions need no operand allocation; byte-oracle, failure/overflow and sanitizer tests cover the change. The measured construction benchmark improves on MSVC and MinGW; instruction objects, larger operand growth and other IR containers still allocate.

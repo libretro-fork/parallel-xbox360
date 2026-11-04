@@ -21,6 +21,13 @@ SvodContainerFile::~SvodContainerFile() = default;
 
 void SvodContainerFile::Destroy() { delete this; }
 
+bool SvodContainerFile::CanRead(size_t offset, size_t length, size_t record_file) const {
+  auto* files = entry_->files();
+  if (!files) return false;
+  auto file = files->find(record_file);
+  return file != files->end() && bool(file->second);
+}
+
 size_t SvodContainerFile::Read(std::span<uint8_t> buffer, size_t offset,
                                size_t record_file) {
   auto* files = entry_->files();

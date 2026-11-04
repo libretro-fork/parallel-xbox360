@@ -31,6 +31,7 @@ class SvodContainerFile : public XContentContainerFile {
   X_STATUS SetLength(size_t length) override { return X_STATUS_ACCESS_DENIED; }
 
  private:
+  bool CanRead(size_t offset, size_t length, size_t record_file) const override;
   size_t Read(std::span<uint8_t> buffer, size_t offset,
               size_t record_file) override;
 

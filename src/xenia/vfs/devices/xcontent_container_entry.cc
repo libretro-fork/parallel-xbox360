@@ -16,7 +16,9 @@ XContentContainerEntry::XContentContainerEntry(Device* device, Entry* parent,
                                                const std::string_view path)
     : Entry(device, parent, path), data_offset_(0), data_size_(0), block_(0) {}
 
-XContentContainerEntry::~XContentContainerEntry() = default;
+XContentContainerEntry::~XContentContainerEntry() {
+  xe_file_blocks_free(&block_list_);
+}
 
 bool XContentContainerEntry::DeleteEntryInternal(Entry* entry) { return false; }
 

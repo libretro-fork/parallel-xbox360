@@ -35,6 +35,7 @@ class XContentContainerFile : public File {
   X_STATUS SetLength(size_t length) override { return X_STATUS_ACCESS_DENIED; }
 
  private:
+  virtual bool CanRead(size_t offset, size_t length, size_t record_file) const = 0;
   virtual size_t Read(std::span<uint8_t> buffer, size_t offset,
                       size_t record_file) = 0;
 

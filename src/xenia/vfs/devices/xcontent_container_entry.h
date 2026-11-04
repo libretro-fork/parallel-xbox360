@@ -10,7 +10,7 @@
 #ifndef XENIA_VFS_DEVICES_XCONTENT_CONTAINER_ENTRY_H_
 #define XENIA_VFS_DEVICES_XCONTENT_CONTAINER_ENTRY_H_
 
-#include <vector>
+#include "libretro/core_file_blocks.h"
 
 #include "xenia/vfs/entry.h"
 #include "xenia/vfs/file.h"
@@ -30,12 +30,9 @@ class XContentContainerEntry : public Entry {
 
   X_STATUS Open(uint32_t desired_access, File** out_file) override = 0;
 
-  struct BlockRecord {
-    size_t file;
-    size_t offset;
-    size_t length;
-  };
-  const std::vector<BlockRecord>& block_list() const { return block_list_; }
+  using BlockRecord = xe_file_block;
+  const BlockRecord* block_data() const { return block_list_.data; }
+  size_t block_count() const { return block_list_.count; }
 
  private:
   friend class StfsContainerDevice;
@@ -46,7 +43,7 @@ class XContentContainerEntry : public Entry {
   size_t data_offset_;
   size_t data_size_;
   size_t block_;
-  std::vector<BlockRecord> block_list_;
+  xe_file_blocks block_list_{};
 };
 
 }  // namespace vfs

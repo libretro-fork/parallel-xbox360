@@ -64,7 +64,7 @@ class StfsContainerDevice : public XContentContainerDevice {
 
   Result Read() override;
   std::unique_ptr<StfsContainerEntry> ReadEntry(
-      Entry* parent, const StfsDirectoryEntry* dir_entry);
+      Entry* parent, const StfsDirectoryEntry* dir_entry, Result* result);
 
   size_t BlockToOffset(uint64_t block_index) const;
   uint32_t BlockToHashBlockNumber(uint32_t block_index,
@@ -74,9 +74,9 @@ class StfsContainerDevice : public XContentContainerDevice {
   const uint8_t GetAmountOfHashLevelsToCheck(uint32_t total_block_count) const;
 
   const StfsHashEntry* GetBlockHash(uint32_t block_index);
-  void UpdateCachedHashTable(uint32_t block_index, uint8_t hash_level,
+  bool UpdateCachedHashTable(uint32_t block_index, uint8_t hash_level,
                              uint32_t& secondary_table_offset);
-  void UpdateCachedHashTables(uint32_t block_index,
+  bool UpdateCachedHashTables(uint32_t block_index,
                               uint8_t highest_hash_level_to_update,
                               uint32_t& secondary_table_offset);
   const uint8_t GetBlocksPerHashTableFromContainerHeader() const;
@@ -84,7 +84,7 @@ class StfsContainerDevice : public XContentContainerDevice {
   uint8_t blocks_per_hash_table_;
   uint32_t block_step_[2];
 
-  std::unordered_map<size_t, StfsHashTable> cached_hash_tables_;
+  std::unordered_map<size_t, const StfsHashTable*> cached_hash_tables_;
   std::unique_ptr<MappedMemory> data_;
 };
 

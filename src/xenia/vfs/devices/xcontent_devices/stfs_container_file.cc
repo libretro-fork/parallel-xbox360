@@ -22,6 +22,11 @@ StfsContainerFile::~StfsContainerFile() = default;
 
 void StfsContainerFile::Destroy() { delete this; }
 
+bool StfsContainerFile::CanRead(size_t offset, size_t length, size_t record_file) const {
+  return entry_->data() && (!length || entry_->data()->data()) &&
+      xe_file_span_range(entry_->data()->size(), 0, offset, length, nullptr);
+}
+
 size_t StfsContainerFile::Read(std::span<uint8_t> buffer, size_t offset,
                                size_t record_file) {
   if (!entry_->data() ||
