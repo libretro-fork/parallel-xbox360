@@ -960,7 +960,7 @@ bool VulkanPipelineCache::TranslateAnalyzedShader(
     }
   }
 
-  if (translation.GetOrCreateShaderModule() == VK_NULL_HANDLE) {
+  if (translation.shader_module() == VK_NULL_HANDLE) {
     return false;
   }
 
@@ -1794,12 +1794,9 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     shader_stage_tes.pNext = nullptr;
     shader_stage_tes.flags = 0;
     shader_stage_tes.stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
-    // GetOrCreateShaderModule, not shader_module(): the module is created
-    // lazily after is_translated() is set, and another thread may have
-    // translated the VS without creating the module yet, so shader_module()
-    // could still be null.
+    // Module creation completes before the translation is published.
     shader_stage_tes.module =
-        creation_arguments.vertex_shader->GetOrCreateShaderModule();
+        creation_arguments.vertex_shader->shader_module();
     if (shader_stage_tes.module == VK_NULL_HANDLE) {
       return false;
     }
@@ -1814,11 +1811,11 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     shader_stage_vertex.pNext = nullptr;
     shader_stage_vertex.flags = 0;
     shader_stage_vertex.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    // GetOrCreateShaderModule, not shader_module() - see the TES note above.
+    // The translation publication includes its immutable module.
     shader_stage_vertex.module =
         vertex_shader_override != VK_NULL_HANDLE
             ? vertex_shader_override
-            : creation_arguments.vertex_shader->GetOrCreateShaderModule();
+            : creation_arguments.vertex_shader->shader_module();
     if (shader_stage_vertex.module == VK_NULL_HANDLE) {
       return false;
     }
@@ -1859,7 +1856,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
       return false;
     }
     shader_stage_fragment.module =
-        creation_arguments.pixel_shader->GetOrCreateShaderModule();
+        creation_arguments.pixel_shader->shader_module();
     if (shader_stage_fragment.module == VK_NULL_HANDLE) {
       return false;
     }

@@ -22,7 +22,6 @@
 #include <vector>
 
 #include "xenia/apu/audio_media_player.h"
-#include "xenia/base/delegate.h"
 #include "xenia/base/exception_handler.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/game_info_database.h"
@@ -139,7 +138,6 @@ class Emulator {
   // For a launcher that picks its game after launch.
   void SetTitleName(std::string title_name) {
     title_name_ = std::move(title_name);
-    on_title_name_change();
   }
 
   // Version of the title as a string.
@@ -448,20 +446,6 @@ class Emulator {
   void WaitUntilExit();
 
  public:
-  xe::Delegate<uint32_t, const std::string_view> on_launch;
-  // A relaunch's title failed to start.
-  xe::Delegate<> on_relaunch_failed;
-  xe::Delegate<bool> on_shader_storage_initialization;
-  xe::Delegate<> on_patch_apply;
-  xe::Delegate<> on_title_name_change;
-  xe::Delegate<> on_terminate;
-  xe::Delegate<> on_exit;
-
-  // Fired as a relaunch or reset starts, while the title's threads still run.
-  xe::Delegate<> on_title_closing;
-  // Fired before Shutdown() during relaunch, while subsystems are still alive.
-  xe::Delegate<> on_before_shutdown;
-
   // Called when XamLoaderLaunchTitle requests launching a new title.
   // The callback should spawn a new process with the given parameters.
   // Parameters: host_path, launch_module, launch_flags, launch_data (hex),

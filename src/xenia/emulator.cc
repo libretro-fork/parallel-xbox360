@@ -180,10 +180,7 @@ Emulator::Emulator(const std::filesystem::path& command_line,
                    const std::filesystem::path& storage_root,
                    const std::filesystem::path& content_root,
                    const std::filesystem::path& cache_root)
-    : on_launch(),
-      on_terminate(),
-      on_exit(),
-      command_line_(command_line),
+    : command_line_(command_line),
       storage_root_(storage_root),
       content_root_(content_root),
       cache_root_(cache_root),
@@ -219,13 +216,6 @@ void Emulator::Shutdown() {
   XELOGI("Emulator::Shutdown: starting teardown");
   // Output waits must be cancellable before any dependent worker is joined.
   if (audio_system_) audio_system_->CancelPendingOutput();
-
-  // During relaunch, notify listeners before teardown so they can disconnect
-  // UI resources while subsystems are still alive. Skip during normal
-  // destructor — the UI loop may not be running.
-  if (relaunching_) {
-    on_before_shutdown();
-  }
 
   // Note that we delete things in the reverse order they were initialized.
 
@@ -489,7 +479,6 @@ X_STATUS Emulator::TerminateTitle() {
   title_id_ = std::nullopt;
   title_name_ = "";
   title_version_ = "";
-  on_terminate();
   return X_STATUS_SUCCESS;
 }
 
@@ -1430,10 +1419,9 @@ void Emulator::RelaunchTitle(const std::string& host_path,
       "RelaunchTitle: starting full in-process relaunch, target={}, module={}",
       host_path, launch_module);
 
-  // Tell WaitUntilExit not to fire on_exit when main thread dies.
+  // Keep WaitUntilExit from treating a relaunch as final termination.
   relaunching_ = true;
   if (audio_system_) audio_system_->CancelPendingOutput();
-  on_title_closing();
 
   // Stop the dispatch thread gracefully before force-terminating threads,
   // otherwise TerminateThread corrupts the CV it's blocked on.
@@ -1477,7 +1465,6 @@ void Emulator::RelaunchTitle(const std::string& host_path,
   auto fail = [this, request]() {
     if (request == relaunch_requests_.load()) {
       ResetTitle();
-      on_relaunch_failed();
     }
   };
 
@@ -1582,7 +1569,6 @@ void Emulator::ResetTitle() {
   XELOGI("ResetTitle: stopping title and resetting kernel");
 
   relaunching_ = true;
-  on_title_closing();
 
   StopTitleThreads();
 
@@ -1951,7 +1937,6 @@ void Emulator::WaitUntilExit() {
     }
   }
 
-  on_exit();
 }
 
 std::string Emulator::RemountAndResolveLaunchPath(
@@ -2319,10 +2304,8 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
   // skipped until pipelines are ready, so this is safe. By the time actual
   // gameplay starts, most cached pipelines should be compiled.
   if (graphics_system_) {
-    on_shader_storage_initialization(true);
     graphics_system_->InitializeShaderStorage(
-        cache_root_, title_id_.value(), false,
-        [this]() { on_shader_storage_initialization(false); });
+        cache_root_, title_id_.value(), false, nullptr);
   }
 
   auto main_thread = kernel_state_->LaunchModule(module);
@@ -2331,7 +2314,6 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     return X_STATUS_UNSUCCESSFUL;
   }
   main_thread_ = main_thread;
-  on_launch(title_id_.value(), title_name_);
 
   // Plugins must be loaded after calling LaunchModule() and
   // FinishLoadingUserModule() which will apply TUs and patching to the main

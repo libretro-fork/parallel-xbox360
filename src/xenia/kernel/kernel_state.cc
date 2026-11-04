@@ -71,6 +71,7 @@ KernelState::KernelState(Emulator* emulator)
       dpc_list_(emulator->memory()),
       kernel_trampoline_group_(emulator->processor()->backend()) {
   assert_null(shared_kernel_state_);
+  xe_pointer_pool_init(&idle_io_events_);
   shared_kernel_state_ = this;
   processor_ = emulator->processor();
   file_system_ = emulator->file_system();
@@ -117,12 +118,12 @@ KernelState::~KernelState() {
   kernel_modules_.clear();
 
   // The table reset would take the pooled I/O events' handles otherwise.
-  for (auto& event : idle_io_events_) {
+  while (auto* pooled = static_cast<XEvent*>(xe_pointer_pool_take(&idle_io_events_))) {
+    object_ref<XEvent> event(pooled);
     if (!event->handles().empty()) {
       event->ReleaseHandle();
     }
   }
-  idle_io_events_.clear();
 
   // Delete all objects.
   object_table_.Reset();
@@ -183,19 +184,13 @@ void KernelState::RunBlockingIo(const std::function<void()>& fn,
 }
 
 object_ref<XEvent> KernelState::AcquireIoEvent() {
-  {
-    std::lock_guard<std::mutex> lock(io_event_lock_);
-    if (!idle_io_events_.empty()) {
-      auto event = std::move(idle_io_events_.back());
-      idle_io_events_.pop_back();
-      xe_completion_pair_init(&static_cast<IoEvent*>(event.get())->completion);
-      return event;
-    }
+  if (auto* pooled = static_cast<XEvent*>(xe_pointer_pool_take(&idle_io_events_))) {
+    object_ref<XEvent> event(pooled);
+    xe_completion_pair_init(&static_cast<IoEvent*>(event.get())->completion);
+    return event;
   }
   auto event = object_ref<XEvent>(new IoEvent(this));
   event->Initialize(false, false);
-  // One signal per request would crowd the guest signals out of the ring.
-  event->set_signal_ring_quiet(true);
   xe_completion_pair_init(&static_cast<IoEvent*>(event.get())->completion);
   return event;
 }
@@ -204,8 +199,13 @@ void KernelState::ReleaseIoEvent(object_ref<XEvent> event) {
   // Neither a late Set nor an unfinished caller may touch a recycled event.
   if (!xe_completion_pair_release(&static_cast<IoEvent*>(event.get())->completion)) return;
   event->Reset();
-  std::lock_guard<std::mutex> lock(io_event_lock_);
-  idle_io_events_.push_back(std::move(event));
+  // Relinquish the reference before publication: a consumer can finish using
+  // and retire the event immediately after the successful slot CAS.
+  XEvent* pooled = event.release();
+  if (!xe_pointer_pool_put(&idle_io_events_, pooled)) {
+    event.reset(pooled);
+    if (!event->handles().empty()) event->ReleaseHandle();
+  }
 }
 
 void KernelState::ShutdownDispatchThread() {
@@ -771,7 +771,6 @@ X_RESULT KernelState::FinishLoadingUserModule(
   }
   emulator_->patcher()->ApplyPatchesForTitle(memory_, module->title_id(),
                                              module->hash());
-  emulator_->on_patch_apply();
   if (module->xex_module()) {
     module->xex_module()->Precompile();
   }

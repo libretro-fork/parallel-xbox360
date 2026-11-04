@@ -403,55 +403,8 @@ bool CooperativeWaiterFifo::HasWaiters() {
   return !waiters_.empty();
 }
 
-namespace {
-// Signal ring. Small, lock-guarded and write-mostly: it is touched once per
-// cooperative wake, which is rare next to the poll traffic it helps explain.
-constexpr size_t kSignalRingSize = 256;
-std::mutex g_signal_ring_lock;
-XObject::SignalRecord g_signal_ring[kSignalRingSize];
-uint64_t g_signal_ring_seq = 0;
-}  // namespace
-
-void XObject::RecordCooperativeSignal(XObject* object) {
-  if (object->signal_ring_quiet_) {
-    return;
-  }
-  SignalRecord rec = {};
-  // A signal can trail the handle's removal.
-  rec.handle = object->handles().empty() ? 0 : object->handle();
-  rec.type = static_cast<uint8_t>(object->type());
-  rec.uptime_ms = uint32_t(Clock::QueryGuestUptimeMillis());
-  if (XThread::IsInThread()) {
-    auto* thread = XThread::GetCurrentThread();
-    rec.signaler_thread = thread->handle();
-    if (auto* state = thread->thread_state()) {
-      rec.signaler_lr = uint32_t(state->context()->lr);
-    }
-  } else {
-    rec.signaler_thread = 0xFFFFFFFF;  // host-side signaller
-  }
-  std::lock_guard<std::mutex> lock(g_signal_ring_lock);
-  rec.seq = ++g_signal_ring_seq;
-  g_signal_ring[(rec.seq - 1) % kSignalRingSize] = rec;
-}
-
-std::vector<XObject::SignalRecord> XObject::RecentCooperativeSignals(
-    size_t max) {
-  std::vector<SignalRecord> out;
-  std::lock_guard<std::mutex> lock(g_signal_ring_lock);
-  uint64_t total = g_signal_ring_seq;
-  size_t have = size_t(total < kSignalRingSize ? total : kSignalRingSize);
-  size_t want = have < max ? have : max;
-  out.reserve(want);
-  for (size_t i = have - want; i < have; ++i) {
-    out.push_back(g_signal_ring[(total - have + i) % kSignalRingSize]);
-  }
-  return out;
-}
-
 void XObject::WakeCooperativeWaiters() {
   cooperative_signal_epoch_.fetch_add(1);
-  RecordCooperativeSignal(this);
   // Wake only the CPUs that can act on this signal instead of every CPU with
   // any blocked thread - broadcast wakes on every semaphore release were most
   // of some titles' kernel time (Eternal Sonata: 69% of CPU in futex wakes

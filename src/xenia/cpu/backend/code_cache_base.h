@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 
+#include "libretro/core_address_table.h"
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/clock.h"
@@ -273,13 +274,15 @@ class CodeCacheBase : public CodeCache {
         static_cast<uintptr_t>(kIndirectionTableBase);
 
     external_indirection_targets_ =
-        std::make_unique<uint64_t[]>(kIndirectionExternalCapacity);
+        std::make_unique<retro_atomic_64_t[]>(kIndirectionExternalCapacity);
     if (!external_indirection_targets_) {
       XELOGE("Unable to allocate external indirection table (entries={})",
              static_cast<uint32_t>(kIndirectionExternalCapacity));
       return false;
     }
-    external_indirection_target_count_.store(0, std::memory_order_relaxed);
+    static_assert(sizeof(retro_atomic_64_t) == sizeof(uint64_t));
+    xe_address_table_init(external_indirection_targets_.get(),
+                          kIndirectionExternalCapacity);
 
     // Try the preferred fixed address first; fall back to OS-chosen on fail.
     if (wx_preferred) {
@@ -344,29 +347,15 @@ class CodeCacheBase : public CodeCache {
       return static_cast<uint32_t>(host_address - code_base);
     }
 
-    std::lock_guard<std::mutex> lock(external_indirection_mutex_);
-    const uint32_t current_count =
-        external_indirection_target_count_.load(std::memory_order_relaxed);
-
-    // Table is small (dozens of entries in practice); linear scan is fine.
-    for (uint32_t i = 0; i < current_count; i++) {
-      if (external_indirection_targets_[i] == host_address) {
-        return kIndirectionExternalTag | i;
-      }
-    }
-
-    if (current_count >= kIndirectionExternalCapacity) {
-      XELOGE(
-          "Indirection external table overflow (count={} capacity={}); "
-          "falling back to default target",
-          current_count, static_cast<uint32_t>(kIndirectionExternalCapacity));
+    const size_t slot = xe_address_table_intern(
+        external_indirection_targets_.get(), kIndirectionExternalCapacity,
+        host_address);
+    if (slot == kIndirectionExternalCapacity) {
+      XELOGE("Indirection external table exhausted or invalid host target; "
+             "falling back to default target");
       return indirection_default_value_;
     }
-
-    external_indirection_targets_[current_count] = host_address;
-    external_indirection_target_count_.store(current_count + 1,
-                                             std::memory_order_release);
-    return kIndirectionExternalTag | current_count;
+    return kIndirectionExternalTag | static_cast<uint32_t>(slot);
   }
 
   void set_indirection_default_64(uint64_t default_value) {
@@ -654,9 +643,9 @@ class CodeCacheBase : public CodeCache {
   bool allow_fast_indirection_ = true;
   uintptr_t indirection_table_actual_base_ = 0;
   uintptr_t indirection_table_base_bias_ = 0;
-  std::unique_ptr<uint64_t[]> external_indirection_targets_;
-  std::atomic<uint32_t> external_indirection_target_count_{0};
-  std::mutex external_indirection_mutex_;
+  // Raw eight-byte slot layout is also consumed by generated dispatch code.
+  // Atomic interning publishes each immutable target without a cache mutex.
+  std::unique_ptr<retro_atomic_64_t[]> external_indirection_targets_;
 
  private:
   Derived& self() { return static_cast<Derived&>(*this); }

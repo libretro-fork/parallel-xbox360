@@ -4,6 +4,12 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Kernel I/O completion events use a fixed atomic ownership cache instead of a mutex and growing vector. The two-party retirement handshake still prevents reuse until both caller and worker finish; overflow releases idle event handles. Removed per-wake signal-history recording, its global mutex and clock sampling; blocked-thread diagnostics remain.
+
+- Vulkan shader modules are created by the sole translation owner before publishing translation completion. Pipeline workers read the immutable module without a lazy-creation mutex or duplicate driver calls. Preparation failure publishes an invalid translation.
+
+- External JIT target interning uses append-only C89 atomic slots instead of a cache mutex/count, preserving the raw eight-byte table layout used by generated dispatch code. Removed unused standalone lifecycle delegates and their mutexes; the core never registered listeners. Fixed common MSVC fences to work when Vulkan-Hpp removes the Windows MemoryBarrier macro.
+
 - Guest notices use a bounded C89 mailbox instead of a per-frame mutex and allocating string handoff. The frontend borrows message storage through its callback. Messages coalesce; oversized text is limited to 1023 UTF-8 bytes and a fully busy mailbox may drop a notice. Shutdown clears notices after guest workers stop.
 
 - Input polling no longer shares a mutex with guest state/keystroke reads. A C89 mailbox lends immutable pinned snapshots, keeps keystrokes in a bounded multi-reader queue and delivers atomic motor pairs on the frontend thread. Held-key repeat follows frontend progress instead of host wall time. Input handoff storage is fixed at creation; cold device-enumeration metadata remains C++. Shared Vulkan queue callbacks are installed once before title workers start, without a redundant setup mutex; required submission synchronization remains.

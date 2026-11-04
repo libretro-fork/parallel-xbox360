@@ -28,18 +28,7 @@ VulkanShader::VulkanTranslation::~VulkanTranslation() {
   }
 }
 
-VkShaderModule VulkanShader::VulkanTranslation::GetOrCreateShaderModule() {
-  if (!is_valid()) {
-    return VK_NULL_HANDLE;
-  }
-
-  // Lock for creation - multiple threads may try to create the same shader
-  std::lock_guard<std::mutex> lock(shader_module_mutex_);
-
-  if (shader_module_ != VK_NULL_HANDLE) {
-    return shader_module_;
-  }
-
+bool VulkanShader::VulkanTranslation::PrepareForPublication() {
   const ui::vulkan::VulkanDevice* const vulkan_device =
       static_cast<const VulkanShader&>(shader()).vulkan_device_;
 
@@ -58,11 +47,10 @@ VkShaderModule VulkanShader::VulkanTranslation::GetOrCreateShaderModule() {
         "VulkanShader::VulkanTranslation: Failed to create a Vulkan shader "
         "module for shader {:016X} modification {:016X}",
         shader().ucode_data_hash(), modification());
-    MakeInvalid();
-    return VK_NULL_HANDLE;
+    return false;
   }
 
-  return shader_module_;
+  return true;
 }
 
 VulkanShader::VulkanShader(const ui::vulkan::VulkanDevice* const vulkan_device,

@@ -866,6 +866,10 @@ class Shader {
     Translation(Shader& shader, uint64_t modification)
         : shader_(shader), modification_(modification) {}
 
+    // Sole translation owner prepares immutable backend state before the
+    // is_translated release publication. Readers never perform lazy creation.
+    virtual bool PrepareForPublication() { return true; }
+
     // If there was some failure during preparation on the implementation side.
     void MakeInvalid() { is_valid_.store(false, std::memory_order_release); }
 

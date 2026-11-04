@@ -775,6 +775,9 @@ bool ShaderTranslator::TranslateAnalyzedShader(
   translation.is_valid_.store(is_valid, std::memory_order_relaxed);
 
   PostTranslation();
+  if (translation.is_valid() && !translation.PrepareForPublication()) {
+    translation.MakeInvalid();
+  }
 
   // Publish last: a thread that lost TryClaimTranslation spins on
   // is_translated() and reads the validity and the binary right after, so all

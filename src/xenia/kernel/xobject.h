@@ -306,24 +306,6 @@ class XObject {
   // primitive is signaled, never before.
   void WakeCooperativeWaiters();
 
-  // Ring of the most recent cooperative wakes, dumped by the scheduler's
-  // no-progress report. A wedge is diagnosed by pairing what the parked fibers
-  // wait on against what was last signalled, and the old boot-window trace ran
-  // out of budget long before any steady-state freeze.
-  struct SignalRecord {
-    uint64_t seq;
-    uint32_t handle;
-    uint32_t signaler_thread;
-    uint32_t signaler_lr;
-    uint32_t uptime_ms;
-    uint8_t type;
-  };
-  static void RecordCooperativeSignal(XObject* object);
-  // Oldest-first, at most |max| entries.
-  static std::vector<SignalRecord> RecentCooperativeSignals(size_t max);
-  // Keeps an object signalled at I/O rates out of the ring above.
-  void set_signal_ring_quiet(bool quiet) { signal_ring_quiet_ = quiet; }
-
   // Registers |thread| as a cooperative waiter on this object and records the
   // registration on the thread, so a terminate that never unwinds the parked
   // stack can still release it.
@@ -365,7 +347,6 @@ class XObject {
 
   // Host objects are persisted through resets/etc.
   bool host_object_ = false;
-  bool signal_ring_quiet_ = false;
 
  private:
   std::atomic<int32_t> pointer_ref_count_;

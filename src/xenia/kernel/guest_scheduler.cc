@@ -1824,21 +1824,7 @@ void GuestScheduler::ReportNoProgress() {
       }
     }
   }
-  // The other half of the picture: what was actually signalled recently. A
-  // handle the fibers above wait on that never appears here names the producer
-  // that stopped; one that appears repeatedly while a waiter stays parked
-  // points at the wake being lost instead of never sent.
-  auto signals = XObject::RecentCooperativeSignals(64);
-  if (signals.empty()) {
-    XELOGW("  recent cooperative signals: none recorded");
-    return;
-  }
-  XELOGW("  last {} cooperative signals (oldest first):", signals.size());
-  for (const auto& rec : signals) {
-    XELOGW("    #{} handle={:08X} type={} by_tid={:08X} lr={:08X} uptime_ms={}",
-           rec.seq, rec.handle, uint32_t(rec.type), rec.signaler_thread,
-           rec.signaler_lr, rec.uptime_ms);
-  }
+
 }
 
 void GuestScheduler::WatchdogLoop() {

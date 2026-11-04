@@ -20,6 +20,7 @@
 #include <mutex>
 #include <vector>
 
+#include "libretro/core_pointer_pool.h"
 #include "xenia/base/bit_map.h"
 #include "xenia/cpu/backend/backend.h"
 #include "xenia/cpu/export_resolver.h"
@@ -419,10 +420,9 @@ class KernelState {
   vfs::VirtualFileSystem* file_system_;
   std::unique_ptr<xam::XamState> xam_state_;
   std::unique_ptr<GuestScheduler> guest_scheduler_;
-  // Pooled completion events for RunBlockingIo so a request creates no kernel
-  // object.
-  std::mutex io_event_lock_;
-  std::vector<object_ref<XEvent>> idle_io_events_;
+  // Bounded idle ownership cache. Overflow events release their handles; the
+  // two-party completion handshake must finish before publication here.
+  xe_pointer_pool idle_io_events_;
   std::unique_ptr<SystemManagementController> smc_;
   std::unique_ptr<XmpVolumePatch> xmp_volume_patch_;
   std::unique_ptr<XConfig> xconfig_;

@@ -226,6 +226,8 @@ The CI workflow `.github/workflows/libretro.yml` builds every platform, includin
 
 STFS directory and hash-table payloads borrow the read-only container mapping for the device lifetime. Directory/hash bounds and parent indices are checked before access; hash cache metadata still uses an existing C++ container during loading.
 
+Kernel completion-event reuse uses 64 fixed atomic ownership slots. A completed event enters the cache only after caller and worker retire; saturation releases its idle handle instead of growing storage. Cache misses still create a kernel event. The per-wake diagnostic signal-history ring and unused standalone lifecycle delegates are removed. Vulkan shader-module creation finishes before translation publication; readers borrow the immutable module. External JIT target interning uses append-only atomic eight-byte slots. Other kernel, GPU, APU, base and CPU synchronization remains under audit.
+
 ## License
 
 BSD, as Xenia. See [LICENSE](LICENSE).
