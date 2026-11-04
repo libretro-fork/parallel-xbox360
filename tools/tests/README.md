@@ -1129,6 +1129,26 @@ relaxes only the existing common rtime.c function-pointer-cast warning.
 Android NDK r27d also compiles the NEON converter as strict C89 for ARM64.
 These tests do not prove loaded-game audio or native ARM64 execution.
 
+### Bespoke Vulkan texture allocator
+
+run_gpu_spans_tests.sh checks 300,000 operations against an independent byte
+occupancy model: alignment, full coverage, coalescing, fixed metadata exhaustion,
+64-bit overflow, and stale/duplicate/cross-arena/modified handles.
+run_vk_heap_tests.sh uses a stub Vulkan driver to check cold warming, 10,000
+warm image/buffer cycles without backing growth, optimal/linear separation,
+required dedicated-allocation chains, oversized-block reuse, restricted memory
+types, budget refusal and image/buffer bind-failure rollback. Both default to
+Linux ASan/UBSan; SANITIZER= is used under MinGW. New helper/driver code builds
+as strict C89; Khronos headers are treated as system headers under GCC.
+
+core_vk_heap_device_test.c uses an actual Vulkan loader/device to create and
+destroy 3,200 image/buffer pairs with the production allocator. It submits no
+GPU commands, creates no window and adds no GPU wait. MSVC uses /TC /MD /O2
+/W4 /WX; link the span/heap C files and device test (dl on Linux). These checks
+cover host allocation/binding and teardown, not retail drawing, resources in
+flight or title-specific RSS/VRAM/performance. Existing core lifecycle fixtures
+still exercise Vulkan/D3D12 negotiation and unload separately.
+
 ### GPU resource retirement
 
 Both Vulkan and D3D12 use this shared C89 retirement queue. D3D12 retains resource descriptors until their last submitted GPU use completes and clears its CPU binding snapshot before retiring orphan targets. The queue tests cover lifecycle policy; retail rendering and peak VRAM require gameplay validation.

@@ -19,7 +19,7 @@
 #include "xenia/gpu/texture_cache.h"
 #include "xenia/gpu/vulkan/vulkan_shader.h"
 #include "xenia/gpu/vulkan/vulkan_shared_memory.h"
-#include "xenia/ui/vulkan/vulkan_mem_alloc.h"
+#include "xenia/ui/vulkan/vulkan_texture_memory.h"
 
 namespace xe {
 namespace gpu {
@@ -147,7 +147,7 @@ class VulkanTextureCache final : public TextureCache {
   // Simple non-overlapping buffer (fallback when sparse binding unavailable)
   struct ScaledResolveBuffer {
     VkBuffer buffer = VK_NULL_HANDLE;
-    VmaAllocation allocation = VK_NULL_HANDLE;
+    xe_vk_allocation allocation = {};
     uint64_t size = 0;
     uint64_t range_start_scaled = 0;
     uint64_t range_length_scaled = 0;
@@ -287,7 +287,7 @@ class VulkanTextureCache final : public TextureCache {
     // track_usage: if false, texture won't participate in LRU cache eviction.
     explicit VulkanTexture(VulkanTextureCache& texture_cache,
                            const TextureKey& key, VkImage image,
-                           VmaAllocation allocation, bool track_usage = true);
+                           xe_vk_allocation allocation, bool track_usage = true);
     ~VulkanTexture();
 
     VkImage image() const { return image_; }
@@ -361,7 +361,7 @@ class VulkanTextureCache final : public TextureCache {
     }
 
     VkImage image_;
-    VmaAllocation allocation_;
+    xe_vk_allocation allocation_;
 
     Usage usage_ = Usage::kUndefined;
 
@@ -444,11 +444,11 @@ class VulkanTextureCache final : public TextureCache {
   VulkanCommandProcessor& command_processor_;
   VkPipelineStageFlags guest_shader_pipeline_stages_;
 
-  // Using the Vulkan Memory Allocator because texture count in games is
+  // Using the C89 texture-memory heap because texture count in games is
   // naturally pretty much unbounded, while Vulkan implementations, especially
   // on Windows versions before 10, may have an allocation count limit as low as
   // 4096.
-  VmaAllocator vma_allocator_ = VK_NULL_HANDLE;
+  xe_vk_heap* memory_heap_ = nullptr;
 
   static const HostFormatPair kBestHostFormats[64];
   static const HostFormatPair kHostFormatGBGRUnaligned;

@@ -24,7 +24,7 @@
 #include "xenia/gpu/texture_util.h"
 #include "xenia/gpu/vulkan/deferred_command_buffer.h"
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
-#include "xenia/ui/vulkan/vulkan_mem_alloc.h"
+#include "xenia/ui/vulkan/vulkan_texture_memory.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
 DECLARE_bool(tiled_shared_memory);
@@ -502,25 +502,27 @@ VulkanTextureCache::~VulkanTextureCache() {
         device, shared_memory_persistent_descriptor_pool_, nullptr);
   }
 
-  // Textures memory is allocated using the Vulkan Memory Allocator, destroy all
-  // textures before destroying VMA.
+  // Textures memory is allocated using the C89 texture-memory heap, destroy all
+  // textures before destroying the heap.
   DestroyAllTextures(true);
 
   // Clean up sparse scaled resolve resources (heaps and sparse buffers)
   ShutdownSparseScaledResolve();
 
-  // Clean up simple scaled resolve buffers before destroying VMA
+  // Clean up simple scaled resolve buffers before destroying the heap
   // The command processor should ensure all GPU operations are complete
   // before the texture cache is destroyed
   for (ScaledResolveBuffer& buffer : scaled_resolve_buffers_) {
     if (buffer.buffer != VK_NULL_HANDLE) {
-      vmaDestroyBuffer(vma_allocator_, buffer.buffer, buffer.allocation);
+      xe_vk_heap_destroy_buffer(memory_heap_, buffer.buffer, &buffer.allocation);
     }
   }
   scaled_resolve_buffers_.clear();
 
-  if (vma_allocator_ != VK_NULL_HANDLE) {
-    vmaDestroyAllocator(vma_allocator_);
+  if (memory_heap_ != VK_NULL_HANDLE) {
+    const bool destroyed = xe_vk_heap_destroy(memory_heap_) != 0;
+    assert_true(destroyed);
+    if (destroyed) memory_heap_ = nullptr;
   }
 }
 
@@ -1201,13 +1203,9 @@ std::unique_ptr<TextureCache::Texture> VulkanTextureCache::CreateTexture(
     image_format_list_create_info.pViewFormats = formats;
   }
 
-  VmaAllocationCreateInfo allocation_create_info = {};
-  allocation_create_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-
   VkImage image;
-  VmaAllocation allocation;
-  if (vmaCreateImage(vma_allocator_, &image_create_info,
-                     &allocation_create_info, &image, &allocation, nullptr)) {
+  xe_vk_allocation allocation;
+  if (xe_vk_heap_create_image(memory_heap_, &image_create_info, &image, &allocation)) {
     return nullptr;
   }
 
@@ -2215,14 +2213,11 @@ void VulkanTextureCache::UpdateTextureBindingsImpl(
 
 VulkanTextureCache::VulkanTexture::VulkanTexture(
     VulkanTextureCache& texture_cache, const TextureKey& key, VkImage image,
-    VmaAllocation allocation, bool track_usage)
+    xe_vk_allocation allocation, bool track_usage)
     : Texture(texture_cache, key, track_usage),
       image_(image),
       allocation_(allocation) {
-  VmaAllocationInfo allocation_info;
-  vmaGetAllocationInfo(texture_cache.vma_allocator_, allocation_,
-                       &allocation_info);
-  SetHostMemoryUsage(uint64_t(allocation_info.size));
+  SetHostMemoryUsage(uint64_t(allocation_.span.size));
 }
 
 VulkanTextureCache::VulkanTexture::~VulkanTexture() {
@@ -2244,7 +2239,7 @@ VulkanTextureCache::VulkanTexture::~VulkanTexture() {
     dfn.vkDestroyImageView(device, image_view_3d_as_2d_signed_, nullptr);
   }
   // texture_3d_as_2d_ is a unique_ptr and will destroy its image/allocation.
-  vmaDestroyImage(vulkan_texture_cache.vma_allocator_, image_, allocation_);
+  xe_vk_heap_destroy_image(vulkan_texture_cache.memory_heap_, image_, &allocation_);
 }
 
 VkImageView VulkanTextureCache::VulkanTexture::GetView(bool is_signed,
@@ -2385,14 +2380,10 @@ VkImageView VulkanTextureCache::VulkanTexture::GetOrCreate3DAs2DImageView(
     image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    VmaAllocationCreateInfo allocation_create_info = {};
-    allocation_create_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-
     VkImage image_2d;
-    VmaAllocation allocation_2d;
-    if (vmaCreateImage(vulkan_texture_cache.vma_allocator_, &image_create_info,
-                       &allocation_create_info, &image_2d, &allocation_2d,
-                       nullptr) != VK_SUCCESS) {
+    xe_vk_allocation allocation_2d;
+    if (xe_vk_heap_create_image(vulkan_texture_cache.memory_heap_, &image_create_info,
+                       &image_2d, &allocation_2d) != VK_SUCCESS) {
       XELOGE("VulkanTexture: Failed to create 3D-as-2D image");
       return VK_NULL_HANDLE;
     }
@@ -2495,10 +2486,10 @@ bool VulkanTextureCache::Initialize() {
   const ui::vulkan::VulkanDevice::Properties& device_properties =
       vulkan_device->properties();
 
-  // Vulkan Memory Allocator.
+  // C89 texture-memory heap.
 
-  vma_allocator_ = ui::vulkan::CreateVmaAllocator(vulkan_device, true);
-  if (vma_allocator_ == VK_NULL_HANDLE) {
+  memory_heap_ = ui::vulkan::CreateTextureMemoryHeap(vulkan_device);
+  if (memory_heap_ == VK_NULL_HANDLE) {
     return false;
   }
 
@@ -3850,12 +3841,8 @@ bool VulkanTextureCache::EnsureScaledResolveMemoryCommitted(
         buffer_create_info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
         buffer_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        VmaAllocationCreateInfo allocation_create_info = {};
-        allocation_create_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-
-        VkResult result = vmaCreateBuffer(
-            vma_allocator_, &buffer_create_info, &allocation_create_info,
-            &new_buffer.buffer, &new_buffer.allocation, nullptr);
+        VkResult result = xe_vk_heap_create_buffer(
+            memory_heap_, &buffer_create_info, &new_buffer.buffer, &new_buffer.allocation);
 
         if (result != VK_SUCCESS) {
           XELOGE(

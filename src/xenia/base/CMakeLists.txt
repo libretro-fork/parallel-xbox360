@@ -11,9 +11,12 @@ if(_base_exclude AND _base_srcs)
   set_target_properties(xenia-base PROPERTIES SOURCES "${_base_srcs}")
 endif()
 target_link_libraries(xenia-base PUBLIC fmt retro-common)
+target_include_directories(xenia-base PRIVATE "${PROJECT_SOURCE_DIR}/third_party/Vulkan-Headers/include")
 target_sources(xenia-base PRIVATE "${PROJECT_SOURCE_DIR}/libretro/core_vblank.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_socket_worker.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_gpu_retire.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_gpu_spans.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_vk_heap.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_pause_gate.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_cache_file.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_fiber_context.c"

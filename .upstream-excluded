@@ -247,3 +247,6 @@ src/xenia/ui/windowed_app_context.cc
 src/xenia/ui/windowed_app_context.h
 src/xenia/ui/windowed_app_context_android.cc
 src/xenia/ui/windowed_app_context_android.h
+third_party/VulkanMemoryAllocator
+src/xenia/ui/vulkan/vulkan_mem_alloc.cc
+src/xenia/ui/vulkan/vulkan_mem_alloc.h
