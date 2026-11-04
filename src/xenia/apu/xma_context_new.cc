@@ -214,18 +214,11 @@ bool XmaContextNew::Work() {
     }
   }
 
-  if (initial_data.IsAnyInputBufferValid()) {
-    data.output_buffer_write_offset =
-        output_rb.write_offset() / kOutputBytesPerBlock;
-
-  } else {
-    // NFS: Carbon and NFS: MW use write_offset as a stall detector
-    // make sure that they are equal if we're starved on input.
-    if (data.output_buffer_write_offset != data.output_buffer_read_offset) {
-      data.output_buffer_write_offset = data.output_buffer_read_offset;
-      data.output_buffer_valid = 0;
-    }
-  }
+  // Publish only actual decoder progress. Input starvation does not consume
+  // PCM: moving this cursor to the guest read cursor would discard unread
+  // samples, including a final frame drained after its input buffer expired.
+  data.output_buffer_write_offset =
+      output_rb.write_offset() / kOutputBytesPerBlock;
 
   // Signal the game that the output buffer is full
   if (remaining_subframe_blocks_in_output_buffer_ == 0 && output_rb.empty()) {
@@ -1028,8 +1021,9 @@ void XmaContextNew::StoreContextMerged(const XMA_CONTEXT_DATA& data,
   // DWORD 4: decoder owns current_buffer
   fresh.current_buffer = data.current_buffer;
 
-  // DWORD 9: decoder owns output_buffer_read_offset (reset by ClearLocked)
-  fresh.output_buffer_read_offset = data.output_buffer_read_offset;
+  // DWORD 9 belongs to the guest PCM consumer. Work must preserve its
+  // latest read cursor; Clear writes its reset through the separate path.
+  // Restoring the decode snapshot here can undo consumption during decode.
 
   fresh.Store(context_ptr);
 }

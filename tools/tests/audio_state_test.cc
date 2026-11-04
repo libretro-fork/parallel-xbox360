@@ -17,6 +17,38 @@ DECLARE_bool(use_dedicated_xma_thread);
 using xe::X_STATUS;
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL %u\n", unsigned(__LINE__)); std::abort(); } } while (0)
 
+namespace xe { namespace apu {
+struct XmaContextWritebackTest {
+  static bool run() {
+    XmaContextNew decoder;
+    uint8_t storage[sizeof(XMA_CONTEXT_DATA)] = {};
+    unsigned cursor;
+    XMA_CONTEXT_DATA initial(storage), decoded(storage), guest(storage);
+    initial.output_buffer_read_offset=0;
+    initial.output_buffer_write_offset=1;
+    initial.input_buffer_0_valid=1;
+    initial.output_buffer_valid=1;
+    decoded=initial;
+    decoded.output_buffer_write_offset=7;
+    decoded.input_buffer_0_valid=0;
+    for (cursor=0;cursor<32;++cursor) {
+      XMA_CONTEXT_DATA actual(storage);
+      guest=initial;
+      guest.output_buffer_read_offset=cursor;
+      guest.input_buffer_1_packet_count=123;
+      guest.Store(storage);
+      decoder.StoreContextMerged(decoded,initial,storage);
+      actual=XMA_CONTEXT_DATA(storage);
+      if (actual.output_buffer_read_offset!=cursor ||
+          actual.input_buffer_1_packet_count!=123 ||
+          actual.output_buffer_write_offset!=7 || actual.input_buffer_0_valid)
+        return false;
+    }
+    return true;
+  }
+};
+}}
+
 /* The extra reference observes ownership without instrumenting release code. */
 template<class Context> class observed_context : public Context {
  public:
@@ -117,6 +149,10 @@ template<class Context> static void check_packet_release() {
 }
 
 int main() {
+  if (!xe::apu::XmaContextWritebackTest::run()) {
+    std::puts("FAIL: XMA writeback lost guest PCM read cursor"); return 1;
+  }
+  std::puts("PASS: XMA writeback preserves all 32 guest read cursors and fresh input metadata");
   xe::InitializeLogging("audio_state_test");
   xe::Profiler::Initialize();
   check_decode<xe::apu::XmaContextNew>();

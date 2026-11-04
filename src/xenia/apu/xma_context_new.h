@@ -65,6 +65,8 @@ class XmaContextNew : public XmaContext {
   void Release();
 
  private:
+  friend struct XmaContextWritebackTest;
+  friend struct XmaContextStreamTest;
   void ClearLocked(XMA_CONTEXT_DATA* data);
   static void SwapInputBuffer(XMA_CONTEXT_DATA* data);
   // Convert sampling rate from ID to frequency.
