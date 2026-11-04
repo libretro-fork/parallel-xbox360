@@ -11,14 +11,13 @@
 #define XENIA_GPU_GRAPHICS_SYSTEM_H_
 
 #include <atomic>
-#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <thread>
 
+#include "libretro/core_vblank.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/gpu/register_file.h"
 #include "xenia/kernel/xthread.h"
@@ -81,7 +80,7 @@ class GraphicsSystem {
                          bool with_presentation);
   virtual void Shutdown();
   // Stops the vblank thread. Idempotent, and Shutdown does it too.
-  void StopFrameLimiter();
+  void StopVblankWorker();
 
   // May be called from any thread any number of times, even during recovery
   // from a device loss.
@@ -130,13 +129,8 @@ class GraphicsSystem {
     scaled_aspect_y_ = y;
   };
 
-#ifdef XENIA_LIBRETRO
-  // retro_run fires the guest's vblank (with the refresh cap on): one frontend
-  // frame is one guest vblank. The frame limiter's own 60 Hz timer drifted
-  // against RetroArch's, so now and then two guest frames fell into one
-  // frontend frame and none into the next - doubled frames (NNshi).
+  // Queue guest interrupts from frontend calls; no independent frame timer.
   void LibretroVblank();
-#endif
 
  protected:
   GraphicsSystem();
@@ -161,8 +155,7 @@ class GraphicsSystem {
   uint32_t interrupt_callback_ = 0;
   uint32_t interrupt_callback_data_ = 0;
 
-  std::atomic<bool> frame_limiter_worker_running_;
-  kernel::object_ref<kernel::XHostThread> frame_limiter_worker_thread_;
+  kernel::object_ref<kernel::XHostThread> vblank_worker_thread_;
 
   // Anchors for synthesizing D1MODE_V_COUNTER. last_vblank_guest_tick_ is
   // the guest tick at the most recent MarkVblank; vblank_period_ticks_ is
@@ -176,12 +169,7 @@ class GraphicsSystem {
 
   bool paused_ = false;
 
-#ifdef XENIA_LIBRETRO
-  std::mutex libretro_vblank_mutex_;
-  std::condition_variable libretro_vblank_cv_;
-  uint32_t libretro_vblanks_pending_ = 0;
-  std::atomic<bool> libretro_vblank_driven_{false};
-#endif
+  xe_vblank_queue* vblank_queue_ = nullptr;
 
   uint32_t scaled_aspect_x_ = 0;
   uint32_t scaled_aspect_y_ = 0;

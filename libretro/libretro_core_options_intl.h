@@ -1,4 +1,4 @@
-﻿#ifndef LIBRETRO_CORE_OPTIONS_INTL_H__
+#ifndef LIBRETRO_CORE_OPTIONS_INTL_H__
 #define LIBRETRO_CORE_OPTIONS_INTL_H__
 
 #if defined(_MSC_VER) && (_MSC_VER >= 1500 && _MSC_VER < 1900)
@@ -97,8 +97,6 @@ extern "C" {
 #define XENIA_DISPLAY_REFRESH_INFO_0_AR NULL
 #define OPTION_VAL_60_AR NULL
 #define OPTION_VAL_50_AR NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_AR NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_AR NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_AR NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_AR NULL
 #define OPTION_VAL_ENABLED_AR NULL
@@ -461,20 +459,6 @@ struct retro_core_option_v2_definition option_defs_ar[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_AR,
-        XENIA_WAIT_FOR_FRAME_LABEL_AR,
-        XENIA_WAIT_FOR_FRAME_INFO_0_AR,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -1133,8 +1117,6 @@ struct retro_core_options_v2 options_ar = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_AST NULL
 #define OPTION_VAL_60_AST "NTSC (60 Hz)"
 #define OPTION_VAL_50_AST "PAL (50 Hz)"
-#define XENIA_WAIT_FOR_FRAME_LABEL_AST NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_AST NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_AST NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_AST NULL
 #define OPTION_VAL_ENABLED_AST NULL
@@ -1497,20 +1479,6 @@ struct retro_core_option_v2_definition option_defs_ast[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_AST,
-        XENIA_WAIT_FOR_FRAME_LABEL_AST,
-        XENIA_WAIT_FOR_FRAME_INFO_0_AST,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -2169,8 +2137,6 @@ struct retro_core_options_v2 options_ast = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_BE NULL
 #define OPTION_VAL_60_BE "NTSC (60 Гц)"
 #define OPTION_VAL_50_BE "PAL (50 Гц)"
-#define XENIA_WAIT_FOR_FRAME_LABEL_BE NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_BE NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_BE NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_BE NULL
 #define OPTION_VAL_ENABLED_BE NULL
@@ -2533,20 +2499,6 @@ struct retro_core_option_v2_definition option_defs_be[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_BE,
-        XENIA_WAIT_FOR_FRAME_LABEL_BE,
-        XENIA_WAIT_FOR_FRAME_INFO_0_BE,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -3205,8 +3157,6 @@ struct retro_core_options_v2 options_be = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_BG NULL
 #define OPTION_VAL_60_BG NULL
 #define OPTION_VAL_50_BG NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_BG NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_BG NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_BG NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_BG NULL
 #define OPTION_VAL_ENABLED_BG NULL
@@ -3569,20 +3519,6 @@ struct retro_core_option_v2_definition option_defs_bg[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_BG,
-        XENIA_WAIT_FOR_FRAME_LABEL_BG,
-        XENIA_WAIT_FOR_FRAME_INFO_0_BG,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -4241,8 +4177,6 @@ struct retro_core_options_v2 options_bg = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_CA "La freqüència de refresc del televisor en què el joc «creu» que s'està executant (una opció disponible en la versió autònoma). NTSC (60 Hz) correspon a la consola; PAL (50 Hz) correspon a un televisor PAL: els jocs funcionen a 50 fotogrames per segon. L'opció «Unlock Framerate» (desbloqueig de la taxa de fotogrames) anul·la aquest paràmetre."
 #define OPTION_VAL_60_CA "NTSC (60 Hz)"
 #define OPTION_VAL_50_CA "PAL (50 Hz)"
-#define XENIA_WAIT_FOR_FRAME_LABEL_CA "[Llibret] Espera de fotograma"
-#define XENIA_WAIT_FOR_FRAME_INFO_0_CA "Elimina 1 fotograma de retard d'entrada, a costa, possiblement, que el joc pateixi petits salts. Recomanat per a maquinari potent i/o jocs lleugers."
 #define XENIA_UNLOCK_FRAMERATE_LABEL_CA "Desbloqueja la taxa de fotogrames"
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_CA "Només per a jocs la lògica dels quals no està lligada a la taxa de fotogrames; en cas contrari, funcionen massa ràpid. Jocs a 30 fps executats a 60: dos intervals de supressió vertical (*vblanks*) per cada fotograma que mostra RetroArch. Jocs a 60 fps executats a 120: el nucli funciona a 120 fotogrames per segon (cal configurar RetroArch i la pantalla per a això). Sense límit (*uncapped*): intervals de supressió vertical tan ràpids com sigui possible. Jocs llistats: el sistema de taxes de Xenia-Edge (especificat a `xenia_framerate_unlock.txt`) s'aplica al joc en execució, si hi apareix. Es pot modificar mentre el joc està en marxa."
 #define OPTION_VAL_ENABLED_CA "Jocs de la llista"
@@ -4605,20 +4539,6 @@ struct retro_core_option_v2_definition option_defs_ca[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_CA,
-        XENIA_WAIT_FOR_FRAME_LABEL_CA,
-        XENIA_WAIT_FOR_FRAME_INFO_0_CA,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -5277,8 +5197,6 @@ struct retro_core_options_v2 options_ca = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_CHS "游戏识别到的电视刷新率（效果对应独立版选项）。NTSC (60 Hz) 为原生主机设置；PAL (50 Hz) 对应 PAL 制式电视（游戏以每秒 50 帧运行）。“解锁帧率”选项开启时将覆盖此设置。"
 #define OPTION_VAL_60_CHS "NTSC（60Hz）"
 #define OPTION_VAL_50_CHS "PAL（50Hz）"
-#define XENIA_WAIT_FOR_FRAME_LABEL_CHS "[Libretro] 帧等待"
-#define XENIA_WAIT_FOR_FRAME_INFO_0_CHS "减少 1 帧的输入延迟，但可能会引发游戏卡顿。建议在强劲的硬件配置或运行轻量级游戏时开启。"
 #define XENIA_UNLOCK_FRAMERATE_LABEL_CHS "解锁帧率"
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_CHS "仅适用于逻辑不与帧率绑定的游戏，否则会导致游戏运行加速。“30 帧游戏提升至 60 帧”：RetroArch 每渲染一帧插入两次场消隐 (vblank)；“60 帧游戏提升至 120 帧”：核心以每秒 120 帧运行（需同步配置好 RetroArch 及显示器）；“不设上限”：场消隐触发速度尽可能达到极值；“列表中列出的游戏”：按 system/Xenia-Edge/xenia_framerate_unlock.txt 中指定的帧率运行（若包含该游戏）。可在游戏运行期间修改。"
 #define OPTION_VAL_ENABLED_CHS "列表中列出的游戏"
@@ -5641,20 +5559,6 @@ struct retro_core_option_v2_definition option_defs_chs[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_CHS,
-        XENIA_WAIT_FOR_FRAME_LABEL_CHS,
-        XENIA_WAIT_FOR_FRAME_INFO_0_CHS,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -6313,8 +6217,6 @@ struct retro_core_options_v2 options_chs = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_CHT NULL
 #define OPTION_VAL_60_CHT NULL
 #define OPTION_VAL_50_CHT NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_CHT NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_CHT NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_CHT NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_CHT NULL
 #define OPTION_VAL_ENABLED_CHT NULL
@@ -6677,20 +6579,6 @@ struct retro_core_option_v2_definition option_defs_cht[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_CHT,
-        XENIA_WAIT_FOR_FRAME_LABEL_CHT,
-        XENIA_WAIT_FOR_FRAME_INFO_0_CHT,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -7349,8 +7237,6 @@ struct retro_core_options_v2 options_cht = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_CS NULL
 #define OPTION_VAL_60_CS NULL
 #define OPTION_VAL_50_CS NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_CS NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_CS NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_CS NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_CS NULL
 #define OPTION_VAL_ENABLED_CS NULL
@@ -7713,20 +7599,6 @@ struct retro_core_option_v2_definition option_defs_cs[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_CS,
-        XENIA_WAIT_FOR_FRAME_LABEL_CS,
-        XENIA_WAIT_FOR_FRAME_INFO_0_CS,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -8385,8 +8257,6 @@ struct retro_core_options_v2 options_cs = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_CY NULL
 #define OPTION_VAL_60_CY NULL
 #define OPTION_VAL_50_CY NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_CY NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_CY NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_CY NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_CY NULL
 #define OPTION_VAL_ENABLED_CY NULL
@@ -8749,20 +8619,6 @@ struct retro_core_option_v2_definition option_defs_cy[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_CY,
-        XENIA_WAIT_FOR_FRAME_LABEL_CY,
-        XENIA_WAIT_FOR_FRAME_INFO_0_CY,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -9421,8 +9277,6 @@ struct retro_core_options_v2 options_cy = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_DA NULL
 #define OPTION_VAL_60_DA NULL
 #define OPTION_VAL_50_DA NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_DA NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_DA NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_DA NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_DA NULL
 #define OPTION_VAL_ENABLED_DA NULL
@@ -9785,20 +9639,6 @@ struct retro_core_option_v2_definition option_defs_da[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_DA,
-        XENIA_WAIT_FOR_FRAME_LABEL_DA,
-        XENIA_WAIT_FOR_FRAME_INFO_0_DA,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -10457,8 +10297,6 @@ struct retro_core_options_v2 options_da = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_DE "Bildwiederholfrequenz des Fernsehers, an dem das Spiel laut eigener Annahme läuft, wie bei der entsprechenden Option in der Standalone-Version. NTSC (60 Hz) entspricht der Konsole. PAL (50 Hz) entspricht einem PAL-Fernseher: Spiele laufen mit 50 Frames pro Sekunde. Bildrate entsperren setzt diese Einstellung außer Kraft."
 #define OPTION_VAL_60_DE "NTSC (60 Hz)"
 #define OPTION_VAL_50_DE "PAL (50 Hz)"
-#define XENIA_WAIT_FOR_FRAME_LABEL_DE "[Libretro] Auf Frame warten"
-#define XENIA_WAIT_FOR_FRAME_INFO_0_DE "Verringert die Eingabelatenz um 1 Frame, kann aber zu Rucklern im Spiel führen. Empfohlen für leistungsstarke Hardware und/oder wenig anspruchsvolle Spiele."
 #define XENIA_UNLOCK_FRAMERATE_LABEL_DE "Bildrate entsperren"
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_DE "Nur bei Spielen verwenden, deren Spiellogik nicht an die Bildrate gekoppelt ist; andernfalls laufen sie zu schnell. Bei 30-fps-Spielen mit 60 fps: zwei VBlanks pro von RetroArch angezeigtem Frame. Bei 60-fps-Spielen mit 120 fps: Der Core läuft mit 120 Frames pro Sekunde (RetroArch und Bildschirm entsprechend einstellen). Unbegrenzt: VBlanks so schnell wie möglich. Bei aufgelisteten Spielen wird dem laufenden Spiel die in system/Xenia-Edge/xenia_framerate_unlock.txt angegebene Bildrate vorgegeben. Lässt sich während des Spiels ändern."
 #define OPTION_VAL_ENABLED_DE "Aufgeführte Spiele"
@@ -10821,20 +10659,6 @@ struct retro_core_option_v2_definition option_defs_de[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_DE,
-        XENIA_WAIT_FOR_FRAME_LABEL_DE,
-        XENIA_WAIT_FOR_FRAME_INFO_0_DE,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -11493,8 +11317,6 @@ struct retro_core_options_v2 options_de = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_EL NULL
 #define OPTION_VAL_60_EL NULL
 #define OPTION_VAL_50_EL NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_EL NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_EL NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_EL NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_EL NULL
 #define OPTION_VAL_ENABLED_EL NULL
@@ -11857,20 +11679,6 @@ struct retro_core_option_v2_definition option_defs_el[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_EL,
-        XENIA_WAIT_FOR_FRAME_LABEL_EL,
-        XENIA_WAIT_FOR_FRAME_INFO_0_EL,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -12529,8 +12337,6 @@ struct retro_core_options_v2 options_el = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_EN NULL
 #define OPTION_VAL_60_EN NULL
 #define OPTION_VAL_50_EN NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_EN NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_EN NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_EN NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_EN NULL
 #define OPTION_VAL_ENABLED_EN NULL
@@ -12893,20 +12699,6 @@ struct retro_core_option_v2_definition option_defs_en[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_EN,
-        XENIA_WAIT_FOR_FRAME_LABEL_EN,
-        XENIA_WAIT_FOR_FRAME_INFO_0_EN,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -13565,8 +13357,6 @@ struct retro_core_options_v2 options_en = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_EO NULL
 #define OPTION_VAL_60_EO NULL
 #define OPTION_VAL_50_EO NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_EO NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_EO NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_EO NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_EO NULL
 #define OPTION_VAL_ENABLED_EO NULL
@@ -13929,20 +13719,6 @@ struct retro_core_option_v2_definition option_defs_eo[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_EO,
-        XENIA_WAIT_FOR_FRAME_LABEL_EO,
-        XENIA_WAIT_FOR_FRAME_INFO_0_EO,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -14601,8 +14377,6 @@ struct retro_core_options_v2 options_eo = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_ES "La frecuencia de actualización de la pantalla que el juego creerá que hay, tal y como se comporta la opción de la aplicación independiente. NTSC (60 Hz) es el valor de la consola. PAL (50 Hz) es el valor de un televisor PAL: los juegos se ejecutarán a 50 fotogramas por segundo. Desbloquear velocidad de fotogramas ignorará este límite."
 #define OPTION_VAL_60_ES "NTSC (60 Hz)"
 #define OPTION_VAL_50_ES "PAL (50 Hz)"
-#define XENIA_WAIT_FOR_FRAME_LABEL_ES "[Libretro] Esperar a fotograma"
-#define XENIA_WAIT_FOR_FRAME_INFO_0_ES "Elimina un fotograma de retraso de entrada con el posible coste de que el juego se ralentice. Recomendado con equipos potentes o juegos que consuman pocos recursos."
 #define XENIA_UNLOCK_FRAMERATE_LABEL_ES "Desbloquear velocidad de fotogramas"
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_ES "Utiliza esta opción solo con aquellos juegos cuya lógica no esté vinculada a su velocidad de fotogramas, porque si lo está, se ejecutarán demasiado rápido. Juegos de 30 FPS a 60: habrá dos VBLANKs por cada fotograma mostrado por RetroArch. Juegos de 60 FPS a 120: el núcleo se ejecutará a 120 fotogramas por segundo (debes configurar RetroArch y tu pantalla para mostrarlos). Sin límite: renderiza todos los VBLANKs posibles. Juegos de la lista: utiliza la frecuencia que indique el archivo system/Xenia-Edge/xenia_framerate_unlock.txt al juego que se esté ejecutando, si es que está indicada. Esta opción puede cambiarse en mitad de una partida."
 #define OPTION_VAL_ENABLED_ES "Juegos de la lista"
@@ -14965,20 +14739,6 @@ struct retro_core_option_v2_definition option_defs_es[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_ES,
-        XENIA_WAIT_FOR_FRAME_LABEL_ES,
-        XENIA_WAIT_FOR_FRAME_INFO_0_ES,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -15637,8 +15397,6 @@ struct retro_core_options_v2 options_es = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_FA NULL
 #define OPTION_VAL_60_FA NULL
 #define OPTION_VAL_50_FA NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_FA NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_FA NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_FA NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_FA NULL
 #define OPTION_VAL_ENABLED_FA NULL
@@ -16001,20 +15759,6 @@ struct retro_core_option_v2_definition option_defs_fa[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_FA,
-        XENIA_WAIT_FOR_FRAME_LABEL_FA,
-        XENIA_WAIT_FOR_FRAME_INFO_0_FA,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -16673,8 +16417,6 @@ struct retro_core_options_v2 options_fa = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_FI NULL
 #define OPTION_VAL_60_FI "NTSC (60 Hz)"
 #define OPTION_VAL_50_FI "PAL (50 Hz)"
-#define XENIA_WAIT_FOR_FRAME_LABEL_FI NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_FI NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_FI NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_FI NULL
 #define OPTION_VAL_ENABLED_FI NULL
@@ -17037,20 +16779,6 @@ struct retro_core_option_v2_definition option_defs_fi[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_FI,
-        XENIA_WAIT_FOR_FRAME_LABEL_FI,
-        XENIA_WAIT_FOR_FRAME_INFO_0_FI,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -17709,8 +17437,6 @@ struct retro_core_options_v2 options_fi = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_FR "La fréquence de rafraîchissement du téléviseur que le jeu croit utiliser, comme l'option de la version autonome. NTSC (60 Hz) correspond à la console. PAL (50 Hz) correspond à un téléviseur PAL : les jeux tournent à 50 images par seconde. Débloquer la fréquence d'images outrepasse ce réglage."
 #define OPTION_VAL_60_FR "NTSC (60 Hz)"
 #define OPTION_VAL_50_FR "PAL (50 Hz)"
-#define XENIA_WAIT_FOR_FRAME_LABEL_FR NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_FR NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_FR "Débloquer la fréquence d'images"
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_FR NULL
 #define OPTION_VAL_ENABLED_FR NULL
@@ -18073,20 +17799,6 @@ struct retro_core_option_v2_definition option_defs_fr[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_FR,
-        XENIA_WAIT_FOR_FRAME_LABEL_FR,
-        XENIA_WAIT_FOR_FRAME_INFO_0_FR,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -18745,8 +18457,6 @@ struct retro_core_options_v2 options_fr = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_GA "Ráta athnuachana na teilifíse a cheapann an cluiche atá in úsáid (mar rogha neamhspleách). Is é NTSC (60 Hz) an ráta atá ag an gconsól féin. Baineann PAL (50 Hz) le teilifís PAL: ritheann cluichí ag 50 fráma sa soicind. Sáraíonn an rogha \"Unlock Framerate\" é seo."
 #define OPTION_VAL_60_GA NULL
 #define OPTION_VAL_50_GA NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_GA "[Libretro] Fanacht Fráma"
-#define XENIA_WAIT_FOR_FRAME_INFO_0_GA "Baineann sé moill ionchuir de fhráma amháin, ach d’fhéadfadh sé a bheith ina chúis le stadaí sa chluiche. Molta do chrua-earraí cumhachtacha agus/nó cluichí éadroma."
 #define XENIA_UNLOCK_FRAMERATE_LABEL_GA "Díghlasáil an ráta frámaí"
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_GA "Ní bhaineann sé seo ach le cluichí nach bhfuil a loighic nasctha lena ráta frámaí; murach sin, rithfeadh siad ró-thapa. Cluichí 30 fps á rith ag 60 fps: dhá 'vblank' (tréimhse bhánaithe ingearach) do gach fráma a thaispeánann RetroArch. Cluichí 60 fps á rith ag 120 fps: an croí ag rith ag 120 fráma sa soicind (ní mór RetroArch agus an scáileán a chumrú chuige sin). Gan teorainn: 'vblanks' chomh tapa agus is féidir. Cluichí liostaithe: úsáidtear an ráta a shonraítear sa chomhad `xenia_framerate_unlock.txt` (in Xenia-Edge) don chluiche atá á rith, má tá sé liostaithe ann. Is féidir an socrú a athrú agus an cluiche ag rith."
 #define OPTION_VAL_ENABLED_GA "Cluichí liostaithe"
@@ -19109,20 +18819,6 @@ struct retro_core_option_v2_definition option_defs_ga[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_GA,
-        XENIA_WAIT_FOR_FRAME_LABEL_GA,
-        XENIA_WAIT_FOR_FRAME_INFO_0_GA,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -19781,8 +19477,6 @@ struct retro_core_options_v2 options_ga = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_GL NULL
 #define OPTION_VAL_60_GL NULL
 #define OPTION_VAL_50_GL NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_GL NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_GL NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_GL NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_GL NULL
 #define OPTION_VAL_ENABLED_GL NULL
@@ -20145,20 +19839,6 @@ struct retro_core_option_v2_definition option_defs_gl[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_GL,
-        XENIA_WAIT_FOR_FRAME_LABEL_GL,
-        XENIA_WAIT_FOR_FRAME_INFO_0_GL,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -20817,8 +20497,6 @@ struct retro_core_options_v2 options_gl = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_HE NULL
 #define OPTION_VAL_60_HE NULL
 #define OPTION_VAL_50_HE NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_HE NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_HE NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_HE NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_HE NULL
 #define OPTION_VAL_ENABLED_HE NULL
@@ -21181,20 +20859,6 @@ struct retro_core_option_v2_definition option_defs_he[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_HE,
-        XENIA_WAIT_FOR_FRAME_LABEL_HE,
-        XENIA_WAIT_FOR_FRAME_INFO_0_HE,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -21853,8 +21517,6 @@ struct retro_core_options_v2 options_he = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_HR NULL
 #define OPTION_VAL_60_HR NULL
 #define OPTION_VAL_50_HR NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_HR NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_HR NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_HR NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_HR NULL
 #define OPTION_VAL_ENABLED_HR NULL
@@ -22217,20 +21879,6 @@ struct retro_core_option_v2_definition option_defs_hr[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_HR,
-        XENIA_WAIT_FOR_FRAME_LABEL_HR,
-        XENIA_WAIT_FOR_FRAME_INFO_0_HR,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -22889,8 +22537,6 @@ struct retro_core_options_v2 options_hr = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_HU NULL
 #define OPTION_VAL_60_HU NULL
 #define OPTION_VAL_50_HU NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_HU NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_HU NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_HU NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_HU NULL
 #define OPTION_VAL_ENABLED_HU NULL
@@ -23253,20 +22899,6 @@ struct retro_core_option_v2_definition option_defs_hu[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_HU,
-        XENIA_WAIT_FOR_FRAME_LABEL_HU,
-        XENIA_WAIT_FOR_FRAME_INFO_0_HU,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -23925,8 +23557,6 @@ struct retro_core_options_v2 options_hu = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_ID NULL
 #define OPTION_VAL_60_ID NULL
 #define OPTION_VAL_50_ID NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_ID NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_ID NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_ID NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_ID NULL
 #define OPTION_VAL_ENABLED_ID NULL
@@ -24289,20 +23919,6 @@ struct retro_core_option_v2_definition option_defs_id[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_ID,
-        XENIA_WAIT_FOR_FRAME_LABEL_ID,
-        XENIA_WAIT_FOR_FRAME_INFO_0_ID,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -24961,8 +24577,6 @@ struct retro_core_options_v2 options_id = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_IT NULL
 #define OPTION_VAL_60_IT NULL
 #define OPTION_VAL_50_IT NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_IT NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_IT NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_IT NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_IT NULL
 #define OPTION_VAL_ENABLED_IT NULL
@@ -25325,20 +24939,6 @@ struct retro_core_option_v2_definition option_defs_it[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_IT,
-        XENIA_WAIT_FOR_FRAME_LABEL_IT,
-        XENIA_WAIT_FOR_FRAME_INFO_0_IT,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -25997,8 +25597,6 @@ struct retro_core_options_v2 options_it = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_JA NULL
 #define OPTION_VAL_60_JA NULL
 #define OPTION_VAL_50_JA NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_JA NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_JA NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_JA NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_JA NULL
 #define OPTION_VAL_ENABLED_JA NULL
@@ -26361,20 +25959,6 @@ struct retro_core_option_v2_definition option_defs_ja[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_JA,
-        XENIA_WAIT_FOR_FRAME_LABEL_JA,
-        XENIA_WAIT_FOR_FRAME_INFO_0_JA,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -27033,8 +26617,6 @@ struct retro_core_options_v2 options_ja = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_KO NULL
 #define OPTION_VAL_60_KO NULL
 #define OPTION_VAL_50_KO NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_KO NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_KO NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_KO NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_KO NULL
 #define OPTION_VAL_ENABLED_KO NULL
@@ -27397,20 +26979,6 @@ struct retro_core_option_v2_definition option_defs_ko[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_KO,
-        XENIA_WAIT_FOR_FRAME_LABEL_KO,
-        XENIA_WAIT_FOR_FRAME_INFO_0_KO,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -28069,8 +27637,6 @@ struct retro_core_options_v2 options_ko = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_NL NULL
 #define OPTION_VAL_60_NL NULL
 #define OPTION_VAL_50_NL NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_NL NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_NL NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_NL NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_NL NULL
 #define OPTION_VAL_ENABLED_NL NULL
@@ -28433,20 +27999,6 @@ struct retro_core_option_v2_definition option_defs_nl[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_NL,
-        XENIA_WAIT_FOR_FRAME_LABEL_NL,
-        XENIA_WAIT_FOR_FRAME_INFO_0_NL,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -29105,8 +28657,6 @@ struct retro_core_options_v2 options_nl = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_NO NULL
 #define OPTION_VAL_60_NO NULL
 #define OPTION_VAL_50_NO NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_NO NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_NO NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_NO NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_NO NULL
 #define OPTION_VAL_ENABLED_NO NULL
@@ -29469,20 +29019,6 @@ struct retro_core_option_v2_definition option_defs_no[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_NO,
-        XENIA_WAIT_FOR_FRAME_LABEL_NO,
-        XENIA_WAIT_FOR_FRAME_INFO_0_NO,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -30141,8 +29677,6 @@ struct retro_core_options_v2 options_no = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_OR NULL
 #define OPTION_VAL_60_OR NULL
 #define OPTION_VAL_50_OR NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_OR NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_OR NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_OR NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_OR NULL
 #define OPTION_VAL_ENABLED_OR NULL
@@ -30505,20 +30039,6 @@ struct retro_core_option_v2_definition option_defs_or[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_OR,
-        XENIA_WAIT_FOR_FRAME_LABEL_OR,
-        XENIA_WAIT_FOR_FRAME_INFO_0_OR,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -31177,8 +30697,6 @@ struct retro_core_options_v2 options_or = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_PL NULL
 #define OPTION_VAL_60_PL NULL
 #define OPTION_VAL_50_PL NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_PL NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_PL NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_PL NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_PL NULL
 #define OPTION_VAL_ENABLED_PL NULL
@@ -31541,20 +31059,6 @@ struct retro_core_option_v2_definition option_defs_pl[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_PL,
-        XENIA_WAIT_FOR_FRAME_LABEL_PL,
-        XENIA_WAIT_FOR_FRAME_INFO_0_PL,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -32213,8 +31717,6 @@ struct retro_core_options_v2 options_pl = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_PT_BR NULL
 #define OPTION_VAL_60_PT_BR "NTSC (60 Hz)"
 #define OPTION_VAL_50_PT_BR "PAL (50 Hz)"
-#define XENIA_WAIT_FOR_FRAME_LABEL_PT_BR NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_PT_BR NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_PT_BR NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_PT_BR NULL
 #define OPTION_VAL_ENABLED_PT_BR NULL
@@ -32577,20 +32079,6 @@ struct retro_core_option_v2_definition option_defs_pt_br[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_PT_BR,
-        XENIA_WAIT_FOR_FRAME_LABEL_PT_BR,
-        XENIA_WAIT_FOR_FRAME_INFO_0_PT_BR,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -33249,8 +32737,6 @@ struct retro_core_options_v2 options_pt_br = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_PT_PT NULL
 #define OPTION_VAL_60_PT_PT NULL
 #define OPTION_VAL_50_PT_PT NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_PT_PT NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_PT_PT NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_PT_PT NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_PT_PT NULL
 #define OPTION_VAL_ENABLED_PT_PT NULL
@@ -33613,20 +33099,6 @@ struct retro_core_option_v2_definition option_defs_pt_pt[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_PT_PT,
-        XENIA_WAIT_FOR_FRAME_LABEL_PT_PT,
-        XENIA_WAIT_FOR_FRAME_INFO_0_PT_PT,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -34285,8 +33757,6 @@ struct retro_core_options_v2 options_pt_pt = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_RU NULL
 #define OPTION_VAL_60_RU "NTSC (60 Гц)"
 #define OPTION_VAL_50_RU "PAL (50 Гц)"
-#define XENIA_WAIT_FOR_FRAME_LABEL_RU NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_RU NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_RU NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_RU NULL
 #define OPTION_VAL_ENABLED_RU NULL
@@ -34649,20 +34119,6 @@ struct retro_core_option_v2_definition option_defs_ru[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_RU,
-        XENIA_WAIT_FOR_FRAME_LABEL_RU,
-        XENIA_WAIT_FOR_FRAME_INFO_0_RU,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -35321,8 +34777,6 @@ struct retro_core_options_v2 options_ru = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_SK "Obnovovacia frekvencia televízora, o ktorom si hra myslí, že na ňom beží, ako voľba v samostatnej verzii. NTSC (60 Hz) je frekvencia konzoly. PAL (50 Hz) je PAL televízor: hry bežia pri 50 snímkach za sekundu. Odomknúť snímkovú frekvenciu má pred týmto prednosť."
 #define OPTION_VAL_60_SK NULL
 #define OPTION_VAL_50_SK NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_SK "[Libretro] Čakanie na snímku"
-#define XENIA_WAIT_FOR_FRAME_INFO_0_SK "Odstráni 1 snímku oneskorenia vstupu za cenu možného trhania hry. Odporúčané pre výkonný hardvér alebo nenáročné hry."
 #define XENIA_UNLOCK_FRAMERATE_LABEL_SK "Odomknúť snímkovú frekvenciu"
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_SK "Iba pre hry, ktorých logika nie je viazaná na snímkovú frekvenciu, inak bežia príliš rýchlo. 30 fps hry pri 60: dva vblanky na každú snímku, ktorú RetroArch zobrazí. 60 fps hry pri 120: jadro pri 120 snímkach za sekundu (nastavte na to RetroArch a displej). Bez obmedzenia: vblanky tak rýchlo, ako sa dá. Hry zo zoznamu: frekvencia, ktorú bežiacej hre určuje system/Xenia-Edge/xenia_framerate_unlock.txt, ak ju obsahuje. Dá sa meniť počas behu hry."
 #define OPTION_VAL_ENABLED_SK "Hry zo zoznamu"
@@ -35685,20 +35139,6 @@ struct retro_core_option_v2_definition option_defs_sk[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_SK,
-        XENIA_WAIT_FOR_FRAME_LABEL_SK,
-        XENIA_WAIT_FOR_FRAME_INFO_0_SK,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -36357,8 +35797,6 @@ struct retro_core_options_v2 options_sk = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_SR NULL
 #define OPTION_VAL_60_SR NULL
 #define OPTION_VAL_50_SR NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_SR NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_SR NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_SR NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_SR NULL
 #define OPTION_VAL_ENABLED_SR NULL
@@ -36721,20 +36159,6 @@ struct retro_core_option_v2_definition option_defs_sr[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_SR,
-        XENIA_WAIT_FOR_FRAME_LABEL_SR,
-        XENIA_WAIT_FOR_FRAME_INFO_0_SR,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -37393,8 +36817,6 @@ struct retro_core_options_v2 options_sr = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_SV "Den uppdateringsfrekvens som spelet tror att TV:n har, enligt alternativet i den fristående versionen. NTSC (60 Hz) är konsolens standard. PAL (50 Hz) är en PAL-TV: spel körs med 50 bildrutor per sekund. Lås upp bildfrekvens åsidosätter detta."
 #define OPTION_VAL_60_SV NULL
 #define OPTION_VAL_50_SV NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_SV "[Libretro] bildruteväntan"
-#define XENIA_WAIT_FOR_FRAME_INFO_0_SV "Tar bort en bildruta av inmatningsfördröjning men spelet kan hacka. Rekommenderas för kraftfull maskinvara och/eller lättdrivna spel."
 #define XENIA_UNLOCK_FRAMERATE_LABEL_SV "Lås upp bildfrekvens"
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_SV "Endast för spel vars logik inte är knuten till bildfrekvensen, annars går de för fort. Spel med 30 fps vid 60: två vertikala synkroniseringar för varje bildruta som RetroArch visar. Spel med 60 fps vid 120: kärnan kör 120 bildrutor per sekund (ställ in RetroArch och bildskärmen för det). Obegränsad: vertikala synkroniseringar så snabbt som möjligt. Listade spel: frekvenssystemet i Xenia-Edge/xenia_framerate_unlock.txt gäller det körande spelet om det finns i listan. Kan ändras medan ett spel körs."
 #define OPTION_VAL_ENABLED_SV "Listade spel"
@@ -37757,20 +37179,6 @@ struct retro_core_option_v2_definition option_defs_sv[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_SV,
-        XENIA_WAIT_FOR_FRAME_LABEL_SV,
-        XENIA_WAIT_FOR_FRAME_INFO_0_SV,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -38429,8 +37837,6 @@ struct retro_core_options_v2 options_sv = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_TH NULL
 #define OPTION_VAL_60_TH NULL
 #define OPTION_VAL_50_TH NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_TH NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_TH NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_TH NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_TH NULL
 #define OPTION_VAL_ENABLED_TH NULL
@@ -38793,20 +38199,6 @@ struct retro_core_option_v2_definition option_defs_th[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_TH,
-        XENIA_WAIT_FOR_FRAME_LABEL_TH,
-        XENIA_WAIT_FOR_FRAME_INFO_0_TH,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -39465,8 +38857,6 @@ struct retro_core_options_v2 options_th = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_TR NULL
 #define OPTION_VAL_60_TR NULL
 #define OPTION_VAL_50_TR NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_TR NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_TR NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_TR NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_TR NULL
 #define OPTION_VAL_ENABLED_TR NULL
@@ -39829,20 +39219,6 @@ struct retro_core_option_v2_definition option_defs_tr[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_TR,
-        XENIA_WAIT_FOR_FRAME_LABEL_TR,
-        XENIA_WAIT_FOR_FRAME_INFO_0_TR,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -40501,8 +39877,6 @@ struct retro_core_options_v2 options_tr = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_TT NULL
 #define OPTION_VAL_60_TT "NTSC (60 Гц)"
 #define OPTION_VAL_50_TT "PAL (50 Гц)"
-#define XENIA_WAIT_FOR_FRAME_LABEL_TT NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_TT NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_TT NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_TT NULL
 #define OPTION_VAL_ENABLED_TT NULL
@@ -40865,20 +40239,6 @@ struct retro_core_option_v2_definition option_defs_tt[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_TT,
-        XENIA_WAIT_FOR_FRAME_LABEL_TT,
-        XENIA_WAIT_FOR_FRAME_INFO_0_TT,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -41537,8 +40897,6 @@ struct retro_core_options_v2 options_tt = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_UK NULL
 #define OPTION_VAL_60_UK "NTSC (60Гц)"
 #define OPTION_VAL_50_UK "Пал (50Гц)"
-#define XENIA_WAIT_FOR_FRAME_LABEL_UK NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_UK NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_UK NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_UK NULL
 #define OPTION_VAL_ENABLED_UK NULL
@@ -41901,20 +41259,6 @@ struct retro_core_option_v2_definition option_defs_uk[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_UK,
-        XENIA_WAIT_FOR_FRAME_LABEL_UK,
-        XENIA_WAIT_FOR_FRAME_INFO_0_UK,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -42573,8 +41917,6 @@ struct retro_core_options_v2 options_uk = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_VAL NULL
 #define OPTION_VAL_60_VAL NULL
 #define OPTION_VAL_50_VAL NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_VAL NULL
-#define XENIA_WAIT_FOR_FRAME_INFO_0_VAL NULL
 #define XENIA_UNLOCK_FRAMERATE_LABEL_VAL NULL
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_VAL NULL
 #define OPTION_VAL_ENABLED_VAL NULL
@@ -42937,20 +42279,6 @@ struct retro_core_option_v2_definition option_defs_val[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_VAL,
-        XENIA_WAIT_FOR_FRAME_LABEL_VAL,
-        XENIA_WAIT_FOR_FRAME_INFO_0_VAL,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",
@@ -43609,8 +42937,6 @@ struct retro_core_options_v2 options_val = {
 #define XENIA_DISPLAY_REFRESH_INFO_0_VN "Tần số quét của TV mà trò chơi nhận diện là màn hình đang kết nối, tương tự tùy chọn của phiên bản chạy độc lập. NTSC (60 Hz) là tần số của máy chơi game. PAL (50 Hz) là TV chuẩn PAL: trò chơi chạy ở tốc độ 50 khung hình mỗi giây. Mở khóa tốc độ khung hình sẽ ghi đè thiết lập này."
 #define OPTION_VAL_60_VN NULL
 #define OPTION_VAL_50_VN NULL
-#define XENIA_WAIT_FOR_FRAME_LABEL_VN "[Libretro] Chờ khung hình"
-#define XENIA_WAIT_FOR_FRAME_INFO_0_VN "Loại bỏ 1 khung hình độ trễ Điều khiển, nhưng có thể khiến trò chơi bị giật. Khuyến nghị dùng với phần cứng mạnh và/hoặc trò chơi nhẹ."
 #define XENIA_UNLOCK_FRAMERATE_LABEL_VN "Mở khóa tốc độ khung hình"
 #define XENIA_UNLOCK_FRAMERATE_INFO_0_VN "Chỉ áp dụng cho các trò chơi có logic không bị ràng buộc với tốc độ khung hình, nếu không trò chơi sẽ chạy quá nhanh. Trò chơi 30 khung hình/giây chạy ở 60: hai chu kỳ làm mới dọc cho mỗi khung hình RetroArch hiển thị. Trò chơi 60 khung hình/giây chạy ở 120: lõi chạy ở tốc độ 120 khung hình mỗi giây (hãy thiết lập RetroArch và màn hình tương ứng). Không giới hạn: chu kỳ làm mới dọc diễn ra nhanh nhất có thể. Trò chơi trong danh sách: tốc độ được quy định trong tệp system/Xenia-Edge/xenia_framerate_unlock.txt sẽ áp dụng cho trò chơi đang chạy nếu trò chơi đó có trong danh sách. Có thể thay đổi thiết lập này khi trò chơi đang chạy."
 #define OPTION_VAL_ENABLED_VN "Trò chơi trong danh sách"
@@ -43973,20 +43299,6 @@ struct retro_core_option_v2_definition option_defs_vn[] = {
             { NULL, NULL }
         },
         "60"
-    },
-    {
-        "xenia_wait_for_frame",
-        XENIA_WAIT_FOR_FRAME_LABEL_VN,
-        XENIA_WAIT_FOR_FRAME_LABEL_VN,
-        XENIA_WAIT_FOR_FRAME_INFO_0_VN,
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
     },
     {
         "xenia_unlock_framerate",

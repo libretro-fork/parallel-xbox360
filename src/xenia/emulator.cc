@@ -1456,7 +1456,7 @@ void Emulator::RelaunchTitle(const std::string& host_path,
   }
   // The other host workers too, as they're not terminated below.
   if (graphics_system_) {
-    graphics_system_->StopFrameLimiter();
+    graphics_system_->StopVblankWorker();
   }
   if (audio_system_) {
     audio_system_->StopWorker();
@@ -1552,9 +1552,9 @@ void Emulator::StopTitleThreads() {
     graphics_system_->command_processor()->Shutdown();
   }
   // The other host workers too, as they're not terminated below.
-  step("frame limiter");
+  step("vblank worker");
   if (graphics_system_) {
-    graphics_system_->StopFrameLimiter();
+    graphics_system_->StopVblankWorker();
   }
   step("audio worker");
   if (audio_system_) {

@@ -6,7 +6,6 @@
 
 #include "libretro_graphics_system.h"
 
-#include <chrono>
 
 namespace xe {
 namespace gpu {
@@ -46,16 +45,7 @@ void LibretroCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                             std::memory_order_relaxed);
   sync_->frame_count.fetch_add(1, std::memory_order_relaxed);
 
-  // Signal frame ready
-  {
-    std::lock_guard<std::mutex> lock(sync_->mutex);
-    sync_->frame_pending.store(true, std::memory_order_release);
-  }
-  sync_->frame_ready_cv.notify_one();
-
-  // Throttle: call the base class throttle so the GPU thread doesn't
-  // spin faster than the frontend can consume frames.
-  ThrottlePresentation();
+  RecordGuestSwap();
 }
 
 Shader* LibretroCommandProcessor::LoadShader(xenos::ShaderType shader_type,
@@ -79,10 +69,7 @@ void LibretroCommandProcessor::InitializeTrace() {}
 
 LibretroGraphicsSystem::LibretroGraphicsSystem() {}
 
-LibretroGraphicsSystem::~LibretroGraphicsSystem() {
-  sync_state_.shutdown.store(true, std::memory_order_release);
-  sync_state_.frame_ready_cv.notify_all();
-}
+LibretroGraphicsSystem::~LibretroGraphicsSystem() = default;
 
 X_STATUS LibretroGraphicsSystem::Setup(cpu::Processor* processor,
                                         kernel::KernelState* kernel_state,
@@ -93,8 +80,6 @@ X_STATUS LibretroGraphicsSystem::Setup(cpu::Processor* processor,
 }
 
 void LibretroGraphicsSystem::Shutdown() {
-  sync_state_.shutdown.store(true, std::memory_order_release);
-  sync_state_.frame_ready_cv.notify_all();
   GraphicsSystem::Shutdown();
 }
 
@@ -102,30 +87,6 @@ std::unique_ptr<CommandProcessor>
 LibretroGraphicsSystem::CreateCommandProcessor() {
   return std::unique_ptr<CommandProcessor>(
       new LibretroCommandProcessor(this, kernel_state_, &sync_state_));
-}
-
-bool LibretroGraphicsSystem::WaitForFrame(unsigned timeout_ms) {
-  if (sync_state_.shutdown.load(std::memory_order_acquire)) return false;
-
-  // Fast path: frame already pending
-  if (sync_state_.frame_pending.load(std::memory_order_acquire)) {
-    sync_state_.frame_pending.store(false, std::memory_order_release);
-    return true;
-  }
-
-  // Wait for GPU thread to signal a swap
-  std::unique_lock<std::mutex> lock(sync_state_.mutex);
-  bool got = sync_state_.frame_ready_cv.wait_for(
-      lock, std::chrono::milliseconds(timeout_ms), [this] {
-        return sync_state_.frame_pending.load(std::memory_order_acquire) ||
-               sync_state_.shutdown.load(std::memory_order_acquire);
-      });
-
-  if (got && sync_state_.frame_pending.load(std::memory_order_acquire)) {
-    sync_state_.frame_pending.store(false, std::memory_order_release);
-    return true;
-  }
-  return false;
 }
 
 }  // namespace libretro_gpu

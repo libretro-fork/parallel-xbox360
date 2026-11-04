@@ -183,10 +183,8 @@ class CommandProcessor {
   virtual void IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbuffer_width,
                          uint32_t frontbuffer_height) {}
 
-  // Throttle presentation based on framerate_limit cvar.
-  // Called after IssueSwap to limit host frame rate without affecting guest
-  // vblank timing.
-  void ThrottlePresentation();
+  // Count a guest swap without delaying the command processor.
+  void RecordGuestSwap();
 
   // May be called not only from the command processor thread when the command
   // processor is paused, and the termination of this function may be explicitly
@@ -735,7 +733,6 @@ class CommandProcessor {
   ZPDMode cached_zpd_mode_ = ZPDMode::kFake;
 
   // For host frame rate limiting at IssueSwap
-  uint64_t last_swap_time_ = 0;
 
  private:
   reg::DC_LUT_30_COLOR gamma_ramp_256_entry_table_[256] = {};

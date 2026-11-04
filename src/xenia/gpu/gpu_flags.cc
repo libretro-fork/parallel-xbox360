@@ -61,19 +61,8 @@ DEFINE_bool(guest_display_refresh_cap, true,
             "possible.",
             "GPU");
 
-DEFINE_uint32(
-    framerate_limit, 0,
-    "Host frame rate limit in FPS. 0 = unlimited.\n"
-    "Throttles presentation without affecting guest vblank timing.\n"
-    "Guest vblanks are controlled by use_50Hz_mode (50Hz PAL, 60Hz NTSC).",
-    "GPU");
-
 void SetGuestDisplayRefreshCap(bool value) {
   OVERRIDE_bool(guest_display_refresh_cap, value);
-}
-
-void SetFramerateLimit(uint32_t value) {
-  OVERRIDE_uint32(framerate_limit, value);
 }
 
 DEFINE_bool(

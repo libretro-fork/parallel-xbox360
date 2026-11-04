@@ -3,18 +3,14 @@
  * Libretro Graphics System
  * Copyright (C) 2024 Xenia Edge Contributors
  *
- * Extends NullGraphicsSystem with a command processor that hooks IssueSwap
- * to signal frame completion. This allows retro_run() to synchronize with
- * Xenia's GPU thread ??? blocking until a frame is presented, then returning
- * control to the libretro frontend.
+ * Extends NullGraphicsSystem with published frame dimensions and counters.
+ * The frontend owns presentation cadence.
  */
 
 #ifndef LIBRETRO_GRAPHICS_SYSTEM_H
 #define LIBRETRO_GRAPHICS_SYSTEM_H
 
 #include <atomic>
-#include <condition_variable>
-#include <mutex>
 
 #include "xenia/gpu/command_processor.h"
 #include "xenia/gpu/null/null_graphics_system.h"
@@ -26,13 +22,9 @@ namespace libretro_gpu {
 // Shared state between the GPU command processor thread and the
 // libretro frontend thread (retro_run).
 struct FrameSyncState {
-  std::mutex mutex;
-  std::condition_variable frame_ready_cv;
-  std::atomic<bool> frame_pending{false};
   std::atomic<uint32_t> frame_width{1280};
   std::atomic<uint32_t> frame_height{720};
   std::atomic<uint64_t> frame_count{0};
-  std::atomic<bool> shutdown{false};
 };
 
 class LibretroCommandProcessor : public CommandProcessor {
@@ -81,9 +73,6 @@ class LibretroGraphicsSystem : public null::NullGraphicsSystem {
   void Shutdown() override;
 
   FrameSyncState* sync_state() { return &sync_state_; }
-
-  // Called from retro_run() - blocks until next IssueSwap or timeout.
-  bool WaitForFrame(unsigned timeout_ms = 33);
 
  protected:
   std::unique_ptr<CommandProcessor> CreateCommandProcessor() override;

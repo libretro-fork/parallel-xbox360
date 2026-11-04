@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed the host swap limiter and Frame Wait option, including translated entries. Guest vblank interrupts now consume frontend requests through a C89 libretro-common eventcount queue, with no independent frame timer or swap-polling sleep. Video/audio callback cadence is preserved.
+
 - Fixed a content-close hang after socket use: socket I/O now stops and joins during kernel teardown, before DLL unload. Pending socket waits and selected guest events are retired while the kernel is alive; reopening content gets a fresh I/O context. The worker uses libretro-common threads instead of a process-static C++ thread.
 
 - Replaced Boost.Context with owned libretro-common libco backends and a C89 lifecycle adapter. Fibers retain guarded stacks and restart in place without copying stack contents. Corrected current-fiber tracking after callback return and sanitizer cleanup for abandoned or migrated stacks; removed the Boost.Context dependency.

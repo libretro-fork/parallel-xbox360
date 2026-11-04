@@ -227,11 +227,8 @@ struct xenia_core_state {
     char save_dir[4096];
 
     char graphics_backend[32];
-    bool vsync_enabled;
     int vblanks_per_run;
     bool fps120;
-    // [Libretro] Frame Wait
-    bool wait_for_frame;
     // What RetroArch is told the core runs at (retro_get_system_av_info)
     double output_fps;
     bool audio_enabled;
@@ -783,9 +780,7 @@ static void apply_core_options(void) {
     }
 
     // Emulated display refresh rate: 60/50 Hz, 120 Hz (two vblanks a frame),
-    // or uncapped (vblanks as fast as possible, not paced by RetroArch)
-    if ((v = opt_get(XENIA_OPT_WAIT_FOR_FRAME)))
-        core_state.wait_for_frame = strcmp(v, "enabled") == 0;
+    // or uncapped (the frontend target refresh rate)
 
     if ((v = opt_get(XENIA_OPT_DISPLAY_REFRESH))) {
         // Unlock Framerate, whatever the Display Refresh Rate says: the
@@ -806,8 +801,6 @@ static void apply_core_options(void) {
         const bool uncapped = strcmp(v, "uncapped") == 0;
         const bool pal = strcmp(v, "50") == 0;
         const bool changed = pal != core_state.pal_mode;
-        core_state.vsync_enabled = !uncapped;
-        SetGuestDisplayRefreshCap(core_state.vsync_enabled);
         core_state.vblanks_per_run = strcmp(v, "30to60") == 0 ? 2 : 1;
         const bool fps120 = strcmp(v, "120") == 0;
         core_state.fps120 = fps120;
@@ -1726,7 +1719,6 @@ RETRO_API void retro_init(void) {
     s_audio_float = {};
     s_audio_multi = {};
     memset(core_state.graphics_backend, 0, sizeof(core_state.graphics_backend));
-    core_state.vsync_enabled    = true;
     core_state.vblanks_per_run  = 1;
     core_state.fps120           = false;
     core_state.output_fps       = 60.0;
@@ -2088,25 +2080,10 @@ RETRO_API void retro_run(void) {
     if (xenia_emulator && xenia_emulator->kernel_state())
         xenia_emulator->kernel_state()->xam_state()->AdvanceUiNotifications(core_state.output_fps);
 
-    // One guest vblank per frontend frame (two at 120 Hz), with the refresh
-    // rate not uncapped
-    const uint64_t swaps_before = g_guest_swaps.load(std::memory_order_acquire);
-    if (lr_graphics && core_state.vsync_enabled)
+    // Frontend calls request guest vblanks, including the unlock multiplier.
+    if (lr_graphics)
         for (int i = 0; i < core_state.vblanks_per_run; i++)
             lr_graphics->LibretroVblank();
-
-    // [Libretro] Frame Wait: the frame the game draws after this vblank,
-    // handed over in this same run - at most most of a frame's time, so a
-    // game that skips a frame costs no more than the frame it skips
-    if (core_state.wait_for_frame && lr_graphics && core_state.vsync_enabled &&
-        !s_guest_paused) {
-        const double frame_ms = 1000.0 / (core_state.output_fps > 0 ? core_state.output_fps : 60.0);
-        const auto deadline = std::chrono::steady_clock::now() +
-            std::chrono::microseconds(static_cast<int64_t>(frame_ms * 800.0));
-        while (g_guest_swaps.load(std::memory_order_acquire) == swaps_before &&
-               std::chrono::steady_clock::now() < deadline)
-            std::this_thread::sleep_for(std::chrono::microseconds(200));
-    }
 
     // Capture the latest frame via the appropriate video path.
 

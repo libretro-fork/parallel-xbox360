@@ -31,7 +31,6 @@ struct xenia_core_state;
 #define XENIA_OPT_GPU_INVALID_FETCH     "xenia_gpu_allow_invalid_fetch_constants"
 #define XENIA_OPT_DISPLAY_REFRESH       "xenia_display_refresh"
 #define XENIA_OPT_UNLOCK_FRAMERATE      "xenia_unlock_framerate"
-#define XENIA_OPT_WAIT_FOR_FRAME        "xenia_wait_for_frame"
 
 // Core option keys ??? Video
 #define XENIA_OPT_INTERNAL_DISPLAY_RES  "xenia_internal_display_resolution"
@@ -285,24 +284,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
         "60"
     },
     {
-        "xenia_wait_for_frame",
-        "[Libretro] Frame Wait",
-        "[Libretro] Frame Wait",
-        "Removes 1 frame of input lag at the possible cost of the game stuttering. Recommended for powerful hardware and/or lightweight games.",
-        NULL,
-        "Graphics",
-        {
-            { "disabled", NULL },
-            { "enabled", NULL },
-            { NULL, NULL }
-        },
-        "disabled"
-    },
-    {
         "xenia_unlock_framerate",
         "Unlock Framerate",
         "Unlock Framerate",
-        "Only for games whose logic is not tied to their frame rate, else they run too fast. 30 fps games at 60: two vblanks for each frame RetroArch shows. 60 fps games at 120: the core at 120 frames a second (set RetroArch and the display up for it). Uncapped: vblanks as fast as possible. Listed games: the rate system/Xenia-Edge/xenia_framerate_unlock.txt gives the running game, if it lists it. Can be changed while a game runs.",
+        "Only for games whose logic is not tied to their frame rate, else they run too fast. 30 fps games at 60: two vblanks for each frame RetroArch shows. 60 fps games at 120: the core at 120 frames a second (set RetroArch and the display up for it). Uncapped follows the frontend target refresh rate. Listed games: the rate system/Xenia-Edge/xenia_framerate_unlock.txt gives the running game, if it lists it. Can be changed while a game runs.",
         NULL,
         "Graphics",
         {

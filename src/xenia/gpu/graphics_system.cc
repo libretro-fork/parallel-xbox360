@@ -77,13 +77,15 @@ __declspec(dllexport) uint32_t AmdPowerXpressRequestHighPerformance = 1;
 }  // extern "C"
 #endif  // XE_PLATFORM_WIN32
 
-GraphicsSystem::GraphicsSystem() : frame_limiter_worker_running_(false) {
+GraphicsSystem::GraphicsSystem() {
   register_file_ = reinterpret_cast<RegisterFile*>(memory::AllocFixed(
       nullptr, sizeof(RegisterFile), memory::AllocationType::kReserveCommit,
       memory::PageAccess::kReadWrite));
 }
 
-GraphicsSystem::~GraphicsSystem() = default;
+GraphicsSystem::~GraphicsSystem() {
+  xe_vblank_queue_free(vblank_queue_);
+}
 
 X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
                                kernel::KernelState* kernel_state,
@@ -145,104 +147,23 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
       reinterpret_cast<cpu::MMIOReadCallback>(ReadRegisterThunk),
       reinterpret_cast<cpu::MMIOWriteCallback>(WriteRegisterThunk));
 
-  // Frame limiter thread.
-  frame_limiter_worker_running_ = true;
-  frame_limiter_worker_thread_ =
+  // Guest interrupts require an XHostThread, but only frontend requests wake it.
+  vblank_queue_ = xe_vblank_queue_new();
+  if (!vblank_queue_) return X_STATUS_UNSUCCESSFUL;
+  vblank_worker_thread_ =
       kernel::object_ref<kernel::XHostThread>(new kernel::XHostThread(
           kernel_state_, 128 * 1024, 0,
           [this]() {
-            uint64_t last_frame_time = Clock::QueryGuestTickCount();
-
-            while (frame_limiter_worker_running_) {
-              // If there is no title running then there is no need for guest
-              // frame limiter thread.
-              if (!kernel_state_->is_title_open()) {
-                xe::threading::Sleep(std::chrono::milliseconds(100));
-                continue;
-              }
-
-              // Read guest_display_refresh_cap cvar each frame to allow
-              // runtime changes
-              // true: Fire vblanks at fixed rate (50Hz PAL, 60Hz NTSC)
-              // false: Fire vblanks limited by framerate_limit or 1ms
-              // Note: framerate_limit is handled separately at IssueSwap for
-              // host presentation throttling
-              bool refresh_cap_enabled = cvars::guest_display_refresh_cap;
-
-#ifdef XENIA_LIBRETRO
-              if (refresh_cap_enabled &&
-                  libretro_vblank_driven_.load(std::memory_order_acquire)) {
-                bool fire = false;
-                {
-                  std::unique_lock<std::mutex> lock(libretro_vblank_mutex_);
-                  libretro_vblank_cv_.wait_for(
-                      lock, std::chrono::milliseconds(50), [this]() {
-                        return libretro_vblanks_pending_ != 0 ||
-                               !frame_limiter_worker_running_;
-                      });
-                  if (libretro_vblanks_pending_) {
-                    --libretro_vblanks_pending_;
-                    fire = true;
-                  }
-                }
-                if (fire) {
-                  MarkVblank();
-                }
-                continue;
-              }
-#endif
-              if (refresh_cap_enabled) {
-                const uint32_t vblank_hz = GetGuestVblankRateHz();
-                const uint64_t tick_freq = Clock::guest_tick_frequency();
-                const uint64_t target_duration_ticks = tick_freq / vblank_hz;
-                const uint64_t current_time = Clock::QueryGuestTickCount();
-                const uint64_t time_delta = current_time - last_frame_time;
-
-                if (time_delta >= target_duration_ticks) {
-                  // If we've fallen behind by more than 2 frames, reset
-                  if (time_delta > target_duration_ticks * 2) {
-                    last_frame_time = current_time;
-                  } else {
-                    last_frame_time += target_duration_ticks;
-                  }
-                  MarkVblank();
-#if XE_PLATFORM_WIN32 || XE_PLATFORM_MAC
-                  // Sleep for 90% of the period, spin for the rest.
-                  const uint64_t sleep_ns = static_cast<uint64_t>(
-                      900000000.0 / (vblank_hz * Clock::guest_time_scalar()));
-#if XE_PLATFORM_MAC
-                  threading::NanoSleepPrecise(sleep_ns);
-#else
-                  threading::NanoSleep(sleep_ns);
-#endif
-#endif
-                }
-#if XE_PLATFORM_LINUX
-                else {
-                  // Sleep to the deadline, so a late wake-up shortens the
-                  // next sleep instead of stretching the period.
-                  threading::NanoSleep(static_cast<int64_t>(
-                      (target_duration_ticks - time_delta) * 1000000000.0 /
-                      (tick_freq * Clock::guest_time_scalar())));
-                }
-#endif
-              } else {
-                // Unlimited mode (guest_display_refresh_cap=false) - fire
-                // vblanks as fast as possible Host presentation is separately
-                // throttled by framerate_limit
-                MarkVblank();
-                threading::Sleep(std::chrono::milliseconds(1));
-              }
+            while (xe_vblank_queue_take(vblank_queue_)) {
+              if (kernel_state_->is_title_open()) MarkVblank();
             }
             return 0;
           },
           kernel_state->GetIdleProcess()));
-  // As we run vblank interrupts the debugger must be able to suspend us.
-  frame_limiter_worker_thread_->set_can_debugger_suspend(true);
-  frame_limiter_worker_thread_->set_name("GPU Frame limiter");
-  frame_limiter_worker_thread_->Create();
-  frame_limiter_worker_thread_->thread()->set_priority(
-      threading::ThreadPriority::kLowest);
+  vblank_worker_thread_->set_can_debugger_suspend(true);
+  vblank_worker_thread_->set_name("Guest vblank");
+  vblank_worker_thread_->Create();
+  vblank_worker_thread_->thread()->set_priority(threading::ThreadPriority::kLowest);
   if (cvars::trace_gpu_stream) {
     BeginTracing();
   }
@@ -257,7 +178,7 @@ void GraphicsSystem::Shutdown() {
     command_processor_.reset();
   }
 
-  StopFrameLimiter();
+  StopVblankWorker();
 
   if (presenter_) {
     if (app_context_) {
@@ -272,32 +193,17 @@ void GraphicsSystem::Shutdown() {
   provider_.reset();
 }
 
-#ifdef XENIA_LIBRETRO
 void GraphicsSystem::LibretroVblank() {
-  libretro_vblank_driven_.store(true, std::memory_order_release);
-  {
-    std::lock_guard<std::mutex> lock(libretro_vblank_mutex_);
-    // At most a frame behind (two vblanks at 120 Hz): a frame limiter that
-    // fell back does not fire a burst of vblanks to catch up.
-    if (libretro_vblanks_pending_ < 3) {
-      ++libretro_vblanks_pending_;
-    }
-  }
-  libretro_vblank_cv_.notify_one();
-}
-#endif
-
-void GraphicsSystem::StopFrameLimiter() {
-  if (frame_limiter_worker_thread_) {
-    frame_limiter_worker_running_ = false;
-#ifdef XENIA_LIBRETRO
-    libretro_vblank_cv_.notify_all();
-#endif
-    frame_limiter_worker_thread_->Wait(0, 0, 0, nullptr);
-    frame_limiter_worker_thread_.reset();
-  }
+  xe_vblank_queue_request(vblank_queue_);
 }
 
+void GraphicsSystem::StopVblankWorker() {
+  xe_vblank_queue_stop(vblank_queue_);
+  if (vblank_worker_thread_) {
+    vblank_worker_thread_->Wait(0, 0, 0, nullptr);
+    vblank_worker_thread_.reset();
+  }
+}
 void GraphicsSystem::OnHostGpuLossFromAnyThread(
     [[maybe_unused]] bool is_responsible) {
   // TODO(Triang3l): Somehow gain exclusive ownership of the Provider (may be
@@ -344,7 +250,7 @@ uint32_t GraphicsSystem::ReadRegister(uint32_t addr) {
       // below. Total ~= active + 4% blanking (720p60 -> 750, 576p50 -> 625).
       // Period is measured from the MarkVblank cadence, so V_COUNTER stays
       // coupled to whatever vblank rate is actually in effect (50Hz, 60Hz,
-      // or uncapped ~1ms) — matching how silicon raises vblank IRQs from
+      // or the frontend target refresh rate) — matching how silicon raises vblank IRQs from
       // V_COUNTER crossings.
       const uint32_t vblank_hz = GetGuestVblankRateHz();
       const uint32_t total_lines = (vblank_hz == 50) ? 625u : 750u;
@@ -431,7 +337,7 @@ void GraphicsSystem::MarkVblank() {
   g_guest_vblanks.fetch_add(1, std::memory_order_relaxed);
 
   // Capture vblank cadence so D1MODE_V_COUNTER tracks the actual rate
-  // (50Hz, 60Hz, or uncapped ~1ms), not just the configured one.
+  // (50Hz, 60Hz, or the frontend target refresh rate), not just the configured one.
   const uint64_t now = Clock::QueryGuestTickCount();
   const uint64_t prev =
       last_vblank_guest_tick_.exchange(now, std::memory_order_acq_rel);

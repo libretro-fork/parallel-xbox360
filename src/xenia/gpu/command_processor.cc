@@ -433,63 +433,8 @@ void CommandProcessor::SetDesiredSwapPostEffect(
 // Guest swaps and vblanks, counted for the libretro core's run stats
 std::atomic<uint64_t> g_guest_swaps{0}, g_guest_vblanks{0};
 
-void CommandProcessor::ThrottlePresentation() {
+void CommandProcessor::RecordGuestSwap() {
   g_guest_swaps.fetch_add(1, std::memory_order_relaxed);
-  // Host frame rate limiting based on framerate_limit cvar.
-  const uint32_t framerate_limit = cvars::framerate_limit;
-
-  if (framerate_limit == 0) {
-    // No host frame limiting
-    return;
-  }
-
-  const double target_duration_ms =
-      1000.0 / static_cast<double>(framerate_limit);
-  const uint64_t tick_freq = Clock::guest_tick_frequency();
-
-  const uint64_t target_duration_ticks = static_cast<uint64_t>(
-      target_duration_ms * static_cast<double>(tick_freq) / 1000.0);
-
-  // Spin until target duration has elapsed
-  while (true) {
-    const uint64_t current_time = Clock::QueryGuestTickCount();
-    const uint64_t time_delta = current_time - last_swap_time_;
-
-    if (time_delta >= target_duration_ticks) {
-      // If we've fallen behind by more than 2 frames, reset to catch up
-      if (time_delta > target_duration_ticks * 2) {
-        last_swap_time_ = current_time;
-      } else {
-        last_swap_time_ += target_duration_ticks;
-      }
-      return;
-    }
-
-    const double elapsed_ms = static_cast<double>(time_delta) /
-                              (static_cast<double>(tick_freq) / 1000.0);
-
-    const double remaining_ms = target_duration_ms - elapsed_ms;
-#if XE_PLATFORM_WIN32
-    // Sleep 90% of remaining, spin the rest for accuracy
-    const uint64_t sleep_ns =
-        static_cast<uint64_t>(remaining_ms * 1000000.0 * 0.90);
-    if (sleep_ns > 0) {
-      xe::threading::NanoSleep(sleep_ns);
-    }
-#elif XE_PLATFORM_MAC
-    // Darwin's nanosleep oversleeps by 100-500us; NanoSleepPrecise spins the
-    // tail so 60Hz targets don't miss their frame budget.
-    const uint64_t sleep_ns = static_cast<uint64_t>(remaining_ms * 1000000.0);
-    if (sleep_ns > 0) {
-      xe::threading::NanoSleepPrecise(sleep_ns);
-    }
-#else
-    const uint64_t sleep_ns = static_cast<uint64_t>(remaining_ms * 1000000.0);
-    if (sleep_ns > 0) {
-      xe::threading::NanoSleep(sleep_ns);
-    }
-#endif
-  }
 }
 
 void CommandProcessor::WorkerThreadMain() {

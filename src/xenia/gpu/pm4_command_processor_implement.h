@@ -805,7 +805,7 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_XE_SWAP(uint32_t packet,
   logging::IncrementFrameNumber();
 
   // Apply host frame rate limiting (separate from guest vblank timing)
-  COMMAND_PROCESSOR::ThrottlePresentation();
+  COMMAND_PROCESSOR::RecordGuestSwap();
 
   return true;
 }

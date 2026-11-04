@@ -350,6 +350,10 @@ compiled with MinGW-w64 GCC using `-std=c89 -Wall -Wextra -Werror`.
 
 - `core_events_test.c` checks coalesced title-stop requests and stale-state
   clearing. Run `make check-core-events` on Windows or Linux.
+- `core_vblank_test.c` checks 20,000 frontend requests and 128 stop/join races
+  without sleep or timer-driven wakeups. Compile it as C89 with
+  `libretro/core_vblank.c`, `HAVE_THREADS`, the root/common include paths and
+  the common thread/eventcount implementations.
 - `context_switch_test.c` checks two fiber resumes using owned libco. Compile
   with `-Ithird_party/libretro-common/include -DLIBCO_MP` and link
   `third_party/libretro-common/libco/amd64.c`; use `aarch64.c` on ARM64 with

@@ -39,6 +39,8 @@ The kernel owns socket I/O. Closing content cancels live socket waits, joins the
 
 Each `retro_run` supplies one video callback and one run's audio duration at the declared refresh rate. Fractional sample counts carry forward; audio underruns and a missing mixer produce silence for the remainder. Muting drains audio without adding a backlog. Stereo frontends may use either the batch or per-sample callback.
 
+The frontend controls presentation cadence. Guest vblank interrupts consume requests from `retro_run`; the core has no host swap limiter or Frame Wait polling option. The audio handoff has no queue-driven time-stretch or drift correction. Non-48-kHz media streams receive fixed sample-rate conversion to the 48-kHz output rate, preserving their duration.
+
 RetroArch owns the negotiated Vulkan device. The core releases its non-owning wrappers before unload and supplies no late device-destroy callback, so threaded video can destroy a cached device after the core DLL is gone.
 
 Vulkan context negotiation v2 routes device creation through the frontend wrapper, allowing the frontend to merge its device requirements. Older frontends and rejected v2 negotiation use v1. D3D12 requests render interface v2 and uses its fenced sync-index handoff when available, with v1 fallback. This does not implement Reflex or DLSS. D3D12 teardown waits are bounded; a stalled GPU may retain system COM resources rather than release memory still in use.
