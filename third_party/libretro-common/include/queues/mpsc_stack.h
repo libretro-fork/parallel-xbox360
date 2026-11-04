@@ -43,10 +43,7 @@
 
 RETRO_BEGIN_DECLS
 
-typedef struct mpsc_stack_node
-{
-   struct mpsc_stack_node *next;
-} mpsc_stack_node_t;
+#include <queues/mpsc_node.h>
 
 #if defined(RETRO_ATOMIC_HAS_PTR)
 

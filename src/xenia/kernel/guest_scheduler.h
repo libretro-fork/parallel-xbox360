@@ -11,6 +11,7 @@
 #define XENIA_KERNEL_GUEST_SCHEDULER_H_
 
 #include "libretro/core_pause_gate.h"
+#include "libretro/core_io_mailbox.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -354,6 +355,7 @@ class GuestScheduler {
 
   // Heap-owned, deleted by the worker after running.
   struct BlockingCall {
+    xe_io_message message;
     std::function<void()> fn;
   };
   // Dispatch counters reported when guest_scheduler_stats is set.
@@ -383,8 +385,7 @@ class GuestScheduler {
 
   std::once_flag io_once_;
   std::atomic<bool> io_started_{false};
-  std::mutex io_lock_;
-  std::queue<BlockingCall*> io_queue_;
+  xe_io_mailbox* io_mailbox_ = nullptr;
   std::unique_ptr<xe::threading::Thread> io_thread_;
   std::unique_ptr<xe::threading::Event> io_event_;
 

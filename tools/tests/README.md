@@ -1221,3 +1221,5 @@ for 192 rounds, covering notifications before and during parking and terminal
 shutdown. Windows MSVC builds the same driver with /TC /W4 /WX and the built
 retro-common.lib. Linux uses ASan/UBSan by default. All workers are joined before
 their eventcount gate is freed; tests introduce no polling sleeps.
+
+`run_io_mailbox_tests.sh` exercises the production C89 serial I/O mailbox with six producers and 196,608 messages in eight reusable nodes per producer. It checks FIFO across pending/incoming batches, per-producer order and immediate node reuse, followed by 24,576 messages freed by the consumer while producers continue publishing. Default Linux builds enable ASan/UBSan; native MSVC and MinGW runs are also supported. This verifies handoff ownership, not retail I/O throughput or bounded request admission.

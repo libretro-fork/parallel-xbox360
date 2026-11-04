@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Serial guest I/O submission uses libretro-common MPSC handoff without a queue mutex or internal queue-node allocation. FIFO batches and stop/join-before-cancel ordering are preserved; request/closure allocations and the concurrent I/O pool remain.
+
 - STFS directory and hash blocks are borrowed from the read-only mapping rather than copied. Truncated blocks and invalid parent indices fail loading with a damaged-file error; hash views are cleared before replacing the backing mapping.
 
 - STFS/SVOD extent metadata now uses owned C89 storage, coalescing adjacent ranges only within the same backing file during load. Reads preflight the full requested metadata span and mapped STFS ranges/SVOD fragment presence, then issue merged reads directly into the final buffer without staging or read-path allocation. Missing coverage fails before data reads; actual short I/O reports its valid prefix. Raw STFS block-count validation is preserved.

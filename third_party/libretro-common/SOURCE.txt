@@ -125,3 +125,5 @@ Initial stack-pointer/FP-control stores use memcpy to avoid typed-record aliasin
 
 1f6190c237754d598e1328a6f776d0195d762ded84eccf6baa950535da619874  libco/amd64.c (local source)
 f3ee26ce3acdc0dccc7a2711846a79c14d80bdf333235b60ad091fcef336c4f1  libco/aarch64.c (local source)
+
+2026-11-04: Existing include/queues/mpsc_stack.h revalidated against RetroArch f13b1459b166dcf89cfedf33f020f2e5345af040. Local change: move its unchanged intrusive-node declaration to include/queues/mpsc_node.h so C++ adapters can embed nodes without importing atomic implementation/platform macros. Stack operations remain unchanged. Used by the C89 serial guest I/O mailbox.

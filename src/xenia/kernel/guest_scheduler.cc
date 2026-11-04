@@ -225,11 +225,17 @@ static double CalibrateTicksPerUs() {
 GuestScheduler::GuestScheduler(KernelState* kernel_state)
     : kernel_state_(kernel_state), pause_gate_(xe_pause_gate_new()) {
   if (!pause_gate_) throw std::bad_alloc();
+  io_mailbox_ = xe_io_mailbox_new();
+  if (!io_mailbox_) {
+    xe_pause_gate_free(pause_gate_);
+    throw std::bad_alloc();
+  }
 }
 
 GuestScheduler::~GuestScheduler() {
   Shutdown();
   xe_pause_gate_free(pause_gate_);
+  xe_io_mailbox_free(io_mailbox_);
 }
 
 bool GuestScheduler::enabled() { return cvars::guest_scheduler; }
@@ -376,7 +382,9 @@ void GuestScheduler::Shutdown() {
       delete queue.front();
     }
   };
-  drop_queued(io_lock_, io_queue_);
+  while (xe_io_message* message = xe_io_mailbox_take(io_mailbox_)) {
+    delete static_cast<BlockingCall*>(message->context);
+  }
   drop_queued(io_pool_lock_, io_pool_queue_);
   // Everything still linked is unreachable now that the dispatch threads are
   // gone. Reclaim each thread so a relaunch does not leak it and its stack.
@@ -1113,6 +1121,7 @@ void GuestScheduler::WaitOnFence(xe::threading::Fence& fence) {
 void GuestScheduler::PostHostCall(std::function<void()> fn,
                                   BlockingCallClass call_class) {
   auto* call = new BlockingCall;
+  call->message.context = call;
   call->fn = std::move(fn);
   if (!EnqueueBlockingCall(call, call_class)) {
     call->fn();
@@ -1126,13 +1135,8 @@ bool GuestScheduler::EnqueueBlockingCall(BlockingCall* call,
     return EnqueuePoolCall(call);
   }
   EnsureIoWorker();
-  {
-    std::lock_guard<std::mutex> lock(io_lock_);
-    if (shutting_down_.load()) {
-      return false;
-    }
-    io_queue_.push(call);
-  }
+  if (shutting_down_.load()) return false;
+  xe_io_mailbox_push(io_mailbox_, &call->message);
   io_event_->Set();
   return true;
 }
@@ -1151,19 +1155,12 @@ void GuestScheduler::RunBlockingCall(BlockingCall* call) {
 void GuestScheduler::IoWorkerLoop() {
   Profiler::ThreadEnter("GuestScheduler IO");
   while (!shutting_down_.load()) {
-    BlockingCall* call = nullptr;
-    {
-      std::lock_guard<std::mutex> lock(io_lock_);
-      if (!io_queue_.empty()) {
-        call = io_queue_.front();
-        io_queue_.pop();
-      }
-    }
-    if (!call) {
+    xe_io_message* message = xe_io_mailbox_take(io_mailbox_);
+    if (!message) {
       xe::threading::Wait(io_event_.get(), false);
       continue;
     }
-    RunBlockingCall(call);
+    RunBlockingCall(static_cast<BlockingCall*>(message->context));
   }
 }
 
