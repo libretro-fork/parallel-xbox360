@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Synchronous guest I/O events now return to the reuse pool only after both the waiting caller and the signaling worker retire. This prevents an early `done` observation from recycling an event before a late completion signal. The handoff uses common C89 atomics and no additional allocation.
+
 - Shader/pipeline cache headers now distinguish failed reads from incomplete or incompatible files. A transient header read failure disables persistence without replacing the existing cache.
 
 - Vulkan/D3D12 shader-cache loading borrows mapped microcode directly instead of filling a temporary vector. Non-mappable VFS inputs reuse one range buffer; callbacks consume views before reuse and mappings close before repair. I/O/allocation failures now disable cache loading without truncating the file as if it were corrupt. Shader-owned bytecode and required endian conversion remain.

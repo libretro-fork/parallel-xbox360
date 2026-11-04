@@ -13,6 +13,7 @@
 #include <atomic>
 #include <ranges>
 
+#include "libretro/core_completion_pair.h"
 #include "xenia/kernel/kernel_state.h"
 #if defined(XENIA_LIBRETRO)
 #include "libretro/core_events.h"
@@ -137,6 +138,11 @@ namespace {
 // What the I/O manager waits with for a title's synchronous request.
 constexpr uint32_t kWaitReasonExecutive = 0;
 constexpr uint32_t kUserMode = 1;
+class IoEvent final : public XEvent {
+ public:
+  explicit IoEvent(KernelState* state) : XEvent(state, true) {}
+  xe_completion_pair completion;
+};
 }  // namespace
 
 void KernelState::RunBlockingIo(const std::function<void()>& fn,
@@ -149,16 +155,18 @@ void KernelState::RunBlockingIo(const std::function<void()>& fn,
   auto event = AcquireIoEvent();
   // The worker writes into this frame so only |done| ends the wait, even on a
   // terminate.
-  std::atomic<bool> done{false};
+  retro_atomic_int_t done;
+  retro_atomic_int_init(&done, 0);
   guest_scheduler_->PostHostCall(
-      [&fn, &done, signal = retain_object(event.get())]() {
+      [this, &fn, &done, signal = retain_object(event.get())]() mutable {
         fn();
-        done.store(true, std::memory_order_release);
+        retro_atomic_store_release_int(&done, 1);
         signal->Set(kIoDiskIncrement, false);
+        ReleaseIoEvent(std::move(signal));
       },
       call_class);
   uint32_t wait_alertable = alertable ? 1 : 0;
-  while (!done.load(std::memory_order_acquire)) {
+  while (!retro_atomic_load_acquire_int(&done)) {
     X_STATUS status = event->Wait(kWaitReasonExecutive, kUserMode,
                                   wait_alertable, nullptr, false);
     if (status == X_STATUS_USER_APC) {
@@ -180,18 +188,21 @@ object_ref<XEvent> KernelState::AcquireIoEvent() {
     if (!idle_io_events_.empty()) {
       auto event = std::move(idle_io_events_.back());
       idle_io_events_.pop_back();
+      xe_completion_pair_init(&static_cast<IoEvent*>(event.get())->completion);
       return event;
     }
   }
-  auto event = object_ref<XEvent>(new XEvent(this, true));
+  auto event = object_ref<XEvent>(new IoEvent(this));
   event->Initialize(false, false);
   // One signal per request would crowd the guest signals out of the ring.
   event->set_signal_ring_quiet(true);
+  xe_completion_pair_init(&static_cast<IoEvent*>(event.get())->completion);
   return event;
 }
 
 void KernelState::ReleaseIoEvent(object_ref<XEvent> event) {
-  // The completion can land after |done|, leaving it armed for the next user.
+  // Neither a late Set nor an unfinished caller may touch a recycled event.
+  if (!xe_completion_pair_release(&static_cast<IoEvent*>(event.get())->completion)) return;
   event->Reset();
   std::lock_guard<std::mutex> lock(io_event_lock_);
   idle_io_events_.push_back(std::move(event));
