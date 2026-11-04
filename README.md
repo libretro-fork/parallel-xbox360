@@ -25,6 +25,8 @@ Input state uses a C89 mailbox with 16 immutable snapshot slots per port and a b
 
 Startup does not display the standalone Windows disclaimer dialog or read/write its registry acknowledgement.
 
+Guest text notices use eight fixed 1024-byte C89 slots and libretro-common atomics. Producers copy temporary strings once; `retro_run` borrows the selected slot through the message callback without a mutex or intermediate string. Notices coalesce, oversized UTF-8 text is truncated, and saturated storage may drop a notice.
+
 Guest UI requests complete headlessly: message boxes choose an offline or confirmation answer, keyboards retain their default text, and storage selection uses the first available hard disk. UI open/close notifications use a bounded libretro-common queue drained by `retro_run`; the close delay follows frontend progress. Standalone windows, menus, native dialogs, swapchains, UI scaling/overlay pipelines, immediate-mode drawers and their shader assets are removed. The presenter only maintains guest output for frontend GPU handoff and capture. No standalone UI timing thread or sleep loop is created. There are no bundled UI fonts or fontconfig dependency. Guest profile/tile image decoding remains available independently of the UI.
 
 Xbox 360 games as a disc image (`.iso`), an executable (`.xex`), or a `.zar` / `.xcp` package. No BIOS or firmware is needed.

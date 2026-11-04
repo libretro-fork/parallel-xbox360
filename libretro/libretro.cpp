@@ -667,8 +667,6 @@ static const char *opt_get(const char *key) {
 
 // A message box the core answered without a window (xam_ui.cc), from a guest
 // thread, shown by retro_run on RetroArch's screen
-static std::mutex s_notice_mutex;
-static std::string s_notice;
 // Dialog Notifications: whether an answered dialog is shown as one
 static std::atomic<bool> s_dialog_notices{true};
 
@@ -1446,13 +1444,11 @@ static bool xenia_setup_and_launch(const char *path) {
             [](const std::string &title, const std::string &answer) {
                 if (!s_dialog_notices.load(std::memory_order_relaxed))
                     return;
-                std::lock_guard<std::mutex> lock(s_notice_mutex);
-                s_notice = title + ": " + answer;
+                xe_libretro_notice_post(title.c_str(), answer.c_str());
             };
         // No window to ask for another disc in: Disc Control answers
         disc::set_notice([](const std::string &text) {
-            std::lock_guard<std::mutex> lock(s_notice_mutex);
-            s_notice = text;
+            xe_libretro_notice_post(nullptr, text.c_str());
         });
         xenia_emulator->set_disc_request(disc::request);
         static bool s_patches_listed;
@@ -1690,6 +1686,7 @@ RETRO_API void retro_set_input_poll(retro_input_poll_t cb)            { core_sta
 RETRO_API void retro_set_input_state(retro_input_state_t cb)          { core_state.input_state_cb = cb; }
 
 RETRO_API void retro_init(void) {
+    xe_libretro_notice_clear();
     struct retro_vfs_interface_info vfs = {};
     vfs.required_interface_version = FILESTREAM_REQUIRED_VFS_VERSION;
     if (!core_state.environ_cb ||
@@ -1713,6 +1710,7 @@ RETRO_API void retro_init(void) {
 
 RETRO_API void retro_deinit(void) {
     xenia_shutdown();
+    xe_libretro_notice_clear();
     xe_audio_registry_free(s_audio_registry);
     s_audio_registry = nullptr;
     xe::threading::ShutdownTimerQueue();
@@ -1762,6 +1760,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
     // A failed load may be retried without an intervening unload.
     if (s_audio_registry) {
         xenia_shutdown();
+        xe_libretro_notice_clear();
         xe_audio_registry_free(s_audio_registry);
         s_audio_registry = nullptr;
     }
@@ -1922,6 +1921,7 @@ RETRO_API void retro_unload_game(void) {
         write_patch_files();
     disc::release();
     xenia_shutdown();
+    xe_libretro_notice_clear();
     disc::unload();
     xe_audio_registry_free(s_audio_registry);
     s_audio_registry = nullptr;
@@ -2028,14 +2028,11 @@ RETRO_API void retro_run(void) {
     if (xe_libretro_take_title_stop())
         xenia_stop_emulator();
     {
-        std::string notice;
-        {
-            std::lock_guard<std::mutex> lock(s_notice_mutex);
-            notice.swap(s_notice);
-        }
-        if (!notice.empty()) {
-            struct retro_message msg = { notice.c_str(), 240 };
+        xe_notice_view notice;
+        if (xe_libretro_notice_acquire(&notice)) {
+            struct retro_message msg = { notice.text, 240 };
             core_state.environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &msg);
+            xe_libretro_notice_release(&notice);
         }
     }
     const auto run_start = std::chrono::steady_clock::now();
