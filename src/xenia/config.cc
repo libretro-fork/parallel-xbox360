@@ -289,8 +289,7 @@ void ReadConfig(const std::filesystem::path& file_path,
         "\nPlease check your config file. The config will be saved with the "
         "correct types.";
 
-    xe::ShowSimpleMessageBox(xe::SimpleMessageBoxType::Warning,
-                             warning_message);
+    XELOGW("{}", warning_message);
 
     // Clear warnings
     cvar::config_type_mismatch_warnings->clear();

@@ -150,7 +150,7 @@ CXXFLAGS += -std=c++20 $(WARNINGS)
 ifeq ($(OS),macos)
 BASE_FLAGS += -mmacosx-version-min=15.0
 LDFLAGS += -dynamiclib -mmacosx-version-min=15.0 -Wl,-exported_symbols_list,libretro/exports-macos.T
-LDLIBS += -framework Cocoa -framework QuartzCore -framework CoreFoundation -framework Foundation -framework IOKit -ldl -lpthread
+LDLIBS += -framework CoreFoundation -framework Foundation -framework IOKit -ldl -lpthread
 else
 LDFLAGS += -shared
 endif

@@ -72,8 +72,7 @@ void ParseLaunchArguments(int& argc, char**& argv,
       if (xe::has_console_attached()) {
         PrintHelpAndExit();
       } else {
-        xe::ShowSimpleMessageBox(xe::SimpleMessageBoxType::Help,
-                                 options.help({""}));
+        XELOGI("{}", options.help({""}));
         exit(0);
       }
     }
@@ -99,7 +98,7 @@ void ParseLaunchArguments(int& argc, char**& argv,
     } else {
       std::string m =
           "Invalid launch options were given.\n" + options.help({""});
-      xe::ShowSimpleMessageBox(xe::SimpleMessageBoxType::Error, m);
+      XELOGE("{}", m);
       exit(0);
     }
   }

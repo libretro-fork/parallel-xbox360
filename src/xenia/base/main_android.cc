@@ -112,14 +112,6 @@ void InitializeAndroidAppFromMainThread(int32_t api_level,
 
   xe::memory::AndroidInitialize();
 
-  if (android_application_context_) {
-    if (!xe::InitializeAndroidSystemForApplicationContext()) {
-      __android_log_write(ANDROID_LOG_ERROR,
-                          "InitializeAndroidAppFromMainThread",
-                          "Failed to initialize system UI interaction");
-      std::abort();
-    }
-  }
 }
 
 void ShutdownAndroidAppFromMainThread() {
@@ -132,7 +124,6 @@ void ShutdownAndroidAppFromMainThread() {
     return;
   }
 
-  xe::ShutdownAndroidSystem();
 
   xe::memory::AndroidShutdown();
 

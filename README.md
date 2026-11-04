@@ -23,7 +23,7 @@ Analog sticks preserve the frontend's raw 16-bit values; the core adds no stick 
 
 Startup does not display the standalone Windows disclaimer dialog or read/write its registry acknowledgement.
 
-Guest UI requests complete headlessly: message boxes choose an offline or confirmation answer, keyboards retain their default text, and storage selection uses the first available hard disk. UI open/close notifications use a bounded libretro-common queue drained by `retro_run`; the close delay follows frontend progress. There are no standalone UI widgets, bundled UI fonts or fontconfig dependency. Guest profile/tile image decoding remains available independently of the UI.
+Guest UI requests complete headlessly: message boxes choose an offline or confirmation answer, keyboards retain their default text, and storage selection uses the first available hard disk. UI open/close notifications use a bounded libretro-common queue drained by `retro_run`; the close delay follows frontend progress. Standalone windows, menus, native dialogs, swapchains, UI scaling/overlay pipelines, immediate-mode drawers and their shader assets are removed. The presenter only maintains guest output for frontend GPU handoff and capture. No standalone UI timing thread or sleep loop is created. There are no bundled UI fonts or fontconfig dependency. Guest profile/tile image decoding remains available independently of the UI.
 
 Xbox 360 games as a disc image (`.iso`), an executable (`.xex`), or a `.zar` / `.xcp` package. No BIOS or firmware is needed.
 

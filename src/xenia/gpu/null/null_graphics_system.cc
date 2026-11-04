@@ -25,16 +25,9 @@ NullGraphicsSystem::~NullGraphicsSystem() {}
 
 X_STATUS NullGraphicsSystem::Setup(cpu::Processor* processor,
                                    kernel::KernelState* kernel_state,
-                                   ui::WindowedAppContext* app_context,
                                    bool with_presentation) {
-#if XE_PLATFORM_MAC
-  provider_ = nullptr;
-#else
-  // This is a null graphics system, but we still setup vulkan because UI needs
-  // it through us :|
-  provider_ = xe::ui::vulkan::VulkanProvider::Create(false, with_presentation);
-#endif
-  return GraphicsSystem::Setup(processor, kernel_state, app_context,
+  provider_.reset();
+  return GraphicsSystem::Setup(processor, kernel_state,
                                with_presentation);
 }
 

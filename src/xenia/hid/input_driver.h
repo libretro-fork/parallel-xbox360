@@ -16,14 +16,8 @@
 #include <vector>
 
 #include "xenia/hid/input.h"
-#include "xenia/ui/window.h"
 #include "xenia/xbox.h"
 
-namespace xe {
-namespace ui {
-class Window;
-}  // namespace ui
-}  // namespace xe
 
 namespace xe {
 namespace hid {
@@ -86,11 +80,8 @@ class InputDriver {
   }
 
  protected:
-  explicit InputDriver(xe::ui::Window* window, size_t window_z_order)
-      : window_(window), window_z_order_(window_z_order) {}
+  InputDriver() = default;
 
-  xe::ui::Window* window() const { return window_; }
-  size_t window_z_order() const { return window_z_order_; }
 
   void NotifyDevicesChanged() {
     if (devices_changed_callback_) {
@@ -99,8 +90,6 @@ class InputDriver {
   }
 
  private:
-  xe::ui::Window* window_;
-  size_t window_z_order_;
   DevicesChangedCallback devices_changed_callback_;
 };
 

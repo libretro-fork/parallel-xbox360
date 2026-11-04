@@ -1388,7 +1388,6 @@ static bool xenia_setup_and_launch(const char *path) {
             cmdline, storage, content, cache);
 
         xe::X_STATUS status = xenia_emulator->Setup(
-            /*display_window=*/nullptr,
             /*require_cpu_backend=*/true,
             /*audio_system_factory=*/
             [](xe::cpu::Processor *processor)
@@ -1412,10 +1411,10 @@ static bool xenia_setup_and_launch(const char *path) {
                 return gs;
             },
             /*input_driver_factory=*/
-            [](xe::ui::Window *window)
+            []()
                 -> std::vector<std::unique_ptr<xe::hid::InputDriver>> {
                 std::vector<std::unique_ptr<xe::hid::InputDriver>> v;
-                auto drv = std::make_unique<xe::hid::libretro_hid::LibretroInputDriver>(window, 0);
+                auto drv = std::make_unique<xe::hid::libretro_hid::LibretroInputDriver>();
                 lr_input_driver = drv.get();
                 v.push_back(std::move(drv));
                 return v;

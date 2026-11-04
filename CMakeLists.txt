@@ -92,7 +92,6 @@ option(XENIA_ENABLE_GPU_TRACE "Enable GPU trace capture in Release" OFF)
 if(XENIA_ENABLE_PROFILER)
   # UI is Debug-only — shutdown dump spams the log otherwise.
   add_compile_definitions(XE_OPTION_PROFILING=1)
-  add_compile_definitions($<$<CONFIG:Debug>:XE_OPTION_PROFILING_UI=1>)
 endif()
 
 if(XENIA_ENABLE_GPU_TRACE)

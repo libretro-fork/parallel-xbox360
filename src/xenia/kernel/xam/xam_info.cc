@@ -31,7 +31,6 @@
 #include "xenia/kernel/xconfig.h"
 #include "xenia/kernel/xenumerator.h"
 #include "xenia/kernel/xthread.h"
-#include "xenia/ui/windowed_app_context.h"
 #include "xenia/vfs/devices/host_path_entry.h"
 #include "xenia/xbox.h"
 

@@ -67,7 +67,6 @@ class LibretroGraphicsSystem : public null::NullGraphicsSystem {
 
   X_STATUS Setup(cpu::Processor* processor,
                  kernel::KernelState* kernel_state,
-                 ui::WindowedAppContext* app_context,
                  bool with_presentation) override;
 
   void Shutdown() override;

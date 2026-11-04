@@ -13,7 +13,6 @@
 #include <memory>
 
 #include "xenia/ui/graphics_provider.h"
-#include "xenia/ui/vulkan/ui_samplers.h"
 #include "xenia/ui/vulkan/vulkan_device.h"
 #include "xenia/ui/vulkan/vulkan_instance.h"
 
@@ -45,13 +44,11 @@ class VulkanProvider : public GraphicsProvider {
 #endif
 
   // nullptr if created without presentation support.
-  const UISamplers* ui_samplers() const { return ui_samplers_.get(); }
 
   std::unique_ptr<Presenter> CreatePresenter(
       Presenter::HostGpuLossCallback host_gpu_loss_callback =
           Presenter::FatalErrorHostGpuLossCallback) override;
 
-  std::unique_ptr<ImmediateDrawer> CreateImmediateDrawer() override;
 
  private:
   explicit VulkanProvider() = default;
@@ -62,7 +59,6 @@ class VulkanProvider : public GraphicsProvider {
   std::unique_ptr<VulkanDevice> vulkan_device_;
 
   // Depends on the device.
-  std::unique_ptr<UISamplers> ui_samplers_;
 #ifdef XENIA_LIBRETRO
   VulkanInstance* external_instance_ = nullptr;
   VulkanDevice* external_device_ = nullptr;

@@ -16,11 +16,6 @@
 // NOTE: microprofile must be setup first, before profiling.h is included.
 #define MICROPROFILE_ENABLED 1
 #define MICROPROFILE_IMPL 1
-// UI impl needs MicroProfileDraw{Box,Text,Line2D} from microprofile_drawer.cc.
-#if defined(XE_OPTION_PROFILING_UI) && XE_OPTION_PROFILING_UI
-#define MICROPROFILEUI_ENABLED 1
-#define MICROPROFILEUI_IMPL 1
-#endif
 // Allocated per logging thread, a flip overrunning it loses its tail.
 #define MICROPROFILE_PER_THREAD_BUFFER_SIZE (4 * 1024 * 1024)
 // No GPU timers to wait on, so each flip replays as soon as it ends.
@@ -45,9 +40,6 @@
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/profiling.h"
-#include "xenia/ui/ui_event.h"
-#include "xenia/ui/virtual_key.h"
-#include "xenia/ui/window.h"
 
 #if XE_OPTION_PROFILING
 #include <cstdio>
@@ -57,17 +49,6 @@
 #include <vector>
 #endif
 
-#if XE_OPTION_PROFILING
-#include "third_party/microprofile/microprofileui.h"
-#endif  // XE_OPTION_PROFILING
-
-#if XE_OPTION_PROFILING_UI
-#include "xenia/ui/microprofile_drawer.h"
-#endif  // XE_OPTION_PROFILING_UI
-
-DEFINE_bool(profiler_dpi_scaling, false,
-            "Apply window DPI scaling to the profiler.", "UI");
-DEFINE_bool(show_profiler, false, "Show profiling UI by default.", "UI");
 DEFINE_bool(
     profiler_dump_html, false,
     "Dump the profiler capture as a browsable HTML timeline rather than "
@@ -124,24 +105,10 @@ MicroProfileToken GetGuestFunctionToken(uint32_t guest_address) {
   return token;
 }
 
-Profiler::ProfilerWindowInputListener Profiler::input_listener_;
-size_t Profiler::z_order_ = 0;
-ui::Window* Profiler::window_ = nullptr;
-#if XE_OPTION_PROFILING_UI
-Profiler::ProfilerUIDrawer Profiler::ui_drawer_;
-ui::Presenter* Profiler::presenter_ = nullptr;
-std::unique_ptr<ui::MicroprofileDrawer> Profiler::drawer_;
-bool Profiler::dpi_scaling_ = false;
-#endif  // XE_OPTION_PROFILING_UI
-
 bool Profiler::is_enabled() { return true; }
 
 bool Profiler::is_visible() {
-#if XE_OPTION_PROFILING_UI
-  return is_enabled() && MicroProfileIsDrawing();
-#else
   return false;
-#endif
 }
 
 void Profiler::Initialize() {
@@ -159,20 +126,9 @@ void Profiler::Initialize() {
   g_MicroProfile.nBars |= 0x1 | 0x2;
   g_MicroProfile.nActiveBars |= 0x1 | 0x2;
 
-#if XE_OPTION_PROFILING_UI
-  dpi_scaling_ = cvars::profiler_dpi_scaling;
-  MicroProfileInitUI();
-  g_MicroProfileUI.bShowSpikes = true;
-  g_MicroProfileUI.nOpacityBackground = 0x40u << 24;
-  g_MicroProfileUI.nOpacityForeground = 0xc0u << 24;
-  if (cvars::show_profiler) {
-    MicroProfileSetDisplayMode(1);
-  }
-#else
   MicroProfileSetForceEnable(true);
   MicroProfileSetEnableAllGroups(true);
   MicroProfileSetForceMetaCounters(false);
-#endif  // XE_OPTION_PROFILING_UI
 }
 
 namespace {
@@ -204,9 +160,6 @@ void Profiler::ResetAggregation() {
 }
 
 void Profiler::Dump() {
-#if XE_OPTION_PROFILING_UI
-  MicroProfileDumpTimers();
-#endif  // XE_OPTION_PROFILING_UI
   const int max_frames =
       MICROPROFILE_MAX_FRAME_HISTORY - MICROPROFILE_GPU_FRAME_DELAY - 3;
   const char* path = cvars::profiler_dump_html ? "profile.html" : "profile.csv";
@@ -232,8 +185,6 @@ void Profiler::Dump() {
 
 void Profiler::Shutdown() {
   Dump();
-  SetUserIO(0, nullptr, nullptr, nullptr);
-  window_ = nullptr;
   MicroProfileShutdown();
 }
 
@@ -273,208 +224,7 @@ void Profiler::RetireThreadLog(ThreadLogHandle log) {
   MicroProfileSetThreadLog(previous == log ? nullptr : previous);
 }
 
-void Profiler::ProfilerWindowInputListener::OnKeyDown(ui::KeyEvent& e) {
-  // https://msdn.microsoft.com/en-us/library/windows/desktop/dd375731(v=vs.85).aspx
-  bool handled = true;
-  switch (e.virtual_key()) {
-    case ui::VirtualKey::kOem3:  // `
-      MicroProfileTogglePause();
-      break;
-#if XE_OPTION_PROFILING_UI
-    case ui::VirtualKey::kTab:
-      ToggleDisplay();
-      break;
-    case ui::VirtualKey::k1:
-      MicroProfileModKey(1);
-      break;
-#endif  // XE_OPTION_PROFILING_UI
-    default:
-      handled = false;
-      break;
-  }
-  if (handled) {
-    e.set_handled(true);
-  }
-  PostInputEvent();
-}
-
-void Profiler::ProfilerWindowInputListener::OnKeyUp(ui::KeyEvent& e) {
-  bool handled = true;
-  switch (e.virtual_key()) {
-#if XE_OPTION_PROFILING_UI
-    case ui::VirtualKey::k1:
-      MicroProfileModKey(0);
-      break;
-#endif  // XE_OPTION_PROFILING_UI
-    default:
-      handled = false;
-      break;
-  }
-  if (handled) {
-    e.set_handled(true);
-  }
-  PostInputEvent();
-}
-
-#if XE_OPTION_PROFILING_UI
-
-void Profiler::ProfilerWindowInputListener::OnMouseDown(ui::MouseEvent& e) {
-  Profiler::SetMousePosition(e.x(), e.y(), 0);
-  MicroProfileMouseButton(e.button() == ui::MouseEvent::Button::kLeft,
-                          e.button() == ui::MouseEvent::Button::kRight);
-  e.set_handled(true);
-  PostInputEvent();
-}
-
-void Profiler::ProfilerWindowInputListener::OnMouseUp(ui::MouseEvent& e) {
-  Profiler::SetMousePosition(e.x(), e.y(), 0);
-  MicroProfileMouseButton(0, 0);
-  e.set_handled(true);
-  PostInputEvent();
-}
-
-void Profiler::ProfilerWindowInputListener::OnMouseMove(ui::MouseEvent& e) {
-  Profiler::SetMousePosition(e.x(), e.y(), 0);
-  e.set_handled(true);
-  PostInputEvent();
-}
-
-void Profiler::ProfilerWindowInputListener::OnMouseWheel(ui::MouseEvent& e) {
-  Profiler::SetMousePosition(e.x(), e.y(), e.scroll_y());
-  e.set_handled(true);
-  PostInputEvent();
-}
-
-void Profiler::TogglePause() { MicroProfileTogglePause(); }
-
-#else
-
-void Profiler::TogglePause() {}
-
-#endif  // XE_OPTION_PROFILING_UI
-
-void Profiler::ToggleDisplay() {
-#if XE_OPTION_PROFILING_UI
-  bool was_visible = is_visible();
-  MicroProfileToggleDisplayMode();
-  if (is_visible() != was_visible) {
-    if (window_) {
-      if (was_visible) {
-        window_->RemoveInputListener(&input_listener_);
-      } else {
-        window_->AddInputListener(&input_listener_, z_order_);
-      }
-    }
-    if (presenter_) {
-      if (was_visible) {
-        presenter_->RemoveUIDrawerFromUIThread(&ui_drawer_);
-      } else {
-        presenter_->AddUIDrawerFromUIThread(&ui_drawer_, z_order_);
-      }
-    }
-  }
-#endif  // XE_OPTION_PROFILING_UI
-}
-
-void Profiler::SetUserIO(size_t z_order, ui::Window* window,
-                         ui::Presenter* presenter,
-                         ui::ImmediateDrawer* immediate_drawer) {
-#if XE_OPTION_PROFILING_UI
-  if (presenter_ && is_visible()) {
-    presenter_->RemoveUIDrawerFromUIThread(&ui_drawer_);
-  }
-  drawer_.reset();
-  presenter_ = nullptr;
-#endif  // XE_OPTION_PROFILING_UI
-
-  if (window_) {
-    if (is_visible()) {
-      window_->RemoveInputListener(&input_listener_);
-    }
-    window_ = nullptr;
-  }
-
-  if (!window) {
-    return;
-  }
-
-  z_order_ = z_order;
-  window_ = window;
-
-#if XE_OPTION_PROFILING_UI
-  if (presenter && immediate_drawer) {
-    presenter_ = presenter;
-    drawer_ = std::make_unique<ui::MicroprofileDrawer>(immediate_drawer);
-  }
-#endif  // XE_OPTION_PROFILING_UI
-
-  if (is_visible()) {
-    window_->AddInputListener(&input_listener_, z_order_);
-#if XE_OPTION_PROFILING_UI
-    if (presenter_) {
-      presenter_->AddUIDrawerFromUIThread(&ui_drawer_, z_order_);
-    }
-#endif  // XE_OPTION_PROFILING_UI
-  }
-}
-
-void Profiler::Flip() {
-  MicroProfileFlip();
-  // This can be called from non-UI threads, so not trying to access the drawer
-  // to trigger redraw here as it's owned and managed exclusively by the UI
-  // thread. Relying on continuous painting currently.
-}
-
-#if XE_OPTION_PROFILING_UI
-void Profiler::ProfilerUIDrawer::Draw(ui::UIDrawContext& ui_draw_context) {
-  if (!window_ || !presenter_ || !drawer_) {
-    return;
-  }
-  SCOPE_profile_cpu_f("internal");
-  uint32_t coordinate_space_width = dpi_scaling_
-                                        ? window_->GetActualLogicalWidth()
-                                        : window_->GetActualPhysicalWidth();
-  uint32_t coordinate_space_height = dpi_scaling_
-                                         ? window_->GetActualLogicalHeight()
-                                         : window_->GetActualPhysicalHeight();
-  drawer_->Begin(ui_draw_context, coordinate_space_width,
-                 coordinate_space_height);
-  MicroProfileDraw(coordinate_space_width, coordinate_space_height);
-  drawer_->End();
-  // Continuous repaint.
-  if (is_visible()) {
-    presenter_->RequestUIPaintFromUIThread();
-  }
-}
-#endif  // XE_OPTION_PROFILING_UI
-
-#if XE_OPTION_PROFILING_UI
-void Profiler::SetMousePosition(int32_t x, int32_t y, int32_t wheel_delta) {
-  if (!window_) {
-    return;
-  }
-  if (dpi_scaling_) {
-    x = window_->PositionToLogical(x);
-    y = window_->PositionToLogical(y);
-  }
-  MicroProfileMousePosition(uint32_t(std::max(int32_t(0), x)),
-                            uint32_t(std::max(int32_t(0), y)), wheel_delta);
-}
-#endif  // XE_OPTION_PROFILING_UI
-
-void Profiler::PostInputEvent() {
-  // The profiler can be hidden from within the profiler (Mode > Off).
-  if (!is_visible()) {
-    window_->RemoveInputListener(&input_listener_);
-#if XE_OPTION_PROFILING_UI
-    if (presenter_) {
-      presenter_->RemoveUIDrawerFromUIThread(&ui_drawer_);
-    }
-#endif  // XE_OPTION_PROFILING_UI
-    return;
-  }
-  // Relying on continuous painting currently, no need to request drawing.
-}
+void Profiler::Flip() { MicroProfileFlip(); }
 
 #else
 
@@ -496,11 +246,6 @@ Profiler::ThreadLogHandle Profiler::SwapThreadLog(ThreadLogHandle log) {
   return nullptr;
 }
 void Profiler::RetireThreadLog(ThreadLogHandle log) {}
-void Profiler::ToggleDisplay() {}
-void Profiler::TogglePause() {}
-void Profiler::SetUserIO(size_t z_order, ui::Window* window,
-                         ui::Presenter* presenter,
-                         ui::ImmediateDrawer* immediate_drawer) {}
 void Profiler::Flip() {}
 
 #endif  // XE_OPTION_PROFILING
@@ -510,38 +255,3 @@ void Profiler::Flip() {}
 uint32_t MicroProfileGpuInsertTimeStamp() { return 0; }
 
 const char* MicroProfileGetThreadName() { return "TODO: get thread name!"; }
-
-#if XE_OPTION_PROFILING
-#if XE_OPTION_PROFILING_UI
-
-void MicroProfileDrawBox(int nX, int nY, int nX1, int nY1, uint32_t nColor,
-                         MicroProfileBoxType type) {
-  auto drawer = xe::Profiler::drawer();
-  if (!drawer) {
-    return;
-  }
-  drawer->DrawBox(nX, nY, nX1, nY1, nColor,
-                  static_cast<xe::ui::MicroprofileDrawer::BoxType>(type));
-}
-
-void MicroProfileDrawLine2D(uint32_t nVertices, float* pVertices,
-                            uint32_t nColor) {
-  auto drawer = xe::Profiler::drawer();
-  if (!drawer) {
-    return;
-  }
-  drawer->DrawLine2D(nVertices, pVertices, nColor);
-}
-
-void MicroProfileDrawText(int nX, int nY, uint32_t nColor, const char* pText,
-                          uint32_t nLen) {
-  auto drawer = xe::Profiler::drawer();
-  if (!drawer) {
-    return;
-  }
-  drawer->DrawTextString(nX, nY, nColor, pText, nLen);
-}
-
-#endif  // XE_OPTION_PROFILING_UI
-
-#endif  // XE_OPTION_PROFILING

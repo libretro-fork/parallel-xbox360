@@ -24,7 +24,6 @@
 #include "xenia/memory.h"
 #include "xenia/ui/graphics_provider.h"
 #include "xenia/ui/presenter.h"
-#include "xenia/ui/windowed_app_context.h"
 #include "xenia/xbox.h"
 
 namespace xe {
@@ -76,7 +75,6 @@ class GraphicsSystem {
 
   virtual X_STATUS Setup(cpu::Processor* processor,
                          kernel::KernelState* kernel_state,
-                         ui::WindowedAppContext* app_context,
                          bool with_presentation);
   virtual void Shutdown();
   // Stops the vblank thread. Idempotent, and Shutdown does it too.
@@ -149,7 +147,6 @@ class GraphicsSystem {
   Memory* memory_ = nullptr;
   cpu::Processor* processor_ = nullptr;
   kernel::KernelState* kernel_state_ = nullptr;
-  ui::WindowedAppContext* app_context_ = nullptr;
   std::unique_ptr<ui::GraphicsProvider> provider_;
 
   uint32_t interrupt_callback_ = 0;

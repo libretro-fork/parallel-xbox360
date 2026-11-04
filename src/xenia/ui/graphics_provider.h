@@ -12,7 +12,6 @@
 
 #include <memory>
 
-#include "xenia/ui/immediate_drawer.h"
 #include "xenia/ui/presenter.h"
 
 namespace xe {
@@ -43,13 +42,11 @@ class GraphicsProvider {
 
   virtual ~GraphicsProvider() = default;
 
-  // It's safe to reinitialize the presenter in the host GPU loss callback if it
-  // was called from the UI thread as specified in the arguments.
+  // Creates guest output storage and capture resources for frontend handoff.
   virtual std::unique_ptr<Presenter> CreatePresenter(
       Presenter::HostGpuLossCallback host_gpu_loss_callback =
           Presenter::FatalErrorHostGpuLossCallback) = 0;
 
-  virtual std::unique_ptr<ImmediateDrawer> CreateImmediateDrawer() = 0;
 
  protected:
   GraphicsProvider() = default;

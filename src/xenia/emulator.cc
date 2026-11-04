@@ -55,9 +55,6 @@
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/memory.h"
-#include "xenia/ui/file_picker.h"
-#include "xenia/ui/window.h"
-#include "xenia/ui/windowed_app_context.h"
 #include "xenia/vfs/device.h"
 #include "xenia/vfs/devices/disc_image_device.h"
 #include "xenia/vfs/devices/disc_zarchive_device.h"
@@ -192,7 +189,6 @@ Emulator::Emulator(const std::filesystem::path& command_line,
       cache_root_(cache_root),
       title_name_(),
       title_version_(),
-      display_window_(nullptr),
       memory_(),
       audio_system_(),
       audio_media_player_(),
@@ -292,19 +288,15 @@ uint32_t Emulator::main_thread_id() {
 }
 
 X_STATUS Emulator::Setup(
-    ui::Window* display_window,
     bool require_cpu_backend,
     std::function<std::unique_ptr<apu::AudioSystem>(cpu::Processor*)>
         audio_system_factory,
     std::function<std::unique_ptr<gpu::GraphicsSystem>()>
         graphics_system_factory,
-    std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
+    std::function<std::vector<std::unique_ptr<hid::InputDriver>>()>
         input_driver_factory) {
   // Store parameters for reuse across Shutdown/Setup cycles.
   // Only overwrite if non-null so re-calls after Shutdown keep prior values.
-  if (display_window) {
-    display_window_ = display_window;
-  }
 
   require_cpu_backend_ = require_cpu_backend;
   if (audio_system_factory) {
@@ -377,13 +369,13 @@ X_STATUS Emulator::Setup(
   // same thread, so drivers are attached here on the emulator thread.
   if (!input_system_) {
     XELOGI("{}: Initializing HID...", __func__);
-    input_system_ = std::make_unique<xe::hid::InputSystem>(display_window_);
+    input_system_ = std::make_unique<xe::hid::InputSystem>();
     if (!input_system_) {
       XELOGE("{}: Cannot initalize input_system!", __func__);
       return X_STATUS_NOT_IMPLEMENTED;
     }
     if (input_driver_factory_) {
-      auto input_drivers = input_driver_factory_(display_window_);
+      auto input_drivers = input_driver_factory_();
       for (size_t i = 0; i < input_drivers.size(); ++i) {
         input_system_->AddDriver(std::move(input_drivers[i]));
       }
@@ -446,12 +438,10 @@ X_STATUS Emulator::SetupSubsystems() {
 
   if (graphics_system_) {
     XELOGI("{}: Starting graphics_system...", __func__);
-    // Presentation is requested even without a display window - the windowless
-    // presenter is what offscreen hosts like the trace dump capture guest
-    // output through.
+    // Guest output capture is required for the frontend frame handoff.
     result = graphics_system_->Setup(
         processor_.get(), kernel_state_.get(),
-        display_window_ ? &display_window_->app_context() : nullptr, true);
+        true);
     if (result) {
       XELOGE("{}: Failed to setup graphics_system!", __func__);
       return result;
@@ -2043,22 +2033,12 @@ static std::string format_version(xex2_version version) {
 
 X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
                                   const std::string_view module_path) {
-  // The window icon and on_launch listeners need the UI thread, when there is
-  // one: a libretro core has no window.
-  X_STATUS result = X_STATUS_UNSUCCESSFUL;
-  if (display_window_) {
-    display_window_->app_context().CallInUIThreadSynchronous(
-        [this, &path, &module_path, &result]() {
-          result = PrepareLaunch(path, module_path);
-        });
-  } else {
-    result = PrepareLaunch(path, module_path);
-  }
+  X_STATUS result = PrepareLaunch(path, module_path);
   if (XFAILED(result)) {
     return result;
   }
 
-  // Off the UI thread and after plugins, which patch code in place.
+  // After plugins, which patch code in place.
   auto module = kernel_state_->GetExecutableModule();
   if (module->xex_module()) {
     module->xex_module()->PrecompileDiscoveredFunctions();
@@ -2073,7 +2053,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
 
 void Emulator::SetupAgain() {
   const X_STATUS result =
-      Setup(nullptr, require_cpu_backend_, nullptr, nullptr, nullptr);
+      Setup(require_cpu_backend_, nullptr, nullptr, nullptr);
   if (XFAILED(result)) {
     xe::FatalError(
         fmt::format("Failed to set the emulator up again: {:08X}", result));
@@ -2085,9 +2065,6 @@ void Emulator::ResetTitleState() {
   title_id_ = std::nullopt;
   title_name_ = "";
   title_version_ = "";
-  if (display_window_) {
-    display_window_->SetIcon(nullptr, 0);
-  }
 }
 
 X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
@@ -2326,10 +2303,6 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
         XELOGI("-- PRESENCE MODES ({}) --\n{}", presence_modes.size(), body);
       }
 
-      auto icon_block = game_info_database_->GetIcon();
-      if (!icon_block.empty() && display_window_) {
-        display_window_->SetIcon(icon_block.data(), icon_block.size());
-      }
     }
   }
 
@@ -2337,10 +2310,6 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
   if (title_id_ == kXeFuTitleId && xbox_game_) {
     if (!xbox_game_->title_name.empty()) {
       title_name_ = xbox_game_->title_name;
-    }
-    if (display_window_ && !xbox_game_->icon_png.empty()) {
-      display_window_->SetIcon(xbox_game_->icon_png.data(),
-                               xbox_game_->icon_png.size());
     }
   }
 

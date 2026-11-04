@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed standalone window/menu/surface handling, native dialogs and browser launch helpers, Vulkan/D3D12 swapchains and UI paint pipelines, immediate-mode drawers, profiler overlay and UI shader assets. Guest output remains available through frontend GPU handoff and capture. Removed the dormant Windows UI timing thread, Linux UI sleep loop, and per-refresh UI clock bookkeeping.
+
 - Removed the host swap limiter and Frame Wait option, including translated entries. Guest vblank interrupts now consume frontend requests through a C89 libretro-common eventcount queue, with no independent frame timer or swap-polling sleep. Video/audio callback cadence is preserved.
 
 - Fixed a content-close hang after socket use: socket I/O now stops and joins during kernel teardown, before DLL unload. Pending socket waits and selected guest events are retired while the kernel is alive; reopening content gets a fresh I/O context. The worker uses libretro-common threads instead of a process-static C++ thread.

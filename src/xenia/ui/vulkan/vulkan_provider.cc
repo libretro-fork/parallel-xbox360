@@ -13,7 +13,6 @@
 
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
-#include "xenia/ui/vulkan/vulkan_immediate_drawer.h"
 #include "xenia/ui/vulkan/vulkan_presenter.h"
 
 DEFINE_int32(
@@ -55,18 +54,12 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(
     provider->external_instance_ = s_external_instance;
     provider->external_device_ = s_external_device;
     XELOGI("Vulkan: on the device shared with the frontend");
-    if (with_presentation) {
-      provider->ui_samplers_ = UISamplers::Create(s_external_device);
-      if (!provider->ui_samplers_) {
-        return nullptr;
-      }
-    }
     return provider;
   }
 #endif
 
   provider->vulkan_instance_ =
-      VulkanInstance::Create(with_presentation, cvars::vulkan_validation);
+      VulkanInstance::Create(false, cvars::vulkan_validation);
   if (!provider->vulkan_instance_) {
     return nullptr;
   }
@@ -101,14 +94,14 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(
     provider->vulkan_device_ = VulkanDevice::CreateIfSupported(
         provider->vulkan_instance_.get(),
         physical_devices[preferred_physical_device_index], with_gpu_emulation,
-        with_presentation);
+        false);
   }
 
   if (!provider->vulkan_device_) {
     for (const VkPhysicalDevice physical_device : physical_devices) {
       provider->vulkan_device_ = VulkanDevice::CreateIfSupported(
           provider->vulkan_instance_.get(), physical_device, with_gpu_emulation,
-          with_presentation);
+          false);
       if (provider->vulkan_device_) {
         break;
       }
@@ -122,24 +115,13 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(
     }
   }
 
-  if (with_presentation) {
-    provider->ui_samplers_ = UISamplers::Create(provider->vulkan_device_.get());
-    if (!provider->ui_samplers_) {
-      return nullptr;
-    }
-  }
 
   return provider;
 }
 
 std::unique_ptr<Presenter> VulkanProvider::CreatePresenter(
     Presenter::HostGpuLossCallback host_gpu_loss_callback) {
-  return VulkanPresenter::Create(host_gpu_loss_callback, vulkan_device(),
-                                 ui_samplers());
-}
-
-std::unique_ptr<ImmediateDrawer> VulkanProvider::CreateImmediateDrawer() {
-  return VulkanImmediateDrawer::Create(vulkan_device(), ui_samplers());
+  return VulkanPresenter::Create(host_gpu_loss_callback, vulkan_device());
 }
 
 }  // namespace vulkan

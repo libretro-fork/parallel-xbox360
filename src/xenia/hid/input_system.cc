@@ -41,7 +41,7 @@ DEFINE_transient_string(
     "across out-of-process relaunch. Not persisted.",
     "HID");
 
-InputSystem::InputSystem(xe::ui::Window* window) : window_(window) {
+InputSystem::InputSystem() {
 #ifdef XE_PLATFORM_WIN32
   portal_ = std::make_unique<HardwarePortal>();
 #endif  // XE_PLATFORM_WIN32
@@ -64,26 +64,6 @@ void InputSystem::AddDriver(std::unique_ptr<InputDriver> driver) {
 }
 
 void InputSystem::NotifyDevicesChanged() {
-  if (reconcile_pending_.exchange(true)) {
-    return;
-  }
-  if (!window_) {
-    reconcile_pending_.store(false);
-    return;
-  }
-  window_->app_context().CallInUIThreadDeferred([this]() {
-    reconcile_pending_.store(false);
-    {
-      auto lock = this->lock();
-      ReconcileBindings();
-    }
-    // The device list has changed; menu/toolbar must refresh even if
-    // ReconcileBindings didn't alter any bindings (e.g. a dismissed device
-    // replugged is visible again but stays unbound).
-    if (bindings_changed_cb_) {
-      bindings_changed_cb_();
-    }
-  });
 }
 
 void InputSystem::UpdateUsedSlot(InputDriver* driver, uint8_t slot,
@@ -146,29 +126,6 @@ X_RESULT InputSystem::GetState(uint32_t user_index, uint32_t flags,
                                X_INPUT_STATE* out_state) {
   SCOPE_profile_cpu_f("hid");
 
-  // If UI is blocking input, return zeroed state to the game
-  if (ui_input_blockers_.load() > 0) {
-    std::memset(out_state, 0, sizeof(X_INPUT_STATE));
-    return X_ERROR_SUCCESS;
-  }
-
-  X_RESULT result = GetStateForUI(user_index, flags, out_state);
-
-  // Mask buttons that were held when a UI dialog closed until they're
-  // released, so the close-press doesn't carry through into the game.
-  if (result == X_ERROR_SUCCESS && user_index < XUserMaxUserCount &&
-      consumed_buttons_[user_index] != 0) {
-    uint16_t buttons = out_state->gamepad.buttons;
-    consumed_buttons_[user_index] &= buttons;
-    out_state->gamepad.buttons = buttons & ~consumed_buttons_[user_index];
-  }
-
-  return result;
-}
-
-X_RESULT InputSystem::GetStateForUI(uint32_t user_index, uint32_t flags,
-                                    X_INPUT_STATE* out_state) {
-  SCOPE_profile_cpu_f("hid");
 
   if (user_index >= XUserMaxUserCount) {
     return X_ERROR_DEVICE_NOT_CONNECTED;
@@ -193,22 +150,6 @@ X_RESULT InputSystem::GetStateForUI(uint32_t user_index, uint32_t flags,
   return X_ERROR_DEVICE_NOT_CONNECTED;
 }
 
-void InputSystem::AddUIInputBlocker() { ui_input_blockers_.fetch_add(1); }
-
-void InputSystem::RemoveUIInputBlocker() {
-  // Before removing the blocker, capture any currently pressed buttons.
-  // These will be masked from game input until they are released, preventing
-  // the button press that closed the UI from carrying over into the game.
-  X_INPUT_STATE state;
-  for (uint32_t user_index = 0; user_index < XUserMaxUserCount; user_index++) {
-    if (GetStateForUI(user_index, 1, &state) == X_ERROR_SUCCESS) {
-      consumed_buttons_[user_index] |= state.gamepad.buttons;
-    }
-  }
-
-  ui_input_blockers_.fetch_sub(1);
-}
-
 X_RESULT InputSystem::SetState(uint32_t user_index,
                                X_INPUT_VIBRATION* vibration) {
   SCOPE_profile_cpu_f("hid");
@@ -226,12 +167,6 @@ X_RESULT InputSystem::SetState(uint32_t user_index,
 X_RESULT InputSystem::GetKeystroke(uint32_t user_index, uint32_t flags,
                                    X_INPUT_KEYSTROKE* out_keystroke) {
   SCOPE_profile_cpu_f("hid");
-
-  // If UI is blocking input, return empty keystroke to the game.
-  if (ui_input_blockers_.load() > 0) {
-    std::memset(out_keystroke, 0, sizeof(X_INPUT_KEYSTROKE));
-    return X_ERROR_EMPTY;
-  }
 
   bool any_connected = false;
 

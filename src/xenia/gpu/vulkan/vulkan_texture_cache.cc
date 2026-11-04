@@ -24,7 +24,6 @@
 #include "xenia/gpu/texture_util.h"
 #include "xenia/gpu/vulkan/deferred_command_buffer.h"
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
-#include "xenia/ui/vulkan/ui_samplers.h"
 #include "xenia/ui/vulkan/vulkan_mem_alloc.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
@@ -3423,8 +3422,7 @@ bool VulkanTextureCache::Initialize() {
   // VkDevice (true in a regular emulation scenario), so taking over all the
   // allocation slots exclusively.
   // Also leaving a few slots for use by things like overlay applications.
-  sampler_max_count_ = device_properties.maxSamplerAllocationCount -
-                       ui::vulkan::UISamplers::kSamplerCount - 16;
+  sampler_max_count_ = device_properties.maxSamplerAllocationCount - 16;
 
   if (device_properties.samplerAnisotropy) {
     max_anisotropy_ = xenos::AnisoFilter(

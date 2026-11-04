@@ -61,9 +61,8 @@ static uint16_t StickKey(int x, int y, int deadzone, uint16_t up) {
 
 // ---- LibretroInputDriver --------------------------------------------------
 
-LibretroInputDriver::LibretroInputDriver(xe::ui::Window* window,
-                                         size_t window_z_order)
-    : InputDriver(window, window_z_order) {
+LibretroInputDriver::LibretroInputDriver()
+ {
   // Mark all ports connected (RetroArch always has port 0).
   for (size_t i = 0; i < kMaxPorts; ++i) {
     states_[i].connected = (i == 0);
@@ -344,9 +343,8 @@ void LibretroInputDriver::SetPortDevice(unsigned port, unsigned device) {
 
 // ---- Factory --------------------------------------------------------------
 
-std::unique_ptr<InputDriver> Create(xe::ui::Window* window,
-                                    size_t window_z_order) {
-  return std::make_unique<LibretroInputDriver>(window, window_z_order);
+std::unique_ptr<InputDriver> Create() {
+  return std::make_unique<LibretroInputDriver>();
 }
 
 }  // namespace libretro_hid

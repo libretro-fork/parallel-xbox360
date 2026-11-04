@@ -16,10 +16,8 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/string.h"
-#include "xenia/ui/d3d12/d3d12_immediate_drawer.h"
 #include "xenia/ui/d3d12/d3d12_presenter.h"
 #include "xenia/ui/d3d12/d3d12_util.h"
-#include "xenia/ui/redist_installer_wx.h"
 DEFINE_bool(d3d12_debug, false, "Enable Direct3D 12 and DXGI debug layer.",
             "D3D12");
 DEFINE_bool(d3d12_gpu_validation, false,
@@ -45,11 +43,6 @@ DEFINE_int32(
     "high, 2 - global realtime (requires administrator privileges, may impact "
     "system responsibility)",
     "D3D12");
-
-DEFINE_path(d3d12_runtime_path, "",
-            "Where the optional D3D12Core.dll runtime is; empty: the D3D12 folder "
-            "next to the executable.",
-            "D3D12");
 
 namespace xe {
 namespace ui {
@@ -266,29 +259,6 @@ bool D3D12Provider::Initialize() {
     return false;
   }
 
-#ifndef XENIA_LIBRETRO
-  auto d3d12_dir = cvars::d3d12_runtime_path.empty()
-      ? xe::filesystem::GetExecutablePath().parent_path() / "D3D12"
-      : cvars::d3d12_runtime_path;
-#endif
-
-  // The D3D12SDKVersion exports make d3d12.dll load D3D12Core.dll at the first
-  // device creation, which fails outright if it's missing, so fetch it first.
-  // Not for a libretro core: the exports have to be the executable's, and
-  // the frontend's has none, so a core runs on the system's Direct3D 12.
-#ifndef XENIA_LIBRETRO
-  std::error_code ec;
-  if (!std::filesystem::exists(d3d12_dir / "D3D12Core.dll", ec)) {
-    // Returns only on decline or failure. On success it restarts.
-    EnsureAgilityRuntime(d3d12_dir);
-    if (!std::filesystem::exists(d3d12_dir / "D3D12Core.dll", ec)) {
-      XELOGE(
-          "The DirectX 12 Agility SDK runtime (D3D12Core.dll) is required but "
-          "was not installed");
-      return false;
-    }
-  }
-#endif
 
   // Configure the DXGI debug info queue.
   if (cvars::d3d12_break_on_error || cvars::d3d12_break_on_warning) {
@@ -339,11 +309,6 @@ bool D3D12Provider::Initialize() {
       XELOGI("Direct3D 12 debug layer enabled{}",
              gpu_validation ? " with GPU-based validation" : "");
     } else {
-      // The debug layer (D3D12SDKLayers.dll) isn't redistributable on its own.
-      // Offer to fetch it from the Agility SDK and restart.
-#ifndef XENIA_LIBRETRO
-      EnsureDebugLayer(d3d12_dir);
-#endif
       XELOGW("Failed to enable the Direct3D 12 debug layer (HRESULT 0x{:08X})",
              uint32_t(debug_interface_hr));
       debug = false;
@@ -671,10 +636,6 @@ uint32_t D3D12Provider::CreateUploadResource(
 std::unique_ptr<Presenter> D3D12Provider::CreatePresenter(
     Presenter::HostGpuLossCallback host_gpu_loss_callback) {
   return D3D12Presenter::Create(host_gpu_loss_callback, *this);
-}
-
-std::unique_ptr<ImmediateDrawer> D3D12Provider::CreateImmediateDrawer() {
-  return D3D12ImmediateDrawer::Create(*this);
 }
 
 void D3D12Provider::LogD3D12DebugMessages() const {

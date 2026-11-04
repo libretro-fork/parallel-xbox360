@@ -40,7 +40,7 @@ struct VulkanFeatures {
 std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     const VulkanInstance* const vulkan_instance,
     const VkPhysicalDevice physical_device, const bool with_gpu_emulation,
-    const bool with_swapchain
+    [[maybe_unused]] const bool with_swapchain
 #ifdef XENIA_LIBRETRO
     ,
     const FrontendRequest* const frontend_request
@@ -171,19 +171,6 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 1, 0)) {
     // #55. Dynamic rendering removes render pass/framebuffer overhead.
     XE_UI_VULKAN_STRUCT_PROMOTED_EXTENSION(KHR_dynamic_rendering, 1, 3)
-  }
-
-  if (with_swapchain) {
-    // #2.
-    XE_UI_VULKAN_STRUCT_EXTENSION(KHR_swapchain)
-#if XE_PLATFORM_WIN32
-    // #256. Windows-only extension to control fullscreen exclusive behavior.
-    // Used to prevent HDR state corruption during fullscreen transitions.
-    // Requires the VK_KHR_get_surface_capabilities2 instance extension.
-    if (vulkan_instance->extensions().ext_KHR_get_surface_capabilities2) {
-      XE_UI_VULKAN_STRUCT_EXTENSION(EXT_full_screen_exclusive)
-    }
-#endif
   }
 
   bool ext_1_2_KHR_sampler_mirror_clamp_to_edge = false;
@@ -333,12 +320,6 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       }
     }
 #endif
-  }
-
-  if (with_swapchain && !device->extensions_.ext_KHR_swapchain) {
-    XELOGW("Vulkan device '{}' doesn't support swapchains",
-           properties.deviceName);
-    return nullptr;
   }
 
   VkDeviceCreateInfo device_create_info = {
@@ -546,7 +527,6 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   uint32_t first_queue_family_graphics_compute = UINT32_MAX;
   uint32_t first_queue_family_sparse_binding = UINT32_MAX;
   uint32_t first_queue_family_transfer = UINT32_MAX;
-  bool has_presentation_queue_family = false;
 
   for (uint32_t queue_family_index = 0; queue_family_index < queue_family_count;
        ++queue_family_index) {
@@ -585,21 +565,6 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
           std::min(queue_family_index, first_queue_family_transfer);
     }
 
-    if (with_swapchain) {
-#if XE_PLATFORM_WIN32
-      queue_family.may_support_presentation =
-          vulkan_instance->extensions().ext_KHR_win32_surface &&
-          ifn.vkGetPhysicalDeviceWin32PresentationSupportKHR(
-              physical_device, queue_family_index);
-#else
-      queue_family.may_support_presentation = true;
-#endif
-      if (queue_family.may_support_presentation) {
-        queue_family.queues.resize(
-            std::max(size_t(1), queue_family.queues.size()));
-        has_presentation_queue_family = true;
-      }
-    }
   }
 
   if (first_queue_family_graphics_compute == UINT32_MAX) {
@@ -607,14 +572,6 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     XELOGW(
         "Vulkan device '{}' doesn't provide a graphics and compute queue "
         "family",
-        properties.deviceName);
-    return nullptr;
-  }
-
-  if (with_swapchain && !has_presentation_queue_family) {
-    XELOGW(
-        "Vulkan device '{}' doesn't provide a queue family that supports "
-        "presentation",
         properties.deviceName);
     return nullptr;
   }

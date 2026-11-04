@@ -30,7 +30,6 @@
 #include "xenia/memory.h"
 #include "xenia/patcher/patcher.h"
 #include "xenia/patcher/plugin_loader.h"
-#include "xenia/ui/immediate_drawer.h"
 #include "xenia/vfs/device.h"
 #include "xenia/vfs/virtual_file_system.h"
 #include "xenia/vfs/xbe_metadata.h"
@@ -53,7 +52,6 @@ class InputDriver;
 class InputSystem;
 }  // namespace hid
 namespace ui {
-class Window;
 }  // namespace ui
 }  // namespace xe
 
@@ -159,8 +157,6 @@ class Emulator {
 
   uint32_t main_thread_id();
 
-  // Window used for displaying graphical output. Can be null.
-  ui::Window* display_window() const { return display_window_; }
 
 
   // Guest memory system modelling the RAM (both virtual and physical) of the
@@ -210,13 +206,12 @@ class Emulator {
   // attach input drivers — call SetupSubsystems for that, after any per-game
   // cvar overrides are in place.
   X_STATUS Setup(
-      ui::Window* display_window,
       bool require_cpu_backend,
       std::function<std::unique_ptr<apu::AudioSystem>(cpu::Processor*)>
           audio_system_factory,
       std::function<std::unique_ptr<gpu::GraphicsSystem>()>
           graphics_system_factory,
-      std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
+      std::function<std::vector<std::unique_ptr<hid::InputDriver>>()>
           input_driver_factory);
 
   // Creates and starts graphics_system + audio_system from stored factories,
@@ -543,7 +538,6 @@ class Emulator {
   std::string title_name_;
   std::string title_version_;
 
-  ui::Window* display_window_ = nullptr;
 
   std::unique_ptr<Memory> memory_;
 
@@ -583,7 +577,7 @@ class Emulator {
       audio_system_factory_;
   std::function<std::unique_ptr<gpu::GraphicsSystem>()>
       graphics_system_factory_;
-  std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
+  std::function<std::vector<std::unique_ptr<hid::InputDriver>>()>
       input_driver_factory_;
 
   std::string active_gpu_backend_;

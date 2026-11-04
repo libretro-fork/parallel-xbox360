@@ -1074,3 +1074,19 @@ C adapter and drivers use `/TC /W4 /WX`.
 The production core has no pugixml dependency. `run_xlast_benchmark.sh` measures
 construction, destruction and repeated lookups separately; its reference code
 also comes from Git history. Benchmark timers are not part of emulation.
+
+### Guest output without standalone presentation
+
+`bash tools/tests/run_presenter_tests.sh` builds a strict C89 driver and a minimal
+C++ bridge to the production guest-output mailbox. It checks capture before the
+first frame, failed refresh retention, blanking/re-enable, and coherent monotonic
+frames across 200,000 concurrent publications using libretro-common threads.
+Linux defaults to ASan/UBSan; use `SANITIZER=` under MSYS2 MinGW. The MSVC driver
+also compiles with `/TC /W4 /WX`; link the bridge and `src/xenia/ui/presenter.cc`
+with the built `retro-common.lib`.
+
+UI-removal validation also covers the complete MSVC core, static MinGW Make
+build, audio format/cadence, repeated invalid-content close, APC interruption,
+and Vulkan/D3D12 interface/lifetime fixtures. Those lifecycle fixtures do not
+boot a retail game or prove visual output across all titles. macOS and Android
+SDK builds are not available in this validation environment.

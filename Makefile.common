@@ -36,9 +36,9 @@ SOURCES_CXX := $(filter-out $(foreach s,$(PLATFORM_SUFFIXES),%_$(s).cc),$(ALL_CO
 SOURCES_CXX += $(filter $(foreach s,$(OS_SUFFIXES) $(ARCH_SUFFIXES),%_$(s).cc),$(ALL_CORE_SOURCES))
 SOURCES_CXX := $(filter-out %_main.cc %_test.cc %_demo.cc \
  src/xenia/base/console_app_main_%.cc src/xenia/base/main_init_%.cc \
- src/xenia/ui/windowed_app_main_%.cc src/xenia/vfs/vfs_dump.cc,$(SOURCES_CXX))
+ src/xenia/vfs/vfs_dump.cc,$(SOURCES_CXX))
 SOURCES_CXX += libretro/libretro.cpp libretro/libretro_audio_driver.cc \
- libretro/libretro_graphics_system.cc libretro/libretro_headless_stubs.cc \
+ libretro/libretro_graphics_system.cc \
  libretro/libretro_hid.cc libretro/libretro_vk_presenter.cc \
  libretro/libretro_gamedb.cc libretro/libretro_disc.cc src/xenia/hid/portal/portal.cc
 ifeq ($(OS),windows)
@@ -86,17 +86,12 @@ endif
 
 # Built-in shaders are checked-in raw SPIR-V and DXIL modules. The C89
 # generator only embeds bytes; no shader language compiler runs during a build.
-SHADER_SOURCES := $(wildcard src/xenia/gpu/shaders/bytecode/vulkan_spirv/*.spv \
- src/xenia/ui/shaders/bytecode/vulkan_spirv/*.spv)
+SHADER_SOURCES := $(wildcard src/xenia/gpu/shaders/bytecode/vulkan_spirv/*.spv)
 ifeq ($(OS),windows)
-SHADER_SOURCES += $(wildcard src/xenia/gpu/shaders/bytecode/d3d12_dxil/*.dxil \
- src/xenia/ui/shaders/bytecode/d3d12_dxil/*.dxil)
+SHADER_SOURCES += $(wildcard src/xenia/gpu/shaders/bytecode/d3d12_dxil/*.dxil)
 endif
 shader-output = $(GEN)/generated/$(patsubst src/%,%,$(basename $(1))).h
 SHADER_HEADERS := $(foreach s,$(SHADER_SOURCES),$(call shader-output,$(s)))
-ifeq ($(OS),macos)
-SOURCES_OBJCXX := src/xenia/ui/surface_mac.mm
-endif
 SOURCES_CXX += $(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc
 
 # FFmpeg: the same fixed codec/container subset as the existing core.

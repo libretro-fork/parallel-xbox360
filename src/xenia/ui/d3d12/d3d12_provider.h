@@ -37,14 +37,12 @@ class D3D12Provider : public GraphicsProvider {
       Presenter::HostGpuLossCallback host_gpu_loss_callback =
           Presenter::FatalErrorHostGpuLossCallback) override;
 
-  std::unique_ptr<ImmediateDrawer> CreateImmediateDrawer() override;
   uint32_t CreateUploadResource(
       D3D12_HEAP_FLAGS HeapFlags, _In_ const D3D12_RESOURCE_DESC* pDesc,
       D3D12_RESOURCE_STATES InitialResourceState, REFIID riidResource,
       void** ppvResource,
       const D3D12_CLEAR_VALUE* pOptimizedClearValue = nullptr) const;
 
-  IDXGIFactory2* GetDXGIFactory() const { return dxgi_factory_; }
   // nullptr if PIX not attached.
   IDXGraphicsAnalysis* GetGraphicsAnalysis() const {
     return graphics_analysis_;

@@ -29,7 +29,6 @@ class NullGraphicsSystem : public GraphicsSystem {
   std::string name() const override { return "null"; }
 
   X_STATUS Setup(cpu::Processor* processor, kernel::KernelState* kernel_state,
-                 ui::WindowedAppContext* app_context,
                  bool with_presentation) override;
 
  private:

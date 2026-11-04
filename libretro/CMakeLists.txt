@@ -6,7 +6,6 @@ add_library(xenia-libretro SHARED
   core_events.c
   libretro_audio_driver.cc
   libretro_graphics_system.cc
-  libretro_headless_stubs.cc
   libretro_hid.cc
   libretro_vk_presenter.cc
   libretro_gamedb.cc

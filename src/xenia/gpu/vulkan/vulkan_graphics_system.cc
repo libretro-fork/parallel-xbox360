@@ -35,7 +35,6 @@ bool VulkanGraphicsSystem::supports_depth_clamp() const {
 
 X_STATUS VulkanGraphicsSystem::Setup(cpu::Processor* processor,
                                      kernel::KernelState* kernel_state,
-                                     ui::WindowedAppContext* app_context,
                                      bool with_presentation) {
   provider_ = xe::ui::vulkan::VulkanProvider::Create(true, with_presentation);
   if (!provider_) {
@@ -49,7 +48,7 @@ X_STATUS VulkanGraphicsSystem::Setup(cpu::Processor* processor,
         "See https://xenia.jp/faq/ for more information and a list of "
         "supported GPUs.");
   }
-  return GraphicsSystem::Setup(processor, kernel_state, app_context,
+  return GraphicsSystem::Setup(processor, kernel_state,
                                with_presentation);
 }
 

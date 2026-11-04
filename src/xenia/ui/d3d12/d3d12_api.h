@@ -17,7 +17,9 @@
 // than the ones from the Windows SDK before other headers that may also
 // potentially include their headers.
 
-#include "xenia/ui/dxgi_include_win.h"
+#include "third_party/DirectX-Headers/include/directx/dxgicommon.h"
+#include "third_party/DirectX-Headers/include/directx/dxgiformat.h"
+#include <dxgi1_5.h>
 
 #include "third_party/DirectX-Headers/include/directx/d3d12.h"
 #include "third_party/DirectX-Headers/include/directx/d3d12sdklayers.h"

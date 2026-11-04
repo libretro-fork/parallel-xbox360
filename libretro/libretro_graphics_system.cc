@@ -73,10 +73,9 @@ LibretroGraphicsSystem::~LibretroGraphicsSystem() = default;
 
 X_STATUS LibretroGraphicsSystem::Setup(cpu::Processor* processor,
                                         kernel::KernelState* kernel_state,
-                                        ui::WindowedAppContext* app_context,
                                         bool with_presentation) {
   // Skip Vulkan provider - frontend owns GPU context.
-  return GraphicsSystem::Setup(processor, kernel_state, app_context, false);
+  return GraphicsSystem::Setup(processor, kernel_state, false);
 }
 
 void LibretroGraphicsSystem::Shutdown() {

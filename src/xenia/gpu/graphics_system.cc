@@ -22,8 +22,6 @@
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/ui/graphics_provider.h"
-#include "xenia/ui/window.h"
-#include "xenia/ui/windowed_app_context.h"
 
 DEFINE_uint32(internal_display_resolution, 8,
               "Allow games that support different resolutions to render "
@@ -89,12 +87,10 @@ GraphicsSystem::~GraphicsSystem() {
 
 X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
                                kernel::KernelState* kernel_state,
-                               ui::WindowedAppContext* app_context,
                                bool with_presentation) {
   memory_ = processor->memory();
   processor_ = processor;
   kernel_state_ = kernel_state;
-  app_context_ = app_context;
 
   scaled_aspect_x_ = 16;
   scaled_aspect_y_ = 9;
@@ -115,22 +111,10 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
   }
 
   if (with_presentation && provider_) {
-    // Safe if either the UI thread call or the presenter creation fails.
-    if (app_context_) {
-      app_context_->CallInUIThreadSynchronous([this]() {
-        presenter_ = provider_->CreatePresenter(
-            [this](bool is_responsible, bool statically_from_ui_thread) {
-              OnHostGpuLossFromAnyThread(is_responsible);
-            });
-      });
-    } else {
-      // May be needed for offscreen use, such as capturing the guest output
-      // image.
-      presenter_ = provider_->CreatePresenter(
-          [this](bool is_responsible, bool statically_from_ui_thread) {
-            OnHostGpuLossFromAnyThread(is_responsible);
-          });
-    }
+    presenter_ = provider_->CreatePresenter(
+        [this](bool is_responsible, bool) {
+          OnHostGpuLossFromAnyThread(is_responsible);
+        });
   }
 
   // Create command processor. This will spin up a thread to process all
@@ -180,16 +164,7 @@ void GraphicsSystem::Shutdown() {
 
   StopVblankWorker();
 
-  if (presenter_) {
-    if (app_context_) {
-      app_context_->CallInUIThreadSynchronous([this]() { presenter_.reset(); });
-    }
-    // If there's no app context (thus the presenter is owned by the thread that
-    // initialized the GraphicsSystem) or can't be queueing UI thread calls
-    // anymore, shutdown anyway.
-    presenter_.reset();
-  }
-
+  presenter_.reset();
   provider_.reset();
 }
 
@@ -206,16 +181,6 @@ void GraphicsSystem::StopVblankWorker() {
 }
 void GraphicsSystem::OnHostGpuLossFromAnyThread(
     [[maybe_unused]] bool is_responsible) {
-  // TODO(Triang3l): Somehow gain exclusive ownership of the Provider (may be
-  // used by the command processor, the presenter, and possibly anything else,
-  // it's considered free-threaded, except for lifetime management which will be
-  // involved in this case) and reset it so a new host GPU API device is
-  // created. Then ask the command processor to reset itself in its thread, and
-  // ask the UI thread to reset the Presenter (the UI thread manages its
-  // lifetime - but if there's no WindowedAppContext, either don't reset it as
-  // in this case there's no user who needs uninterrupted gameplay, or somehow
-  // protect it with a mutex so any thread can be considered a UI thread and
-  // reset).
   if (host_gpu_loss_reported_.test_and_set(std::memory_order_relaxed)) {
     return;
   }

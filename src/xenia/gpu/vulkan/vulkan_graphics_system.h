@@ -31,7 +31,6 @@ class VulkanGraphicsSystem : public GraphicsSystem {
   bool supports_depth_clamp() const override;
 
   X_STATUS Setup(cpu::Processor* processor, kernel::KernelState* kernel_state,
-                 ui::WindowedAppContext* app_context,
                  bool with_presentation) override;
 
  private:

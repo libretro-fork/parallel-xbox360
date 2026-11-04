@@ -32,10 +32,9 @@ std::string D3D12GraphicsSystem::name() const { return "D3D12"; }
 
 X_STATUS D3D12GraphicsSystem::Setup(cpu::Processor* processor,
                                     kernel::KernelState* kernel_state,
-                                    ui::WindowedAppContext* app_context,
                                     bool with_presentation) {
   provider_ = xe::ui::d3d12::D3D12Provider::Create();
-  return GraphicsSystem::Setup(processor, kernel_state, app_context,
+  return GraphicsSystem::Setup(processor, kernel_state,
                                with_presentation);
 }
 

@@ -24,21 +24,15 @@
 #include "xenia/hid/portal/portal.h"
 #include "xenia/xbox.h"
 
-namespace xe {
-namespace ui {
-class Window;
-}  // namespace ui
-}  // namespace xe
 
 namespace xe {
 namespace hid {
 
 class InputSystem {
  public:
-  explicit InputSystem(xe::ui::Window* window);
+  InputSystem();
   ~InputSystem();
 
-  xe::ui::Window* window() const { return window_; }
 
   X_STATUS Setup();
 
@@ -51,15 +45,11 @@ class InputSystem {
   X_RESULT GetState(uint32_t user_index, uint32_t flags,
                     X_INPUT_STATE* out_state);
   // GetState variant for UI that bypasses the input blocker
-  X_RESULT GetStateForUI(uint32_t user_index, uint32_t flags,
-                         X_INPUT_STATE* out_state);
   X_RESULT SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration);
   X_RESULT GetKeystroke(uint32_t user_index, uint32_t flags,
                         X_INPUT_KEYSTROKE* out_keystroke);
 
   // Block/unblock input to the game (for UI dialogs)
-  void AddUIInputBlocker();
-  void RemoveUIInputBlocker();
 
   bool GetVibrationCvar();
   void ToggleVibration();
@@ -143,7 +133,6 @@ class InputSystem {
   // ReconcileBindings reattaches them by stable_id as devices appear.
   void LoadSlotBindingsFromPassthrough();
 
-  xe::ui::Window* window_ = nullptr;
 
   std::vector<std::unique_ptr<InputDriver>> drivers_;
 
@@ -151,9 +140,6 @@ class InputSystem {
 
   std::bitset<XUserMaxUserCount> connected_slots = {};
   std::array<SlotBinding, XUserMaxUserCount> slot_bindings_{};
-  // True while a NotifyDevicesChanged() reconcile is pending on the UI
-  // thread; coalesces bursts of hotplug events into a single reconcile.
-  std::atomic<bool> reconcile_pending_{false};
   // Devices the user has explicitly unbound this session; suppresses
   // re-auto-binding by ReconcileBindings until BindSlot or app restart.
   std::set<std::string> dismissed_ids_;
@@ -165,14 +151,8 @@ class InputSystem {
 
   xe_unlikely_mutex lock_;
 
-  // Reference count for UI elements blocking game input
-  std::atomic<int> ui_input_blockers_{0};
-
-  // Buttons that should be masked from game input until released (per slot).
-  // This prevents button presses used to close UI dialogs from being
-  // seen by the game immediately after the dialog closes.
-  std::array<uint16_t, XUserMaxUserCount> consumed_buttons_{};
 };
+
 
 }  // namespace hid
 }  // namespace xe

@@ -61,7 +61,7 @@ class LibretroInputDriver final : public InputDriver {
  public:
   static constexpr size_t kMaxPorts = 4;
 
-  explicit LibretroInputDriver(xe::ui::Window* window, size_t window_z_order);
+  LibretroInputDriver();
   ~LibretroInputDriver() override;
 
   X_STATUS Setup() override;
@@ -99,8 +99,7 @@ class LibretroInputDriver final : public InputDriver {
 };
 
 // Factory function (matches xe::hid::nop::Create pattern).
-std::unique_ptr<InputDriver> Create(xe::ui::Window* window,
-                                    size_t window_z_order);
+std::unique_ptr<InputDriver> Create();
 
 }  // namespace libretro_hid
 }  // namespace hid

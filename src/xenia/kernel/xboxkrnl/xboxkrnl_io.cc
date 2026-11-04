@@ -25,8 +25,6 @@
 #include "xenia/kernel/xiocompletion.h"
 #include "xenia/kernel/xsymboliclink.h"
 #include "xenia/kernel/xthread.h"
-#include "xenia/ui/window.h"
-#include "xenia/ui/windowed_app_context.h"
 #include "xenia/vfs/device.h"
 #include "xenia/xbox.h"
 
@@ -138,18 +136,13 @@ static void NoteXeFuTitle(std::string_view path) {
   if (name.empty()) {
     name = fmt::format("{:08X}", title_id);
   }
-  // On the UI thread, which reads the name.
   auto emulator = kernel_state()->emulator();
   auto set_name = [emulator, name]() {
     if (emulator->title_name() != name) {
       emulator->SetTitleName(name);
     }
   };
-  if (auto window = emulator->display_window()) {
-    window->app_context().CallInUIThread(set_name);
-  } else {
-    set_name();
-  }
+  set_name();
 }
 
 dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,

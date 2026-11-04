@@ -37,7 +37,6 @@
 #if XE_PLATFORM_ANDROID
 #include <android/log.h>
 #elif XE_PLATFORM_WIN32
-// For MessageBox:
 #include "xenia/base/platform_win.h"
 #endif  // XE_PLATFORM
 
@@ -548,9 +547,6 @@ void logging::AppendLogLine(LogLevel log_level, const char prefix_char,
 void FatalError(const std::string_view str) {
   logging::AppendLogLine(LogLevel::Error, 'x', str);
 
-  if (!xe::has_console_attached()) {
-    ShowSimpleMessageBox(SimpleMessageBoxType::Error, str);
-  }
 
   ShutdownLogging();
 

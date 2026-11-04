@@ -376,7 +376,6 @@ class VulkanDevice {
 
   struct QueueFamily {
     VkQueueFlags queue_flags = 0;
-    bool may_support_presentation = false;
     std::vector<std::unique_ptr<Queue>> queues;
   };
 

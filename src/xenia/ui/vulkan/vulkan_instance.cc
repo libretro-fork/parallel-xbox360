@@ -20,8 +20,7 @@
 #include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
-#include "xenia/ui/redist_installer_wx.h"
-#include "xenia/ui/vulkan/vulkan_presenter.h"
+#include "xenia/ui/vulkan/vulkan_device.h"
 
 #if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
 #include <dlfcn.h>
@@ -41,7 +40,7 @@ namespace ui {
 namespace vulkan {
 
 std::unique_ptr<VulkanInstance> VulkanInstance::Create(
-    const bool with_surface, const int validation_level) {
+    [[maybe_unused]] const bool with_surface, const int validation_level) {
   std::unique_ptr<VulkanInstance> vulkan_instance(new VulkanInstance());
 
   // Load the RenderDoc API if connected.
@@ -72,12 +71,9 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
       (ifn.name = PFN_##name(dlsym(vulkan_instance->loader_, #name))) != \
       nullptr;
 #elif XE_PLATFORM_WIN32
-  // Offer to download the loader into a "Vulkan" folder next to the executable
-  // if it's missing, then load it from there by full path. Fall back to the
-  // system search path.
+  // Use an installed Vulkan loader; the core never downloads a runtime.
   auto vulkan_dir =
       xe::filesystem::GetExecutablePath().parent_path() / "Vulkan";
-  xe::ui::EnsureVulkanLoader(vulkan_dir);
   auto loader_path = xe::path_to_utf16(vulkan_dir / "vulkan-1.dll");
   vulkan_instance->loader_ =
       LoadLibraryW(reinterpret_cast<LPCWSTR>(loader_path.c_str()));
@@ -153,46 +149,6 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
   requested_extensions.emplace(
       "VK_KHR_portability_enumeration",
       &vulkan_instance->extensions_.ext_KHR_portability_enumeration);
-  if (with_surface) {
-    // #1.
-    requested_extensions.emplace("VK_KHR_surface",
-                                 &vulkan_instance->extensions_.ext_KHR_surface);
-    // #120. Required by VK_EXT_full_screen_exclusive.
-    requested_extensions.emplace(
-        "VK_KHR_get_surface_capabilities2",
-        &vulkan_instance->extensions_.ext_KHR_get_surface_capabilities2);
-#ifdef VK_USE_PLATFORM_XCB_KHR
-    // #6.
-    requested_extensions.emplace(
-        "VK_KHR_xcb_surface",
-        &vulkan_instance->extensions_.ext_KHR_xcb_surface);
-#endif
-#ifdef VK_USE_PLATFORM_WAYLAND_KHR
-    // #7.
-    requested_extensions.emplace(
-        "VK_KHR_wayland_surface",
-        &vulkan_instance->extensions_.ext_KHR_wayland_surface);
-#endif
-#ifdef VK_USE_PLATFORM_ANDROID_KHR
-    // #9.
-    requested_extensions.emplace(
-        "VK_KHR_android_surface",
-        &vulkan_instance->extensions_.ext_KHR_android_surface);
-#endif
-#ifdef VK_USE_PLATFORM_METAL_EXT
-    // #218.
-    requested_extensions.emplace(
-        "VK_EXT_metal_surface",
-        &vulkan_instance->extensions_.ext_EXT_metal_surface);
-#endif
-#ifdef VK_USE_PLATFORM_WIN32_KHR
-    // #10.
-    requested_extensions.emplace(
-        "VK_KHR_win32_surface",
-        &vulkan_instance->extensions_.ext_KHR_win32_surface);
-#endif
-  }
-
   std::vector<const char*> enabled_extensions;
 
   std::vector<VkExtensionProperties> supported_implementation_extensions;
@@ -535,14 +491,6 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
 
   if (!functions_loaded) {
     XELOGE("Failed to get all Vulkan instance function pointers");
-    return nullptr;
-  }
-
-  // Check whether a surface can be created.
-
-  if (with_surface && !VulkanPresenter::GetSurfaceTypesSupportedByInstance(
-                          vulkan_instance->extensions_)) {
-    XELOGE("The Vulkan instance doesn't support surface types used by Xenia");
     return nullptr;
   }
 
