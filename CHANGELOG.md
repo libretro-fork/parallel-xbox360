@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan/D3D12 shader-cache loading borrows mapped microcode directly instead of filling a temporary vector. Non-mappable VFS inputs reuse one range buffer; callbacks consume views before reuse and mappings close before repair. I/O/allocation failures now disable cache loading without truncating the file as if it were corrupt. Shader-owned bytecode and required endian conversion remain.
+
 - Ordered pipeline results now retain a borrowed request slot rather than moving the request into a second full-size buffer. Checked leases keep the original object alive until store/discard, and shutdown retires completed results before clearing unclaimed requests. Warm-up publication remains independent. Added held-slot, stale-release, object-identity and mixed warm-up/gameplay tests plus a reproducible metadata handoff benchmark.
 
 - Vulkan/D3D12 compilation requests now use a fixed 4,096-slot C89 pool with atomic worker claims and direct in-slot consumption. Removed the shared C++ request queue, thread vector, mutex/condition variable and completion event. Common rthreads park idle workers and wake one per submission; callback locking is only armed for an actual completion callback. Worker contexts are ready before configuration returns, the 4 MiB stack budget is preserved, and shutdown still stops/joins workers before cancelling queued requests or destroying retained pipeline handles. Backend allocations and deferred-destruction containers remain further work.

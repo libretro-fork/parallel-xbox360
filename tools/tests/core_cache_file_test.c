@@ -9,6 +9,7 @@
 #ifdef XE_TEST_SHADER_STORAGE
 #include <encodings/xxh3.h>
 extern uint64_t xe_test_shader_entries(RFILE *file, unsigned *entries);
+extern uint64_t xe_test_shader_entries_path(const char *path, unsigned *entries);
 #endif
 static unsigned char storage[4096];
 static size_t length, position;
@@ -209,6 +210,28 @@ int main(int argc, char **argv) {
    fault = 0; filestream_close(file);
    if (!validation_test("cache://pipeline")) return 33;
    if (!writer_file_test("cache://pipeline")) return 35;
+#ifdef XE_TEST_SHADER_STORAGE
+   memset(storage, 0, sizeof(storage));
+   length = 40; exists = 1; fault = 0;
+   words_count = 2;
+   memcpy(storage + 16, &words_count, 4);
+   memcpy(storage + 20, data, 8);
+   hash = xxh3_64(storage + 20, 8, 0);
+   memcpy(storage + 8, &hash, 8);
+   words_count = 0;
+   memcpy(storage + 36, &words_count, 4);
+   hash = xxh3_64(storage + 40, 0, 0);
+   memcpy(storage + 28, &hash, 8);
+   interrupted = 1;
+   if (xe_test_shader_entries_path("cache://pipeline", &entries) != 40 || entries != 2) return 37;
+   before = truncates; fault = 7;
+   if (xe_test_shader_entries_path("cache://pipeline", &entries) != UINT64_MAX ||
+         entries || truncates != before || length != 40) return 38;
+   fault = 0; storage[8] ^= 1;
+   if (xe_test_shader_entries_path("cache://pipeline", &entries) != 8 || entries) return 39;
+   storage[8] ^= 1; length = 27;
+   if (xe_test_shader_entries_path("cache://pipeline", &entries) != 8 || entries) return 40;
+#endif
    info.iface = NULL; filestream_vfs_init(&info);
    file = xe_cache_file_open(argv[1]); if (!file || !xe_cache_file_repair(file, 0)) return 15;
    if (xe_cache_file_write(data, 1, 100, file) != 100) return 16;

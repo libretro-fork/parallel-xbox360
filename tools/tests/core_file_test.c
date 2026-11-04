@@ -49,6 +49,8 @@ int main(int argc, char **argv) {
   struct retro_vfs_interface_info info;
   xe_file *file;
   xe_file_blob blob;
+  xe_file_ranges *ranges;
+  const uint8_t *first;
   FILE *output;
   const void *view;
   unsigned char buffer[259];
@@ -90,6 +92,21 @@ int main(int argc, char **argv) {
         blob.data || blob.owner || blob.storage || blob.size) return 19;
   }
   fault = 0;
+  ranges = xe_file_ranges_open("content://archive");
+  if (!ranges || xe_file_ranges_size(ranges) != sizeof(data)) return 24;
+  first = xe_file_ranges_get(ranges, 1, 100);
+  if (!first || memcmp(first, data + 1, 100)) return 25;
+  view = xe_file_ranges_get(ranges, 7, 80);
+  if (view != first || memcmp(view, data + 7, 80)) return 26;
+  before = reads;
+  if (!xe_file_ranges_get(ranges, sizeof(data), 0) ||
+      xe_file_ranges_get(ranges, UINT64_MAX, 0) ||
+      xe_file_ranges_get(ranges, 250, 8) || reads != before) return 27;
+  fault = 1;
+  if (xe_file_ranges_get(ranges, 100, 100)) return 28;
+  fault = 0;
+  if (!xe_file_ranges_get(ranges, 100, 100)) return 29;
+  xe_file_ranges_close(ranges);
   info.iface = NULL; filestream_vfs_init(&info);
   output = fopen(argv[1], "wb");
   if (!output) return 9;
@@ -107,6 +124,14 @@ int main(int argc, char **argv) {
       memcmp(blob.data, data, sizeof(data))) return 20;
   if (xe_file_view(blob.owner, 0, blob.size) && blob.storage) return 21;
   xe_file_blob_close(&blob);
+  ranges = xe_file_ranges_open(argv[1]);
+  if (!ranges) return 30;
+  first = xe_file_ranges_get(ranges, 7, 100);
+  if (!first || memcmp(first, data + 7, 100)) return 31;
+  view = xe_file_ranges_get(ranges, 8, 99);
+  if (!view || memcmp(view, data + 8, 99)) return 32;
+  if (first && view && view != first && view != first + 1) return 33;
+  xe_file_ranges_close(ranges);
   output = fopen(argv[1], "wb"); if (!output || fclose(output)) return 22;
   if (!xe_file_blob_open(&blob, argv[1]) || blob.data || blob.storage || blob.size) return 23;
   xe_file_blob_close(&blob);

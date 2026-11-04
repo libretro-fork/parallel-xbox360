@@ -158,3 +158,43 @@ int xe_file_records_read(xe_file_records *records, size_t index, void *out, size
   memcpy(out, bytes, size);
   return 1;
 }
+
+struct xe_file_ranges {
+  xe_file *file;
+  uint8_t *storage;
+  size_t capacity;
+};
+void xe_file_ranges_close(xe_file_ranges *ranges) {
+  if (!ranges) return;
+  xe_file_close(ranges->file);
+  free(ranges->storage);
+  free(ranges);
+}
+xe_file_ranges *xe_file_ranges_open(const char *path) {
+  xe_file_ranges *ranges = (xe_file_ranges *)calloc(1, sizeof(*ranges));
+  if (!ranges) return NULL;
+  ranges->file = xe_file_open(path);
+  if (!ranges->file) { xe_file_ranges_close(ranges); return NULL; }
+  return ranges;
+}
+uint64_t xe_file_ranges_size(const xe_file_ranges *ranges) {
+  return ranges ? xe_file_size(ranges->file) : 0;
+}
+const uint8_t *xe_file_ranges_get(xe_file_ranges *ranges, uint64_t offset, size_t size) {
+  static const uint64_t empty = 0;
+  const uint8_t *view;
+  uint8_t *storage;
+  if (!ranges || !valid(ranges->file, offset, size)) return NULL;
+  if (!size) return (const uint8_t *)&empty;
+  view = xe_file_view(ranges->file, offset, size);
+  if (view) return view;
+  if (size > ranges->capacity) {
+    storage = (uint8_t *)malloc(size);
+    if (!storage) return NULL;
+    free(ranges->storage);
+    ranges->storage = storage;
+    ranges->capacity = size;
+  }
+  if (!xe_file_read(ranges->file, offset, ranges->storage, size)) return NULL;
+  return ranges->storage;
+}

@@ -21,7 +21,6 @@
 #include <filesystem>
 #include <functional>
 #include <set>
-#include <vector>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
@@ -124,48 +123,42 @@ inline bool WriteShaderStorageHeader(RFILE* file) {
 }
 
 // Reads shader entries from storage file and calls the callback for each.
-// Returns the number of valid bytes read (for truncation on corruption).
+// Returns the validated prefix, or UINT64_MAX on I/O/allocation failure.
+// Callback views expire on return; the mapping closes before cache repair.
 // The callback signature is: bool(xenos::ShaderType type,
 //                                  const uint32_t* ucode_dwords,
 //                                  uint32_t ucode_dword_count,
 //                                  uint64_t ucode_data_hash)
 // Callback should return true to continue reading, false to stop.
 template <typename Callback>
-inline uint64_t ReadShaderEntries(RFILE* file, Callback&& callback) {
+inline uint64_t ReadShaderEntries(const char* path, Callback&& callback) {
+  static_assert(sizeof(ShaderStorageFileHeader) % alignof(uint32_t) == 0 &&
+                sizeof(ShaderStoredHeader) % alignof(uint32_t) == 0);
   uint64_t valid_bytes = sizeof(ShaderStorageFileHeader);
-
-  ShaderStoredHeader shader_header;
-  std::vector<uint32_t> ucode_dwords;
-
-  while (true) {
-    if (!xe_cache_file_read(&shader_header, sizeof(shader_header), 1, file)) {
-      break;
-    }
+  std::unique_ptr<xe_file_ranges, decltype(&xe_file_ranges_close)> ranges(
+      xe_file_ranges_open(path), xe_file_ranges_close);
+  if (!ranges) return UINT64_MAX;
+  const uint64_t size = xe_file_ranges_size(ranges.get());
+  if (size < valid_bytes) return UINT64_MAX;
+  while (size - valid_bytes >= sizeof(ShaderStoredHeader)) {
+    ShaderStoredHeader shader_header;
+    const uint8_t* bytes = xe_file_ranges_get(
+        ranges.get(), valid_bytes, sizeof(shader_header));
+    if (!bytes) return UINT64_MAX;
+    std::memcpy(&shader_header, bytes, sizeof(shader_header));
     const uint64_t requested_bytes =
         uint64_t(shader_header.ucode_dword_count) * sizeof(uint32_t);
-    if (requested_bytes > SIZE_MAX || !xe_cache_file_has_bytes(file, requested_bytes)) {
+    const uint64_t data_offset = valid_bytes + sizeof(shader_header);
+    if (requested_bytes > SIZE_MAX || requested_bytes > size - data_offset)
       break;
-    }
-    const size_t ucode_byte_count = size_t(requested_bytes);
-    ucode_dwords.resize(shader_header.ucode_dword_count);
-    if (shader_header.ucode_dword_count &&
-        !xe_cache_file_read(ucode_dwords.data(), ucode_byte_count, 1, file)) {
-      break;
-    }
-    uint64_t ucode_data_hash =
-        XXH3_64bits(ucode_dwords.data(), ucode_byte_count);
-    if (shader_header.ucode_data_hash != ucode_data_hash) {
-      // Validation failed - corrupted entry.
-      break;
-    }
-    valid_bytes += sizeof(shader_header) + ucode_byte_count;
-
-    if (!callback(shader_header.type, ucode_dwords.data(),
-                  shader_header.ucode_dword_count, ucode_data_hash)) {
-      break;
-    }
+    bytes = xe_file_ranges_get(ranges.get(), data_offset, size_t(requested_bytes));
+    if (!bytes) return UINT64_MAX;
+    const uint64_t ucode_data_hash = XXH3_64bits(bytes, size_t(requested_bytes));
+    if (shader_header.ucode_data_hash != ucode_data_hash) break;
+    valid_bytes = data_offset + requested_bytes;
+    if (!callback(shader_header.type, reinterpret_cast<const uint32_t*>(bytes),
+                  shader_header.ucode_dword_count, ucode_data_hash)) break;
   }
-
   return valid_bytes;
 }
 
@@ -332,7 +325,7 @@ class ShaderStorageWriter {
     ShaderStorageFileHeader shader_header;
     if (ValidateShaderStorageHeader(shader_storage_file_, shader_header)) {
       uint64_t shader_storage_valid_bytes = ReadShaderEntries(
-          shader_storage_file_,
+          xe::path_to_utf8(shader_storage_file_path).c_str(),
           [&](xenos::ShaderType type, const uint32_t* ucode_dwords,
               uint32_t ucode_dword_count, uint64_t ucode_data_hash) {
             if (load_shader(type, ucode_dwords, ucode_dword_count,
@@ -342,8 +335,9 @@ class ShaderStorageWriter {
             }
             return false;
           });
-      if (!xe_cache_file_repair(shader_storage_file_,
-                                        shader_storage_valid_bytes)) {
+      if (shader_storage_valid_bytes == UINT64_MAX ||
+          !xe_cache_file_repair(shader_storage_file_,
+                                shader_storage_valid_bytes)) {
         return CloseStorageFilesAfterInitializationFailure();
       }
     } else {
