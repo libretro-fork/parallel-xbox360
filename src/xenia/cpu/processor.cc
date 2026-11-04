@@ -854,6 +854,17 @@ size_t Processor::ResolveFunctionsInParallel(
   return resolved;
 }
 
+Function* Processor::LookupImportQuiescent(uint32_t address) const {
+  for (const auto& module : modules_) {
+    auto* symbol = module->LookupSymbolQuiescent(address);
+    if (!symbol) continue;
+    if (symbol->type() != Symbol::Type::kFunction) return nullptr;
+    auto* function = static_cast<Function*>(symbol);
+    return function->behavior() == Function::Behavior::kExtern ? function : nullptr;
+  }
+  return nullptr;
+}
+
 Module* Processor::LookupModule(uint32_t address) {
   auto global_lock = global_critical_region_.Acquire();
   // TODO(benvanik): sort by code address (if contiguous) so can bsearch.
@@ -1020,15 +1031,13 @@ bool Processor::Restore(ByteStream* stream) {
   }
 
   // Clear cached thread data for zombie threads.
-  std::vector<uint32_t> to_delete;
-  for (auto& it : thread_debug_infos_) {
-    if (it.second->state == ThreadDebugInfo::State::kZombie) {
-      it.second->thread_handle = 0;
-      to_delete.push_back(it.first);
+  for (auto it = thread_debug_infos_.begin(); it != thread_debug_infos_.end();) {
+    if (it->second->state == ThreadDebugInfo::State::kZombie) {
+      it->second->thread_handle = 0;
+      it = thread_debug_infos_.erase(it);
+    } else {
+      ++it;
     }
-  }
-  for (uint32_t thread_id : to_delete) {
-    thread_debug_infos_.erase(thread_id);
   }
 
   return true;

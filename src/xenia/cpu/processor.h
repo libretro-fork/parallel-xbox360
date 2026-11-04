@@ -158,6 +158,9 @@ class Processor {
 
   Function* LookupFunction(uint32_t address);
   Module* LookupModule(uint32_t address);
+  // Existing imports only; no allocation, declaration, locks or host waits.
+  // The caller stops all module/symbol producers for the entire borrowed use.
+  Function* LookupImportQuiescent(uint32_t address) const;
   Function* LookupFunction(Module* module, uint32_t address);
   Function* ResolveFunction(uint32_t address);
   // |expand| appends more addresses to resolve from each resolved function.

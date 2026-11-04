@@ -1341,8 +1341,15 @@ void X64Emitter::CallExtern(const hir::Instr* instr, const Function* function) {
       if (cvars::guest_scheduler) {
         mov(eax, dword[GetContextReg() + offsetof(ppc::PPCContext, checkpoint_export_pc)]);
         mov(dword[rsp + StackLayout::GUEST_CHECKPOINT_PC], eax);
-        mov(dword[GetContextReg() + offsetof(ppc::PPCContext, checkpoint_export_pc)],
-            function->address());
+        Xbyak::Label top_level, recorded;
+        test(eax, eax);
+        jz(top_level, T_NEAR);
+        mov(eax, UINT32_MAX);
+        jmp(recorded, T_NEAR);
+        L(top_level);
+        mov(eax, function->address());
+        L(recorded);
+        mov(dword[GetContextReg() + offsetof(ppc::PPCContext, checkpoint_export_pc)], eax);
       }
       // rcx = target function
       // rdx = arg0

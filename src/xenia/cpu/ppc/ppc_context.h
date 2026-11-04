@@ -449,8 +449,8 @@ typedef struct alignas(64) PPCContext_s {
   // call it made, which is often nowhere near the loop it is actually stuck in;
   // this names a block it provably reached.
   uint32_t last_safepoint_pc;
-  // Active export stub, restored across nested guest callbacks. Snapshot code
-  // rejects an in-flight HLE call until it has explicit restartable state.
+  // Active top-level export stub, UINT32_MAX inside a nested export, or zero.
+  // Restored across guest callbacks; only certified continuations may save it.
   uint32_t checkpoint_export_pc;
 
   template <typename T = uint8_t*>

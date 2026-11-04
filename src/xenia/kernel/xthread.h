@@ -39,7 +39,7 @@ class Function;
 }  // namespace cpu
 namespace kernel {
 
-constexpr fourcc_t kThreadSaveSignature = make_fourcc("TH02");
+constexpr fourcc_t kThreadSaveSignature = make_fourcc("TH03");
 
 class XEvent;
 
@@ -454,6 +454,8 @@ class XThread : public XObject, public cpu::Thread {
   virtual void Execute();
   // Fresh host/libco continuation for a serialized guest block or export.
   void ExecuteRestored(uint32_t pc);
+  uint32_t BeginRestartableDelay();
+  void EndRestartableDelay(uint32_t previous);
   void ActivateRestored();
 
   virtual void Reenter(uint32_t address);
@@ -793,6 +795,11 @@ class XThread : public XObject, public cpu::Thread {
   }
 
   CreationParams creation_params_ = {0};
+  uint32_t restore_pending_pc_ = 0;
+  uint32_t restartable_delay_export_pc_ = 0;
+  uint32_t restored_wait_kind_ = 0;
+  uint64_t restored_wait_remaining_ms_ = 0;
+  uint64_t restored_wait_deadline_ms_ = 0;
 
   std::vector<object_ref<XMutant>> pending_mutant_acquires_;
 

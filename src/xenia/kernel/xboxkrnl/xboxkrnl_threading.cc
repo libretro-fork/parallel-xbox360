@@ -498,8 +498,12 @@ dword_result_t KeDelayExecutionThread_entry(dword_t processor_mode,
                                             const ppc_context_t& context) {
   SCOPE_profile_cpu_i("guestsync", "KeDelayExecutionThread");
   uint64_t interval = interval_ptr ? static_cast<uint64_t>(*interval_ptr) : 0u;
-  return KeDelayExecutionThread(processor_mode, alertable,
+  XThread* thread = XThread::GetCurrentThread();
+  const uint32_t previous_delay = thread->BeginRestartableDelay();
+  const uint32_t result = KeDelayExecutionThread(processor_mode, alertable,
                                 interval_ptr ? &interval : nullptr, context);
+  thread->EndRestartableDelay(previous_delay);
+  return result;
 }
 DECLARE_XBOXKRNL_EXPORT3(KeDelayExecutionThread, kThreading, kImplemented,
                          kBlocking, kHighFrequency);

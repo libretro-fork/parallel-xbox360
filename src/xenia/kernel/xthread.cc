@@ -17,6 +17,9 @@
 #endif
 
 #include "xenia/base/byte_stream.h"
+#include "libretro/core_state_wait.h"
+#include "xenia/cpu/function.h"
+#include "xenia/cpu/export_resolver.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
@@ -829,6 +832,9 @@ void XThread::Reenter(uint32_t address) {
   // No user APC routine frame survives the unwind.
   user_apc_depth_ = 0;
   thread_state_->context()->checkpoint_export_pc = 0;
+  restartable_delay_export_pc_ = 0;
+  restored_wait_kind_ = XE_STATE_WAIT_NONE;
+  restore_pending_pc_ = 0;
 #if !XE_PLATFORM_WIN32
   // Throw a C++ exception that unwinds through JIT frames (using DWARF
   // .eh_frame info) and host frames (using compiler-generated DWARF),
@@ -841,6 +847,7 @@ void XThread::Reenter(uint32_t address) {
 }
 
 void XThread::ExecuteRestored(uint32_t pc) {
+  restore_pending_pc_ = 0;
   auto* context = thread_state_->context();
   kernel_state()->processor()->backend()->SetGuestRoundingMode(context, context->fpscr.value & 7);
   for (auto& mutant : pending_mutant_acquires_) {
@@ -875,6 +882,11 @@ void XThread::ExecuteRestored(uint32_t pc) {
 
 void XThread::ActivateRestored() {
   if (!thread_state_) return;
+  if (restored_wait_kind_ == XE_STATE_WAIT_DELAY && !restored_wait_deadline_ms_) {
+    const xe_state_wait wait = {restored_wait_kind_, restored_wait_remaining_ms_};
+    if (!xe_state_wait_rebase(&wait, Clock::QueryHostUptimeMillis(),
+                              &restored_wait_deadline_ms_)) return;
+  }
   X_KPCR* pcr = memory()->TranslateVirtual<X_KPCR*>(pcr_address_);
   pcr->host_stash = reinterpret_cast<uint64_t>(thread_state_->context());
   if (fiber_ && guest_object<X_KTHREAD>()->thread_state != KTHREAD_STATE_TERMINATED) {
@@ -1339,23 +1351,40 @@ uint32_t XThread::SelfSuspend() {
 }
 #endif  // !XE_PLATFORM_WIN32
 
+uint32_t XThread::BeginRestartableDelay() {
+  const uint32_t previous = restartable_delay_export_pc_;
+  const auto* context = thread_state_->context();
+  restartable_delay_export_pc_ = context->checkpoint_export_pc != UINT32_MAX ?
+      context->checkpoint_export_pc : 0;
+  return previous;
+}
+void XThread::EndRestartableDelay(uint32_t previous) {
+  restartable_delay_export_pc_ = previous;
+}
+
 X_STATUS XThread::Delay(uint32_t processor_mode, uint32_t alertable,
                         uint64_t interval) {
+  const bool restored = restored_wait_kind_ == XE_STATE_WAIT_DELAY;
+  const uint64_t restored_deadline = restored_wait_deadline_ms_;
+  restored_wait_kind_ = XE_STATE_WAIT_NONE;
   int64_t timeout_ticks = interval;
   uint32_t timeout_ms;
-  if (timeout_ticks > 0) {
+  if (restored) {
+    const uint64_t now = Clock::QueryHostUptimeMillis();
+    timeout_ms = static_cast<uint32_t>(restored_deadline > now ? restored_deadline - now : 0);
+  } else if (timeout_ticks > 0) {
     // Absolute time, based on January 1, 1601.
     // TODO(benvanik): convert time to relative time.
     assert_always();
     timeout_ms = 0;
   } else if (timeout_ticks < 0) {
     // Relative time.
-    timeout_ms = uint32_t(-timeout_ticks / 10000);  // Ticks -> MS
+    timeout_ms = static_cast<uint32_t>(xe_state_relative_millis(timeout_ticks));
   } else {
     timeout_ms = 0;
   }
 
-  timeout_ms = Clock::ScaleGuestDurationMillis(timeout_ms);
+  if (!restored) timeout_ms = Clock::ScaleGuestDurationMillis(timeout_ms);
 
   if (fiber_) {
     // Cooperative path: yield/park the fiber instead of sleeping the dispatch
@@ -1363,10 +1392,11 @@ X_STATUS XThread::Delay(uint32_t processor_mode, uint32_t alertable,
     // deadline, returning early on a user APC when alertable.
     auto* scheduler = kernel_state()->guest_scheduler();
     if (timeout_ms == 0) {
+      if (restored) return X_STATUS_SUCCESS;
       scheduler->YieldExecution(false);
       return X_STATUS_SUCCESS;
     }
-    uint64_t deadline = Clock::QueryHostUptimeMillis() + timeout_ms;
+    uint64_t deadline = restored ? restored_deadline : Clock::QueryHostUptimeMillis() + timeout_ms;
     set_cooperative_wait_shape(CooperativeWaitKind::kDelay, nullptr, 0);
     while (Clock::QueryHostUptimeMillis() < deadline) {
       // A kernel APC runs during the delay, which then goes on.
@@ -1428,6 +1458,7 @@ struct ThreadSavedState {
   uint32_t is_running;
   uint32_t has_run;
   uint32_t terminated;
+  xe_state_wait wait;
   XThread::CreationParams creation;
   int32_t priority, base_priority, boost_amount;
 
@@ -1469,19 +1500,35 @@ bool XThread::Save(ByteStream* stream) {
 
   XELOGD("XThread {:08X} serializing...", handle());
 
-  uint32_t pc = 0;
+  if (fiber_ && !kernel_state_->guest_scheduler()->WaitUntilPaused(0)) return false;
+  uint32_t pc = restore_pending_pc_;
+  xe_state_wait wait = {};
+  if (restored_wait_kind_ == XE_STATE_WAIT_DELAY) {
+    wait.kind = restored_wait_kind_;
+    wait.remaining_ms = restored_wait_remaining_ms_;
+    if (restored_wait_deadline_ms_ && !xe_state_wait_capture_delay(&wait,
+          Clock::QueryHostUptimeMillis(), restored_wait_deadline_ms_)) return false;
+  }
   if (fiber_) {
     // The controller must have all dispatch CPUs acknowledged and all borrowed
     // host I/O retired; no stack walking or host-thread suspension is needed.
-    if (!kernel_state_->guest_scheduler()->WaitUntilPaused(0) || user_mode_ ||
+    if (user_mode_ ||
         in_user_apc() || guest_object<X_KTHREAD>()->executing_kernel_apc) return false;
-    if (scheduler_links_.has_run) {
+    if (scheduler_links_.has_run && !restore_pending_pc_) {
       const auto* context = thread_state_->context();
       // Restarting an arbitrary HLE call can repeat mutations performed
       // before its wait. Such calls need explicit restartable state rather
       // than treating an export entry point as an ordinary guest PC.
-      if (context->checkpoint_export_pc) return false;
       pc = context->last_safepoint_pc;
+      if (context->checkpoint_export_pc) {
+        if (scheduler_links_.wait_kind != static_cast<uint8_t>(CooperativeWaitKind::kDelay) ||
+            !scheduler_links_.wait_gated || HasDeliverableKernelApc()) return false;
+        if (context->checkpoint_export_pc == UINT32_MAX ||
+            restartable_delay_export_pc_ != context->checkpoint_export_pc) return false;
+        if (!xe_state_wait_capture_delay(&wait, Clock::QueryHostUptimeMillis(),
+              scheduler_links_.wait_deadline_ms)) return false;
+        pc = context->checkpoint_export_pc;
+      }
       if (!pc) return false;
     }
   } else if (running_) {
@@ -1505,8 +1552,10 @@ bool XThread::Save(ByteStream* stream) {
   state.thread_id = thread_id_;
   state.is_main_thread = main_thread_;
   state.is_running = running_;
-  state.has_run = fiber_ ? scheduler_links_.has_run : running_;
+  state.has_run = fiber_ ? (scheduler_links_.has_run || restore_pending_pc_) : running_;
+  state.wait = wait;
   state.terminated = guest_object<X_KTHREAD>()->thread_state == KTHREAD_STATE_TERMINATED;
+  if (state.terminated) state.wait = {};
   state.creation = creation_params_;
   state.priority = priority_;
   state.base_priority = base_priority_;
@@ -1575,6 +1624,19 @@ object_ref<XThread> XThread::Restore(KernelState* kernel_state,
   stream->Read(&state, sizeof(ThreadSavedState));
   if (state.is_main_thread > 1 || state.is_running > 1 ||
       state.has_run > 1 || state.terminated > 1) return nullptr;
+  if (!xe_state_wait_valid(&state.wait) || (state.wait.kind &&
+      (!state.has_run || state.terminated || !GuestScheduler::enabled()))) return nullptr;
+  if (state.wait.kind == XE_STATE_WAIT_DELAY) {
+    // Validate against owned import metadata, never against untrusted code
+    // bytes or a saved native function pointer. This cold lookup is quiescent.
+    const auto* expected = kernel_state->emulator()->export_resolver()->GetExportByOrdinal("xboxkrnl.exe", 0x5A);
+    auto* function = kernel_state->processor()->LookupImportQuiescent(state.context.pc);
+    if (!expected || !function ||
+        static_cast<cpu::GuestFunction*>(function)->export_data() != expected) return nullptr;
+  }
+  thread->restore_pending_pc_ = state.has_run ? state.context.pc : 0;
+  thread->restored_wait_kind_ = state.wait.kind;
+  thread->restored_wait_remaining_ms_ = state.wait.remaining_ms;
   thread->thread_id_ = state.thread_id;
   thread->main_thread_ = state.is_main_thread;
   thread->running_ = state.is_running;
@@ -1601,6 +1663,7 @@ object_ref<XThread> XThread::Restore(KernelState* kernel_state,
   {
     auto context = thread->thread_state_->context();
     context->kernel_state = kernel_state;
+    context->last_safepoint_pc = state.context.pc;
     context->lr = state.context.lr;
     context->ctr = state.context.ctr;
     std::memcpy(context->r, state.context.r, 32 * 8);

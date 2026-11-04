@@ -1048,8 +1048,14 @@ void A64Emitter::CallExtern(const hir::Instr* instr, const Function* function) {
       undefined = false;
       if (cvars::guest_scheduler) {
         ldr(w9, ptr(GetContextReg(), static_cast<int32_t>(offsetof(ppc::PPCContext, checkpoint_export_pc))));
-        str(w9, ptr(sp, StackLayout::GUEST_RESERVED));
+        str(w9, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RESERVED)));
+        Label top_level, recorded;
+        cbz(w9, top_level);
+        mov(w9, UINT32_MAX);
+        b(recorded);
+        L(top_level);
         mov(w9, function->address());
+        L(recorded);
         str(w9, ptr(GetContextReg(), static_cast<int32_t>(offsetof(ppc::PPCContext, checkpoint_export_pc))));
       }
       // GuestToHostThunk: x0=target, x1=arg0
@@ -1059,7 +1065,7 @@ void A64Emitter::CallExtern(const hir::Instr* instr, const Function* function) {
       ldr(x9, BackendCtxPtr(thunk_offset));
       blr(x9);
       if (cvars::guest_scheduler) {
-        ldr(w9, ptr(sp, StackLayout::GUEST_RESERVED));
+        ldr(w9, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RESERVED)));
         str(w9, ptr(GetContextReg(), static_cast<int32_t>(offsetof(ppc::PPCContext, checkpoint_export_pc))));
       }
     }

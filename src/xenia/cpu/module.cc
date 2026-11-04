@@ -23,6 +23,13 @@ Module::~Module() = default;
 
 bool Module::ContainsAddress(uint32_t address) { return true; }
 
+Symbol* Module::LookupSymbolQuiescent(uint32_t address) const {
+  const auto it = map_.find(address);
+  Symbol* symbol = it != map_.end() ? it->second : nullptr;
+  return symbol && symbol->status() != Symbol::Status::kDeclaring &&
+      symbol->status() != Symbol::Status::kFailed ? symbol : nullptr;
+}
+
 Symbol* Module::LookupSymbol(uint32_t address, bool wait) {
   auto global_lock = global_critical_region_.Acquire();
   const auto it = map_.find(address);

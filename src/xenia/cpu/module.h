@@ -44,6 +44,9 @@ class Module {
   }
 
   Symbol* LookupSymbol(uint32_t address, bool wait = true);
+  // Borrow existing metadata without locking, waiting or declaring symbols.
+  // All symbol producers must remain quiescent throughout the borrowed use.
+  Symbol* LookupSymbolQuiescent(uint32_t address) const;
   virtual Symbol::Status DeclareFunction(uint32_t address,
                                          Function** out_function);
   virtual Symbol::Status DeclareVariable(uint32_t address, Symbol** out_symbol);

@@ -4,6 +4,10 @@ for %%R in ("%~dp0..\..") do set ROOT=%%~fR
 set OUT=%ROOT%\build\tests\state-msvc
 if not exist "%OUT%" mkdir "%OUT%"
 set COMMON=%ROOT%\third_party\libretro-common
+cl /nologo /TC /MD /O2 /W4 /WX /I"%ROOT%" /I"%COMMON%\include" "%ROOT%\tools\tests\core_state_wait_test.c" /Fo"%OUT%\wait.obj" /Fe"%OUT%\wait.exe"
+if errorlevel 1 exit /b 1
+"%OUT%\wait.exe"
+if errorlevel 1 exit /b 1
 cl /nologo /TC /MD /O2 /W4 /WX /I"%ROOT%" "%ROOT%\tools\tests\core_log_line_test.c" /Fo"%OUT%\log-line.obj" /Fe"%OUT%\log-line.exe"
 if errorlevel 1 exit /b 1
 "%OUT%\log-line.exe"
