@@ -1108,3 +1108,12 @@ GPU submissions. The threshold triggers collection rather than promising a
 hard VRAM bound. The captured retail slowdown used 4x rendering, about
 30.2 GiB dedicated plus 2.0 GiB shared GPU memory and failed image allocations;
 reproducing visual output and peak memory for that title remains necessary.
+
+### Scheduler pause gate
+
+Run bash tools/tests/run_pause_gate_tests.sh (SANITIZER= under MSYS2).
+The C89 driver races six workers against resume, stop and resume-followed-by-stop
+for 192 rounds, covering notifications before and during parking and terminal
+shutdown. Windows MSVC builds the same driver with /TC /W4 /WX and the built
+retro-common.lib. Linux uses ASan/UBSan by default. All workers are joined before
+their eventcount gate is freed; tests introduce no polling sleeps.

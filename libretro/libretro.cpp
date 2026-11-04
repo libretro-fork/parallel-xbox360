@@ -1538,10 +1538,13 @@ static void guest_set_paused(bool paused) {
     std::lock_guard<std::mutex> lock(s_pause_state_mutex);
     if (s_guest_paused.exchange(paused) == paused)
         return;
+    // Restore guest time before waking dispatch workers. Freeze it only after
+    // requesting the pause, so resumed workers never see a stale paused clock.
+    if (!paused) xe::Clock::SetGuestClockPaused(false);
     if (xenia_emulator && xenia_emulator->kernel_state() &&
         xenia_emulator->kernel_state()->guest_scheduler())
         xenia_emulator->kernel_state()->guest_scheduler()->SetPaused(paused);
-    xe::Clock::SetGuestClockPaused(paused);
+    if (paused) xe::Clock::SetGuestClockPaused(true);
     xenia_log(RETRO_LOG_INFO, "%s\n", paused ? "paused (no retro_run for 100 ms)" : "resumed");
 }
 

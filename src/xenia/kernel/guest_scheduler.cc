@@ -10,6 +10,7 @@
 #include "xenia/kernel/guest_scheduler.h"
 
 #include <algorithm>
+#include <new>
 #include <chrono>
 #include <string>
 #include <thread>
@@ -223,9 +224,14 @@ static double CalibrateTicksPerUs() {
 }
 
 GuestScheduler::GuestScheduler(KernelState* kernel_state)
-    : kernel_state_(kernel_state) {}
+    : kernel_state_(kernel_state), pause_gate_(xe_pause_gate_new()) {
+  if (!pause_gate_) throw std::bad_alloc();
+}
 
-GuestScheduler::~GuestScheduler() { Shutdown(); }
+GuestScheduler::~GuestScheduler() {
+  Shutdown();
+  xe_pause_gate_free(pause_gate_);
+}
 
 bool GuestScheduler::enabled() { return cvars::guest_scheduler; }
 
@@ -293,6 +299,7 @@ void GuestScheduler::Shutdown() {
     return;
   }
   shutting_down_.store(true);
+  xe_pause_gate_stop(pause_gate_);
   for (Cpu& cpu : cpus_) {
     if (cpu.ready_event) {
       cpu.ready_event->Set();
@@ -1543,10 +1550,7 @@ void GuestScheduler::RunLoop(int cpu_index) {
   XELOGI("GuestScheduler: CPU {} dispatch loop started", cpu_index);
 
   while (!shutting_down_.load()) {
-    if (paused_.load(std::memory_order_acquire)) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-      continue;
-    }
+    if (!xe_pause_gate_wait(pause_gate_)) break;
     if (cpu_index == 0) {
       ReportStatsIfDue();
     }
@@ -1888,7 +1892,7 @@ void GuestScheduler::WatchdogLoop() {
     // loading is not reported.
     uint32_t frame = xe::logging::GetFrameNumber();
     if (frame != last_frame_number_ || !dispatched_any_.load() ||
-        paused_.load()) {
+        paused()) {
       last_frame_number_ = frame;
       no_progress_ticks_ = 0;
       no_progress_reported_ = false;

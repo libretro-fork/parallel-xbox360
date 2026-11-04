@@ -10,6 +10,7 @@
 #ifndef XENIA_KERNEL_GUEST_SCHEDULER_H_
 #define XENIA_KERNEL_GUEST_SCHEDULER_H_
 
+#include "libretro/core_pause_gate.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -47,8 +48,8 @@ class GuestScheduler {
 
   // The libretro core's pause: no guest fiber is dispatched while paused (one
   // running keeps going until it yields).
-  void SetPaused(bool paused) { paused_.store(paused); }
-  bool paused() const { return paused_.load(); }
+  void SetPaused(bool paused) { xe_pause_gate_set(pause_gate_, paused); }
+  bool paused() const { return xe_pause_gate_is_paused(pause_gate_) != 0; }
 
   // True if the cooperative scheduler is active (gated by the cvar).
   static bool enabled();
@@ -342,7 +343,7 @@ class GuestScheduler {
 
   std::atomic<bool> started_{false};
   std::atomic<bool> shutting_down_{false};
-  std::atomic<bool> paused_{false};
+  xe_pause_gate* pause_gate_ = nullptr;
   // Set once Shutdown has joined the dispatch threads and reclaimed every
   // leftover fiber. TerminateThread then frees threads directly.
   std::atomic<bool> stopped_{false};

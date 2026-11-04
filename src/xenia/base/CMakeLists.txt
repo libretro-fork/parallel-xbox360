@@ -14,6 +14,7 @@ target_link_libraries(xenia-base PUBLIC fmt retro-common)
 target_sources(xenia-base PRIVATE "${PROJECT_SOURCE_DIR}/libretro/core_vblank.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_socket_worker.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_gpu_retire.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_pause_gate.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_fiber_context.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_decompress.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_audio_cadence.c"

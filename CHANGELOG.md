@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Paused guest CPU workers now park on a C89 libretro-common eventcount gate and wake directly on resume or shutdown, replacing repeated 2 ms sleeps. Guest time resumes before workers are released. Other scheduler timing and pause detection remain under audit.
+
 - Vulkan now periodically retires cached render targets that no longer own EDRAM data, instead of retaining them until an explicit cache clear. Framebuffers retire before their image views after the last submitted GPU use; no device-idle wait, sleep or pixel copy is added. Render passes remain alive for asynchronous pipeline compilation. Active EDRAM owners are preserved, so this is not a hard cap on total VRAM.
 
 - Removed standalone window/menu/surface handling, native dialogs and browser launch helpers, Vulkan/D3D12 swapchains and UI paint pipelines, immediate-mode drawers, profiler overlay and UI shader assets. Guest output remains available through frontend GPU handoff and capture. Removed the dormant Windows UI timing thread, Linux UI sleep loop, and per-refresh UI clock bookkeeping.
