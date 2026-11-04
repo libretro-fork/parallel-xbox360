@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Ordered async Vulkan/D3D12 pipeline publication now uses 4,096 reusable C89 slots instead of allocating C++ map entries and taking a publication mutex. Completion workers hand off through common atomics while stores remain serialized in draw order, including failed creations. Saturated reservations wait outside the worker request lock. After workers join, each backend destroys unpublished handles and retained CPU objects directly in their slots without a shutdown vector. The request queue and deferred-destruction containers remain separate allocation/threading work.
+
 - Vulkan and D3D12 now assemble persistent pipeline records directly in the async writer queue, removing the producer-side temporary descriptor and its extra full-descriptor copy. Compile-time layout checks retain the existing packed cache format; split-range queue tests also cover exact-byte VFS output through interrupted/short writes and shutdown draining.
 
 - Vulkan/D3D12 shader persistence now uses a preallocated C89 libretro-common SPSC queue and file worker instead of growing C++ deques, mutexes and condition variables. Pipeline records write directly from queue slots, flush requests retain FIFO order, and content close drains pending records before closing files or releasing shaders. Queue exhaustion applies bounded backpressure instead of dropping cache entries; ordinary writes remain asynchronous.

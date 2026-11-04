@@ -53,6 +53,10 @@ class PipelineCreationQueue {
     thread_name_ = thread_name;
     creator_ = std::move(creator);
     store_ = std::move(store);
+    publish_order_.Initialize([](void* opaque, Publication& publication) {
+      auto* self = static_cast<PipelineCreationQueue*>(opaque);
+      self->store_(publication.first, publication.second);
+    }, this);
     context_factory_ = std::move(context_factory);
     threads_busy_ = 0;
     completion_set_event_ = false;
@@ -61,10 +65,10 @@ class PipelineCreationQueue {
     assert_not_null(completion_event_);
   }
 
-  // Stops the threads and drops everything still queued. Returns what was held
-  // back for publishing, for the backend to destroy - nothing will publish it
-  // now.
-  std::vector<Publication> Shutdown() {
+  // Stop/join workers, then let the backend destroy unpublished handles in
+  // place. No temporary return container or publication copy is needed.
+  template <typename F>
+  void Shutdown(F&& discard) {
     SetThreadCount(0);
     completion_event_.reset();
     {
@@ -73,7 +77,9 @@ class PipelineCreationQueue {
       completion_callback_ = nullptr;
       completion_set_event_ = false;
     }
-    return publish_order_.Reset();
+    publish_order_.Reset([&](Publication& publication) {
+      discard(publication.first, publication.second);
+    });
   }
 
   bool has_threads() const { return !threads_.empty(); }
@@ -172,12 +178,12 @@ class PipelineCreationQueue {
   bool IsBusyLocked() const { return !queue_.empty() || threads_busy_ != 0; }
 
   void PushRequest(TRequest request, bool ordered) {
+    // One producer. Reserve before taking the worker queue lock: waiting for
+    // a reusable publication slot must not prevent workers dequeuing jobs.
+    const size_t sequence = ordered ? publish_order_.NextSequence() : 0;
     {
       std::lock_guard<std::mutex> lock(lock_);
-      // Numbered under the lock that orders the push, so the publish order
-      // matches the queue order.
-      queue_.emplace(ordered ? publish_order_.NextSequence() : 0,
-                     std::move(request));
+      queue_.emplace(sequence, std::move(request));
     }
     cond_.notify_one();
   }
@@ -185,7 +191,7 @@ class PipelineCreationQueue {
   // Creates the next queued pipeline, or returns false with nothing queued.
   bool CreateOneQueued(TThreadContext* context) {
     TRequest request;
-    uint32_t sequence;
+    size_t sequence;
     {
       std::lock_guard<std::mutex> lock(lock_);
       if (queue_.empty()) {
@@ -202,10 +208,7 @@ class PipelineCreationQueue {
     THandle handle = creator_(request, context);
     // Published even when creation failed: the order has to advance past a
     // failure, or everything queued after it waits on it forever.
-    publish_order_.Publish(sequence, {std::move(request), handle},
-                           [this](Publication& publication) {
-                             store_(publication.first, publication.second);
-                           });
+    publish_order_.Publish(sequence, {std::move(request), handle});
     std::unique_lock<std::mutex> lock(lock_);
     --threads_busy_;
     SignalCompletionLocked(lock);
@@ -265,7 +268,7 @@ class PipelineCreationQueue {
   // Pipelines are never evicted - games have a finite set that should all stay
   // cached - so this holds nothing but requests waiting for a thread. FIFO, so
   // they build in the order the game first drew them.
-  std::queue<std::pair<uint32_t, TRequest>> queue_;
+  std::queue<std::pair<size_t, TRequest>> queue_;
   PipelinePublishOrder<Publication> publish_order_;
   // Threads that have taken a request but not finished creating it. Guarded by
   // lock_.

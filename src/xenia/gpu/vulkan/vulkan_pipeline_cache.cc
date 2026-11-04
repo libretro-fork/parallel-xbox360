@@ -383,14 +383,17 @@ void VulkanPipelineCache::Shutdown() {
   // Shut down all threads, before destroying the pipelines since they may be
   // creating them. Also drops the pending completion callback, which may
   // capture 'this'.
-  std::vector<std::pair<PipelineCreationArguments, VkPipeline>> parked =
-      creation_queue_.Shutdown();
-  startup_loading_ = false;
-
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
+
+  creation_queue_.Shutdown([&dfn, device](const PipelineCreationArguments&,
+                                          VkPipeline pipeline) {
+    if (pipeline != VK_NULL_HANDLE)
+      dfn.vkDestroyPipeline(device, pipeline, nullptr);
+  });
+  startup_loading_ = false;
 
   // Process any remaining deferred destructions (force destroy all since
   // device should be idle at shutdown).
@@ -402,13 +405,6 @@ void VulkanPipelineCache::Shutdown() {
       }
     }
     deferred_destroy_pipelines_.clear();
-  }
-
-  // Nothing will publish what the creation threads held back, so destroy it.
-  for (const auto& publication : parked) {
-    if (publication.second != VK_NULL_HANDLE) {
-      dfn.vkDestroyPipeline(device, publication.second, nullptr);
-    }
   }
 
   // Destroy all pipelines.

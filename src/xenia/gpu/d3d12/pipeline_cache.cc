@@ -180,11 +180,9 @@ void PipelineCache::Shutdown() {
   // Shut down all threads, before destroying the pipelines since they may be
   // creating them. Nothing can be parked for publishing once they are joined,
   // so release whatever was still held back.
-  for (auto& parked : creation_queue_.Shutdown()) {
-    if (parked.second) {
-      parked.second->Release();
-    }
-  }
+  creation_queue_.Shutdown([](Pipeline*, ID3D12PipelineState* state) {
+    if (state) state->Release();
+  });
 
   xe_dxil_depth_only_set_free(native_depth_only_pixel_shaders_);
   xe_dxil_rov_depth_set_free(native_rov_depth_pixel_shaders_);
