@@ -8,6 +8,7 @@
  */
 
 #include "xenia/gpu/vulkan/vulkan_texture_cache.h"
+#include "libretro/core_gpu_resolve.h"
 
 #include <algorithm>
 #include <array>
@@ -512,12 +513,12 @@ VulkanTextureCache::~VulkanTextureCache() {
   // Clean up simple scaled resolve buffers before destroying the heap
   // The command processor should ensure all GPU operations are complete
   // before the texture cache is destroyed
-  for (ScaledResolveBuffer& buffer : scaled_resolve_buffers_) {
-    if (buffer.buffer != VK_NULL_HANDLE) {
-      xe_vk_heap_destroy_buffer(memory_heap_, buffer.buffer, &buffer.allocation);
-    }
+  if (scaled_resolve_fallback_.buffer != VK_NULL_HANDLE) {
+    const bool destroyed = xe_vk_heap_destroy_buffer(memory_heap_,
+        scaled_resolve_fallback_.buffer, &scaled_resolve_fallback_.allocation) != 0;
+    assert_true(destroyed);
+    scaled_resolve_fallback_ = {};
   }
-  scaled_resolve_buffers_.clear();
 
   if (memory_heap_ != VK_NULL_HANDLE) {
     const bool destroyed = xe_vk_heap_destroy(memory_heap_) != 0;
@@ -3427,7 +3428,7 @@ bool VulkanTextureCache::Initialize() {
 
   // Initialize sparse scaled resolve buffers if draw resolution scaling is
   // enabled and sparse binding is supported.
-  if (!InitializeSparseScaledResolve()) {
+  if (!InitializeSparseScaledResolve() || !InitializeScaledResolveFallback()) {
     return false;
   }
 
@@ -3743,128 +3744,44 @@ xenos::ClampMode VulkanTextureCache::NormalizeClampMode(
   return clamp_mode;
 }
 
-bool VulkanTextureCache::EnsureScaledResolveMemoryCommitted(
-    uint32_t start_unscaled, uint32_t length_unscaled,
-    uint32_t length_scaled_alignment_log2) {
-  if (!IsDrawResolutionScaled()) {
-    return true;
-  }
-
-  // Dispatch to sparse implementation if supported
-  if (sparse_scaled_resolve_supported_) {
-    return EnsureScaledResolveMemoryCommittedSparse(
-        start_unscaled, length_unscaled, length_scaled_alignment_log2);
-  }
-
-  // Simple non-overlapping buffer implementation (fallback)
-  if (length_unscaled == 0) {
-    return true;
-  }
-
-  if (start_unscaled > SharedMemory::kBufferSize ||
-      (SharedMemory::kBufferSize - start_unscaled) < length_unscaled) {
-    return false;
-  }
-
-  uint32_t draw_resolution_scale_area =
+bool VulkanTextureCache::InitializeScaledResolveFallback() {
+  if (!IsDrawResolutionScaled() || sparse_scaled_resolve_supported_) return true;
+  const uint64_t size = uint64_t(SharedMemory::kBufferSize) *
       draw_resolution_scale_x() * draw_resolution_scale_y();
-  uint64_t start_scaled = uint64_t(start_unscaled) * draw_resolution_scale_area;
-  uint64_t length_scaled_alignment_bits =
-      (UINT64_C(1) << length_scaled_alignment_log2) - 1;
-  uint64_t length_scaled =
-      (uint64_t(length_unscaled) * draw_resolution_scale_area +
-       length_scaled_alignment_bits) &
-      ~length_scaled_alignment_bits;
-
-  // Check if any existing buffer covers this range
-
-  bool range_covered = false;
-  for (const ScaledResolveBuffer& buffer : scaled_resolve_buffers_) {
-    if (buffer.range_start_scaled <= start_scaled &&
-        (buffer.range_start_scaled + buffer.range_length_scaled) >=
-            (start_scaled + length_scaled)) {
-      // This buffer covers the requested range - store the REQUESTED range,
-      // not the buffer's range (matching D3D12 behavior)
-      scaled_resolve_current_range_start_scaled_ = start_scaled;
-      scaled_resolve_current_range_length_scaled_ = length_scaled;
-      range_covered = true;
-      break;
-    }
-  }
-
-  if (!range_covered) {
-    // Need to create a new buffer or extend an existing one
-    // For simplicity and to avoid fragmentation, we'll use a fixed-size buffer
-    // approach similar to D3D12 (but smaller - 256MB chunks instead of 2GB)
-    constexpr uint64_t kBufferSize = 256 * 1024 * 1024;  // 256MB per buffer
-
-    // Round up the range to cover complete buffer chunks
-    uint64_t buffer_start = (start_scaled / kBufferSize) * kBufferSize;
-    uint64_t buffer_end =
-        ((start_scaled + length_scaled + kBufferSize - 1) / kBufferSize) *
-        kBufferSize;
-    uint64_t buffer_size = buffer_end - buffer_start;
-
-    // Check again if this expanded range is covered
-    bool expanded_range_covered = false;
-    for (const ScaledResolveBuffer& buffer : scaled_resolve_buffers_) {
-      if (buffer.range_start_scaled <= buffer_start &&
-          (buffer.range_start_scaled + buffer.range_length_scaled) >=
-              buffer_end) {
-        // Store the REQUESTED range, not the buffer's range
-        scaled_resolve_current_range_start_scaled_ = start_scaled;
-        scaled_resolve_current_range_length_scaled_ = length_scaled;
-        expanded_range_covered = true;
-        break;
-      }
-    }
-
-    if (!expanded_range_covered) {
-      // Limit the number of buffers to prevent unbounded growth
-      constexpr size_t kMaxBuffers = 32;  // Maximum 8GB total (32 * 256MB)
-      if (scaled_resolve_buffers_.size() >= kMaxBuffers) {
-        // Reuse the least recently used buffer
-        // For now, just reuse the first buffer (simple LRU would be better)
-        ScaledResolveBuffer& reused_buffer = scaled_resolve_buffers_[0];
-        reused_buffer.range_start_scaled = buffer_start;
-        reused_buffer.range_length_scaled = buffer_size;
-        // Store the REQUESTED range, not the buffer's range
-        scaled_resolve_current_range_start_scaled_ = start_scaled;
-        scaled_resolve_current_range_length_scaled_ = length_scaled;
-      } else {
-        ScaledResolveBuffer new_buffer;
-        new_buffer.size = buffer_size;
-
-        VkBufferCreateInfo buffer_create_info = {};
-        buffer_create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        buffer_create_info.size = new_buffer.size;
-        buffer_create_info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-        buffer_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        VkResult result = xe_vk_heap_create_buffer(
-            memory_heap_, &buffer_create_info, &new_buffer.buffer, &new_buffer.allocation);
-
-        if (result != VK_SUCCESS) {
-          XELOGE(
-              "VulkanTextureCache: Failed to create scaled resolve buffer: {}",
-              static_cast<int>(result));
-          return false;
-        }
-
-        new_buffer.range_start_scaled = buffer_start;
-        new_buffer.range_length_scaled = buffer_size;
-
-        scaled_resolve_buffers_.push_back(new_buffer);
-        // Store the REQUESTED range, not the buffer's range
-        scaled_resolve_current_range_start_scaled_ = start_scaled;
-        scaled_resolve_current_range_length_scaled_ = length_scaled;
-      }
-    }
-  }
-
+  VkBufferCreateInfo info = {};
+  info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  info.size = size;
+  info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+  info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  // Reserve once at initialization. All overlapping guest views borrow the
+  // same backing bytes; there are no duplicate range buffers or rekey copies.
+  if (xe_vk_heap_create_buffer(memory_heap_, &info,
+      &scaled_resolve_fallback_.buffer,
+      &scaled_resolve_fallback_.allocation) != VK_SUCCESS) return false;
+  scaled_resolve_fallback_.size = size;
+  scaled_resolve_fallback_.range_length_scaled = size;
   return true;
 }
 
+bool VulkanTextureCache::EnsureScaledResolveMemoryCommitted(
+    uint32_t start_unscaled, uint32_t length_unscaled,
+    uint32_t length_scaled_alignment_log2) {
+  if (!IsDrawResolutionScaled()) return true;
+  uint64_t offset, length;
+  const uint32_t area = draw_resolution_scale_x() * draw_resolution_scale_y();
+  const uint64_t capacity = sparse_scaled_resolve_supported_
+      ? uint64_t(SharedMemory::kBufferSize) * area : scaled_resolve_fallback_.size;
+  if (!xe_gpu_resolve_range(start_unscaled, length_unscaled, area,
+      length_scaled_alignment_log2, capacity, &offset, &length)) return false;
+  if (sparse_scaled_resolve_supported_) {
+    return EnsureScaledResolveMemoryCommittedSparse(start_unscaled,
+        length_unscaled, length_scaled_alignment_log2);
+  }
+  if (scaled_resolve_fallback_.buffer == VK_NULL_HANDLE) return false;
+  scaled_resolve_current_range_start_scaled_ = offset;
+  scaled_resolve_current_range_length_scaled_ = length;
+  return true;
+}
 bool VulkanTextureCache::MakeScaledResolveRangeCurrent(
     uint32_t start_unscaled, uint32_t length_unscaled,
     uint32_t length_scaled_alignment_log2) {
@@ -3878,38 +3795,11 @@ bool VulkanTextureCache::MakeScaledResolveRangeCurrent(
                                                length_scaled_alignment_log2);
   }
 
-  // Simple non-overlapping buffer implementation (fallback)
-  // First ensure the memory is committed (creates buffers if needed)
   if (!EnsureScaledResolveMemoryCommitted(start_unscaled, length_unscaled,
-                                          length_scaled_alignment_log2)) {
-    return false;
-  }
-
-  const uint32_t draw_resolution_scale_area =
-      draw_resolution_scale_x() * draw_resolution_scale_y();
-  uint64_t start_scaled = uint64_t(start_unscaled) * draw_resolution_scale_area;
-  uint64_t length_scaled_alignment_bits =
-      (UINT64_C(1) << length_scaled_alignment_log2) - 1;
-  uint64_t length_scaled =
-      (uint64_t(length_unscaled) * draw_resolution_scale_area +
-       length_scaled_alignment_bits) &
-      ~length_scaled_alignment_bits;
-  uint64_t end_scaled = start_scaled + length_scaled;
-
-  // Find which buffer contains this entire range (not just the start)
-  for (size_t i = 0; i < scaled_resolve_buffers_.size(); ++i) {
-    const ScaledResolveBuffer& buffer = scaled_resolve_buffers_[i];
-    if (start_scaled >= buffer.range_start_scaled &&
-        end_scaled <=
-            (buffer.range_start_scaled + buffer.range_length_scaled)) {
-      scaled_resolve_current_buffer_index_ = i;
-      return true;
-    }
-  }
-
-  return false;
+      length_scaled_alignment_log2)) return false;
+  scaled_resolve_current_buffer_index_ = 0;
+  return true;
 }
-
 VkBuffer VulkanTextureCache::GetCurrentScaledResolveBuffer() const {
   if (sparse_scaled_resolve_supported_) {
     if (scaled_resolve_current_buffer_index_ < kMaxScaledResolveSparseBuffers &&
@@ -3920,14 +3810,8 @@ VkBuffer VulkanTextureCache::GetCurrentScaledResolveBuffer() const {
     }
     return VK_NULL_HANDLE;
   }
-  if (scaled_resolve_current_buffer_index_ >= scaled_resolve_buffers_.size()) {
-    return VK_NULL_HANDLE;
-  }
-  return scaled_resolve_buffers_[scaled_resolve_current_buffer_index_].buffer;
+  return scaled_resolve_fallback_.buffer;
 }
-
-// Sparse scaled resolve helper functions
-
 size_t VulkanTextureCache::GetScaledResolveSparseBufferCount() const {
   // Each buffer is 2GB, and buffer N covers [N GB .. (N+2) GB)
   // So for an address space of X bytes, we need ceil((X-1) / 1GB) buffers
@@ -4134,26 +4018,13 @@ void VulkanTextureCache::BindHeapToOverlappingBuffers(uint32_t heap_index,
 bool VulkanTextureCache::EnsureScaledResolveMemoryCommittedSparse(
     uint32_t start_unscaled, uint32_t length_unscaled,
     uint32_t length_scaled_alignment_log2) {
-  if (length_unscaled == 0) {
-    return true;
-  }
-
-  if (start_unscaled > SharedMemory::kBufferSize ||
-      (SharedMemory::kBufferSize - start_unscaled) < length_unscaled) {
-    return false;
-  }
-
-  uint32_t draw_resolution_scale_area =
-      draw_resolution_scale_x() * draw_resolution_scale_y();
-  uint64_t start_scaled = uint64_t(start_unscaled) * draw_resolution_scale_area;
-  uint64_t length_scaled_alignment_bits =
-      (UINT64_C(1) << length_scaled_alignment_log2) - 1;
-  uint64_t length_scaled =
-      (uint64_t(length_unscaled) * draw_resolution_scale_area +
-       length_scaled_alignment_bits) &
-      ~length_scaled_alignment_bits;
-  uint64_t end_scaled = start_scaled + length_scaled;
-
+  const uint32_t area = draw_resolution_scale_x() * draw_resolution_scale_y();
+  uint64_t start_scaled, length_scaled;
+  if (!xe_gpu_resolve_range(start_unscaled, length_unscaled, area,
+      length_scaled_alignment_log2, uint64_t(SharedMemory::kBufferSize) * area,
+      &start_scaled, &length_scaled)) return false;
+  if (!length_scaled) return true;
+  const uint64_t end_scaled = start_scaled + length_scaled;
   // Calculate which heaps we need
   uint32_t heap_first = uint32_t(start_scaled >> kScaledResolveHeapSizeLog2);
   uint32_t heap_last = uint32_t((end_scaled - 1) >> kScaledResolveHeapSizeLog2);
@@ -4208,17 +4079,13 @@ bool VulkanTextureCache::MakeScaledResolveRangeCurrentSparse(
     return false;
   }
 
-  uint32_t draw_resolution_scale_area =
-      draw_resolution_scale_x() * draw_resolution_scale_y();
-  uint64_t start_scaled = uint64_t(start_unscaled) * draw_resolution_scale_area;
-  uint64_t length_scaled_alignment_bits =
-      (UINT64_C(1) << length_scaled_alignment_log2) - 1;
-  uint64_t length_scaled =
-      (uint64_t(length_unscaled) * draw_resolution_scale_area +
-       length_scaled_alignment_bits) &
-      ~length_scaled_alignment_bits;
-  uint64_t end_scaled = start_scaled + length_scaled;
-
+  const uint32_t area = draw_resolution_scale_x() * draw_resolution_scale_y();
+  uint64_t start_scaled, length_scaled;
+  if (!xe_gpu_resolve_range(start_unscaled, length_unscaled, area,
+      length_scaled_alignment_log2, uint64_t(SharedMemory::kBufferSize) * area,
+      &start_scaled, &length_scaled)) return false;
+  if (!length_scaled) return false;
+  const uint64_t end_scaled = start_scaled + length_scaled;
   // Find a buffer that contains the entire range
   // Each buffer is 2GB and covers [buffer_index GB .. (buffer_index + 2) GB)
   auto [buffer_a, buffer_b] =

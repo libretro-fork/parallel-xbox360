@@ -1045,23 +1045,22 @@ void D3D12RenderTargetCache::ReleaseRenderTarget(void* target) {
 
 void D3D12RenderTargetCache::RetireCachedRenderTarget(RenderTarget* target) {
   auto* d3d12_target = static_cast<D3D12RenderTarget*>(target);
-  const bool queued = xe_gpu_retire_append(&retired_resources_,
+  const bool queued = xe_gpu_retire_append_cost(&retired_resources_,
       &d3d12_target->retirement, command_processor_.GetCurrentSubmission() - 1,
-      ReleaseRenderTarget, d3d12_target) != 0;
+      ReleaseRenderTarget, d3d12_target, XE_GPU_RETIRE_IMAGE_COST) != 0;
   assert_true(queued);
 }
 
-bool D3D12RenderTargetCache::RetireUnusedRenderTargets() {
+bool D3D12RenderTargetCache::RetireUnusedRenderTargets(unsigned retain_frames) {
   if (command_processor_.submission_open()) return false;
-  if (!PrepareRenderTargetCollection()) return true;
+  if (!PrepareRenderTargetCollection(retain_frames)) return true;
   InvalidateCommandListRenderTargets();
   std::memset(current_command_list_render_targets_, 0,
               sizeof(current_command_list_render_targets_));
   // Preserve all EDRAM owners. Descriptors retire with their resource, after
   // the last submitted command list that may reference either has completed.
   CollectPreparedRenderTargets();
-  xe_gpu_retire_collect(&retired_resources_,
-                       command_processor_.GetCompletedSubmission());
+  xe_gpu_retire_collect_frame(&retired_resources_, command_processor_.GetCompletedSubmission(), &retirement_budget_, resource_frame(), XE_GPU_RETIRE_FRAME_BUDGET);
   return true;
 }
 
@@ -1072,15 +1071,14 @@ void D3D12RenderTargetCache::ClearCache() {
 void D3D12RenderTargetCache::CollectUnusedRenderTargets(uint64_t frame) {
   if (xe_gpu_cache_gc_due(&render_target_gc_, frame,
           render_target_allocated_bytes_, UINT64_C(512) << 20,
-          render_target_allocation_generation_) && RetireUnusedRenderTargets()) {
+          render_target_allocation_generation_) && RetireUnusedRenderTargets(8)) {
     xe_gpu_cache_gc_commit(&render_target_gc_, frame,
         render_target_allocation_generation_, 120);
   }
 }
 
 void D3D12RenderTargetCache::CompletedSubmissionUpdated() {
-  xe_gpu_retire_collect(&retired_resources_,
-                       command_processor_.GetCompletedSubmission());
+  xe_gpu_retire_collect_frame(&retired_resources_, command_processor_.GetCompletedSubmission(), &retirement_budget_, resource_frame(), XE_GPU_RETIRE_FRAME_BUDGET);
   if (edram_snapshot_restore_pool_) {
     edram_snapshot_restore_pool_->Reclaim(
         command_processor_.GetCompletedSubmission());
@@ -1999,6 +1997,26 @@ RenderTargetCache::RenderTarget* D3D12RenderTargetCache::CreateRenderTarget(
   render_target_allocated_bytes_ += allocation_size;
   ++render_target_allocation_generation_;
   return target;
+}
+
+void D3D12RenderTargetCache::RebindRenderTarget(RenderTarget& target) {
+  auto& resource = static_cast<D3D12RenderTarget&>(target);
+  const bool depth = target.key().is_depth;
+  const D3D12_RESOURCE_STATES state = depth
+      ? D3D12_RESOURCE_STATE_DEPTH_WRITE : D3D12_RESOURCE_STATE_RENDER_TARGET;
+  InvalidateCommandListRenderTargets();
+  command_processor_.PushTransitionBarrier(resource.resource(),
+      resource.SetResourceState(state), state);
+  command_processor_.SubmitBarriers();
+  auto& commands = command_processor_.GetDeferredCommandList();
+  const auto descriptor = resource.descriptor_draw().GetHandle();
+  if (depth) {
+    commands.D3DClearDepthStencilView(descriptor,
+        D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 0.0f, 0, 0, nullptr);
+  } else {
+    static const FLOAT zero[4] = {};
+    commands.D3DClearRenderTargetView(descriptor, zero, 0, nullptr);
+  }
 }
 
 bool D3D12RenderTargetCache::IsHostDepthEncodingDifferent(

@@ -92,9 +92,15 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   struct Framebuffer {
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
     VkExtent2D host_extent{};
+    const RenderTarget* render_targets[1 + xenos::kMaxColorRenderTargets] = {};
     Framebuffer() = default;
-    Framebuffer(VkFramebuffer framebuffer, const VkExtent2D& host_extent)
-        : framebuffer(framebuffer), host_extent(host_extent) {}
+    Framebuffer(VkFramebuffer framebuffer, const VkExtent2D& host_extent,
+                const RenderTarget* const* targets, uint32_t used)
+        : framebuffer(framebuffer), host_extent(host_extent) {
+      uint32_t i;
+      for (i = 0; i < 1 + xenos::kMaxColorRenderTargets; ++i)
+        render_targets[i] = (used & (uint32_t(1) << i)) ? targets[i] : nullptr;
+    }
   };
 
   VulkanRenderTargetCache(const RegisterFile& register_file,
@@ -479,16 +485,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   struct FramebufferKey {
     RenderPassKey render_pass_key;
 
-    // Same as RenderTargetKey::pitch_tiles_at_32bpp.
-    uint32_t pitch_tiles_at_32bpp : 8;  // 8
-    // [0, 2047].
-    uint32_t depth_base_tiles : xenos::kEdramBaseTilesBits;    // 19
-    uint32_t color_0_base_tiles : xenos::kEdramBaseTilesBits;  // 30
-
-    uint32_t color_1_base_tiles : xenos::kEdramBaseTilesBits;  // 43
-    uint32_t color_2_base_tiles : xenos::kEdramBaseTilesBits;  // 54
-
-    uint32_t color_3_base_tiles : xenos::kEdramBaseTilesBits;  // 75
+    uint32_t pitch_tiles_at_32bpp;
+    // Stable image identities, independent of the guest's moving EDRAM base.
+    // The render-pass key selects the attachment views of these images.
+    uint64_t attachments[1 + xenos::kMaxColorRenderTargets];
 
     // Including all the padding, for a stable hash.
     FramebufferKey() { Reset(); }
@@ -688,19 +688,15 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   std::unordered_map<FramebufferKey, Framebuffer, FramebufferKey::Hasher>
       framebuffers_;
 
-  // Container ownership is C++ interop; scheduling and fence retirement are C89.
-  struct RetiredFramebuffers {
-    xe_gpu_retire_node retirement = {};
-    const ui::vulkan::VulkanDevice* device;
-    decltype(framebuffers_) framebuffers;
-    explicit RetiredFramebuffers(const ui::vulkan::VulkanDevice* d) : device(d) {}
-    ~RetiredFramebuffers();
-  };
-  static void ReleaseFramebuffers(void* objects);
+  enum { kFramebufferRetirementSlots = 4096 };
+  xe_gpu_retire_slot framebuffer_retirement_slots_[kFramebufferRetirementSlots] = {};
+  xe_gpu_retire_pool framebuffer_retirement_pool_ = {};
+  static void ReleaseFramebuffer(void* context, uint64_t handle);
   static void ReleaseRenderTarget(void* target);
   void RetireCachedRenderTarget(RenderTarget* target) override;
-  bool RetireUnusedRenderTargets();
+  bool RetireUnusedRenderTargets(unsigned retain_frames = 0);
   xe_gpu_retire_queue retired_resources_ = {};
+  xe_gpu_retire_budget retirement_budget_ = {};
   xe_gpu_cache_gc render_target_gc_ = {};
   uint64_t render_target_allocated_bytes_ = 0;
   uint64_t render_target_allocation_generation_ = 0;

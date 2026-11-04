@@ -112,7 +112,11 @@ VulkanRenderTargetCache::VulkanRenderTargetCache(
     : RenderTargetCache(register_file, memory, &trace_writer,
                         draw_resolution_scale_x, draw_resolution_scale_y),
       command_processor_(command_processor),
-      trace_writer_(trace_writer) {}
+      trace_writer_(trace_writer) {
+  const bool ready = xe_gpu_retire_pool_init(&framebuffer_retirement_pool_,
+      framebuffer_retirement_slots_, kFramebufferRetirementSlots) != 0;
+  assert_true(ready);
+}
 
 VulkanRenderTargetCache::~VulkanRenderTargetCache() { Shutdown(true); }
 
@@ -885,10 +889,10 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
   // Shutdown is GPU-quiescent. Drop framebuffer references before image views,
   // including deferred batches, while descriptor pools are still alive.
   xe_gpu_retire_collect(&retired_resources_, UINT64_MAX);
-  {
-    RetiredFramebuffers live(command_processor_.GetVulkanDevice());
-    live.framebuffers.swap(framebuffers_);
-  }
+  for (const auto& entry : framebuffers_)
+    dfn.vkDestroyFramebuffer(device, entry.second.framebuffer, nullptr);
+  framebuffers_.clear();
+  assert_true(framebuffer_retirement_pool_.available == kFramebufferRetirementSlots);
 
   // Destroy all render targets before the descriptor set pool is destroyed -
   // may happen if shutting down the VulkanRenderTargetCache by destroying it,
@@ -1012,47 +1016,59 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
   }
 }
 
-VulkanRenderTargetCache::RetiredFramebuffers::~RetiredFramebuffers() {
-  const auto& dfn = device->functions();
-  const VkDevice handle = device->device();
-  for (const auto& entry : framebuffers)
-    dfn.vkDestroyFramebuffer(handle, entry.second.framebuffer, nullptr);
-}
-void VulkanRenderTargetCache::ReleaseFramebuffers(void* objects) {
-  delete static_cast<RetiredFramebuffers*>(objects);
+void VulkanRenderTargetCache::ReleaseFramebuffer(void* context, uint64_t bits) {
+  const auto* device = static_cast<const ui::vulkan::VulkanDevice*>(context);
+  VkFramebuffer handle;
+  static_assert(sizeof(handle) <= sizeof(bits), "framebuffer handle storage");
+  std::memcpy(&handle, &bits, sizeof(handle));
+  device->functions().vkDestroyFramebuffer(device->device(), handle, nullptr);
 }
 void VulkanRenderTargetCache::ReleaseRenderTarget(void* target) {
   delete static_cast<VulkanRenderTarget*>(target);
 }
 void VulkanRenderTargetCache::RetireCachedRenderTarget(RenderTarget* target) {
   auto* vulkan_target = static_cast<VulkanRenderTarget*>(target);
-  const bool queued = xe_gpu_retire_append(&retired_resources_,
+  const bool queued = xe_gpu_retire_append_cost(&retired_resources_,
       &vulkan_target->retirement, command_processor_.GetCurrentSubmission() - 1,
-      ReleaseRenderTarget, vulkan_target) != 0;
+      ReleaseRenderTarget, vulkan_target, XE_GPU_RETIRE_IMAGE_COST) != 0;
   assert_true(queued);
 }
-bool VulkanRenderTargetCache::RetireUnusedRenderTargets() {
+bool VulkanRenderTargetCache::RetireUnusedRenderTargets(unsigned retain_frames) {
   if (command_processor_.submission_open()) return false;
-  if (!PrepareRenderTargetCollection()) return true;
-  auto* batch = new (std::nothrow) RetiredFramebuffers(
-      command_processor_.GetVulkanDevice());
-  if (!batch) return false;
-  // Render passes remain cached: asynchronous pipeline jobs may still use
-  // them on the CPU, independently of completed GPU submissions.
-  // Retire framebuffers before their views/images. The queue preserves this
-  // order even when an entire batch becomes complete at once.
-  batch->framebuffers.swap(framebuffers_);
-  const bool queued = xe_gpu_retire_append(&retired_resources_,
-      &batch->retirement, command_processor_.GetCurrentSubmission() - 1,
-      ReleaseFramebuffers, batch) != 0;
-  assert_true(queued);
+  if (!PrepareRenderTargetCollection(retain_frames)) return true;
+  xe_gpu_retire_collect_frame(&retired_resources_,
+      command_processor_.GetCompletedSubmission(), &retirement_budget_,
+      resource_frame(), XE_GPU_RETIRE_FRAME_BUDGET);
+  bool all_framebuffers_retired = true;
+  auto it = framebuffers_.begin();
+  while (it != framebuffers_.end()) {
+    uint32_t i;
+    bool cold = false;
+    for (i = 0; i < 1 + xenos::kMaxColorRenderTargets; ++i)
+      if (!KeepPreparedRenderTarget(it->second.render_targets[i])) cold = true;
+    if (!cold) { ++it; continue; }
+    uint64_t handle = 0;
+    std::memcpy(&handle, &it->second.framebuffer, sizeof(it->second.framebuffer));
+    if (!xe_gpu_retire_handle(&retired_resources_, &framebuffer_retirement_pool_,
+        command_processor_.GetCurrentSubmission() - 1, handle, ReleaseFramebuffer,
+        const_cast<ui::vulkan::VulkanDevice*>(command_processor_.GetVulkanDevice()))) {
+      all_framebuffers_retired = false;
+      break;
+    }
+    it = framebuffers_.erase(it);
+  }
+  // Preserve unrelated framebuffer objects and render passes. Invalidate only
+  // the binding snapshot, including when a full metadata pool defers images.
   last_update_framebuffer_ = VK_NULL_HANDLE;
   last_update_render_pass_ = VK_NULL_HANDLE;
   last_update_framebuffer_pitch_tiles_at_32bpp_ = 0;
   std::memset(last_update_framebuffer_attachments_, 0,
               sizeof(last_update_framebuffer_attachments_));
+  if (!all_framebuffers_retired) return false;
   CollectPreparedRenderTargets();
-  xe_gpu_retire_collect(&retired_resources_, command_processor_.GetCompletedSubmission());
+  xe_gpu_retire_collect_frame(&retired_resources_,
+      command_processor_.GetCompletedSubmission(), &retirement_budget_,
+      resource_frame(), XE_GPU_RETIRE_FRAME_BUDGET);
   return true;
 }
 void VulkanRenderTargetCache::ClearCache() {
@@ -1063,14 +1079,14 @@ void VulkanRenderTargetCache::CollectUnusedRenderTargets(uint64_t frame) {
   // the same transient surfaces. EDRAM owners are always retained by ClearCache.
   if (xe_gpu_cache_gc_due(&render_target_gc_, frame,
           render_target_allocated_bytes_, UINT64_C(512) << 20,
-          render_target_allocation_generation_) && RetireUnusedRenderTargets()) {
+          render_target_allocation_generation_) && RetireUnusedRenderTargets(8)) {
     xe_gpu_cache_gc_commit(&render_target_gc_, frame,
         render_target_allocation_generation_, 120);
   }
 }
 
 void VulkanRenderTargetCache::CompletedSubmissionUpdated() {
-  xe_gpu_retire_collect(&retired_resources_, command_processor_.GetCompletedSubmission());
+  xe_gpu_retire_collect_frame(&retired_resources_, command_processor_.GetCompletedSubmission(), &retirement_budget_, resource_frame(), XE_GPU_RETIRE_FRAME_BUDGET);
   SCOPE_profile_cpu_f("gpu");
   if (transfer_vertex_buffer_pool_) {
     transfer_vertex_buffer_pool_->Reclaim(
@@ -2158,6 +2174,12 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
     if (view_color_transfer_separate != VK_NULL_HANDLE) {
       dfn.vkDestroyImageView(device, view_color_transfer_separate, nullptr);
     }
+    if (view_stencil != VK_NULL_HANDLE) {
+      dfn.vkDestroyImageView(device, view_stencil, nullptr);
+    }
+    if (view_depth_stencil != VK_NULL_HANDLE) {
+      dfn.vkDestroyImageView(device, view_depth_stencil, nullptr);
+    }
     dfn.vkDestroyImageView(device, view_depth_color, nullptr);
     dfn.vkDestroyImage(device, image, nullptr);
     dfn.vkFreeMemory(device, memory, nullptr);
@@ -2340,24 +2362,10 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
   FramebufferKey key;
   key.render_pass_key = render_pass_key;
   key.pitch_tiles_at_32bpp = pitch_tiles_at_32bpp;
-  if (render_pass_key.depth_and_color_used & (1 << 0)) {
-    key.depth_base_tiles = depth_and_color_render_targets[0]->key().base_tiles;
-  }
-  if (render_pass_key.depth_and_color_used & (1 << 1)) {
-    key.color_0_base_tiles =
-        depth_and_color_render_targets[1]->key().base_tiles;
-  }
-  if (render_pass_key.depth_and_color_used & (1 << 2)) {
-    key.color_1_base_tiles =
-        depth_and_color_render_targets[2]->key().base_tiles;
-  }
-  if (render_pass_key.depth_and_color_used & (1 << 3)) {
-    key.color_2_base_tiles =
-        depth_and_color_render_targets[3]->key().base_tiles;
-  }
-  if (render_pass_key.depth_and_color_used & (1 << 4)) {
-    key.color_3_base_tiles =
-        depth_and_color_render_targets[4]->key().base_tiles;
+  for (uint32_t i = 0; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
+    if (render_pass_key.depth_and_color_used & (1 << i)) {
+      key.attachments[i] = depth_and_color_render_targets[i]->identity();
+    }
   }
   auto it = framebuffers_.find(key);
   if (it != framebuffers_.end()) {
@@ -2441,7 +2449,9 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
   // Creates at a persistent location - safe to use pointers.
   return &framebuffers_
               .emplace(std::piecewise_construct, std::forward_as_tuple(key),
-                       std::forward_as_tuple(framebuffer, host_extent))
+                       std::forward_as_tuple(framebuffer, host_extent,
+                           depth_and_color_render_targets,
+                           uint32_t(render_pass_key.depth_and_color_used)))
               .first->second;
 }
 

@@ -216,6 +216,8 @@ class RenderTargetCache {
   virtual void ClearCache();
 
   virtual void BeginFrame();
+  // Published by the real backend frame boundary, independent of BeginFrame.
+  void SetResourceFrame(uint64_t frame) { resource_frame_ = frame; }
 
   virtual bool Update(bool is_rasterization_done,
                       reg::RB_DEPTHCONTROL normalized_depth_control,
@@ -396,6 +398,7 @@ class RenderTargetCache {
     RenderTarget(RenderTarget&& render_target) = delete;
     RenderTarget& operator=(RenderTarget&& render_target) = delete;
     RenderTargetKey key() const { return key_; }
+    uint64_t identity() const { return identity_; }
 
    protected:
     RenderTarget(RenderTargetKey key) : key_(key) {}
@@ -404,6 +407,8 @@ class RenderTargetCache {
     friend class RenderTargetCache;
     RenderTargetKey key_;
     bool owns_edram_for_collection_ = false;
+    uint64_t last_use_frame_ = 0;
+    uint64_t identity_ = 0;
   };
 
   struct Transfer {
@@ -615,8 +620,13 @@ class RenderTargetCache {
 
   // Command-processor ownership only. Inspect before invalidating backend
   // bindings: a collection with no orphan must leave the warm caches intact.
-  bool PrepareRenderTargetCollection();
+  bool PrepareRenderTargetCollection(unsigned retain_frames = 0);
   void CollectPreparedRenderTargets();
+  bool KeepPreparedRenderTarget(const RenderTarget* target) const {
+    return !target || target->owns_edram_for_collection_;
+  }
+  uint64_t resource_frame() const { return resource_frame_; }
+  virtual void RebindRenderTarget(RenderTarget& target) {}
 
   // Whether depth buffer is encoded differently on the host, thus after
   // aliasing naively, precision may be lost - host depth must only be
@@ -845,6 +855,10 @@ class RenderTargetCache {
   }
 
   RenderTarget* GetOrCreateRenderTarget(RenderTargetKey key);
+  void MarkRenderTargetOwnership();
+  RenderTarget* FindReusableRenderTarget(RenderTargetKey key);
+  uint64_t resource_frame_ = 0;
+  uint64_t next_resource_identity_ = 1;
 
   // Checks if changing ownership of the range to the specified render target
   // would require transferring data - primarily for barrier placement on the
@@ -884,7 +898,7 @@ class RenderTargetCache {
   // update. 0 is depth, color starting from 1, nullptr if not bound.
   // Only valid for non-pixel-shader-interlock paths.
   RenderTarget*
-      last_update_used_render_targets_[1 + xenos::kMaxColorRenderTargets];
+      last_update_used_render_targets_[1 + xenos::kMaxColorRenderTargets] = {};
   // Keys of the color render targets of the last successful update whose
   // blending reads the destination, empty for the other slots. Cleared for
   // transfers gathered outside a draw, like before a resolve clear.
@@ -908,7 +922,7 @@ class RenderTargetCache {
   // Only valid for non-pixel-shader-interlock paths.
   RenderTarget*
       last_update_accumulated_render_targets_[1 +
-                                              xenos::kMaxColorRenderTargets];
+                                              xenos::kMaxColorRenderTargets] = {};
   // If false, the next update must copy last_update_used_render_targets_ to
   // last_update_accumulated_render_targets_ - it's not beneficial or even
   // incorrect to keep the previously bound render targets.
