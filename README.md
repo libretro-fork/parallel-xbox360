@@ -167,6 +167,7 @@ checked-in raw vertex/hull helpers share matching patch/control-point signatures
 and borrow the existing system constants through a root alias. Discrete,
 continuous and adaptive modes need no linked conversion or temporary shader copy.
 D3D12 uses owned DXIL generation exclusively; Vulkan uses raw SPIR-V.
+SPIR-V operand words and ID flags use C89 storage with four inline operands and one combined allocation with packed flags for larger instructions. This removes the two per-instruction vectors; instruction objects, larger operand growth, other IR containers and final output vectors remain further allocation work. Reproducible construction measurements are in `tools/tests/spv_operands_bench_results.txt`.
 The build and runtime need no Mesa, Meson, Python, GLSL frontend, SPIRV-Cross,
 glslang, shader compiler executable or separate DXIL validator DLL.
 The native DXIL ALU, control-flow, vertex-fetch, buffer-resource and texture-sampling checks are documented in

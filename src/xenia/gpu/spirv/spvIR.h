@@ -48,6 +48,8 @@
 #define spvIR_H
 
 #include "spirv.hpp11"
+#include "libretro/core_spv_operands.h"
+#include <new>
 
 #include <algorithm>
 #include <cassert>
@@ -98,30 +100,27 @@ struct IdImmediate {
 
 class Instruction {
 public:
-    Instruction(Id resultId, Id typeId, Op opCode) : resultId(resultId), typeId(typeId), opCode(opCode), block(nullptr) { }
-    explicit Instruction(Op opCode) : resultId(NoResult), typeId(NoType), opCode(opCode), block(nullptr) { }
-    virtual ~Instruction() {}
+    Instruction(Id resultId, Id typeId, Op opCode) : resultId(resultId), typeId(typeId), opCode(opCode), block(nullptr) { xe_spv_operands_init(&operands); }
+    explicit Instruction(Op opCode) : resultId(NoResult), typeId(NoType), opCode(opCode), block(nullptr) { xe_spv_operands_init(&operands); }
+    virtual ~Instruction() { if (operands.heap) xe_spv_operands_free(&operands); }
     void reserveOperands(size_t count) {
-        operands.reserve(count);
-        idOperand.reserve(count);
+        if (!xe_spv_operands_reserve(&operands, count)) throw std::bad_alloc();
     }
     void addIdOperand(Id id) {
         // ids can't be 0
         assert(id);
-        operands.push_back(id);
-        idOperand.push_back(true);
+        if (!xe_spv_operands_append(&operands, id, 1)) throw std::bad_alloc();
     }
     // This method is potentially dangerous as it can break assumptions
     // about SSA and lack of forward references.
     void setIdOperand(unsigned idx, Id id) {
         assert(id);
-        assert(idOperand[idx]);
-        operands[idx] = id;
+        assert(xe_spv_operands_is_id(&operands, idx));
+        xe_spv_operands_words(&operands)[idx] = id;
     }
 
     void addImmediateOperand(unsigned int immediate) {
-        operands.push_back(immediate);
-        idOperand.push_back(false);
+        if (!xe_spv_operands_append(&operands, immediate, 0)) throw std::bad_alloc();
     }
 
     void addImmediateOperand(spv::StorageClass immediate) {
@@ -185,8 +184,8 @@ public:
     }
 
     void setImmediateOperand(unsigned idx, unsigned int immediate) {
-        assert(!idOperand[idx]);
-        operands[idx] = immediate;
+        assert(!xe_spv_operands_is_id(&operands, idx));
+        xe_spv_operands_words(&operands)[idx] = immediate;
     }
 
     void addStringOperand(const char* str)
@@ -211,24 +210,23 @@ public:
             addImmediateOperand(word);
         }
     }
-    bool isIdOperand(int op) const { return idOperand[op]; }
+    bool isIdOperand(int op) const { return xe_spv_operands_is_id(&operands, op); }
     void setBlock(Block* b) { block = b; }
     Block* getBlock() const { return block; }
     Op getOpCode() const { return opCode; }
     int getNumOperands() const
     {
-        assert(operands.size() == idOperand.size());
-        return (int)operands.size();
+        return (int)operands.count;
     }
     Id getResultId() const { return resultId; }
     Id getTypeId() const { return typeId; }
     Id getIdOperand(int op) const {
-        assert(idOperand[op]);
-        return operands[op];
+        assert(xe_spv_operands_is_id(&operands, op));
+        return xe_spv_operands_const_words(&operands)[op];
     }
     unsigned int getImmediateOperand(int op) const {
-        assert(!idOperand[op]);
-        return operands[op];
+        assert(!xe_spv_operands_is_id(&operands, op));
+        return xe_spv_operands_const_words(&operands)[op];
     }
 
     // Write out the binary form.
@@ -240,7 +238,7 @@ public:
             ++wordCount;
         if (resultId)
             ++wordCount;
-        wordCount += (unsigned int)operands.size();
+        wordCount += (unsigned int)operands.count;
 
         // Write out the beginning of the instruction
         out.push_back(((wordCount) << WordCountShift) | (unsigned)opCode);
@@ -250,16 +248,16 @@ public:
             out.push_back(resultId);
 
         // Write out the operands
-        for (int op = 0; op < (int)operands.size(); ++op)
-            out.push_back(operands[op]);
+        for (int op = 0; op < (int)operands.count; ++op)
+            out.push_back(xe_spv_operands_const_words(&operands)[op]);
     }
 
     const char *getNameString() const {
         if (opCode == Op::OpString) {
-            return (const char *)&operands[0];
+            return (const char *)&xe_spv_operands_const_words(&operands)[0];
         } else {
             assert(opCode == Op::OpName);
-            return (const char *)&operands[1];
+            return (const char *)&xe_spv_operands_const_words(&operands)[1];
         }
     }
 
@@ -268,8 +266,7 @@ protected:
     Id resultId;
     Id typeId;
     Op opCode;
-    std::vector<Id> operands;     // operands, both <id> and immediates (both are unsigned int)
-    std::vector<bool> idOperand;  // true for operands that are <id>, false for immediates
+    xe_spv_operands operands;
     Block* block;
 };
 

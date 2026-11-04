@@ -1,5 +1,24 @@
-# Raw DXIL writer checks
+# Core runtime and raw shader checks
 
+
+## Raw SPIR-V operand storage
+
+`run_spv_operands_tests.sh` exercises the production C89 storage with allocation
+failure, poisoned buffers, inline/growing words and flags, overflow and reuse.
+Its C++ bridge checks the actual Instruction API against independent word and
+string oracles. Linux defaults to ASan/UBSan; use `SANITIZER=` for MinGW.
+
+`run_spv_module_compare.sh` builds the baseline and current raw binary builder,
+including post-processing, and compares five complete compute modules byte for
+byte. `BASELINE_COMMIT` selects the control; `SANITIZER` enables instrumentation
+and `SPIRV_VALIDATOR` optionally validates each output. The tested outputs also
+pass `spirv-val --target-env vulkan1.1`.
+
+`run_spv_operands_bench.sh` separates tracked allocation counts from plain CRT
+construction/serialization timing. Finish other builds before measuring;
+`BUILD_ONLY=1` prepares executables without timing. Results, machine/compiler
+settings and limits are in `spv_operands_bench_results.txt`. These are synthetic
+storage timings, not whole-shader compilation or gameplay measurements.
 ## Owned libretro-common primitives and codecs
 
 `core_audio_registry_test.c` checks a reader deliberately paused with a lease,

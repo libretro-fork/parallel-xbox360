@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Raw SPIR-V instructions now keep four operand words/flags inline in C89 storage, replacing two growing vectors and combining larger payloads into one allocation. Common instructions need no operand allocation; byte-oracle, failure/overflow and sanitizer tests cover the change. The measured construction benchmark improves on MSVC and MinGW; instruction objects, larger operand growth and other IR containers still allocate.
+
 - Static Make builds track frontend version/commit definitions separately, avoiding a full emulator/dependency rebuild when only build identification changes. Reported core metadata remains current.
 
 - Removed per-call host timestamps and diagnostic atomics from offloaded guest I/O. These ran even with statistics disabled; completion, guest drive timing and worker ordering are unchanged. Scheduler statistics still report dispatch and ready-list behavior.

@@ -1,0 +1,43 @@
+SPIR-V operand construction experiment, 4 November 2026
+Host: AMD Ryzen 9 9950X3D, Windows x64. Single-threaded, no affinity pin.
+Baseline: 7e088a41 spvIR.h. Same fixture and compiler flags for both versions.
+Five batches of 200000 stack Instruction objects per case; append mixed ID and
+immediate operands, dump to an already reserved output vector, checksum words.
+Two runs in opposite executable order; no core builds running while measuring.
+This measures synthetic operand construction/serialization, not whole-shader compilation or FPS. The timed Instruction objects are storage probes, not GPU-executable programs.
+Instruction heap allocation, block/module containers and output growth are not
+removed by this change. More than four operands can still allocate/grow.
+
+Plain timing uses ordinary C/CRT allocators with allocation tracking disabled.
+Tracked runs override C++ new/delete and the C operand allocator to count calls.
+The shared report's bytes field is operand count, live is sizeof(Instruction),
+and workers=0. These fields are NOT RSS or retained/peak heap measurements.
+
+Median plain ns/instruction, first/reverse order:
+Operands   MSVC baseline  MSVC current   MinGW baseline  MinGW current
+0          2.8 / 2.9      3.1 / 2.9      2.0 / 1.8      2.0 / 2.0
+1          52.0 / 51.7    7.0 / 7.0      40.9 / 40.9    6.3 / 6.3
+2          75.8 / 76.1    7.8 / 7.7      63.6 / 64.0    6.8 / 6.8
+4          123.9 / 123.6  9.2 / 9.1      84.4 / 84.5    8.1 / 8.0
+8          182.7 / 182.5  34.1 / 33.7    106.5 / 106.3  29.0 / 29.2
+20         327.8 / 327.4  89.5 / 88.7    155.0 / 154.5  78.3 / 77.3
+MSVC 19.44 /O2 /MD /DNDEBUG, separate C89 /TC and C++20 translation units.
+MinGW GCC 16.2 -O3 -DNDEBUG, separate C89 and C++20 translation units.
+
+Captured operand allocations/instruction (0,1,2,4,8,20 operands):
+MSVC baseline:  0,2,3,5,7,10; current: 0,0,0,0,1,3.
+MinGW baseline: 0,2,3,4,5,7;  current: 0,0,0,0,1,3.
+sizeof(Instruction): MSVC 88 -> 72; MinGW 96 -> 72 bytes.
+Checksums match every baseline/current pair, including the zero-operand control.
+Zero-operand controls include small regressions; no improvement is claimed there.
+
+Reproduce GNU/MinGW builds with tools/tests/run_spv_operands_bench.sh.
+BASELINE_COMMIT selects another baseline, TEST_BUILD_DIR selects output,
+BUILD_ONLY=1 builds without timing (finish other CPU-heavy jobs before running).
+The fixture also builds with native MSVC after compiling the C profile and
+operand .c with /TC /MD /O2. Baseline include overlay must precede src; both use
+identical fixture flags. Define XE_SPV_BENCH_PLAIN and compile operand storage
+without XE_SPV_ALLOC/XE_SPV_FREE overrides for uninstrumented measurements.
+Heap flags stay bit-packed: capacity*4 + ceil(capacity/8) payload bytes, not one byte per flag. Inline flags use four bytes. No release instrumentation or diagnostic counters are introduced.
+
+Separate production-builder regression: five compute modules (arrays of 1,4,8,33,129 floats with arithmetic/store/return) match baseline binary output exactly on MinGW and Linux ASan/UBSan. All five MinGW outputs also pass spirv-val --target-env vulkan1.1. Run tools/tests/run_spv_module_compare.sh; optionally set SANITIZER and SPIRV_VALIDATOR.

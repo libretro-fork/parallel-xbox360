@@ -4,7 +4,10 @@ add_library(xenia-spirv-writer STATIC
   spirv/SpvBuilder.cpp
   spirv/SpvPostProcess.cpp
   spirv/InReadableOrder.cpp
+  "${PROJECT_SOURCE_DIR}/libretro/core_spv_operands.c"
 )
+target_include_directories(xenia-spirv-writer PUBLIC
+  "${PROJECT_SOURCE_DIR}/third_party/libretro-common/include")
 
 add_library(xenia-gpu STATIC)
 xe_platform_sources(xenia-gpu ${CMAKE_CURRENT_SOURCE_DIR})
