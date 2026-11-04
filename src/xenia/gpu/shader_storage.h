@@ -12,7 +12,8 @@
 
 #include <condition_variable>
 #include <cstdint>
-#include <cstdio>
+#include "libretro/core_cache_file.h"
+#include <file/file_path.h>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -88,16 +89,10 @@ inline std::filesystem::path GetShaderStorageFilePath(
 // Ensures shader storage directories exist. Returns true on success.
 inline bool EnsureShaderStorageDirectoriesExist(
     const std::filesystem::path& cache_root) {
-  std::error_code error_code;
-  auto shareable_root = GetShaderStorageShareableRoot(cache_root);
-  if (!std::filesystem::exists(shareable_root)) {
-    if (!std::filesystem::create_directories(shareable_root, error_code)) {
-      XELOGE(
-          "Failed to create shader storage directory, persistent shader "
-          "storage will be disabled: {}",
-          xe::path_to_utf8(shareable_root));
-      return false;
-    }
+  const auto shareable_root = xe::path_to_utf8(GetShaderStorageShareableRoot(cache_root));
+  if (!path_mkdir(shareable_root.c_str())) {
+    XELOGE("Failed to create shader storage directory: {}", shareable_root);
+    return false;
   }
   return true;
 }
@@ -109,9 +104,9 @@ XEPACKEDSTRUCT(ShaderStorageFileHeader, {
 });
 
 // Validates the shader storage file header. Returns true if valid.
-inline bool ValidateShaderStorageHeader(FILE* file,
+inline bool ValidateShaderStorageHeader(RFILE* file,
                                         ShaderStorageFileHeader& header_out) {
-  if (!fread(&header_out, sizeof(header_out), 1, file)) {
+  if (!xe_cache_file_read(&header_out, sizeof(header_out), 1, file)) {
     return false;
   }
   return header_out.magic == kShaderStorageMagic &&
@@ -120,11 +115,11 @@ inline bool ValidateShaderStorageHeader(FILE* file,
 }
 
 // Writes a new shader storage file header.
-inline bool WriteShaderStorageHeader(FILE* file) {
+inline bool WriteShaderStorageHeader(RFILE* file) {
   ShaderStorageFileHeader header;
   header.magic = kShaderStorageMagic;
   header.version_swapped = xe::byte_swap(ShaderStoredHeader::kVersion);
-  return fwrite(&header, sizeof(header), 1, file) == 1;
+  return xe_cache_file_write(&header, sizeof(header), 1, file) == 1;
 }
 
 // Reads shader entries from storage file and calls the callback for each.
@@ -135,22 +130,25 @@ inline bool WriteShaderStorageHeader(FILE* file) {
 //                                  uint64_t ucode_data_hash)
 // Callback should return true to continue reading, false to stop.
 template <typename Callback>
-inline uint64_t ReadShaderEntries(FILE* file, Callback&& callback) {
+inline uint64_t ReadShaderEntries(RFILE* file, Callback&& callback) {
   uint64_t valid_bytes = sizeof(ShaderStorageFileHeader);
 
   ShaderStoredHeader shader_header;
   std::vector<uint32_t> ucode_dwords;
-  ucode_dwords.reserve(0xFFFF);
 
   while (true) {
-    if (!fread(&shader_header, sizeof(shader_header), 1, file)) {
+    if (!xe_cache_file_read(&shader_header, sizeof(shader_header), 1, file)) {
       break;
     }
-    size_t ucode_byte_count =
-        shader_header.ucode_dword_count * sizeof(uint32_t);
+    const uint64_t requested_bytes =
+        uint64_t(shader_header.ucode_dword_count) * sizeof(uint32_t);
+    if (requested_bytes > SIZE_MAX || !xe_cache_file_has_bytes(file, requested_bytes)) {
+      break;
+    }
+    const size_t ucode_byte_count = size_t(requested_bytes);
     ucode_dwords.resize(shader_header.ucode_dword_count);
     if (shader_header.ucode_dword_count &&
-        !fread(ucode_dwords.data(), ucode_byte_count, 1, file)) {
+        !xe_cache_file_read(ucode_dwords.data(), ucode_byte_count, 1, file)) {
       break;
     }
     uint64_t ucode_data_hash =
@@ -231,7 +229,7 @@ class ShaderStorageWriter {
         shader_storage_shareable_root /
         fmt::format("{:08X}{}", title_id, pipeline_config.file_suffix);
     pipeline_storage_file_ =
-        xe::filesystem::OpenFile(pipeline_storage_file_path, "a+b");
+        xe_cache_file_open(xe::path_to_utf8(pipeline_storage_file_path).c_str());
     if (!pipeline_storage_file_) {
       XELOGE(
           "Failed to open the pipeline storage file for writing, persistent "
@@ -239,23 +237,29 @@ class ShaderStorageWriter {
           xe::path_to_utf8(pipeline_storage_file_path));
       return false;
     }
-    // "a+" leaves the read position at end of file on the BSDs, macOS included.
-    // Without this the header read finds nothing and the file looks corrupt.
-    xe::filesystem::Seek(pipeline_storage_file_, 0, SEEK_SET);
+    // Read the header explicitly; repair below selects the append position.
+    if (filestream_seek(pipeline_storage_file_, 0, RETRO_VFS_SEEK_POSITION_START) < 0) {
+      return CloseStorageFilesAfterInitializationFailure();
+    }
 
     // Read pipeline descriptions.
     const uint32_t pipeline_storage_version_swapped =
         xe::byte_swap(pipeline_config.version);
     PipelineStorageFileHeader pipeline_header;
-    if (fread(&pipeline_header, sizeof(pipeline_header), 1,
+    if (xe_cache_file_read(&pipeline_header, sizeof(pipeline_header), 1,
               pipeline_storage_file_) &&
         pipeline_header.magic == kPipelineStorageMagic &&
         pipeline_header.magic_api == pipeline_config.api_magic &&
         pipeline_header.version_swapped == pipeline_storage_version_swapped) {
       // Valid header, read pipeline descriptions.
-      xe::filesystem::Seek(pipeline_storage_file_, 0, SEEK_END);
+      if (filestream_seek(pipeline_storage_file_, 0, RETRO_VFS_SEEK_POSITION_END) < 0) {
+        return CloseStorageFilesAfterInitializationFailure();
+      }
       int64_t pipeline_storage_told_end =
-          xe::filesystem::Tell(pipeline_storage_file_);
+          filestream_tell(pipeline_storage_file_);
+      if (pipeline_storage_told_end < 0) {
+        return CloseStorageFilesAfterInitializationFailure();
+      }
       size_t pipeline_storage_told_count =
           size_t(pipeline_storage_told_end >= int64_t(sizeof(pipeline_header))
                      ? (uint64_t(pipeline_storage_told_end) -
@@ -263,11 +267,13 @@ class ShaderStorageWriter {
                            sizeof(TPipelineStoredDescription)
                      : 0);
       if (pipeline_storage_told_count) {
-        xe::filesystem::Seek(pipeline_storage_file_,
-                             int64_t(sizeof(pipeline_header)), SEEK_SET);
+        if (filestream_seek(pipeline_storage_file_,
+                             int64_t(sizeof(pipeline_header)), RETRO_VFS_SEEK_POSITION_START) < 0) {
+        return CloseStorageFilesAfterInitializationFailure();
+      }
         pipeline_descriptions_out.resize(pipeline_storage_told_count);
         pipeline_descriptions_out.resize(
-            fread(pipeline_descriptions_out.data(),
+            xe_cache_file_read(pipeline_descriptions_out.data(),
                   sizeof(TPipelineStoredDescription),
                   pipeline_storage_told_count, pipeline_storage_file_));
         // Validate each description's hash.
@@ -283,21 +289,25 @@ class ShaderStorageWriter {
         pipeline_descriptions_out.resize(valid_count);
       }
       // Truncate to last valid description.
-      xe::filesystem::TruncateStdioFile(
+      if (!xe_cache_file_repair(
           pipeline_storage_file_,
           uint64_t(sizeof(pipeline_header) +
                    sizeof(TPipelineStoredDescription) *
-                       pipeline_descriptions_out.size()));
+                       pipeline_descriptions_out.size()))) {
+        return CloseStorageFilesAfterInitializationFailure();
+      }
     } else {
       // Write new header.
-      xe::filesystem::TruncateStdioFile(pipeline_storage_file_, 0);
+      if (!xe_cache_file_repair(pipeline_storage_file_, 0)) {
+        return CloseStorageFilesAfterInitializationFailure();
+      }
       pipeline_header.magic = kPipelineStorageMagic;
       pipeline_header.magic_api = pipeline_config.api_magic;
       pipeline_header.version_swapped = pipeline_storage_version_swapped;
-      if (fwrite(&pipeline_header, sizeof(pipeline_header), 1,
+      if (xe_cache_file_write(&pipeline_header, sizeof(pipeline_header), 1,
                  pipeline_storage_file_) != 1) {
         XELOGE("Failed to write pipeline storage header");
-        fclose(pipeline_storage_file_);
+        filestream_close(pipeline_storage_file_);
         pipeline_storage_file_ = nullptr;
         return false;
       }
@@ -307,17 +317,19 @@ class ShaderStorageWriter {
     auto shader_storage_file_path =
         GetShaderStorageFilePath(cache_root, title_id);
     shader_storage_file_ =
-        xe::filesystem::OpenFile(shader_storage_file_path, "a+b");
+        xe_cache_file_open(xe::path_to_utf8(shader_storage_file_path).c_str());
     if (!shader_storage_file_) {
       XELOGE(
           "Failed to open the guest shader storage file for writing, "
           "persistent shader storage will be disabled: {}",
           xe::path_to_utf8(shader_storage_file_path));
-      fclose(pipeline_storage_file_);
+      filestream_close(pipeline_storage_file_);
       pipeline_storage_file_ = nullptr;
       return false;
     }
-    xe::filesystem::Seek(shader_storage_file_, 0, SEEK_SET);
+    if (filestream_seek(shader_storage_file_, 0, RETRO_VFS_SEEK_POSITION_START) < 0) {
+      return CloseStorageFilesAfterInitializationFailure();
+    }
 
     // Load shaders from storage.
     size_t shaders_loaded = 0;
@@ -334,16 +346,20 @@ class ShaderStorageWriter {
             }
             return false;
           });
-      xe::filesystem::TruncateStdioFile(shader_storage_file_,
-                                        shader_storage_valid_bytes);
+      if (!xe_cache_file_repair(shader_storage_file_,
+                                        shader_storage_valid_bytes)) {
+        return CloseStorageFilesAfterInitializationFailure();
+      }
     } else {
       // Write new header.
-      xe::filesystem::TruncateStdioFile(shader_storage_file_, 0);
+      if (!xe_cache_file_repair(shader_storage_file_, 0)) {
+        return CloseStorageFilesAfterInitializationFailure();
+      }
       if (!WriteShaderStorageHeader(shader_storage_file_)) {
         XELOGE("Failed to write shader storage header");
-        fclose(shader_storage_file_);
+        filestream_close(shader_storage_file_);
         shader_storage_file_ = nullptr;
-        fclose(pipeline_storage_file_);
+        filestream_close(pipeline_storage_file_);
         pipeline_storage_file_ = nullptr;
         return false;
       }
@@ -372,6 +388,7 @@ class ShaderStorageWriter {
     storage_write_thread_shutdown_ = false;
     storage_write_thread_ =
         xe::threading::Thread::Create({}, [this]() { WriteThread(); });
+    if (!storage_write_thread_) return CloseStorageFilesAfterInitializationFailure();
     storage_write_thread_->set_name("Shader Storage Writer");
 
     return true;
@@ -398,11 +415,11 @@ class ShaderStorageWriter {
     }
 
     if (pipeline_storage_file_) {
-      fclose(pipeline_storage_file_);
+      filestream_close(pipeline_storage_file_);
       pipeline_storage_file_ = nullptr;
     }
     if (shader_storage_file_) {
-      fclose(shader_storage_file_);
+      filestream_close(shader_storage_file_);
       shader_storage_file_ = nullptr;
     }
 
@@ -411,8 +428,8 @@ class ShaderStorageWriter {
   }
 
   uint32_t storage_index() const { return storage_index_; }
-  FILE* shader_storage_file() const { return shader_storage_file_; }
-  FILE* pipeline_storage_file() const { return pipeline_storage_file_; }
+  RFILE* shader_storage_file() const { return shader_storage_file_; }
+  RFILE* pipeline_storage_file() const { return pipeline_storage_file_; }
   bool is_active() const { return shader_storage_file_ != nullptr; }
   const std::filesystem::path& cache_root() const { return cache_root_; }
   uint32_t title_id() const { return title_id_; }
@@ -458,12 +475,16 @@ class ShaderStorageWriter {
   }
 
  private:
+  bool CloseStorageFilesAfterInitializationFailure() {
+    if (shader_storage_file_) filestream_close(shader_storage_file_);
+    if (pipeline_storage_file_) filestream_close(pipeline_storage_file_);
+    shader_storage_file_ = pipeline_storage_file_ = nullptr;
+    return false;
+  }
+
   void WriteThread() {
     ShaderStoredHeader shader_header;
     std::memset(&shader_header, 0, sizeof(shader_header));
-
-    std::vector<uint32_t> ucode_guest_endian;
-    ucode_guest_endian.reserve(0xFFFF);
 
     bool flush_shaders = false;
     bool flush_pipelines = false;
@@ -472,12 +493,12 @@ class ShaderStorageWriter {
       if (flush_shaders) {
         flush_shaders = false;
         assert_not_null(shader_storage_file_);
-        fflush(shader_storage_file_);
+        filestream_flush(shader_storage_file_);
       }
       if (flush_pipelines) {
         flush_pipelines = false;
         assert_not_null(pipeline_storage_file_);
-        fflush(pipeline_storage_file_);
+        filestream_flush(pipeline_storage_file_);
       }
 
       const Shader* shader = nullptr;
@@ -516,18 +537,12 @@ class ShaderStorageWriter {
         shader_header.ucode_dword_count = shader->ucode_dword_count();
         shader_header.type = shader->type();
         assert_not_null(shader_storage_file_);
-        if (fwrite(&shader_header, sizeof(shader_header), 1,
+        if (xe_cache_file_write(&shader_header, sizeof(shader_header), 1,
                    shader_storage_file_) != 1) {
           XELOGE("Failed to write shader header to storage");
         } else if (shader_header.ucode_dword_count) {
-          ucode_guest_endian.resize(shader_header.ucode_dword_count);
-          // Need to swap because the hash is calculated for the shader with
-          // guest endianness.
-          xe::copy_and_swap(ucode_guest_endian.data(), shader->ucode_dwords(),
-                            shader_header.ucode_dword_count);
-          if (fwrite(ucode_guest_endian.data(),
-                     shader_header.ucode_dword_count * sizeof(uint32_t), 1,
-                     shader_storage_file_) != 1) {
+          if (!xe_cache_file_write_be32(shader_storage_file_, shader->ucode_dwords(),
+                                        shader_header.ucode_dword_count)) {
             XELOGE("Failed to write shader ucode to storage");
           }
         }
@@ -535,7 +550,7 @@ class ShaderStorageWriter {
 
       if (write_pipeline) {
         assert_not_null(pipeline_storage_file_);
-        if (fwrite(&pipeline_description, sizeof(pipeline_description), 1,
+        if (xe_cache_file_write(&pipeline_description, sizeof(pipeline_description), 1,
                    pipeline_storage_file_) != 1) {
           XELOGE("Failed to write pipeline description to storage");
         }
@@ -547,8 +562,8 @@ class ShaderStorageWriter {
   uint32_t title_id_ = 0;
   uint32_t storage_index_ = 0;
 
-  FILE* shader_storage_file_ = nullptr;
-  FILE* pipeline_storage_file_ = nullptr;
+  RFILE* shader_storage_file_ = nullptr;
+  RFILE* pipeline_storage_file_ = nullptr;
 
   std::unique_ptr<xe::threading::Thread> storage_write_thread_;
   std::mutex storage_write_request_lock_;

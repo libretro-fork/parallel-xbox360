@@ -1093,6 +1093,18 @@ and Vulkan/D3D12 interface/lifetime fixtures. Those lifecycle fixtures do not
 boot a retail game or prove visual output across all titles. macOS and Android
 SDK builds are not available in this validation environment.
 
+### Persistent shader-cache VFS
+
+Run bash tools/tests/run_cache_file_tests.sh (SANITIZER= under MSYS2).
+The C89 driver checks short reads/writes, EINTR retry, zero writes and disk-full
+errors, failed flush/truncate/seek, bounds and overflow, refusing a truncating
+retry for a known existing file, native reopen and 4 KiB encoder boundaries.
+A minimal C++ bridge calls the production templated shader reader: a valid
+1057-word record retains its hash/layout and an impossible 31-bit length in a
+tiny file is rejected. Linux runs ASan/UBSan; MSVC uses /TC /MD /O2 /W4 /WX for
+the driver/helpers and C++20 for the bridge. This is not a retail shader-cache
+replay, write-failure reproduction or multi-process writer test.
+
 ### Direct audio production
 
 Run bash tools/tests/run_direct_audio_tests.sh (SANITIZER= under MSYS2).
