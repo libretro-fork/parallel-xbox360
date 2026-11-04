@@ -168,8 +168,11 @@ void AudioMediaPlayer::WorkerThreadMain() {
       resume_fence_.Wait();
     }
 
-    if (!active_playlist_) {
-      xe::threading::Sleep(std::chrono::milliseconds(500));
+    if (!worker_running_) break;
+    if (!active_playlist_ || !active_song_) {
+      // Play/Resume/track changes and shutdown signal this fence. No polling
+      // interval or empty-playlist spin is needed while there is no work.
+      resume_fence_.Wait();
       continue;
     }
 

@@ -41,6 +41,7 @@ class LibretroAudioDriver : public AudioDriver {
   bool Initialize() override;
   void Shutdown() override;
 
+  bool CanSubmitFrame() const override;
   void SubmitFrame(float* samples) override;
   void Pause() override;
   void Resume() override;

@@ -1223,3 +1223,5 @@ retro-common.lib. Linux uses ASan/UBSan by default. All workers are joined befor
 their eventcount gate is freed; tests introduce no polling sleeps.
 
 `run_io_mailbox_tests.sh` exercises the production C89 serial I/O mailbox with six producers and 196,608 messages in eight reusable nodes per producer. It checks FIFO across pending/incoming batches, per-producer order and immediate node reuse, followed by 24,576 messages freed by the consumer while producers continue publishing. Default Linux builds enable ASan/UBSan; native MSVC and MinGW runs are also supported. This verifies handoff ownership, not retail I/O throughput or bounded request admission.
+
+Native audio queue tests also cover complete-batch readiness at the exact 3,072-frame/64 ms limit, one-frame overflow, SIZE_MAX/null/stopped inputs, consumer-driven wakeup and stop cancellation without a periodic writer timeout. These tests exercise queue production and readiness, not loaded-game audio callbacks or Tekken frame pacing.

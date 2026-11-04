@@ -9,8 +9,6 @@
 
 #include "xenia/apu/audio_system.h"
 
-#include <limits>
-
 #include "xenia/apu/apu_flags.h"
 #include "xenia/apu/audio_driver.h"
 #include "xenia/apu/xma_decoder.h"
@@ -52,6 +50,8 @@ AudioSystem::AudioSystem(cpu::Processor* processor)
     : memory_(processor->memory()),
       processor_(processor),
       worker_running_(false) {
+  pause_gate_.reset(xe_pause_gate_new());
+  if (!pause_gate_) throw std::bad_alloc();
   queued_frames_ = std::clamp(cvars::apu_max_queued_frames,
                               static_cast<uint32_t>(kMinimumQueuedFrames),
                               static_cast<uint32_t>(kMaximumQueuedFrames));
@@ -64,8 +64,7 @@ AudioSystem::AudioSystem(cpu::Processor* processor)
 
   xma_decoder_ = std::make_unique<xe::apu::XmaDecoder>(processor_);
 
-  resume_event_ = xe::threading::Event::CreateAutoResetEvent(false);
-  assert_not_null(resume_event_);
+
 }
 
 AudioSystem::~AudioSystem() {
@@ -102,91 +101,40 @@ void AudioSystem::WorkerThreadMain() {
   // Initialize driver and ringbuffer.
   Initialize();
 
-  // The host mixer releases a client's semaphore on its own coarse cadence,
-  // but Xenos audio subsystem operates at 5.333ms interval (see
-  // xaudio2_audio_driver.cc) Interval scales inversely with guest_time_scalar.
-  // We therefore pace pumps to each client's next_pump_us deadline and use
-  // the semaphore only as back-pressure: a frame is submitted only if
-  // a host output slot is free, otherwise it is dropped (the host queue
-  // is full, so it is already well buffered).
+  size_t next_client = 0;
+  // Output queue space and driver credits drive callbacks. No host clock,
+  // deadline or timed sleep may limit production during fast-forward.
   while (worker_running_) {
-    const uint64_t now = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count());
-
-    size_t client_index = kMaximumClientCount;
-    uint64_t earliest_pump_us = std::numeric_limits<uint64_t>::max();
+    xe::threading::WaitHandle* handles[kMaximumClientCount + 1];
+    size_t indices[kMaximumClientCount + 1];
+    size_t count = 0, client_index, i;
+    if (is_paused()) {
+      pause_fence_.Signal();
+      xe_pause_gate_wait(pause_gate_.get());
+      continue;
+    }
     {
       std::lock_guard<std::mutex> clients_lock(clients_mutex_);
-
-      for (size_t i = 0; i < kMaximumClientCount; ++i) {
-        if (!clients_[i].in_use ||
-            clients_[i].next_pump_us >= earliest_pump_us) {
-          continue;
-        }
-        earliest_pump_us = clients_[i].next_pump_us;
-        client_index = i;
-      }
-
-      if (client_index != kMaximumClientCount) {
-        const double scalar = xe::Clock::guest_time_scalar();
-        const uint64_t min_us =
-            scalar > 0.0 ? static_cast<uint64_t>(kAudioPumpInterval / scalar)
-                         : kAudioPumpInterval;
-        // Counted from the deadline, so a late pump is made up and the host
-        // queue absorbs the stall, until it falls further behind than the
-        // queue holds.
-        uint64_t next_pump_us = earliest_pump_us + min_us;
-        if (now > earliest_pump_us + min_us * queued_frames_) {
-          next_pump_us = now + min_us;
-        }
-        clients_[client_index].next_pump_us = next_pump_us;
+      for (i = 0; i < kMaximumClientCount; ++i) {
+        client_index = (next_client + i) % kMaximumClientCount;
+        if (!clients_[client_index].in_use || !clients_[client_index].driver ||
+            !clients_[client_index].driver->CanSubmitFrame()) continue;
+        handles[count] = client_semaphores_[client_index].get();
+        indices[count++] = client_index;
       }
     }
-
-    // No clients yet: park until one registers or we're told to stop.
-    if (client_index == kMaximumClientCount) {
-      xe::threading::Wait(pending_work_event_.get(), true);
-      if (paused_) {
-        pause_fence_.Signal();
-        xe::threading::Wait(resume_event_.get(), false);
-      }
+    // The control event covers registration, output consumption, pause and
+    // shutdown. Its stored signal closes the scan-to-wait wakeup window.
+    handles[count++] = pending_work_event_.get();
+    auto result = xe::threading::WaitAny(handles, count, true);
+    if (result.first != xe::threading::WaitResult::kSuccess ||
+        result.second + 1 == count || !worker_running_) continue;
+    client_index = indices[result.second];
+    if (is_paused()) {
+      client_semaphores_[client_index]->Release(1, nullptr);
       continue;
     }
-
-    // Pace to kAudioIntervalSlack ahead of the deadline.
-    const uint64_t wake_target_us = earliest_pump_us > kAudioIntervalSlack
-                                        ? earliest_pump_us - kAudioIntervalSlack
-                                        : 0;
-    if (wake_target_us > now) {
-      const std::chrono::milliseconds timeout((wake_target_us - now) / 1000);
-      auto result =
-          xe::threading::Wait(pending_work_event_.get(), true, timeout);
-      if (result == xe::threading::WaitResult::kSuccess) {
-        if (paused_) {
-          pause_fence_.Signal();
-          xe::threading::Wait(resume_event_.get(), false);
-        }
-        continue;
-      }
-
-      const uint64_t now_precise = static_cast<uint64_t>(
-          std::chrono::duration_cast<std::chrono::microseconds>(
-              std::chrono::steady_clock::now().time_since_epoch())
-              .count());
-      if (wake_target_us > now_precise) {
-        xe::threading::NanoSleepPrecise((wake_target_us - now_precise) * 1000);
-      }
-    }
-
-    // Submit only if the host has a free output slot; otherwise drop (the host
-    // queue is full, so it is already well buffered).
-    if (xe::threading::Wait(client_semaphores_[client_index].get(), false,
-                            std::chrono::milliseconds(0)) !=
-        xe::threading::WaitResult::kSuccess) {
-      continue;
-    }
+    next_client = (client_index + 1) % kMaximumClientCount;
 
     // UnregisterClient waits on this after clearing in_use.
     std::lock_guard<std::mutex> cb_lk(clients_[client_index].callback_mutex);
@@ -230,7 +178,7 @@ void AudioSystem::StopWorker() {
   worker_running_ = false;
   pending_work_event_->Set();
   // A paused worker waits for the resume.
-  resume_event_->Set();
+  xe_pause_gate_stop(pause_gate_.get());
   if (worker_thread_) {
     worker_thread_->Wait(0, 0, 0, nullptr);
     worker_thread_.reset();
@@ -304,12 +252,11 @@ X_STATUS AudioSystem::RegisterClient(uint32_t callback, uint32_t callback_arg,
   clients_[index].callback_arg = callback_arg;
   clients_[index].wrapped_callback_arg = ptr;
   clients_[index].in_use = true;
-  clients_[index].next_pump_us = 0;
   clients_[index].frames_submitted.store(0);
   clients_[index].frames_processed.store(0);
   clients_[index].frames_dropped.store(0);
 
-  // Wake the worker so it re-scans and starts pacing this client immediately.
+  // Wake the worker to include this client in the output readiness scan.
   pending_work_event_->Set();
 
   XELOGI("AudioSystem::RegisterClient: client {} registered successfully",
@@ -386,7 +333,6 @@ void AudioSystem::UnregisterClient(size_t index) {
     clients_[index].callback_arg = 0;
     clients_[index].wrapped_callback_arg = 0;
     clients_[index].in_use = false;
-    clients_[index].next_pump_us = 0;
     clients_[index].frames_submitted.store(0);
     clients_[index].frames_processed.store(0);
     clients_[index].frames_dropped.store(0);
@@ -460,7 +406,6 @@ bool AudioSystem::Restore(ByteStream* stream) {
     client.callback_arg = stream->Read<uint32_t>();
     client.wrapped_callback_arg = stream->Read<uint32_t>();
 
-    client.next_pump_us = 0;
     client.in_use = true;
 
     auto client_semaphore = client_semaphores_[id].get();
@@ -485,10 +430,10 @@ bool AudioSystem::Restore(ByteStream* stream) {
 }
 
 void AudioSystem::Pause() {
-  if (paused_) {
+  if (is_paused()) {
     return;
   }
-  paused_ = true;
+  xe_pause_gate_set(pause_gate_.get(), 1);
 
   // Kind of a hack, but it works.
   pending_work_event_->Set();
@@ -498,12 +443,12 @@ void AudioSystem::Pause() {
 }
 
 void AudioSystem::Resume() {
-  if (!paused_) {
+  if (!is_paused()) {
     return;
   }
-  paused_ = false;
+  xe_pause_gate_set(pause_gate_.get(), 0);
 
-  resume_event_->Set();
+
 
   xma_decoder_->Resume();
 }

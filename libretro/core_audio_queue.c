@@ -224,6 +224,11 @@ static size_t room(const xe_audio_queue *queue) {
   return used < queue->limit ? queue->limit - used : 0;
 }
 
+int xe_audio_queue_can_write_frames(const xe_audio_queue *queue, size_t frames) {
+  if (!queue || stopped(queue) || frames > SIZE_MAX / queue->frame_bytes) return 0;
+  return frames * queue->frame_bytes <= room(queue);
+}
+
 typedef struct xe_audio_convert_source {
   size_t frames;
   unsigned channels;
@@ -247,9 +252,7 @@ static size_t write_samples(xe_audio_queue *queue, const float *data, size_t cou
       if (room(queue) || stopped(queue))
         retro_eventcount_cancel_wait(space_event(queue));
       else {
-        /* Safety recheck only; consumption/stop notifications drive readiness.
-         * This timeout never advances guest time or schedules audio samples. */
-        retro_eventcount_commit_wait_timeout(space_event(queue), key, 1000000);
+        retro_eventcount_commit_wait(space_event(queue), key);
       }
       continue;
     }

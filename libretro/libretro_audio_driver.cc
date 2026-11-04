@@ -23,8 +23,9 @@ LibretroAudioDriver::LibretroAudioDriver(LibretroAudioSystem* system,
       semaphore_(semaphore),
       frequency_(frequency ? frequency : 48000),
       channels_(channels == 2 ? 2 : 6),
-      // As upstream's SDL driver: a frame is 256 samples of 6 channels or
-      // 768 of 2, the same 1536 floats either way.
+      // Native XAudio submits 256 frames of six channels. The existing media
+      // caller separately submits 1536 interleaved floats; this is its legacy
+      // chunk contract, not a hardware stereo quantum or retro_run cadence.
       channel_samples_(channels == 2 ? 768 : kChannelSamplesDefault),
       out_channels_(LibretroAudioSystem::output_channels()),
       need_format_conversion_(need_format_conversion) {}
@@ -71,6 +72,10 @@ void LibretroAudioDriver::Resample(const float* in, size_t frames) {
   resample_pos_ -= double(frames);
   std::memcpy(last_, &in[(frames - 1) * ch], ch * sizeof(float));
   if (n) xe_audio_queue_write(ring_.get(), out, n);
+}
+
+bool LibretroAudioDriver::CanSubmitFrame() const {
+  return xe_audio_queue_can_write_frames(ring_.get(), channel_samples_) != 0;
 }
 
 void LibretroAudioDriver::SubmitFrame(float* samples) {

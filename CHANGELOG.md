@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Native audio callbacks now follow frontend output capacity instead of host-clock deadlines and timed sleeps, allowing production to accelerate during fast-forward. Whole-batch capacity checks keep the 64 ms bound without requesting callbacks into a full queue. Pause/resume uses the common C89 gate; media-player idle polling is replaced by its existing work fence. Fast-forward audibility and reported Tekken frame-time regressions still need loaded-game verification.
+
 - Serial guest I/O submission uses libretro-common MPSC handoff without a queue mutex or internal queue-node allocation. FIFO batches and stop/join-before-cancel ordering are preserved; request/closure allocations and the concurrent I/O pool remain.
 
 - STFS directory and hash blocks are borrowed from the read-only mapping rather than copied. Truncated blocks and invalid parent indices fail loading with a damaged-file error; hash views are cleared before replacing the backing mapping.

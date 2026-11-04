@@ -31,6 +31,9 @@ xe_audio_queue *xe_audio_queue_new(unsigned channels);
  * queues require both sides quiesced before free. */
 void xe_audio_queue_stop(xe_audio_queue *queue);
 void xe_audio_queue_free(xe_audio_queue *queue);
+/* Producer-side readiness for a whole output batch; sole producer must retain
+ * ownership through submission. Consumer progress can only increase space. */
+int xe_audio_queue_can_write_frames(const xe_audio_queue *queue, size_t frames);
 /* Copies directly into queue spans, waiting for consumer readiness when full.
  * Count must contain complete channel frames. Invalid arguments return zero;
  * a valid write is short only after stop or for an unavailable queue. */

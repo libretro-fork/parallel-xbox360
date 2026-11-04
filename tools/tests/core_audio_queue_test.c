@@ -98,7 +98,12 @@ static int full_test(unsigned ch, int cancel) {
   queue = xe_audio_queue_new(ch); if (!queue) return 0;
   count = 3072 * ch;
   for (i = 0; i < count; ++i) data[i] = sample(i);
+  if (!xe_audio_queue_can_write_frames(queue, 3072) ||
+      xe_audio_queue_can_write_frames(queue, 3073) ||
+      xe_audio_queue_can_write_frames(queue, SIZE_MAX) ||
+      xe_audio_queue_can_write_frames(NULL, 1)) return 0;
   if (xe_audio_queue_write(queue, data, count) != count) return 0;
+  if (xe_audio_queue_can_write_frames(queue, 1)) return 0;
   retro_atomic_store_release_int(&started, 0);
   retro_atomic_store_release_int(&done, 0);
   thread = sthread_create(blocked_writer, NULL); if (!thread) return 0;
@@ -119,7 +124,9 @@ static int full_test(unsigned ch, int cancel) {
     if (data[i] != sample(i + (cancel ? 0 : ch))) return 0;
   if (!cancel) for (; i < count; ++i) if (data[i] != 99.0f) return 0;
   xe_audio_queue_stop(queue);
-  if (xe_audio_queue_write(queue, data, ch)) return 0;
+  if (xe_audio_queue_write(queue, data, ch) ||
+      xe_audio_queue_can_write_frames(queue, 0) ||
+      xe_audio_queue_can_write_frames(queue, 1)) return 0;
   xe_audio_queue_free(queue);
   return 1;
 }

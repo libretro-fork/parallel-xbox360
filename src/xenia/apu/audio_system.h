@@ -10,6 +10,7 @@
 #ifndef XENIA_APU_AUDIO_SYSTEM_H_
 #define XENIA_APU_AUDIO_SYSTEM_H_
 
+#include "libretro/core_pause_gate.h"
 #include <atomic>
 #include <mutex>
 
@@ -34,8 +35,6 @@ class AudioSystem {
   // XAUDIO2_MAX_QUEUED_BUFFERS))
   static constexpr size_t kMinimumQueuedFrames = 4;
   static constexpr size_t kMaximumQueuedFrames = 64;
-  static constexpr uint32_t kAudioPumpInterval = 5333u;
-  static constexpr uint32_t kAudioIntervalSlack = 400u;
 
   virtual ~AudioSystem();
 
@@ -52,6 +51,8 @@ class AudioSystem {
   virtual void StopWorker();
   // Wake output submissions before dependent workers are joined.
   virtual void CancelPendingOutput() {}
+  // Called after frontend consumption makes output capacity available.
+  void NotifyOutputSpace() { pending_work_event_->Set(); }
 
   X_STATUS RegisterClient(uint32_t callback, uint32_t callback_arg,
                           size_t* out_index);
@@ -74,7 +75,7 @@ class AudioSystem {
   bool Save(ByteStream* stream);
   bool Restore(ByteStream* stream);
 
-  bool is_paused() const { return paused_; }
+  bool is_paused() const { return xe_pause_gate_is_paused(pause_gate_.get()) != 0; }
   void Pause();
   void Resume();
 
@@ -108,8 +109,6 @@ class AudioSystem {
     uint32_t callback_arg = 0;
     uint32_t wrapped_callback_arg = 0;
     bool in_use = false;
-    // Wall-clock deadline for this client's next pump.
-    uint64_t next_pump_us = 0;
     std::atomic<uint32_t> frames_submitted{0};
     std::atomic<uint32_t> frames_processed{0};
     std::atomic<uint32_t> frames_dropped{0};
@@ -125,9 +124,9 @@ class AudioSystem {
   // Wakes the worker to re-scan clients on register, shutdown, and pause.
   std::unique_ptr<xe::threading::Event> pending_work_event_;
 
-  bool paused_ = false;
+  std::unique_ptr<xe_pause_gate, decltype(&xe_pause_gate_free)> pause_gate_{
+      nullptr, &xe_pause_gate_free};
   threading::Fence pause_fence_;
-  std::unique_ptr<threading::Event> resume_event_;
 };
 
 }  // namespace apu

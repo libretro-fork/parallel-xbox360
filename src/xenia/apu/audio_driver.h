@@ -30,6 +30,8 @@ class AudioDriver {
   virtual bool Initialize() = 0;
   virtual void Shutdown() = 0;
 
+  // The worker checks capacity before invoking one guest render callback.
+  virtual bool CanSubmitFrame() const { return true; }
   virtual void SubmitFrame(float* samples) = 0;
   virtual void Pause() = 0;
   virtual void Resume() = 0;
