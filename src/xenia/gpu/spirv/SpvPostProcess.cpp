@@ -361,14 +361,13 @@ void Builder::postProcessCFG()
             });
         for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
             if (unreachableMerges.count(b) != 0 || headerForUnreachableContinue.count(b) != 0) {
-                auto ii = b->getInstructions().cbegin();
-                ++ii; // Keep potential decorations on the label.
-                for (; ii != b->getInstructions().cend(); ++ii)
-                    unreachableDefinitions.insert(ii->get()->getResultId());
+                // Keep potential decorations on the label.
+                for (Instruction* i = b->getFirstBodyInstruction(); i; i = i->getNextInstruction())
+                    unreachableDefinitions.insert(i->getResultId());
             } else if (reachableBlocks.count(b) == 0) {
                 // The normal case for unreachable code.  All definitions are considered dead.
-                for (auto ii = b->getInstructions().cbegin(); ii != b->getInstructions().cend(); ++ii)
-                    unreachableDefinitions.insert(ii->get()->getResultId());
+                for (Instruction* i = b->getFirstInstruction(); i; i = b->getNextInstruction(i))
+                    unreachableDefinitions.insert(i->getResultId());
             }
         }
     }
@@ -423,14 +422,14 @@ void Builder::postProcessFeatures() {
     for (const auto& functionOwner : functions) {
         Function* f = functionOwner.get();
         for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
-            for (auto ii = b->getInstructions().cbegin(); ii != b->getInstructions().cend(); ii++)
-                postProcess(*ii->get());
+            for (Instruction* i = b->getFirstInstruction(); i; i = b->getNextInstruction(i))
+                postProcess(*i);
 
             // For all local variables that contain pointers to PhysicalStorageBufferEXT, check whether
             // there is an existing restrict/aliased decoration. If we don't find one, add Aliased as the
             // default.
-            for (auto vi = b->getLocalVariables().cbegin(); vi != b->getLocalVariables().cend(); vi++) {
-                const Instruction& inst = *vi->get();
+            for (Instruction* vi = b->getFirstLocalVariable(); vi; vi = vi->getNextInstruction()) {
+                const Instruction& inst = *vi;
                 Id resultId = inst.getResultId();
                 if (containsPhysicalStorageBufferOrArray(getDerefTypeId(resultId))) {
                     bool foundDecoration = false;
@@ -491,53 +490,43 @@ void Builder::postProcessFeatures() {
 // The old OpSampledImage is left in place, potentially with no users.
 void Builder::postProcessSamplers()
 {
-    // first, find all OpSampledImage instructions and store them in a map.
-    std::map<Id, Instruction*> sampledImageInstrs;
+    // Borrow instruction and owner separately: only labels carry a block pointer.
+    struct SampledImage { Instruction* instruction; Block* block; };
+    std::map<Id, SampledImage> sampledImageInstrs;
     for (const auto& functionOwner : functions) {
         Function* f = functionOwner.get();
         for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
-	    for (auto &i: b->getInstructions()) {
-        if (i->getOpCode() == spv::Op::OpSampledImage) {
-		    sampledImageInstrs[i->getResultId()] = i.get();
-		}
-	    }
-	}
-    }
-    // next find all uses of the given ids and rewrite them if needed.
-    for (const auto& functionOwner : functions) {
-        Function* f = functionOwner.get();
-        for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
-            auto &instrs = b->getInstructions();
-            for (size_t idx = 0; idx < instrs.size(); idx++) {
-                Instruction *i = instrs[idx].get();
-                for (int opnum = 0; opnum < i->getNumOperands(); opnum++) {
-                    // Is this operand of the current instruction the result of an OpSampledImage?
-                    if (i->isIdOperand(opnum) &&
-                        sampledImageInstrs.count(i->getIdOperand(opnum)))
-                    {
-                        Instruction *opSampImg = sampledImageInstrs[i->getIdOperand(opnum)];
-                        if (i->getBlock() != opSampImg->getBlock()) {
-                            Instruction *newInstr = createInstruction(getUniqueId(),
-                                                                    opSampImg->getTypeId(),
-                                                                    spv::Op::OpSampledImage);
-                            newInstr->addIdOperand(opSampImg->getIdOperand(0));
-                            newInstr->addIdOperand(opSampImg->getIdOperand(1));
-                            newInstr->setBlock(b);
-
-                            // rewrite the user of the OpSampledImage to use the new instruction.
-                            i->setIdOperand(opnum, newInstr->getResultId());
-                            // insert the new OpSampledImage right before the current instruction.
-                            instrs.insert(instrs.begin() + idx,
-                                    std::unique_ptr<Instruction>(newInstr));
-                            idx++;
-                        }
-                    }
-                }
+            for (Instruction* i = b->getFirstBodyInstruction(); i; i = i->getNextInstruction()) {
+                if (i->getOpCode() == spv::Op::OpSampledImage)
+                    sampledImageInstrs[i->getResultId()] = {i, b};
             }
-	}
+        }
+    }
+    for (const auto& functionOwner : functions) {
+        Function* f = functionOwner.get();
+        for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
+            Instruction* previous = nullptr;
+            for (Instruction* i = b->getFirstBodyInstruction(); i; i = i->getNextInstruction()) {
+                for (int opnum = 0; opnum < i->getNumOperands(); ++opnum) {
+                    if (!i->isIdOperand(opnum)) continue;
+                    auto found = sampledImageInstrs.find(i->getIdOperand(opnum));
+                    if (found == sampledImageInstrs.end() || found->second.block == b) continue;
+                    Instruction* original = found->second.instruction;
+                    std::unique_ptr<Instruction> clone(createInstruction(getUniqueId(),
+                        original->getTypeId(), spv::Op::OpSampledImage));
+                    clone->addIdOperand(original->getIdOperand(0));
+                    clone->addIdOperand(original->getIdOperand(1));
+                    Instruction* inserted = clone.get();
+                    b->insertInstruction(previous, i, std::move(clone));
+                    i->setIdOperand(opnum, inserted->getResultId());
+                    previous = inserted;
+                }
+                // Newly inserted clones are skipped, as in the old index walk.
+                previous = i;
+            }
+        }
     }
 }
-
 // comment in header
 void Builder::postProcess(bool compileOnly)
 {

@@ -212,6 +212,41 @@ int main(int argc, char**) {
     CHECK(secondEntry->getNextBlock() == last && second->getLastBlock() == last);
     CHECK(last->getTraversalIndex() == 1 && !last->getNextBlock());
   }
+  {
+    spv::Builder builder(spv::Spv_1_3, 0, nullptr);
+    auto* function = builder.makeEntryPoint("instruction-chain");
+    auto* block = function->getEntryBlock();
+    auto* label = block->getFirstInstruction();
+    CHECK(label->getBlock() == block && !block->getNextInstruction(label));
+    CHECK(!block->isTerminated() && !block->getMergeInstruction());
+    auto first = builder.makeInstruction(spv::Op::OpNop);
+    auto* firstRaw = first.get();
+    block->addInstruction(std::move(first));
+    CHECK(block->getNextInstruction(label) == firstRaw && !firstRaw->getBlock());
+    auto merge = builder.makeInstruction(spv::Op::OpSelectionMerge);
+    auto* mergeRaw = merge.get();
+    block->addInstruction(std::move(merge));
+    block->addInstruction(builder.makeInstruction(spv::Op::OpReturn));
+    CHECK(block->getMergeInstruction() == mergeRaw && block->isTerminated());
+    auto before = builder.makeInstruction(spv::Op::OpNop);
+    auto* beforeRaw = before.get();
+    block->insertInstruction(firstRaw, mergeRaw, std::move(before));
+    CHECK(firstRaw->getNextInstruction() == beforeRaw && block->getMergeInstruction() == mergeRaw);
+    auto beforeTail = builder.makeInstruction(spv::Op::OpNop);
+    block->insertInstruction(mergeRaw, mergeRaw->getNextInstruction(), std::move(beforeTail));
+    CHECK(!block->getMergeInstruction() && block->isTerminated());
+    block->rewriteAsCanonicalUnreachableMerge();
+    CHECK(block->getFirstInstruction() == label && block->getNextInstruction(label)->getOpCode() == spv::Op::OpUnreachable);
+    CHECK(!block->getMergeInstruction() && block->isTerminated());
+    block->rewriteAsCanonicalUnreachableContinue(block);
+    CHECK(block->getNextInstruction(label)->getOpCode() == spv::Op::OpBranch);
+    CHECK(!block->getNextInstruction(block->getNextInstruction(label)));
+    auto* local = builder.createInstruction(spv::Op::OpVariable);
+    block->addLocalVariable(std::unique_ptr<spv::Instruction>(local));
+    CHECK(block->getFirstLocalVariable() == local && !local->getNextInstruction());
+    CHECK(!local->getBlock());
+  }
+  std::puts("PASS: typed instruction ownership, label identity, splice and canonical rewrites");
   std::puts("PASS: typed block-chain adoption, duplicate/foreign rejection and creation order");
   std::puts("PASS: 0/1/4/9/70 parameters and partial-parameter construction cleanup");
   std::puts("PASS: 50000 typed ID mappings across module resets without warm index growth");

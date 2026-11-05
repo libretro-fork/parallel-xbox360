@@ -41,6 +41,10 @@ cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests
 if errorlevel 1 goto fail
 %OUT%\block-state-unit.exe
 if errorlevel 1 goto fail
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_instruction_chain_test.c /Fo%OUT%\instruction-chain-unit.obj /Fe%OUT%\instruction-chain-unit.exe
+if errorlevel 1 goto fail
+%OUT%\instruction-chain-unit.exe
+if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /c libretro/core_spv_size.c /Fo%OUT%\size.obj
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_arena_test.c /Fo%OUT%\arena-unit.obj /Fe%OUT%\arena-unit.exe
@@ -78,6 +82,10 @@ if errorlevel 1 goto fail
 cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /FItools/tests/core_spv_arena_test_alloc.h /I. /Isrc /Ithird_party/libretro-common/include tools/tests/core_spv_arena_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\arena-bridge.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\arena-fault.obj %OUT%\operands-fault.obj %OUT%\fault.obj
 if errorlevel 1 goto fail
 %OUT%\arena-bridge.exe
+if errorlevel 1 goto fail
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_sampler_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\sampler-bridge.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\arena.obj %OUT%\operands.obj
+if errorlevel 1 goto fail
+%OUT%\sampler-bridge.exe %OUT%\sampler.spv
 if errorlevel 1 goto fail
 popd
 exit /b 0

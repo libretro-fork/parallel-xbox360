@@ -30,6 +30,8 @@ ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party
 "$out/chain-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_block_state_test.c" -o "$out/block-state-unit"
 "$out/block-state-unit"
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_instruction_chain_test.c" -o "$out/instruction-chain-unit"
+"$out/instruction-chain-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_size.c" -o "$out/size.o"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -c "$root/libretro/core_spv_binary.c" -o "$out/binary.o"
 ${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_operands.c" -o "$out/operands.o"
@@ -89,10 +91,17 @@ for mode in baseline current; do
   "$src/xenia/gpu/spirv/SpvBuilder.cpp" "$src/xenia/gpu/spirv/SpvPostProcess.cpp" \
   "$src/xenia/gpu/spirv/InReadableOrder.cpp" "$src/xenia/gpu/spirv/Logger.cpp" \
   "$out/binary.o" "$out/operands.o" "$out/arena.o" "$out/size.o" $profile_object -o "$out/views-$mode"
+ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$src/xenia/gpu/spirv" -I"$root" -I"$root/third_party/libretro-common/include" \
+  "$root/tools/tests/core_spv_sampler_bridge.cc" "$src/xenia/gpu/spirv/SpvBuilder.cpp" \
+  "$src/xenia/gpu/spirv/SpvPostProcess.cpp" "$src/xenia/gpu/spirv/InReadableOrder.cpp" \
+  "$src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/operands.o" "$out/arena.o" "$out/size.o" -o "$out/sampler-$mode"
+ "$out/sampler-$mode" "$out/sampler-$mode.spv"
  for variant in 0 1 2 3 4 5 6 7; do
   "$out/views-$mode" "$out/views-$mode-$variant.spv" "$variant"
  done
 done
+cmp "$out/sampler-baseline.spv" "$out/sampler-current.spv"
+if test -n "${SPIRV_VALIDATOR:-}"; then "$SPIRV_VALIDATOR" "$out/sampler-current.spv"; fi
 cmp "$out/baseline.bin" "$out/current.bin"
 cmp "$out/baseline-wide.bin" "$out/current-wide.bin"
 for variant in 0 1 2 3 4 5 6 7; do

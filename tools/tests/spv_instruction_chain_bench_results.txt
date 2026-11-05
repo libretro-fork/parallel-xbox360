@@ -1,0 +1,60 @@
+C89 instruction ownership, Windows x86-64, 2026-11-05
+Parent: complete e410e7024 source archive. Current: intrusive body/local ownership.
+GCC16.2 -O2 C++20 microbenchmarks; five samples per revision.
+No new link bytes: the former non-label block pointer is the actual void* next slot.
+Labels retain their Block owner separately. Instruction64, Block136, Function208, Module80.
+Body descriptor retains penultimate for O(1) merge queries; local list has head/tail.
+No body/local pointer arrays, capacity growth, or pointer-array copies.
+Typed deletion still releases operands and retires arena records; terminal walks read next before destruction.
+Source/scope metadata, CFG ownership, working audio and renderer resource policy are unchanged.
+
+Construction: 1000 modules/sample, warmed retained arena, one-block functions with return.
+Tracked requests include C++ new and C arena/index/output/plan hooks; operand malloc and allocator headers excluded.
+Peak includes untimed golden serialization, not process RSS. Retained covers workspace/output after module destruction.
+All tracked memory returns to its initial value on close. Golden parent/current SPIR-V matches.
+revision functions calls requested_bytes retained_bytes peak_tracked_bytes median_ms range_ms
+parent 1 22000 2392000 9475 11859 1.112 1.110..1.121
+current 1 20000 2368000 9475 11835 1.076 1.068..1.109
+parent 71 316000 32216000 32497 64409 10.783 10.632..10.891
+current 71 174000 30512000 32497 63273 7.541 7.479..7.841
+parent 257 1064000 112952000 103483 215411 56.460 56.144..56.525
+current 257 550000 106784000 103483 211299 44.625 44.289..44.743
+The 257-function case removes 48.31% of counted requests and reduces construction median21.0%.
+This fixture has short bodies; these percentages do not characterize every guest shader.
+
+Serialization: 10000 fresh outputs/sample over warmed modules (construction excluded).
+Sizing still traverses the payloads before direct encoding, but pointer-array lookup is removed.
+variant5 has513 blocks. Output allocations and byte counts match the parent.
+revision output_bytes calls requested_bytes median_ms range_ms
+parent 328 10000 3280000 1.750 1.709..1.758
+current 328 10000 3280000 1.714 1.694..1.750
+parent 5432 10000 54320000 13.648 13.534..13.958
+current 5432 10000 54320000 13.535 13.371..13.835
+parent 13624 10001 136249216 118.932 118.099..119.470
+current 13624 10001 136249216 107.681 106.942..107.968
+Small serializer ranges overlap; large serializer median improves9.46% in this run.
+The report from the previous release remains a historical measurement of its own change.
+
+Actual Make-linked offline guest cache: 2256 translations, host-RT+interlock, byte-identical output146448252B.
+Parent spv-block-chain-final-cache/test.exe; current spv-instruction-cache/test.exe.
+One warm process each then five alternating measured pairs, SPV_GUEST_OUTPUT=NUL.
+Input reads, initialization, analysis and translation included; no GPU/frontend/game process.
+CPU accounting steps15.625ms; only2 translations have control-flow labels.
+revision sample cpu_ms wall_ms
+parent 0 593.750 604.0705
+current 0 531.250 545.5125
+current 1 531.250 549.9520
+parent 1 578.125 591.6968
+parent 2 578.125 594.4186
+current 2 546.875 547.6537
+current 3 531.250 547.0161
+parent 3 593.750 593.9700
+parent 4 578.125 595.5583
+current 4 593.750 549.5279
+CPU median578.125->531.250ms; wall median594.4186->547.6537ms.
+CPU ranges overlap; this is one input/run, not an overall game or frame-time claim.
+Compilers for separate native/sanitizer suites ran concurrently with parts of the microbenchmarks.
+Reproduce with BASELINE_ROOT=<complete e410e7024 archive> sh tools/tests/run_spv_binary_bench.sh.
+Set TEST_SOURCE=<absolute tools/tests/core_spv_block_chain_bench.cc> for construction.
+run_spv_guest_cache_bench.ps1 compares already-built fixtures; independently verify bytes first.
+No measured hardware cache misses, register spills, GPU timing, OS RSS or gameplay FPS claim.

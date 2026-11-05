@@ -54,6 +54,7 @@
 #include "libretro/core_spv_plan.h"
 #include "libretro/core_spv_id_range.h"
 #include "libretro/core_spv_block_chain.h"
+#include "libretro/core_spv_instruction_chain.h"
 #include "libretro/core_spv_block_state.h"
 #include "libretro/core_spv_arena.h"
 #include <cstddef>
@@ -107,8 +108,8 @@ struct IdImmediate {
 
 class Instruction final {
 public:
-    Instruction(Id resultId, Id typeId, Op opCode) : resultId(resultId), typeId(typeId), opCode(opCode), arenaOffset(0), block(nullptr) { xe_spv_operands_init(&operands); }
-    explicit Instruction(Op opCode) : resultId(NoResult), typeId(NoType), opCode(opCode), arenaOffset(0), block(nullptr) { xe_spv_operands_init(&operands); }
+    Instruction(Id resultId, Id typeId, Op opCode) : resultId(resultId), typeId(typeId), opCode(opCode), arenaOffset(0), ownerOrNext(nullptr) { xe_spv_operands_init(&operands); }
+    explicit Instruction(Op opCode) : resultId(NoResult), typeId(NoType), opCode(opCode), arenaOffset(0), ownerOrNext(nullptr) { xe_spv_operands_init(&operands); }
     ~Instruction() { if (operands.heap) xe_spv_operands_free(&operands); }
     // All heap records come from their module arena. Stack temporaries remain valid.
     static void* operator new(size_t) = delete;
@@ -222,8 +223,13 @@ public:
         }
     }
     bool isIdOperand(int op) const { return xe_spv_operands_is_id(&operands, op); }
-    void setBlock(Block* b) { block = b; }
-    Block* getBlock() const { return block; }
+    // Only labels carry block ownership. Other records use this slot as their
+    // intrusive ownership link, preserving record size and arena tag offset.
+    void setBlock(Block* b) { assert(opCode == Op::OpLabel); ownerOrNext = b; }
+    Block* getBlock() const { return opCode == Op::OpLabel ? static_cast<Block*>(ownerOrNext) : nullptr; }
+    Instruction* getNextInstruction() const { assert(opCode != Op::OpLabel); return static_cast<Instruction*>(ownerOrNext); }
+    static void** nextSlot(void* record) noexcept { return &static_cast<Instruction*>(record)->ownerOrNext; }
+    static void destroyLinked(void* record) noexcept { delete static_cast<Instruction*>(record); }
     Op getOpCode() const { return opCode; }
     int getNumOperands() const
     {
@@ -294,7 +300,7 @@ protected:
     uint32_t arenaOffset;
     friend class Module;
     xe_spv_operands operands;
-    Block* block;
+    void* ownerOrNext;
 };
 
 //
@@ -307,9 +313,13 @@ public:
     Instruction* createInstruction(Op code);
 
     Block(Id id, Function& parent);
-    ~Block() = default;
+    ~Block() {
+        xe_spv_instruction_destroy(localVariables.head, Instruction::nextSlot, Instruction::destroyLinked);
+        label.reset();
+        xe_spv_instruction_destroy(body.chain.head, Instruction::nextSlot, Instruction::destroyLinked);
+    }
 
-    Id getId() { return instructions.front()->getResultId(); }
+    Id getId() { return label->getResultId(); }
 
     Function& getParent() const { return parent; }
     // Returns true if the source location is actually updated.
@@ -324,21 +334,34 @@ public:
     }
     void addInstruction(std::unique_ptr<Instruction> inst);
     void addPredecessor(Block* pred) { predecessors.push_back(pred); pred->successors.push_back(this);}
-    void addLocalVariable(std::unique_ptr<Instruction> inst) { localVariables.push_back(std::move(inst)); }
+    void addLocalVariable(std::unique_ptr<Instruction> inst) {
+        assert(inst && inst->getOpCode() != Op::OpLabel && !inst->getNextInstruction());
+        xe_spv_instruction_append(&localVariables, inst.get(), Instruction::nextSlot);
+        inst.release();
+    }
+    // previous/target are borrowed body nodes; the label is kept separately.
+    void insertInstruction(Instruction* previous, Instruction* target, std::unique_ptr<Instruction> inst) {
+        assert(inst && inst->getOpCode() != Op::OpLabel && !inst->getNextInstruction());
+        if (!xe_spv_instruction_insert(&body, previous, target, inst.get(), Instruction::nextSlot))
+            throw std::bad_alloc();
+        inst.release();
+    }
     const std::vector<Block*>& getPredecessors() const { return predecessors; }
     const std::vector<Block*>& getSuccessors() const { return successors; }
-    std::vector<std::unique_ptr<Instruction> >& getInstructions() {
-        return instructions;
+    Instruction* getFirstInstruction() const { return label.get(); }
+    Instruction* getFirstBodyInstruction() const { return static_cast<Instruction*>(body.chain.head); }
+    Instruction* getNextInstruction(const Instruction* instruction) const {
+        return instruction == label.get() ? getFirstBodyInstruction() : instruction->getNextInstruction();
     }
-    const std::vector<std::unique_ptr<Instruction> >& getLocalVariables() const { return localVariables; }
+    Instruction* getFirstLocalVariable() const { return static_cast<Instruction*>(localVariables.head); }
     void setUnreachable() { stateFlags = (uint8_t)(stateFlags | XE_SPV_BLOCK_UNREACHABLE); }
     bool isUnreachable() const { return (stateFlags & XE_SPV_BLOCK_UNREACHABLE) != 0; }
     uint32_t getTraversalIndex() const { return traversalIndex; }
     Block* getNextBlock() const { return static_cast<Block*>(next); }
     // Returns the block's merge instruction, if one exists (otherwise null).
     const Instruction* getMergeInstruction() const {
-        if (instructions.size() < 2) return nullptr;
-        const Instruction* nextToLast = (instructions.cend() - 2)->get();
+        const Instruction* nextToLast = static_cast<Instruction*>(body.penultimate);
+        if (!nextToLast) return nullptr;
         switch (nextToLast->getOpCode()) {
             case Op::OpSelectionMerge:
             case Op::OpLoopMerge:
@@ -353,10 +376,9 @@ public:
     // as necessary.  A canonical dead merge block has only an OpLabel and an
     // OpUnreachable.
     void rewriteAsCanonicalUnreachableMerge() {
-        assert(localVariables.empty());
+        assert(!localVariables.head);
         // Delete all instructions except for the label.
-        assert(instructions.size() > 0);
-        instructions.resize(1);
+        clearBody();
         successors.clear();
         addInstruction(std::unique_ptr<Instruction>(createInstruction(Op::OpUnreachable)));
     }
@@ -365,10 +387,9 @@ public:
     // target has only an OpLabel and an unconditional branch back to the corresponding
     // header.
     void rewriteAsCanonicalUnreachableContinue(Block* header) {
-        assert(localVariables.empty());
+        assert(!localVariables.head);
         // Delete all instructions except for the label.
-        assert(instructions.size() > 0);
-        instructions.resize(1);
+        clearBody();
         successors.clear();
         // Add OpBranch back to the header.
         assert(header != nullptr);
@@ -380,7 +401,7 @@ public:
 
     bool isTerminated() const
     {
-        switch (instructions.back()->getOpCode()) {
+        switch ((body.chain.tail ? static_cast<Instruction*>(body.chain.tail) : label.get())->getOpCode()) {
         case Op::OpBranch:
         case Op::OpBranchConditional:
         case Op::OpSwitch:
@@ -397,11 +418,11 @@ public:
 
     template <class Output> void dump(Output& out) const
     {
-        instructions[0]->dump(out);
-        for (int i = 0; i < (int)localVariables.size(); ++i)
-            localVariables[i]->dump(out);
-        for (int i = 1; i < (int)instructions.size(); ++i)
-            instructions[i]->dump(out);
+        label->dump(out);
+        for (Instruction* i = getFirstLocalVariable(); i; i = i->getNextInstruction())
+            i->dump(out);
+        for (Instruction* i = getFirstBodyInstruction(); i; i = i->getNextInstruction())
+            i->dump(out);
     }
 
 protected:
@@ -412,14 +433,20 @@ protected:
     friend Function;
 
     // Keep the traversal inputs together; predecessor/debug data is colder.
-    std::vector<std::unique_ptr<Instruction> > instructions;
+    xe_spv_instruction_body body = {};
+    std::unique_ptr<Instruction> label;
     std::vector<Block*> successors;
     // Dense creation index and owner are read on every traversal visit.
     uint32_t traversalIndex = UINT32_MAX;
     uint8_t stateFlags;
     Function& parent;
     std::vector<Block*> predecessors;
-    std::vector<std::unique_ptr<Instruction> > localVariables;
+    xe_spv_instruction_chain localVariables = {};
+
+    void clearBody() noexcept {
+        xe_spv_instruction_destroy(body.chain.head, Instruction::nextSlot, Instruction::destroyLinked);
+        body = {};
+    }
 
     // Read only when the corresponding valid bit is present in stateFlags.
     xe_spv_block_debug debugState;
@@ -713,16 +740,17 @@ __inline void Function::addLocalVariable(std::unique_ptr<Instruction> inst)
 
 __inline Block::Block(Id id, Function& parent) : xe_spv_block_link{}, stateFlags(0), parent(parent)
 {
-    instructions.push_back(std::unique_ptr<Instruction>(createInstruction(id, NoType, Op::OpLabel)));
-    instructions.back()->setBlock(this);
-    parent.getParent().mapInstruction(instructions.back().get());
+    label.reset(createInstruction(id, NoType, Op::OpLabel));
+    label->setBlock(this);
+    parent.getParent().mapInstruction(label.get());
 }
 
 __inline void Block::addInstruction(std::unique_ptr<Instruction> inst)
 {
     Instruction* raw_instruction = inst.get();
-    instructions.push_back(std::move(inst));
-    raw_instruction->setBlock(this);
+    assert(inst && inst->getOpCode() != Op::OpLabel && !inst->getNextInstruction());
+    xe_spv_instruction_body_append(&body, raw_instruction, Instruction::nextSlot);
+    inst.release();
     if (raw_instruction->getResultId())
         parent.getParent().mapInstruction(raw_instruction);
 }
