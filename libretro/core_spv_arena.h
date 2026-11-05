@@ -8,6 +8,7 @@
 #include "core_spv_index.h"
 #include "core_spv_constant_cache.h"
 #include "core_spv_groups.h"
+#include "core_spv_stack.h"
 #if defined(__SANITIZE_ADDRESS__)
 #define XE_SPV_ARENA_ASAN 1
 #elif defined(__has_feature)
@@ -62,6 +63,13 @@ int xe_spv_arena_reserve_constants(xe_spv_arena *arena, size_t count);
 xe_spv_record_view xe_spv_arena_group_view(const xe_spv_arena *arena, uint32_t key);
 int xe_spv_arena_group_append(xe_spv_arena *arena, uint32_t key, void *record);
 int xe_spv_arena_reserve_type_groups(xe_spv_arena *arena);
+enum { XE_SPV_STACK_SCOPE = 0, XE_SPV_STACK_SWITCH = 1, XE_SPV_STACK_LOOP = 2, XE_SPV_STACK_COUNT = 3 };
+int xe_spv_arena_reserve_stacks(xe_spv_arena *arena, size_t loop_bytes);
+void *xe_spv_arena_stack_push(xe_spv_arena *arena, unsigned kind, size_t bytes);
+void *xe_spv_arena_stack_top(const xe_spv_arena *arena, unsigned kind);
+int xe_spv_arena_stack_pop(xe_spv_arena *arena, unsigned kind);
+void xe_spv_arena_stack_clear(xe_spv_arena *arena, unsigned kind);
+void xe_spv_arena_clear_stacks(xe_spv_arena *arena);
 void *xe_spv_arena_record_owner(const void *record, uint32_t offset);
 void *xe_spv_arena_payload_realloc(void *context, void *old, size_t old_bytes, size_t bytes);
 /* Checks live instruction slots without reading candidate payload bytes. */

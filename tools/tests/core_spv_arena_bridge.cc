@@ -13,6 +13,7 @@ class FunctionOwnerProbe : public spv::Builder {
   using spv::Builder::Builder;
   spv::Function* first() const { return static_cast<spv::Function*>(functions.head); }
   spv::Function* last() const { return static_cast<spv::Function*>(functions.tail); }
+  spv::Builder::LoopBlocks* loopTop() { return loops.empty() ? nullptr : &loops.top(); }
 };
 // Match the production translator's declaration and reverse destruction order.
 struct Worker {
@@ -41,6 +42,42 @@ struct Worker {
   }
 };
 int main(int argc, char** argv) {
+  {
+    const size_t before = xe_spv_test_pages();
+    {
+      spv::InstructionArena workspace(8192, sizeof(spv::Block), sizeof(spv::Function));
+      CHECK(xe_spv_arena_reserve_objects(workspace.get(), sizeof(spv::Block), 1024, sizeof(spv::Function), 32));
+      spv::Builder::LoopBlocks* first = nullptr;
+      size_t warmed = 0;
+      for (unsigned round = 0; round < 5; ++round) {
+        FunctionOwnerProbe builder(spv::Spv_1_3, 0, nullptr, workspace.get());
+        builder.makeEntryPoint("main");
+        CHECK(!builder.loopTop());
+        for (unsigned i = 0; i < 65; ++i) {
+          if (!round && i == 64) {
+            auto* prior = builder.loopTop();
+            xe_spv_test_page_fail_after(xe_spv_test_page_calls());
+            bool failed = false;
+            try { builder.makeNewLoop(); } catch (const std::bad_alloc&) { failed = true; }
+            xe_spv_test_page_fail_after(size_t(-1));
+            CHECK(failed && builder.loopTop() == prior);
+          }
+          auto* frame = &builder.makeNewLoop();
+          if (!i) {
+            if (round) CHECK(frame == first);
+            first = frame;
+          }
+        }
+        CHECK(first->head.getId());
+        if (round == 1) warmed = xe_spv_test_page_calls();
+        if (round > 1) CHECK(warmed == xe_spv_test_page_calls());
+        // Deliberately unwind with active frames. They borrow live blocks;
+        // builder/module cleanup must retire frames before releasing the IR.
+      }
+    }
+    CHECK(xe_spv_test_pages() == before);
+    std::puts("PASS: typed loop-page growth failure/retry, stable outer references, module reuse and active-frame unwind");
+  }
   {
     const size_t before = xe_spv_test_pages();
     {

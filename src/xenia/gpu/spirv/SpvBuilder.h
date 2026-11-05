@@ -51,6 +51,7 @@
 #define SPV_ENABLE_UTILITY_CODE
 #include "spirv.hpp11"
 #include "spvIR.h"
+#include "ArenaStack.h"
 #include "spvUtil.h"
 
 namespace spv {
@@ -67,7 +68,6 @@ namespace spv {
 #include <memory>
 #include <set>
 #include <sstream>
-#include <stack>
 #include <unordered_map>
 #include <unordered_set>
 #include <map>
@@ -739,13 +739,14 @@ public:
     void endSwitch(std::vector<Block*>& segmentBB);
 
     struct LoopBlocks {
-        LoopBlocks(Block& head, Block& body, Block& merge, Block& continue_target) :
+        LoopBlocks(Block& head, Block& body, Block& merge, Block& continue_target) noexcept :
             head(head), body(body), merge(merge), continue_target(continue_target) { }
         Block &head, &body, &merge, &continue_target;
     private:
         LoopBlocks();
         LoopBlocks& operator=(const LoopBlocks&) = delete;
     };
+    static_assert(sizeof(LoopBlocks) == 4 * sizeof(void*));
 
     // Start a new loop and prepare the builder to generate code for it.  Until
     // closeLoop() is called for this loop, createLoopContinue() and
@@ -1024,7 +1025,6 @@ public:
     // 1. A new lexical block is pushed
     // 2. The current build point changed
     bool dirtyScopeTracker;
-    std::stack<spv::Id> currentDebugScopeId;
 
     // This flag toggles tracking of debug info while building the SPIR-V.
     bool trackDebugInfo = false;
@@ -1047,6 +1047,8 @@ public:
     Module module;
     Block* buildPoint;
     Id uniqueId;
+    // Borrowed stack views follow their module owner in declaration order.
+    ArenaStack<spv::Id> currentDebugScopeId;
     Function* entryPointFunction;
     bool generatingOpCodeForSpecConst;
     bool useReplicatedComposites { false };
@@ -1070,10 +1072,10 @@ public:
     std::unordered_set<unsigned int> explicitlyLaidOut;
 
     // stack of switches
-    std::stack<Block*> switchMerges;
+    ArenaStack<Block*> switchMerges;
 
     // Our loop stack.
-    std::stack<LoopBlocks> loops;
+    ArenaStack<LoopBlocks> loops;
 
     // map from strings to their string ids
     std::unordered_map<std::string, spv::Id> stringIds;

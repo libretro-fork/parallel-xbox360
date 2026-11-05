@@ -635,6 +635,7 @@ public:
     // destructor only frees operand storage, so no cross-record order is needed.
     ~Module()
     {
+        xe_spv_arena_clear_stacks(arena);
         // Detached blocks only release their own payloads; their parent function
         // may already be gone. Complete typed cleanup before sweeping instructions.
         const bool objectsEnded = xe_spv_arena_objects_end(arena, destroyFunction, destroyBlock) != 0;
@@ -668,6 +669,15 @@ public:
         return xe_spv_arena_owns_record(arena, instruction) != 0;
     }
     void forgetInstruction(Id id) { xe_spv_index_unmap(&arena->index, id); }
+    void* stackPush(unsigned kind, size_t bytes) {
+        void* frame = xe_spv_arena_stack_push(arena, kind, bytes);
+        if (!frame) throw std::bad_alloc();
+        return frame;
+    }
+    void* stackTop(unsigned kind) const { return xe_spv_arena_stack_top(arena, kind); }
+    bool stackPop(unsigned kind) { return xe_spv_arena_stack_pop(arena, kind) != 0; }
+    void stackClear(unsigned kind) noexcept { xe_spv_arena_stack_clear(arena, kind); }
+    void clearStacks() noexcept { xe_spv_arena_clear_stacks(arena); }
     xe_spv_record_view typeRecords(uint32_t opcode, bool debug = false) const {
         return xe_spv_arena_group_view(arena, xe_spv_group_key(opcode, debug));
     }

@@ -45,6 +45,7 @@ typedef struct xe_spv_object_state {
    payload_pool payloads;
    xe_spv_constant_cache constants;
    xe_spv_groups groups;
+   xe_spv_stack stacks[XE_SPV_STACK_COUNT];
 } xe_spv_object_state;
 
 enum { PAYLOAD_PAGE_BYTES = 16384 };
@@ -109,6 +110,40 @@ int xe_spv_arena_reserve_type_groups(xe_spv_arena *arena)
       if (!group || !xe_spv_group_reserve(group, 4, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE)) return 0;
    }
    return 1;
+}
+int xe_spv_arena_reserve_stacks(xe_spv_arena *arena, size_t loop_bytes)
+{
+   xe_spv_object_state *state = object_state(arena);
+   if (!state) return 0;
+   return xe_spv_stack_reserve(&state->stacks[XE_SPV_STACK_SCOPE], sizeof(uint32_t), 64, XE_SPV_ARENA_ALLOC) &&
+      xe_spv_stack_reserve(&state->stacks[XE_SPV_STACK_SWITCH], sizeof(void *), 64, XE_SPV_ARENA_ALLOC) &&
+      xe_spv_stack_reserve(&state->stacks[XE_SPV_STACK_LOOP], loop_bytes, 64, XE_SPV_ARENA_ALLOC);
+}
+void *xe_spv_arena_stack_push(xe_spv_arena *arena, unsigned kind, size_t bytes)
+{
+   xe_spv_object_state *state;
+   if (!arena->in_use || kind >= XE_SPV_STACK_COUNT || !(state = object_state(arena))) return NULL;
+   return xe_spv_stack_push(&state->stacks[kind], bytes, XE_SPV_ARENA_ALLOC);
+}
+void *xe_spv_arena_stack_top(const xe_spv_arena *arena, unsigned kind)
+{
+   if (!arena->in_use || !arena->objects || kind >= XE_SPV_STACK_COUNT) return NULL;
+   return xe_spv_stack_top(&arena->objects->stacks[kind]);
+}
+int xe_spv_arena_stack_pop(xe_spv_arena *arena, unsigned kind)
+{
+   if (!arena->in_use || !arena->objects || kind >= XE_SPV_STACK_COUNT) return 0;
+   return xe_spv_stack_pop(&arena->objects->stacks[kind]);
+}
+void xe_spv_arena_stack_clear(xe_spv_arena *arena, unsigned kind)
+{
+   if (arena->objects && kind < XE_SPV_STACK_COUNT) xe_spv_stack_reset(&arena->objects->stacks[kind]);
+}
+void xe_spv_arena_clear_stacks(xe_spv_arena *arena)
+{
+   unsigned kind;
+   if (!arena->objects) return;
+   for (kind = 0; kind < XE_SPV_STACK_COUNT; ++kind) xe_spv_stack_reset(&arena->objects->stacks[kind]);
 }
 static payload_page *payload_grow(payload_pool *pool, size_t minimum)
 {
@@ -354,6 +389,8 @@ static void objects_close(xe_spv_arena *arena)
    }
    XE_SPV_ARENA_FREE(arena->objects->constants.slots);
    xe_spv_groups_close(&arena->objects->groups, XE_SPV_ARENA_FREE);
+   for (kind = 0; kind < XE_SPV_STACK_COUNT; ++kind)
+      xe_spv_stack_close(&arena->objects->stacks[kind], XE_SPV_ARENA_FREE);
    XE_SPV_ARENA_FREE(arena->objects);
    arena->objects = NULL;
 }
@@ -436,6 +473,7 @@ static int arena_end(xe_spv_arena *arena, void (*destroy)(void *record), int pay
    size_t i, slot;
    uint32_t mask;
    if (!arena->in_use || !objects_empty(arena)) return 0;
+   xe_spv_arena_clear_stacks(arena);
    for (page = arena->head; page; page = page->next) {
       /* Skip empty groups. Borrowed global lists need no separate ownership
        * walk: payload-only cleanup snapshots each live bitmap once. */

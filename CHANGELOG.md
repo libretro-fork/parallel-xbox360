@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Shader loop, switch and debug-scope stacks now use retained C89 pages, removing three deque owners and their recurring empty-stack allocations. Stable frame addresses preserve outer-loop references during nested growth, and loop frames construct directly in final storage. Startup reserves capacity; larger stacks grow without copying live frames. Retirement, failure/retry, deep nesting and sanitizer checks cover the new lifetime path. Audio, presentation and shader wire output remain unchanged.
+
 - Both shader type-group maps of vectors now use retained C89 pointer storage and borrowed lookup views, including debug types and post-processing. Layout-sensitive arrays, distinct structs and forward-pointer patching keep their existing identity rules. Common groups reserve capacity at compiler startup; larger groups grow safely and retain storage until close. This reduces recurring allocations and builder metadata while increasing retained workspace storage; measured tradeoffs and shader byte comparisons are documented separately.
 
 - Shader constant lookup now uses a retained C89 exact-key table, removing two maps of vectors, the null-constant vector, and repeated linear scans. Keys borrow existing operand words; module resets invalidate them by epoch. Compiler workspaces prefault 4 KiB and retain larger checked capacity, so retained metadata can increase. Regular struct constants no longer accidentally reuse specialization IDs. Cached game shader bytes and performance/memory tradeoffs are tested separately; audio and presentation scheduling are unchanged.

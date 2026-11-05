@@ -1,0 +1,119 @@
+Stable C89 shader-builder stacks, 2026-11-05
+Parent: complete b010524031d04e0475e2ca9aeb64d18d657c26f1 sources.
+Windows x64 GCC 16.2 -O2; native MSVC and WSL ASan/UBSan checked separately.
+
+Three std::stack/default deque owners (debug scope IDs, switch merge pointers,
+and LoopBlocks) are replaced by borrowed typed views over C89 retained pages.
+Pages hold 64 frames; frame areas align to 64 bytes and strides round to eight
+bytes. Growth links another page without moving or copying live frames. Pops
+reuse earlier slots; reset keeps high-water pages until arena close. Count/size
+arithmetic, incompatible strides and growth failures are checked. Cold compiler
+setup reserves one page per stack. This reserves capacity, not a guarantee of
+physical prefaulting for every payload page. Deeper stacks can still allocate.
+
+LoopBlocks contains four Block references and makeNewLoop returns LoopBlocks&.
+A reallocating contiguous replacement would invalidate callers' outer references
+when nested loops grow. The paged replacement preserves those addresses. Blocks
+are still created in the same ID order; the reference aggregate constructs once,
+directly in its final frame, without a temporary LoopBlocks copy. A size assertion
+protects the cold reservation against ABI/layout drift. Scope IDs and switch
+pointers use explicit typed placement construction. The thin C++ view requires
+nothrow copying, trivial destruction and alignment <=8. All allocation, paging,
+logical retirement and reuse algorithms are C89; no type-punned pointer arrays.
+
+Module ownership precedes all typed stack views in field/declaration order.
+Builder destruction retires frames before releasing functions; module cleanup
+also retires frames before orphan IR cleanup. C arena end covers raw callers.
+Only trivial values may occupy frames, so bulk retirement needs no user callback
+or resource destructor. Empty resets return immediately. ASan poisons popped and
+reset frames; new pushes unpoison only their slot. Arena close unpoisons/free
+pages through the same C allocation hooks as growth. No new shutdown callback,
+thread, synchronization, logging or release profiling counter is introduced.
+
+Measured GCC x64 Builder 1752 -> 1552 bytes; Instruction64/Block136/Function136/
+Module88 are unchanged. Three typed views replace 240 bytes of deque metadata;
+field reordering also saves padding. C owner state grows 120 bytes. The three
+cold page allocations request 3357 bytes (payload plus page/alignment metadata),
+for 3477 additional retained bytes per workspace in the fixtures below. The
+removed six recurring deque allocations requested 1728 bytes per builder. Thus
+retained/peak heap storage increases even while allocation churn falls.
+
+Seven alternating quiet parent/current pairs after compilation stopped, using
+complete own-revision C/IR sources and unchanged construction fixtures. Function
+cases use 1/71/257 functions, long helper names, no parameters/linkage. Constant
+cases use 40/640/5120 regular scalar/pair-composite constants, then three repeated
+lookup passes. Timed construction includes builder cleanup, excludes dump/file
+I/O. Warm untimed outputs match. All C++ new and C operand/arena/index/plan/output
+allocation hooks are counted; allocator headers/free-block retention and driver
+memory are excluded. Tracked live storage returns to the initial state at close,
+and warmed storage stays constant over repeated modules. Earlier build-time
+samples are excluded from the following timing summary.
+
+workload/revision / modules / calls / requested bytes / retained / peak / ms
+constants, 40, current  modules=1000 calls=1000 requested=40000 retained=52393 peak=52433 ms=2.011 (1.998..2.037)
+constants, 40, parent   modules=1000 calls=7000 requested=1768000 retained=48916 peak=50684 ms=2.294 (2.274..2.311)
+constants, 640, current modules=1000 calls=1000 requested=40000 retained=156545 peak=156585 ms=33.254 (33.117..33.959)
+constants, 640, parent  modules=1000 calls=7000 requested=1768000 retained=153068 peak=154836 ms=33.853 (33.708..34.660)
+constants, 5120, current modules=100 calls=100 requested=4000 retained=926153 peak=926193 ms=29.641 (29.626..29.965)
+constants, 5120, parent modules=100 calls=700 requested=176800 retained=922676 peak=924444 ms=29.840 (29.772..30.028)
+functions, 1, current   modules=1000 calls=1000 requested=40000 retained=51677 peak=51717 ms=0.195 (0.194..0.200)
+functions, 1, parent    modules=1000 calls=7000 requested=1768000 retained=48200 peak=49968 ms=0.418 (0.416..0.429)
+functions, 71, current  modules=1000 calls=1000 requested=40000 retained=100448 peak=102792 ms=4.038 (4.000..4.104)
+functions, 71, parent   modules=1000 calls=7000 requested=1768000 retained=96971 peak=101043 ms=4.239 (4.220..4.298)
+functions, 257, current modules=1000 calls=1000 requested=40000 retained=263376 peak=272632 ms=14.340 (14.313..14.516)
+functions, 257, parent  modules=1000 calls=7000 requested=1768000 retained=259899 peak=270883 ms=14.509 (14.434..15.018)
+
+Each fixture falls from seven to one counted allocation per module (85.71%
+fewer), and 1768 ->40 requested bytes (97.74% fewer). This is a fixture result,
+not an assertion that every real shader now allocates once: other metadata,
+decoration/string containers, larger working sets and driver paths still allocate.
+The remaining request in these fixtures is the capability-set node.
+
+Tiny function construction median falls 53.35%; 71-function construction falls
+4.74%; the largest falls 1.16% with overlapping ranges, so remains comparable.
+The small constant case falls 12.34%; medium/large cases fall 1.77%/0.67% with
+overlapping ranges, so are comparable. Retained storage rises 3477 bytes in all
+cases; peak tracked storage rises 1749 bytes after removing the transient deque
+buffers. No total compilation, driver, gameplay/FPS, RSS, cache-miss or register-
+spill improvement is claimed. Serialization throughput was not separately timed.
+
+Validation:
+- Full Windows Make -j5 and native MSVC /TC C89 stack/storage and typed suite.
+- Strict/pedantic C89 stack unit: 1024 simultaneously stable frames, 102400 warm
+  push/pop pairs without allocation, 64-byte frame-area alignment, checked size/
+  capacity overflow, failed page growth preserving the old top and safe retry.
+- Actual typed arena: grow beyond the 64-frame loop reservation, force the next
+  page allocation to fail after preallocating IR/block storage, retain the old
+  top/outer references and retry; five module leases reuse pages and unwind with
+  active frames without leaks. Old IR is not reused through a stale stack.
+- 129 nested loop references across page growth; real continue/exit/merge CFG
+  construction; 1024 typed scope IDs and switch pointers round-trip in order.
+  10476 bytes match the deque baseline. Native MSVC and GCC outputs match SHA256
+  8933E91EDD65E02BC9D5382E5F8EF198448CAAAE561AE8D80D86519602AF461C.
+- Full WSL ASan/UBSan: 5248 standard/wide helper modules, source/views, linkage,
+  constant and type fixtures, ownership/fault/unwind tests and negative retired
+  object/record/payload tests. New C pop/reset-frame and typed loop-frame misuse
+  tests all fail as expected with use-after-poison diagnostics.
+- 18432 native MSVC geometry variants, 109668864 bytes retain golden SHA256
+  427B071C7E7868566596FF55270BBCA9AAB31F54C714CA552E928DFE349E69E0.
+- Actual rebuilt Make objects: 1410 Tekken translations/2 control-flow cases,
+  81581628 bytes; 210 Tomb Raider translations/96 control-flow cases, 93646888
+  bytes. Both match existing reference outputs exactly. User-local cache input
+  files are not shipped with tests or mailbox patches.
+- No frontend/game/driver launched, installed DLL untouched. Audio cadence,
+  presentation, guest timing, texture-watch and thread shutdown unchanged.
+  ARM/device-runtime behavior and overall game performance remain unmeasured.
+
+Reproduce nested-loop equivalence: sh tools/tests/run_spv_stack_compare.sh with
+optional BASELINE_ROOT=<complete b01052403 archive>, SANITIZER and TEST_BUILD_DIR.
+Native suite: tools/tests/run_spv_output_tests.cmd from an x64 VS prompt. Full
+sanitizer/output suite: tools/tests/run_spv_output_tests.sh with its documented
+baseline archive, TEST_BUILD_DIR, SANITIZER and SPIRV_VALIDATOR settings.
+Construction: tools/tests/run_spv_binary_bench.sh with CAPTURE_OPERANDS=1 and
+BASELINE_ROOT=<complete b01052403 archive>. For functions:
+ TEST_SOURCE=tools/tests/core_spv_function_bench.cc
+ EXTRA_CXXFLAGS='-DXE_SPV_LONG_NAME_BENCH -DXE_SPV_BLOCK_CHAIN_BENCH'
+For constants: TEST_SOURCE=tools/tests/core_spv_constant_bench.cc, unset
+EXTRA_CXXFLAGS. After compilation, alternate parent/current variants 0/4/5 in
+seven quiet pairs and compare module outputs. The largest constant case uses
+100 modules/sample; all other construction cases use 1000.

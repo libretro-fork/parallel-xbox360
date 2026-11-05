@@ -66,8 +66,11 @@ Builder::Builder(unsigned int spvVersion, unsigned int magicNumber, SpvBuildLogg
     module(instructionArena),
     buildPoint(nullptr),
     uniqueId(0),
+    currentDebugScopeId(module, XE_SPV_STACK_SCOPE),
     entryPointFunction(nullptr),
     generatingOpCodeForSpecConst(false),
+    switchMerges(module, XE_SPV_STACK_SWITCH),
+    loops(module, XE_SPV_STACK_LOOP),
     logger(buildLogger)
 {
     clearAccessChain();
@@ -75,6 +78,7 @@ Builder::Builder(unsigned int spvVersion, unsigned int magicNumber, SpvBuildLogg
 
 Builder::~Builder()
 {
+    module.clearStacks();
     xe_spv_binary_close(&moduleProcesses);
     xe_spv_plan_close(&emissionPlan);
     xe_spv_instruction_destroy(functions.head, Function::nextSlot, Function::destroyLinked);
@@ -4191,9 +4195,8 @@ Builder::LoopBlocks& Builder::makeNewLoop()
     Block& body            = makeNewBlock();
     Block& merge           = makeNewBlock();
     Block& continue_target = makeNewBlock();
-    LoopBlocks blocks(head, body, merge, continue_target);
-    loops.push(blocks);
-    return loops.top();
+    return *::new (module.stackPush(XE_SPV_STACK_LOOP, sizeof(LoopBlocks)))
+        LoopBlocks(head, body, merge, continue_target);
 }
 
 void Builder::createLoopContinue()

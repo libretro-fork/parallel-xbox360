@@ -12,6 +12,8 @@ git -C "$root" archive "$baseline" src/xenia/gpu/spirv src/xenia/gpu/spirv_shade
 fi
 tar -xf "$out/base.tar" -C "$out/base"
 san=${SANITIZER-}
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_stack_test.c" -o "$out/stack-unit"
+"$out/stack-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_groups_test.c" -o "$out/groups-unit"
 "$out/groups-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_constant_cache_test.c" -o "$out/constant-unit"
@@ -145,6 +147,10 @@ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src/xenia/gpu/spirv"
  "$root/tools/tests/core_spv_types_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-debug.o" "$out/size.o" "$out/operands.o" "$out/fault.o" -o "$out/types-bridge"
 for variant in 0 1; do "$out/types-bridge" "$out/types-$variant.bin" "$variant"; done
+${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" \
+ "$root/tools/tests/core_spv_stack_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
+ "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-debug.o" "$out/size.o" "$out/operands.o" "$out/fault.o" -o "$out/stack-bridge"
+"$out/stack-bridge" "$out/stack.bin"
 
 # Fault-injected operand ownership is isolated from profiling adapters.
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_payload_test.c" -o "$out/payload-unit"
@@ -156,6 +162,12 @@ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -include "$root/tools/tests/core_spv_ar
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-plain.o" "$out/size.o" "$out/operands-fault.o" "$out/fault.o" -o "$out/arena-bridge"
 "$out/arena-bridge"
 case "$san" in *address*)
+ for lifetime in pop-uaf reset-uaf; do
+  if "$out/stack-unit" "$lifetime" > "$out/stack-$lifetime.log" 2>&1; then echo 'missed retired stack frame'; exit 1; fi
+  grep -q 'use-after-poison' "$out/stack-$lifetime.log"
+ done
+ if "$out/stack-bridge" "$out/stack-uaf.bin" loop-uaf > "$out/stack-typed-uaf.log" 2>&1; then echo 'missed retired loop frame'; exit 1; fi
+ grep -q 'use-after-poison' "$out/stack-typed-uaf.log"
  for lifetime in grow-uaf free-uaf end-uaf; do
   if "$out/payload-unit" "$lifetime" > "$out/payload-$lifetime.log" 2>&1; then echo "missed payload UAF"; exit 1; fi
   grep -q 'use-after-poison' "$out/payload-$lifetime.log"
