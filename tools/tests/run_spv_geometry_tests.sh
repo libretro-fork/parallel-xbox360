@@ -23,7 +23,12 @@ fi
 for revision in parent current; do
  src="$root"
  legacy=
- if test "$revision" = parent; then src="$parent"; legacy=-DXE_SPV_GEOMETRY_LEGACY; fi
+ if test "$revision" = parent; then
+  src="$parent"
+  if test -z "$(sed -n '/^bool BuildGuestPrimitiveGeometryShaderSpirv(/p' "$src/src/xenia/gpu/spirv_builtin_geometry_shader.h")"; then
+   legacy=-DXE_SPV_GEOMETRY_LEGACY
+  fi
+ fi
  obj="$out/$revision"
  mkdir -p "$obj/validation"
  for unit in size binary operands arena; do

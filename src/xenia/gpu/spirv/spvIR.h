@@ -203,25 +203,12 @@ public:
 
     void addStringOperand(const char* str)
     {
-        unsigned int word = 0;
-        unsigned int shiftAmount = 0;
-        unsigned char c;
-
-        do {
-            c = *(str++);
-            word |= ((unsigned int)c) << shiftAmount;
-            shiftAmount += 8;
-            if (shiftAmount == 32) {
-                addImmediateOperand(word);
-                word = 0;
-                shiftAmount = 0;
-            }
-        } while (c != 0);
-
-        // deal with partial last word
-        if (shiftAmount > 0) {
-            addImmediateOperand(word);
-        }
+        if (!str) throw std::bad_alloc();
+        addStringOperand(str, strlen(str));
+    }
+    void addStringOperand(const char* str, size_t bytes)
+    {
+        if (!xe_spv_operands_string(&operands, str, bytes)) throw std::bad_alloc();
     }
     bool isIdOperand(int op) const { return xe_spv_operands_is_id(&operands, op); }
     // Only labels carry block ownership. Other records use this slot as their

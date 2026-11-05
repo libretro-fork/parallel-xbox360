@@ -470,11 +470,8 @@ Id Builder::makeStructResultType(Id type0, Id type1)
     }
 
     // not found, make it
-    std::vector<spv::Id> members;
-    members.push_back(type0);
-    members.push_back(type1);
-
-    return makeStructType(members, "ResType");
+    const spv::Id members[2] = {type0, type1};
+    return makeStructTypeView(xe_spv_word_view{members, 2}, "ResType");
 }
 
 Id Builder::makeVectorType(Id component, int size)
@@ -4586,6 +4583,10 @@ static void appendStringInstruction(xe_spv_count& out, Op opcode, const char* te
     if (!text) { out.failed = 1; return; }
     xe_spv_count_instruction(&out, (uint32_t)opcode, 0, 0, strlen(text) / 4 + 1);
 }
+static void appendStringInstruction(xe_spv_binary& out, Op opcode, const char* text)
+{
+    xe_spv_binary_string(&out, (uint32_t)opcode, text);
+}
 
 template <class Output> void Builder::dumpInternal(Output& out, xe_spv_plan* plan, bool record) const
 {
@@ -4832,43 +4833,49 @@ void Builder::createConditionalBranch(Id condition, Block* thenBlock, Block* els
 // OpSource
 // [OpSourceContinued]
 // ...
+template <class Output> static void appendSourceChunk(Output& out, Op opcode,
+    uint32_t language, uint32_t version, uint32_t file,
+    const char* text, size_t bytes)
+{
+    Instruction instruction(opcode);
+    if (opcode == Op::OpSource) {
+        instruction.addImmediateOperand(language);
+        instruction.addImmediateOperand(version);
+        if (file) instruction.addIdOperand(file);
+    }
+    if (text) instruction.addStringOperand(text, bytes);
+    instruction.dump(out);
+}
+static void appendSourceChunk(xe_spv_binary& out, Op opcode,
+    uint32_t language, uint32_t version, uint32_t file,
+    const char* text, size_t bytes)
+{
+    const uint32_t prefix[3] = {language, version, file};
+    const size_t count = opcode == Op::OpSource ? 2 + (file != 0) : 0;
+    if (text)
+        xe_spv_binary_string_span(&out, (uint32_t)opcode, prefix, count, text, bytes);
+    else
+        xe_spv_binary_instruction(&out, (uint32_t)opcode, 0, 0, prefix, count);
+}
 template <class Output> void Builder::dumpSourceInstructions(const spv::Id fileId, const std::string& text,
                                      Output& out) const
 {
-    const int nonNullBytesPerInstruction = XE_SPV_SOURCE_CHUNK_BYTES;
-
-    if (sourceLang != SourceLanguage::Unknown) {
-        // OpSource Language Version File Source
-        Instruction sourceInst(NoResult, NoType, Op::OpSource);
-        sourceInst.reserveOperands(3);
-        sourceInst.addImmediateOperand(sourceLang);
-        sourceInst.addImmediateOperand(sourceVersion);
-        // File operand
-        if (fileId != NoResult) {
-            sourceInst.addIdOperand(fileId);
-            // Source operand
-            if (text.size() > 0) {
-                size_t nextByte = 0;
-                std::string subString;
-                while (nextByte < text.size()) {
-                    size_t chunkBytes = std::min(size_t(nonNullBytesPerInstruction), text.size() - nextByte);
-                    subString = text.substr(nextByte, chunkBytes);
-                    if (nextByte == 0) {
-                        // OpSource
-                        sourceInst.addStringOperand(subString.c_str());
-                        sourceInst.dump(out);
-                    } else {
-                        // OpSourcContinued
-                        Instruction sourceContinuedInst(Op::OpSourceContinued);
-                        sourceContinuedInst.addStringOperand(subString.c_str());
-                        sourceContinuedInst.dump(out);
-                    }
-                    nextByte += chunkBytes;
-                }
-            } else
-                sourceInst.dump(out);
-        } else
-            sourceInst.dump(out);
+    if (sourceLang == SourceLanguage::Unknown) return;
+    if (fileId == NoResult || text.empty()) {
+        appendSourceChunk(out, Op::OpSource, (uint32_t)sourceLang, sourceVersion,
+            fileId, nullptr, 0);
+        return;
+    }
+    size_t nextByte = 0;
+    while (nextByte < text.size()) {
+        const size_t chunkBytes = std::min(size_t(XE_SPV_SOURCE_CHUNK_BYTES), text.size() - nextByte);
+        const char* chunk = text.data() + nextByte;
+        // Preserve legacy C-string semantics for an embedded terminator.
+        const char* end = (const char*)memchr(chunk, 0, chunkBytes);
+        appendSourceChunk(out, nextByte ? Op::OpSourceContinued : Op::OpSource,
+            (uint32_t)sourceLang, sourceVersion, fileId, chunk,
+            end ? size_t(end - chunk) : chunkBytes);
+        nextByte += chunkBytes;
     }
 }
 

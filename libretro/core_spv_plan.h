@@ -34,7 +34,7 @@ static INLINE void xe_spv_plan_close(xe_spv_plan *plan)
  * pushes during that walk therefore cannot move the allocation. */
 static INLINE int xe_spv_plan_reserve(xe_spv_plan *plan, size_t count)
 {
-   size_t capacity = plan->heap ? plan->capacity : XE_SPV_PLAN_INLINE;
+   size_t capacity = plan->heap ? plan->capacity : (size_t)XE_SPV_PLAN_INLINE;
    const size_t stride = sizeof(const void *) + 1;
    const size_t limit = (size_t)-1 / stride;
    const void **nodes;

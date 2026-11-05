@@ -1,6 +1,7 @@
 /* Checked C89 serialization into reusable storage, without a second module
  * buffer. IR operand words are borrowed until the instruction append returns. */
 #include "core_spv_binary.h"
+#include "core_spv_string.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -105,17 +106,18 @@ void xe_spv_binary_append(xe_spv_binary *out, const uint32_t *words, size_t coun
    out->count += count;
 }
 
-/* Encode immediately: callers may destroy or mutate text after this returns.
- * Pack bytes explicitly so the SPIR-V literal's word values are host independent. */
-void xe_spv_binary_string(xe_spv_binary *out, uint32_t opcode, const char *text)
+void xe_spv_binary_string_span(xe_spv_binary *out, uint32_t opcode,
+      const uint32_t *prefix, size_t prefix_count, const char *text, size_t bytes)
 {
-   size_t bytes, words, i;
-   uint32_t *dest, value;
+   size_t words, string_words = bytes / 4 + 1;
+   uint32_t *dest;
    if (out->failed) return;
-   if (!text || opcode > 65535) { out->failed = 1; return; }
-   bytes = strlen(text);
-   if (bytes > 4 * (65535u - 1u) - 1u) { out->failed = 1; return; }
-   words = 1 + bytes / 4 + 1;
+   if ((bytes && !text) || (prefix_count && !prefix) || opcode > 65535 ||
+       prefix_count > 65533 || string_words > 65534 - prefix_count) {
+      out->failed = 1;
+      return;
+   }
+   words = 1 + prefix_count + string_words;
    if (out->count > (size_t)-1 - words ||
        !xe_spv_binary_reserve(out, out->count + words)) {
       out->failed = 1;
@@ -123,13 +125,14 @@ void xe_spv_binary_string(xe_spv_binary *out, uint32_t opcode, const char *text)
    }
    dest = out->words + out->count;
    *dest++ = ((uint32_t)words << 16) | opcode;
-   for (i = 0; i <= bytes; ++dest) {
-      value = 0;
-      value |= (uint32_t)(uint8_t)text[i++];
-      if (i <= bytes) value |= (uint32_t)(uint8_t)text[i++] << 8;
-      if (i <= bytes) value |= (uint32_t)(uint8_t)text[i++] << 16;
-      if (i <= bytes) value |= (uint32_t)(uint8_t)text[i++] << 24;
-      *dest = value;
-   }
+   if (prefix_count) memcpy(dest, prefix, prefix_count * sizeof(*prefix));
+   xe_spv_string_encode(dest + prefix_count, text, bytes);
    out->count += words;
+}
+/* The caller may mutate or release text immediately after this call. */
+void xe_spv_binary_string(xe_spv_binary *out, uint32_t opcode, const char *text)
+{
+   if (out->failed) return;
+   if (!text) { out->failed = 1; return; }
+   xe_spv_binary_string_span(out, opcode, NULL, 0, text, strlen(text));
 }

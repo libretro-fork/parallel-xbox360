@@ -79,6 +79,36 @@ int main(void)
          CHECK(out.words[i + 1] == expected);
       }
    }
+   for (j = 0; j < 4; ++j) {
+      for (i = 0; i < sizeof(text); ++i) {
+         memset(text, 0xE7, sizeof(text)); /* No input terminator required. */
+         xe_spv_binary_reset(&out);
+         xe_spv_binary_string_span(&out, 3, operands, j, text, i);
+         CHECK(!out.failed && out.count == 2 + j + i / 4);
+         CHECK(out.words[0] == ((uint32_t)out.count << 16 | 3));
+         CHECK(!memcmp(out.words + 1, operands, j * sizeof(*operands)));
+         CHECK(out.words[j + 1 + i / 4] == (i % 4 == 0 ? 0u :
+               i % 4 == 1 ? UINT32_C(0xE7) : i % 4 == 2 ? UINT32_C(0xE7E7) : UINT32_C(0xE7E7E7)));
+      }
+   }
+   before = allocations;
+   xe_spv_binary_reset(&out);
+   xe_spv_binary_string_span(&out, 3, operands, 65533, NULL, 0);
+   CHECK(!out.failed && out.count == 65535 && allocations == before);
+   xe_spv_binary_reset(&out);
+   xe_spv_binary_string_span(&out, 3, operands, 65534, NULL, 0);
+   CHECK(out.failed && !out.count && allocations == before);
+   xe_spv_binary_reset(&out);
+   xe_spv_binary_string_span(&out, 3, NULL, 1, text, 1);
+   CHECK(out.failed && !out.count);
+   xe_spv_binary_reset(&out);
+   xe_spv_binary_string_span(&out, 3, NULL, 0, NULL, 1);
+   CHECK(out.failed && !out.count);
+   xe_spv_binary_reset(&out);
+   xe_spv_binary_string_span(&out, 3, NULL, 0, text, SIZE_MAX);
+   CHECK(out.failed && !out.count);
+   xe_spv_binary_reset(&out);
+   xe_spv_binary_string_span(&out, 3, NULL, 0, text, 16);
    copy = (uint32_t *)malloc(out.count * sizeof(uint32_t));
    CHECK(copy);
    memcpy(copy, out.words, out.count * sizeof(uint32_t));

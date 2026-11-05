@@ -1,4 +1,5 @@
 #include "core_spv_operands.h"
+#include "core_spv_string.h"
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
@@ -43,4 +44,22 @@ int xe_spv_operands_grow(xe_spv_operands *operands) {
    if (operands->capacity >= INT_MAX) return 0;
    capacity = operands->capacity > INT_MAX / 2 ? INT_MAX : operands->capacity * 2;
    return xe_spv_operands_reserve(operands, capacity);
+}
+int xe_spv_operands_string(xe_spv_operands *operands, const char *text, size_t bytes)
+{
+   size_t added = bytes / 4 + 1, first = operands->count, end, byte;
+   uint8_t *flags;
+   if ((bytes && !text) || first > INT_MAX || added > (size_t)INT_MAX - first ||
+       !xe_spv_operands_reserve(operands, first + added)) return 0;
+   xe_spv_string_encode(xe_spv_operands_words(operands) + first, text, bytes);
+   if (operands->heap) {
+      flags = (uint8_t *)(operands->heap + operands->capacity);
+      byte = first / 8;
+      end = (first + added + 7) / 8;
+      if (first & 7) flags[byte] &= (uint8_t)((1u << (first & 7)) - 1);
+      else flags[byte] = 0;
+      if (end > byte + 1) memset(flags + byte + 1, 0, end - byte - 1);
+   } else memset(operands->local_flags + first, 0, added);
+   operands->count = (uint32_t)(first + added);
+   return 1;
 }

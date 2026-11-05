@@ -1,0 +1,87 @@
+Direct string encoding and borrowed source chunks, Windows x64, 2026-11-05
+Parent: complete a7a81e8f5 source archive. Production builder and C operand owner.
+
+Instruction string operands now reserve the entire checked span once. A C89
+encoder writes final words and sets only their immediate-operand flags, preserving
+preceding ID bits. It accepts counted borrowed input, so source chunks need no
+NUL-terminated substring. Complete-word loads use fixed-width memcpy into a typed
+word followed by typed final stores: unaligned byte input is permitted, with no
+pointer casts or malloc effective-type assumptions. Target endianness folds out
+on tested little-endian builds; the portable byte-swap fallback is not a claim
+of tested big-endian hardware. Tail words contain an explicit terminator/padding.
+The inspected GCC release object uses AVX word-copy loads/stores for long spans.
+
+Direct C89 output also encodes extension strings and source chunks into the
+final binary allocation, avoiding the temporary Instruction operand allocation
+and the subsequent full-string copy. Legacy vector output borrows the same
+source chunks but retains its required temporary encoding owner. Source chunk
+ordering, no-file/no-text behavior, embedded-NUL C-string semantics and size
+limits remain unchanged. Input views expire on return; output owns encoded words.
+Sources cannot alias output/operand storage. Necessary source-to-final encoding
+is still a copy; this does not make all shader generation copy-free.
+
+makeStructResultType uses two fixed IDs instead of a temporary vector. The plan
+capacity enum has an explicit size_t conversion for strict C++ warning builds.
+Instruction/Block/Function/Builder sizes and retained workspace capacity remain
+unchanged. Other operand growth, container and driver allocations still exist.
+No production profiling counters, locks or audio/runloop changes are introduced.
+
+Tests exercise all 1058 counted lengths with 18 different ID-prefix lengths,
+including high bytes and embedded zeros, exact packed flags and a following ID,
+at most one growth request per string, allocation failures and intact prior
+operands, empty/null/overflow input, un-terminated spans, prefix/string wire
+limits and output rollback. Both MSVC C89 /W4 /WX and ASan/UBSan pass. Native
+300000-byte source fixtures compare vector, direct and sized output, prove
+no C++ metadata allocations during final emission, and retain C allocation
+failure/recovery checks. Eight final MSVC source modules match pre-change GCC
+bytes; all 18432 geometry variants match the parent (109668864-byte stream).
+Actual offline guest-cache output also matches: 1410 translations across host-RT
+and interlock profiles, including two control-flow cases. No GPU/frontend/game
+is launched and the installed RetroArch DLL is not replaced.
+
+Measurement details and paired results follow below. Allocation capture includes
+C++new AND C operand malloc/arena/index/plan/output hooks, unlike earlier reports
+that explicitly excluded operand malloc. Allocator headers and driver work are
+excluded. Live tracked storage returns to its initial value after owners close.
+
+Seven alternating parent/current pairs after all compiler jobs completed. GCC
+16.2 -O2; 1000 constructions per sample, with untimed warm construction/output.
+Fixture: core_spv_function_bench.cc, LONG_NAME_BENCH and BLOCK_CHAIN_BENCH enabled.
+Names are the same 73-byte linkage-free names in both revisions; even the prefix
+ownership optimization from earlier commits is present in the parent. Golden
+serialized outputs match for all three sizes. Counts include operand malloc.
+
+revision functions calls requested_bytes retained_bytes peak_bytes median_ms range_ms
+parent 1 14000 2009000 27105 29114 .780 .777..783
+current 1 14000 2009000 27105 29114 .773 .768..780
+parent 71 231000 20211000 79956 94525 10.990 10.967..11.026
+current 71 91000 9851000 79956 91095 6.655 6.636..6.781
+parent 257 791000 69321000 238701 287806 37.973 37.784..39.065
+current 257 279000 31433000 238701 275262 22.083 21.959..22.435
+
+Largest case: 512000 fewer allocations (64.73%), 54.66% fewer requested bytes,
+41.85% less construction time (1.72x throughput). Retained bytes are unchanged;
+tracked peak is 12544 bytes smaller. Short-name-only case has the same allocation
+counts and overlapping timing ranges. These are synthetic construction results,
+not a claim about total game shader compilation or gameplay frame times.
+
+For reproduction, set BASELINE_ROOT to a complete a7a81e8f5 archive and run:
+CAPTURE_OPERANDS=1 EXTRA_CXXFLAGS='-DXE_SPV_LONG_NAME_BENCH -DXE_SPV_BLOCK_CHAIN_BENCH' \
+TEST_SOURCE="$PWD/tools/tests/core_spv_function_bench.cc" \
+sh tools/tests/run_spv_binary_bench.sh
+Then alternate the built parent/current test executables with variants 0/4/5.
+The optional CAPTURE_OPERANDS flag defaults off, preserving the scope of older
+published measurement reports; older totals must not be treated as full malloc
+counts. EXTRA_CXXFLAGS applies to C++ compilation.
+
+The short-name geometry profile shows only small changes: 171240->170600
+requests and 7599040->7401280 requested bytes per 1280 modules; no broad speed
+claim is made from that run. An actual 1410-translation cache CPU comparison
+also has overlapping CPU/wall ranges. That comparison's old executable predates
+the unrelated geometry-workspace commit, so it is not an isolated timing proof.
+
+Validation includes full Make-j5, native MSVC C89/typed fixtures, the 18432-module
+geometry oracle and 128 selected spirv-val cases, 5248 EDRAM helper modules,
+eight view/source modules, sampler rewrites, fault-injected owners and negative
+ASan use-after-poison checks. Final byte hashes match across MSVC/GCC. Whole-core
+GPU/ARM runtime and big-endian runtime behavior are not established here.

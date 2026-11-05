@@ -21,6 +21,9 @@ static INLINE void xe_spv_operands_init(xe_spv_operands *operands) {
 void xe_spv_operands_free(xe_spv_operands *operands);
 int xe_spv_operands_reserve(xe_spv_operands *operands, size_t capacity);
 int xe_spv_operands_grow(xe_spv_operands *operands);
+/* Counted text need not be NUL terminated; it cannot alias operand storage.
+ * Reserve once and encode in place. Failure preserves the original operands. */
+int xe_spv_operands_string(xe_spv_operands *operands, const char *text, size_t bytes);
 static INLINE uint32_t *xe_spv_operands_words(xe_spv_operands *operands) {
    return operands->heap ? operands->heap : operands->local_words;
 }

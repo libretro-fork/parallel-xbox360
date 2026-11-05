@@ -232,6 +232,9 @@ int main(int argc, char **argv) {
   }
 #endif
   unsigned thrown_failure = 0;
+#ifndef XE_SPV_BYTE_BENCH
+  const size_t metadata_calls = allocation_calls;
+#endif
   for (int fail = 0; fail < 32; ++fail) {
     xe::gpu::ShaderBinary partial;
     bool success = false;
@@ -244,10 +247,13 @@ int main(int argc, char **argv) {
     if (!success && partial.size() != 0) return 10;
     if (success && (partial.size() != words.size() * sizeof(unsigned) ||
         std::memcmp(partial.data(), words.data(), partial.size()))) return 11;
+#ifndef XE_SPV_BYTE_BENCH
+    if (!success) return 10;
+#endif
   }
 #ifndef XE_SPV_BYTE_BENCH
-  if (thrown_failure < 2) return 12;
-  std::printf("PASS: direct owner C allocation failure/recovery; observed %u C++ metadata exceptions\n", thrown_failure);
+  if (thrown_failure || allocation_calls != metadata_calls) return 12;
+  std::printf("PASS: direct owner C allocation failure/recovery and allocation-free C++ metadata emission\n");
 #endif
   main->getEntryBlock()->addInstruction(builder.makeInstruction(static_cast<spv::Op>(65536)));
   if (builder.dumpSized(*bytes.storage(), &borrowed_plan) || bytes.size() != 0 ||

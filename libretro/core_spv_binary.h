@@ -21,6 +21,10 @@ void xe_spv_binary_close(xe_spv_binary *out);
 void xe_spv_binary_word(xe_spv_binary *out, uint32_t word);
 void xe_spv_binary_append(xe_spv_binary *out, const uint32_t *words, size_t count);
 void xe_spv_binary_string(xe_spv_binary *out, uint32_t opcode, const char *text);
+/* Prefix and text are borrowed for this call and cannot alias output storage.
+ * Counted text need not have a terminator; one is encoded in the final words. */
+void xe_spv_binary_string_span(xe_spv_binary *out, uint32_t opcode,
+      const uint32_t *prefix, size_t prefix_count, const char *text, size_t bytes);
 void xe_spv_binary_instruction(xe_spv_binary *out, uint32_t opcode,
       uint32_t type, uint32_t result, const uint32_t *operands, size_t count);
 #ifdef __cplusplus
