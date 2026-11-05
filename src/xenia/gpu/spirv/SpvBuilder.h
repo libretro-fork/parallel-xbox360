@@ -938,6 +938,8 @@ public:
 
     void dump(std::vector<unsigned int>&) const;
     bool dump(xe_spv_binary&) const;
+    // One final allocation after an operand-length sizing walk.
+    bool dumpSized(xe_spv_binary&) const;
 
     // Add a branch to the target block.
     // If set implicit, the branch instruction shouldn't have debug source location.
@@ -971,6 +973,7 @@ public:
     template <class Output> void dumpInternal(Output&) const;
     template <class Output> void dumpSourceInstructions(Output&) const;
     template <class Output> void dumpSourceInstructions(const spv::Id fileId, const std::string& text, Output&) const;
+    void dumpSourceInstructions(const spv::Id fileId, const std::string& text, xe_spv_count&) const;
     template <class Output, class Range> void dumpInstructions(Output& out, const Range& instructions) const;
     template <class Output> void dumpModuleProcesses(Output&) const;
     spv::MemoryAccessMask sanitizeMemoryAccessForStorageClass(spv::MemoryAccessMask memoryAccess, StorageClass sc)

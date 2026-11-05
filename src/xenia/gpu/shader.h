@@ -25,6 +25,7 @@
 #include "xenia/base/string_buffer.h"
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/ucode.h"
+#include "xenia/gpu/shader_binary.h"
 
 namespace xe {
 namespace gpu {
@@ -840,8 +841,8 @@ class Shader {
     const std::vector<Error>& errors() const { return errors_; }
 
     // Translated shader binary (or text).
-    const std::vector<uint8_t>& translated_binary() const {
-      return translated_binary_;
+    std::span<const uint8_t> translated_binary() const {
+      return translated_binary_.view();
     }
 
     // Gets the translated shader binary as a string.
@@ -875,11 +876,12 @@ class Shader {
     // If there was some failure during preparation on the implementation side.
     void MakeInvalid() { xe_shader_set_valid(&publication_state_, 0); }
 
-    std::vector<uint8_t> translated_binary_;
+    ShaderBinary translated_binary_;
 
    private:
     friend class Shader;
     friend class ShaderTranslator;
+    friend class SpirvShaderTranslator;
 
     Shader& shader_;
     uint64_t modification_;

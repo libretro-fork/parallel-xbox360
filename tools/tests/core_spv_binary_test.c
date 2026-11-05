@@ -15,6 +15,7 @@ static void *test_realloc(void *ptr, size_t bytes)
 int main(void)
 {
    xe_spv_binary out = {0};
+   xe_spv_binary moved = {0};
    uint32_t operands[65535], *stable;
    char text[17];
    char *long_text;
@@ -107,6 +108,26 @@ int main(void)
    xe_spv_binary_close(&out);
    xe_spv_binary_close(&out);
    CHECK(!out.words && !out.count && !out.capacity && !out.failed);
+   CHECK(xe_spv_binary_reserve_exact(&out, 129) && out.capacity == 129);
+   xe_spv_binary_word(&out, 0x12345678u);
+   stable = out.words;
+   fail_allocation = 1;
+   CHECK(!xe_spv_binary_reserve_exact(&out, 1000));
+   CHECK(out.words == stable && out.count == 1 && out.words[0] == 0x12345678u);
+   fail_allocation = 0;
+   xe_spv_binary_reset(&out);
+   xe_spv_binary_word(&out, 0x87654321u);
+   CHECK(xe_spv_binary_reserve_exact(&moved, 33));
+   before = allocations;
+   xe_spv_binary_take(&moved, &out);
+   CHECK(!out.words && !out.count && !out.capacity && !out.failed);
+   CHECK(moved.words == stable && moved.count == 1 && moved.words[0] == 0x87654321u);
+   xe_spv_binary_take(&moved, &moved);
+   CHECK(moved.words == stable && moved.count == 1 && allocations == before);
+   xe_spv_binary_take(&out, &moved);
+   CHECK(out.words == stable && !moved.words && allocations == before);
+   xe_spv_binary_close(&out);
+   xe_spv_binary_close(&moved);
    puts("PASS: C89 SPIR-V encoding, wire limits, 1024 reused modules, failure rollback");
    return 0;
 }

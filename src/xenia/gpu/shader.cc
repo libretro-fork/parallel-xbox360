@@ -43,11 +43,9 @@ Shader::~Shader() {
 }
 
 std::string Shader::Translation::GetTranslatedBinaryString() const {
-  std::string result;
-  result.resize(translated_binary_.size());
-  std::memcpy(const_cast<char*>(result.data()), translated_binary_.data(),
-              translated_binary_.size());
-  return result;
+  if (!translated_binary_.size()) return {};
+  return std::string(reinterpret_cast<const char*>(translated_binary_.data()),
+                     translated_binary_.size());
 }
 
 std::pair<std::filesystem::path, std::filesystem::path>

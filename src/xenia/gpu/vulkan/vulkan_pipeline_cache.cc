@@ -134,7 +134,7 @@ bool VulkanPipelineCache::Initialize() {
   }
 
   {
-    std::vector<uint8_t> depth_only_fragment_shader_code =
+    ShaderBinary depth_only_fragment_shader_code =
         guest_shader_cache_.translator().CreateDepthOnlyFragmentShader();
     depth_only_fragment_shader_ = ui::vulkan::util::CreateShaderModule(
         vulkan_device,
@@ -151,7 +151,7 @@ bool VulkanPipelineCache::Initialize() {
 
   if (edram_fragment_shader_interlock) {
     for (size_t i = 0; i < xe::countof(depth_only_fragment_shaders_); ++i) {
-      std::vector<uint8_t> depth_only_fragment_shader_code =
+      ShaderBinary depth_only_fragment_shader_code =
           guest_shader_cache_.translator().CreateDepthOnlyFragmentShader(
               xenos::MsaaSamples(i));
       depth_only_fragment_shaders_[i] = ui::vulkan::util::CreateShaderModule(
@@ -167,7 +167,7 @@ bool VulkanPipelineCache::Initialize() {
             UINT32_C(1) << i);
         return false;
       }
-      std::vector<uint8_t> viz_survey_fragment_shader_code =
+      ShaderBinary viz_survey_fragment_shader_code =
           guest_shader_cache_.translator().CreateDepthOnlyFragmentShader(
               xenos::MsaaSamples(i), true);
       viz_survey_fragment_shaders_[i] = ui::vulkan::util::CreateShaderModule(
@@ -189,7 +189,7 @@ bool VulkanPipelineCache::Initialize() {
     using DepthStencilMode =
         SpirvShaderTranslator::Modification::DepthStencilMode;
     auto build = [&](DepthStencilMode mode, VkShaderModule& out) -> bool {
-      std::vector<uint8_t> code =
+      ShaderBinary code =
           guest_shader_cache_.translator().CreateDepthOnlyFragmentShader(mode,
                                                                          true);
       out = ui::vulkan::util::CreateShaderModule(
@@ -222,7 +222,7 @@ bool VulkanPipelineCache::Initialize() {
     using DepthStencilMode =
         SpirvShaderTranslator::Modification::DepthStencilMode;
     auto build = [&](DepthStencilMode mode, VkShaderModule& out) -> bool {
-      std::vector<uint8_t> code =
+      ShaderBinary code =
           guest_shader_cache_.translator().CreateDepthOnlyFragmentShader(mode);
       out = ui::vulkan::util::CreateShaderModule(
           vulkan_device, reinterpret_cast<const uint32_t*>(code.data()),

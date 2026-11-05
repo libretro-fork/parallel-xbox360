@@ -607,13 +607,13 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // a float24 mode, the shader reads gl_FragCoord.z, converts to float24, and
   // writes the result to gl_FragDepth - matching the substitute pixel shader
   // the DXBC backend uses when a guest draw has no pixel shader.
-  std::vector<uint8_t> CreateDepthOnlyFragmentShader(
+  ShaderBinary CreateDepthOnlyFragmentShader(
       Modification::DepthStencilMode depth_stencil_mode =
           Modification::DepthStencilMode::kNoModifiers,
       bool zpd_total = false, bool viz_survey = false);
   // FSI variant - specialized for one guest sample count instead of a host
   // depth / stencil mode.
-  std::vector<uint8_t> CreateDepthOnlyFragmentShader(
+  ShaderBinary CreateDepthOnlyFragmentShader(
       xenos::MsaaSamples fsi_msaa_samples, bool viz_survey = false);
 
   // Common functions useful not only for the translator, but also for EDRAM
@@ -665,7 +665,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
 
   void StartTranslation() override;
 
-  std::vector<uint8_t> CompleteTranslation() override;
+  ShaderBinary CompleteTranslation() override;
 
   void PostTranslation() override;
 

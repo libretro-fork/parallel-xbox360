@@ -50,6 +50,7 @@
 #include "spirv.hpp11"
 #include "libretro/core_spv_operands.h"
 #include "libretro/core_spv_binary.h"
+#include "libretro/core_spv_size.h"
 #include "libretro/core_spv_arena.h"
 #include <cstddef>
 #include <new>
@@ -265,6 +266,12 @@ public:
             xe_spv_operands_const_words(&operands), operands.count);
     }
 
+void dump(xe_spv_count& out) const
+    {
+        xe_spv_count_instruction(&out, (uint32_t)opCode, typeId, resultId,
+            operands.count);
+    }
+
     const char *getNameString() const {
         if (opCode == Op::OpString) {
             return (const char *)&xe_spv_operands_const_words(&operands)[0];
@@ -341,6 +348,7 @@ public:
     const std::vector<std::unique_ptr<Instruction> >& getLocalVariables() const { return localVariables; }
     void setUnreachable() { unreachable = true; }
     bool isUnreachable() const { return unreachable; }
+    uint32_t getTraversalIndex() const { return traversalIndex; }
     // Returns the block's merge instruction, if one exists (otherwise null).
     const Instruction* getMergeInstruction() const {
         if (instructions.size() < 2) return nullptr;
@@ -432,6 +440,9 @@ protected:
     // true for all unreachable blocks, but should be set at least
     // for the extraneous ones introduced by the builder).
     bool unreachable;
+    // Dense owner index, occupying tail padding on 64-bit hosts.
+    uint32_t traversalIndex = UINT32_MAX;
+    friend class Function;
 };
 
 // The different reasons for reaching a block in the inReadableOrder traversal.
@@ -475,12 +486,18 @@ public:
     Id getParamId(int p) const { return parameterInstructions[p]->getResultId(); }
     Id getParamType(int p) const { return parameterInstructions[p]->getTypeId(); }
 
-    void addBlock(Block* block) { blocks.push_back(block); }
+    void addBlock(Block* block) {
+        if (blocks.size() > UINT32_MAX) throw std::bad_alloc();
+        blocks.push_back(block);
+        block->traversalIndex = (uint32_t)(blocks.size() - 1);
+    }
     void removeBlock(Block* block)
     {
-        auto found = find(blocks.begin(), blocks.end(), block);
-        assert(found != blocks.end());
-        blocks.erase(found);
+        const size_t index = block->traversalIndex;
+        if (index >= blocks.size() || blocks[index] != block) throw std::bad_alloc();
+        blocks.erase(blocks.begin() + (ptrdiff_t)index);
+        for (size_t i = index; i < blocks.size(); ++i)
+            blocks[i]->traversalIndex = (uint32_t)i;
         delete block;
     }
 

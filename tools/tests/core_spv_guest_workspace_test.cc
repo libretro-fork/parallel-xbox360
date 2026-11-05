@@ -74,8 +74,19 @@ int main() {
       CHECK(size && std::fwrite(&size, sizeof(size), 1, output) == 1);
       CHECK(std::fwrite(words.data(), 1, size, output) == size);
     }
+    // Returned storage must outlive the helper's local Shader and the next
+    // builder reset. Keep both results alive and compare after the second call.
+    auto depth = translator.CreateDepthOnlyFragmentShader();
+    auto next_depth = translator.CreateDepthOnlyFragmentShader();
+    CHECK(depth.size() && depth.size() == next_depth.size());
+    CHECK(!std::memcmp(depth.data(), next_depth.data(), depth.size()));
+    uint32_t depth_size = uint32_t(depth.size());
+    CHECK(std::fwrite(&depth_size, sizeof(depth_size), 1, output) == 1);
+    CHECK(std::fwrite(depth.data(), 1, depth_size, output) == depth_size);
+    CHECK(std::fwrite(&depth_size, sizeof(depth_size), 1, output) == 1);
+    CHECK(std::fwrite(next_depth.data(), 1, depth_size, output) == depth_size);
     // The last builder is still live when the translator is destroyed.
   }
   CHECK(std::fclose(output) == 0);
-  std::puts("PASS: 256 real guest translations, vertex/pixel, jump and no-edge fallback, repeated Reset and live-builder shutdown");
+  std::puts("PASS: 256 control-flow guest translations and four retained depth outputs across shader destruction/reset");
 }

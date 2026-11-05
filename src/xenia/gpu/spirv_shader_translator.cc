@@ -278,7 +278,7 @@ uint64_t SpirvShaderTranslator::GetDefaultPixelShaderModification(
   return shader_modification.value;
 }
 
-std::vector<uint8_t> SpirvShaderTranslator::CreateDepthOnlyFragmentShader(
+ShaderBinary SpirvShaderTranslator::CreateDepthOnlyFragmentShader(
     Modification::DepthStencilMode depth_stencil_mode, bool zpd_total,
     bool viz_survey) {
   is_depth_only_fragment_shader_ = true;
@@ -296,10 +296,10 @@ std::vector<uint8_t> SpirvShaderTranslator::CreateDepthOnlyFragmentShader(
   TranslateAnalyzedShader(translation);
   is_depth_only_fragment_shader_ = false;
   is_viz_survey_fragment_shader_ = false;
-  return translation.translated_binary();
+  return std::move(translation.translated_binary_);
 }
 
-std::vector<uint8_t> SpirvShaderTranslator::CreateDepthOnlyFragmentShader(
+ShaderBinary SpirvShaderTranslator::CreateDepthOnlyFragmentShader(
     xenos::MsaaSamples fsi_msaa_samples, bool viz_survey) {
   // The sample count lives in depth_stencil_mode's bits on the FSI path.
   Modification modification(0);
@@ -1072,7 +1072,7 @@ void SpirvShaderTranslator::StartTranslation() {
   }
 }
 
-std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
+ShaderBinary SpirvShaderTranslator::CompleteTranslation() {
   if (preloaded_resource_bindings_) {
     auto* shader = dynamic_cast<SpirvShader*>(&current_shader());
     if (!shader || texture_bindings_.size() != shader->GetTextureBindingsAfterTranslation().size() ||
@@ -1345,16 +1345,8 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
     }
   }
 
-  // TODO(Triang3l): Avoid copy?
-  std::vector<unsigned int> module_uints;
-  builder_->dump(module_uints);
-
-  std::vector<uint8_t> module_bytes;
-  module_bytes.reserve(sizeof(unsigned int) * module_uints.size());
-  module_bytes.insert(module_bytes.cend(),
-                      reinterpret_cast<const uint8_t*>(module_uints.data()),
-                      reinterpret_cast<const uint8_t*>(module_uints.data()) +
-                          sizeof(unsigned int) * module_uints.size());
+  ShaderBinary module_bytes;
+  if (!builder_->dumpSized(*module_bytes.storage())) throw std::bad_alloc();
   return module_bytes;
 }
 

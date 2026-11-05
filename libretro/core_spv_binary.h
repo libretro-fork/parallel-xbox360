@@ -13,6 +13,9 @@ typedef struct xe_spv_binary {
    int failed;
 } xe_spv_binary;
 int xe_spv_binary_reserve(xe_spv_binary *out, size_t words);
+int xe_spv_binary_reserve_exact(xe_spv_binary *out, size_t words);
+/* Moves ownership, closes the previous destination, and empties the source. */
+void xe_spv_binary_take(xe_spv_binary *out, xe_spv_binary *source);
 void xe_spv_binary_reset(xe_spv_binary *out);
 void xe_spv_binary_close(xe_spv_binary *out);
 void xe_spv_binary_word(xe_spv_binary *out, uint32_t word);

@@ -37,3 +37,10 @@ void xe_spv_test_page_fail_after(size_t successful_calls)
 {
    page_fail = successful_calls;
 }
+static int binary_fail_next;
+void *xe_spv_test_binary_realloc(void *value, size_t size)
+{
+   if (binary_fail_next) { binary_fail_next = 0; return NULL; }
+   return realloc(value, size);
+}
+void xe_spv_test_binary_fail_next(void) { binary_fail_next = 1; }

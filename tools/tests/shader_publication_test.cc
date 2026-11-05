@@ -5,6 +5,7 @@
 #include <rthreads/rthreads.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #define CHECK(x) do { if (!(x)) std::abort(); } while (0)
 static retro_atomic_int_t entered, release_hook, hook_calls;
 static const uint32_t empty_ucode[3] = {0, 0, 0};
@@ -39,8 +40,13 @@ class TestShader : public xe::gpu::Shader {
 };
 class TestTranslator : public xe::gpu::ShaderTranslator {
  protected:
-  std::vector<uint8_t> CompleteTranslation() override {
-    return {0x12, 0x34, 0xab, 0xcd};
+  xe::gpu::ShaderBinary CompleteTranslation() override {
+    xe::gpu::ShaderBinary output;
+    const unsigned char bytes[] = {0x12, 0x34, 0xab, 0xcd};
+    CHECK(xe_spv_binary_reserve_exact(output.storage(), 1));
+    std::memcpy(output.storage()->words, bytes, sizeof(bytes));
+    output.storage()->count = 1;
+    return output;
   }
 };
 static void translate(void* opaque) {

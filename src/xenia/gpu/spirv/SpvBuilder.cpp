@@ -1307,8 +1307,8 @@ Id Builder::makeDebugSource(const Id fileName) {
         const int nonNullBytesPerInstruction = 4 * (maxWordCount - opSourceWordCount) - 1;
         auto processDebugSource = [&](std::string source) {
             if (source.size() > 0) {
-                int nextByte = 0;
-                while ((int)source.size() - nextByte > 0) {
+                size_t nextByte = 0;
+                while (nextByte < source.size()) {
                     auto subString = source.substr(nextByte, nonNullBytesPerInstruction);
                     auto sourceId = getStringId(subString);
                     if (nextByte == 0) {
@@ -1324,7 +1324,7 @@ Id Builder::makeDebugSource(const Id fileName) {
                         constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(sourceContinuedInst));
                         module.mapInstruction(sourceContinuedInst);
                     }
-                    nextByte += nonNullBytesPerInstruction;
+                    nextByte += subString.size();
                 }
             } else {
                 auto sourceId = getStringId(source);
@@ -4515,6 +4515,33 @@ static void appendBinaryWord(xe_spv_binary& out, unsigned int word)
     xe_spv_binary_word(&out, word);
 }
 
+static void appendBinaryWord(xe_spv_count& out, unsigned int)
+{
+    xe_spv_count_words(&out, 1);
+}
+
+bool Builder::dumpSized(xe_spv_binary& out) const
+{
+    xe_spv_binary_reset(&out);
+    xe_spv_count size = {0, 0};
+    try {
+        dumpInternal(size);
+        if (size.failed || !xe_spv_binary_reserve_exact(&out, size.count)) {
+            out.failed = 1;
+            return false;
+        }
+        dumpInternal(out);
+    } catch (...) {
+        out.count = 0;
+        throw;
+    }
+    if (out.failed || out.count != size.count) {
+        out.count = 0;
+        out.failed = 1;
+        return false;
+    }
+    return true;
+}
 void Builder::dump(std::vector<unsigned int>& out) const
 {
     dumpInternal(out);
@@ -4525,6 +4552,19 @@ bool Builder::dump(xe_spv_binary& out) const
     dumpInternal(out);
     if (out.failed) { out.count = 0; return false; }
     return true;
+}
+
+template <class Output> static void appendStringInstruction(Output& out, Op opcode, const char* text)
+{
+    Instruction instruction(opcode);
+    instruction.addStringOperand(text);
+    instruction.dump(out);
+}
+
+static void appendStringInstruction(xe_spv_count& out, Op opcode, const char* text)
+{
+    if (!text) { out.failed = 1; return; }
+    xe_spv_count_instruction(&out, (uint32_t)opcode, 0, 0, strlen(text) / 4 + 1);
 }
 
 template <class Output> void Builder::dumpInternal(Output& out) const
@@ -4544,9 +4584,7 @@ template <class Output> void Builder::dumpInternal(Output& out) const
     }
 
     for (auto it = extensions.cbegin(); it != extensions.cend(); ++it) {
-        Instruction extInst(0, 0, Op::OpExtension);
-        extInst.addStringOperand(it->c_str());
-        extInst.dump(out);
+        appendStringInstruction(out, Op::OpExtension, it->c_str());
     }
 
     dumpInstructions(out, imports);
@@ -4563,9 +4601,7 @@ template <class Output> void Builder::dumpInternal(Output& out) const
     dumpInstructions(out, strings);
     dumpSourceInstructions(out);
     for (int e = 0; e < (int)sourceExtensions.size(); ++e) {
-        Instruction sourceExtInst(0, 0, Op::OpSourceExtension);
-        sourceExtInst.addStringOperand(sourceExtensions[e]);
-        sourceExtInst.dump(out);
+        appendStringInstruction(out, Op::OpSourceExtension, sourceExtensions[e]);
     }
     dumpInstructions(out, names);
     dumpModuleProcesses(out);
@@ -4779,9 +4815,7 @@ void Builder::createConditionalBranch(Id condition, Block* thenBlock, Block* els
 template <class Output> void Builder::dumpSourceInstructions(const spv::Id fileId, const std::string& text,
                                      Output& out) const
 {
-    const int maxWordCount = 0xFFFF;
-    const int opSourceWordCount = 4;
-    const int nonNullBytesPerInstruction = 4 * (maxWordCount - opSourceWordCount) - 1;
+    const int nonNullBytesPerInstruction = XE_SPV_SOURCE_CHUNK_BYTES;
 
     if (sourceLang != SourceLanguage::Unknown) {
         // OpSource Language Version File Source
@@ -4794,10 +4828,11 @@ template <class Output> void Builder::dumpSourceInstructions(const spv::Id fileI
             sourceInst.addIdOperand(fileId);
             // Source operand
             if (text.size() > 0) {
-                int nextByte = 0;
+                size_t nextByte = 0;
                 std::string subString;
-                while ((int)text.size() - nextByte > 0) {
-                    subString = text.substr(nextByte, nonNullBytesPerInstruction);
+                while (nextByte < text.size()) {
+                    size_t chunkBytes = std::min(size_t(nonNullBytesPerInstruction), text.size() - nextByte);
+                    subString = text.substr(nextByte, chunkBytes);
                     if (nextByte == 0) {
                         // OpSource
                         sourceInst.addStringOperand(subString.c_str());
@@ -4808,13 +4843,20 @@ template <class Output> void Builder::dumpSourceInstructions(const spv::Id fileI
                         sourceContinuedInst.addStringOperand(subString.c_str());
                         sourceContinuedInst.dump(out);
                     }
-                    nextByte += nonNullBytesPerInstruction;
+                    nextByte += chunkBytes;
                 }
             } else
                 sourceInst.dump(out);
         } else
             sourceInst.dump(out);
     }
+}
+
+void Builder::dumpSourceInstructions(const spv::Id fileId, const std::string& text,
+                                      xe_spv_count& out) const
+{
+    if (sourceLang != SourceLanguage::Unknown)
+        xe_spv_count_source(&out, fileId != NoResult, text.size());
 }
 
 // Dump an OpSource[Continued] sequence for the source and every include file
@@ -4841,6 +4883,11 @@ static void appendBinaryWords(std::vector<unsigned int>& out, const xe_spv_binar
 static void appendBinaryWords(xe_spv_binary& out, const xe_spv_binary& words)
 {
     xe_spv_binary_append(&out, words.words, words.count);
+}
+
+static void appendBinaryWords(xe_spv_count& out, const xe_spv_binary& words)
+{
+    xe_spv_count_words(&out, words.count);
 }
 
 template <class Output> void Builder::dumpModuleProcesses(Output& out) const

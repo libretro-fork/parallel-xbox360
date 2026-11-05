@@ -11,25 +11,40 @@
 #define XE_SPV_BINARY_FREE free
 #endif
 
-int xe_spv_binary_reserve(xe_spv_binary *out, size_t words)
+int xe_spv_binary_reserve_exact(xe_spv_binary *out, size_t words)
 {
-   size_t capacity, limit;
    uint32_t *allocation;
    if (out->failed) return 0;
    if (words <= out->capacity) return 1;
-   limit = (size_t)-1 / sizeof(uint32_t);
+   if (words > (size_t)-1 / sizeof(uint32_t)) { out->failed = 1; return 0; }
+   allocation = (uint32_t *)XE_SPV_BINARY_REALLOC(out->words,
+         words * sizeof(uint32_t));
+   if (!allocation) { out->failed = 1; return 0; }
+   out->words = allocation;
+   out->capacity = words;
+   return 1;
+}
+
+int xe_spv_binary_reserve(xe_spv_binary *out, size_t words)
+{
+   size_t capacity, limit = (size_t)-1 / sizeof(uint32_t);
+   if (out->failed) return 0;
+   if (words <= out->capacity) return 1;
    if (words > limit) { out->failed = 1; return 0; }
    capacity = out->capacity ? out->capacity : 16;
    while (capacity < words) {
       if (capacity > limit / 2) { capacity = words; break; }
       capacity *= 2;
    }
-   allocation = (uint32_t *)XE_SPV_BINARY_REALLOC(out->words,
-         capacity * sizeof(uint32_t));
-   if (!allocation) { out->failed = 1; return 0; }
-   out->words = allocation;
-   out->capacity = capacity;
-   return 1;
+   return xe_spv_binary_reserve_exact(out, capacity);
+}
+
+void xe_spv_binary_take(xe_spv_binary *out, xe_spv_binary *source)
+{
+   if (out == source) return;
+   xe_spv_binary_close(out);
+   *out = *source;
+   memset(source, 0, sizeof(*source));
 }
 
 void xe_spv_binary_reset(xe_spv_binary *out)

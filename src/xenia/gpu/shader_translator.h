@@ -81,8 +81,8 @@ class ShaderTranslator {
 
   // Handles the end of translation when all ucode has been processed.
   // Returns the translated shader binary.
-  virtual std::vector<uint8_t> CompleteTranslation() {
-    return std::vector<uint8_t>();
+  virtual ShaderBinary CompleteTranslation() {
+    return {};
   }
 
   // Handles post-translation tasks when the shader has been fully translated.

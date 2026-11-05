@@ -49,83 +49,66 @@
 // function.
 
 #include "spvIR.h"
-
-#include <cassert>
-#include <unordered_set>
-
-using spv::Block;
-using spv::Id;
+#include "libretro/core_spv_walk.h"
+#include <exception>
 
 namespace {
-// Traverses CFG in a readable order, invoking a pre-set callback on each block.
-// Use by calling visit() on the root block.
-class ReadableOrderTraverser {
-public:
-    ReadableOrderTraverser(std::function<void(Block*, spv::ReachReason, Block*)> callback)
-      : callback_(callback) {}
-    // Visits the block if it hasn't been visited already and isn't currently
-    // being delayed.  Invokes callback(block, why, header), then descends into its
-    // successors.  Delays merge-block and continue-block processing until all
-    // the branches have been completed.  If |block| is an unreachable merge block or
-    // an unreachable continue target, then |header| is the corresponding header block.
-    void visit(Block* block, spv::ReachReason why, Block* header)
-    {
-        assert(block);
-        if (why == spv::ReachViaControlFlow) {
-            reachableViaControlFlow_.insert(block);
-        }
-        if (visited_.count(block) || delayed_.count(block))
-            return;
-        callback_(block, why, header);
-        visited_.insert(block);
-        Block* mergeBlock = nullptr;
-        Block* continueBlock = nullptr;
-        auto mergeInst = block->getMergeInstruction();
-        if (mergeInst) {
-            Id mergeId = mergeInst->getIdOperand(0);
-            mergeBlock = block->getParent().getParent().getInstruction(mergeId)->getBlock();
-            delayed_.insert(mergeBlock);
-            if (mergeInst->getOpCode() == spv::Op::OpLoopMerge) {
-                Id continueId = mergeInst->getIdOperand(1);
-                continueBlock =
-                    block->getParent().getParent().getInstruction(continueId)->getBlock();
-                delayed_.insert(continueBlock);
-            }
-        }
-        if (why == spv::ReachViaControlFlow) {
-            const auto& successors = block->getSuccessors();
-            for (auto it = successors.cbegin(); it != successors.cend(); ++it)
-                visit(*it, why, nullptr);
-        }
-        if (continueBlock) {
-            const spv::ReachReason continueWhy =
-                (reachableViaControlFlow_.count(continueBlock) > 0)
-                    ? spv::ReachViaControlFlow
-                    : spv::ReachDeadContinue;
-            delayed_.erase(continueBlock);
-            visit(continueBlock, continueWhy, block);
-        }
-        if (mergeBlock) {
-            const spv::ReachReason mergeWhy =
-                (reachableViaControlFlow_.count(mergeBlock) > 0)
-                    ? spv::ReachViaControlFlow
-                    : spv::ReachDeadMerge;
-            delayed_.erase(mergeBlock);
-            visit(mergeBlock, mergeWhy, block);
-        }
-    }
-
-private:
-    std::function<void(Block*, spv::ReachReason, Block*)> callback_;
-    // Whether a block has already been visited or is being delayed.
-    std::unordered_set<Block *> visited_, delayed_;
-
-    // The set of blocks that actually are reached via control flow.
-    std::unordered_set<Block *> reachableViaControlFlow_;
+struct WalkContext {
+    const spv::Function* function;
+    const std::function<void(spv::Block*, spv::ReachReason, spv::Block*)>* callback;
+    std::exception_ptr exception;
 };
+static size_t nodeIndex(void* opaque, const void* node) {
+    const auto& context = *static_cast<WalkContext*>(opaque);
+    const auto* block = static_cast<const spv::Block*>(node);
+    size_t index = block->getTraversalIndex();
+    const auto& blocks = context.function->getBlocks();
+    return index < blocks.size() && blocks[index] == block ? index : SIZE_MAX;
+}
+static size_t successorCount(const void* node) {
+    return static_cast<const spv::Block*>(node)->getSuccessors().size();
+}
+static const void* successor(const void* node, size_t index) {
+    return static_cast<const spv::Block*>(node)->getSuccessors()[index];
+}
+static int targets(const void* node, const void** merge, const void** continuation) {
+    const auto* block = static_cast<const spv::Block*>(node);
+    const auto* instruction = block->getMergeInstruction();
+    if (!instruction) return 1;
+    const auto& module = block->getParent().getParent();
+    const auto* mergeInstruction = module.getInstruction(instruction->getIdOperand(0));
+    if (!mergeInstruction || !mergeInstruction->getBlock()) return 0;
+    *merge = mergeInstruction->getBlock();
+    if (instruction->getOpCode() == spv::Op::OpLoopMerge) {
+        const auto* continueInstruction = module.getInstruction(instruction->getIdOperand(1));
+        if (!continueInstruction || !continueInstruction->getBlock()) return 0;
+        *continuation = continueInstruction->getBlock();
+    }
+    return 1;
+}
+static int visit(void* opaque, const void* node, int reason, const void* header) noexcept {
+    auto& context = *static_cast<WalkContext*>(opaque);
+    try {
+        (*context.callback)(const_cast<spv::Block*>(static_cast<const spv::Block*>(node)),
+            static_cast<spv::ReachReason>(reason),
+            const_cast<spv::Block*>(static_cast<const spv::Block*>(header)));
+    } catch (...) {
+        context.exception = std::current_exception();
+        return 0;
+    }
+    return 1;
+}
 }
 
-void spv::inReadableOrder(Block* root, std::function<void(Block*, spv::ReachReason, Block*)> callback)
+void spv::inReadableOrder(Block* root, std::function<void(Block*, ReachReason, Block*)> callback)
 {
-    ReadableOrderTraverser(callback).visit(root, spv::ReachViaControlFlow, nullptr);
+    static_assert(int(ReachViaControlFlow) == XE_SPV_WALK_CONTROL &&
+                  int(ReachDeadContinue) == XE_SPV_WALK_DEAD_CONTINUE &&
+                  int(ReachDeadMerge) == XE_SPV_WALK_DEAD_MERGE);
+    if (!root) throw std::bad_alloc();
+    WalkContext context = {&root->getParent(), &callback, {}};
+    const xe_spv_walk_ops operations = {nodeIndex, successorCount, successor, targets, visit};
+    int success = xe_spv_walk_graph(&operations, &context, root, context.function->getBlocks().size());
+    if (context.exception) std::rethrow_exception(context.exception);
+    if (!success) throw std::bad_alloc();
 }

@@ -7,6 +7,7 @@ add_library(xenia-spirv-writer STATIC
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_operands.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_binary.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_arena.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_spv_size.c"
 )
 target_include_directories(xenia-spirv-writer PUBLIC
   "${PROJECT_SOURCE_DIR}/third_party/libretro-common/include")

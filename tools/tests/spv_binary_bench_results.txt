@@ -1,0 +1,27 @@
+SPIR-V output ownership microbenchmark, Windows x86-64, 2026-11-05
+Compiler: MSYS2 GCC 16.2.0; -O2 -std=c++20 -DNDEBUG, static C++ runtime.
+Parent traversal: 67a701ccf InReadableOrder.cpp; current traversal: C89 byte-state walker.
+Same production builder IR; 10000 fresh serializations/sample, five samples/row.
+Modules: 328/5432 bytes have one block; 13624-byte module has 513 blocks (large scratch path).
+Allocation counts/requests include replaced C++ new, final C binary realloc and C graph scratch.
+Operand malloc, allocator headers, total IR memory, OS RSS and GPU memory are excluded.
+Peak output payload sums output-container capacities; graph scratch is excluded from that peak column.
+Baseline word-then-copy retains word+byte vectors together; direct-owned uses one exact C allocation.
+For the complete change compare parent word-then-copy with current direct-owned. Intermediate rows isolate effects.
+Direct-owned still performs sizing and emission traversals. On the large graph, the current walker + old copy path is faster than counted direct ownership; a retained emission plan is further work.
+High-resolution monotonic batch timer; warm serialization measurements, not gameplay FPS or process RSS.
+Reproduce: sh tools/tests/run_spv_binary_bench.sh
+
+walker mode module_bytes calls requested_bytes peak_output_bytes median_ms range_ms
+current direct-owned 328 10000 3280000 328 1.731 1.730..1.748
+current direct-owned 5432 10000 54320000 5432 14.950 14.778..15.029
+current direct-owned 13624 30000 146500000 13624 156.291 154.343..157.399
+current word-then-copy 328 90000 13480000 840 3.439 3.395..3.500
+current word-then-copy 5432 130000 218120000 13624 16.919 16.758..17.274
+current word-then-copy 13624 150000 469010000 30008 79.065 77.884..81.018
+parent direct-owned 328 90000 8080000 328 3.919 3.783..3.978
+parent direct-owned 5432 90000 59120000 5432 16.362 16.141..16.703
+parent direct-owned 13624 20770000 792880000 13624 724.781 723.126..732.520
+parent word-then-copy 328 130000 15880000 840 4.368 4.333..4.433
+parent word-then-copy 5432 170000 220520000 13624 17.967 17.885..18.859
+parent word-then-copy 13624 10520000 792200000 30008 386.631 385.670..389.461
