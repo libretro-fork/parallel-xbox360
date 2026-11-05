@@ -315,6 +315,7 @@ void SpirvShaderTranslator::Reset() {
 
   // A partial switch may still be owned outside the builder's IR graph.
   main_switch_op_.reset();
+  main_loop_pc_next_op_.reset();
   builder_.reset();
 
   uniform_float_constants_ = spv::NoResult;
@@ -341,7 +342,7 @@ void SpirvShaderTranslator::Reset() {
   sampler_bindings_.clear();
   texture_bindings_.clear();
 
-  main_interface_.clear();
+  main_interface_.count = 0;
   bisect_instruction_index_ = 0;
   bisect_current_instruction_ = UINT32_MAX;
   bisect_snapshot_emitted_ = false;
@@ -373,7 +374,6 @@ void SpirvShaderTranslator::Reset() {
   main_fbo_depth_unbiased_ = spv::NoResult;
   main_fbo_depth_derivatives_.fill(spv::NoResult);
 
-  main_switch_next_pc_phi_operands_.clear();
   main_rect_list_loop_header_ = nullptr;
   main_rect_list_loop_continue_ = nullptr;
   main_rect_list_loop_merge_ = nullptr;
@@ -692,7 +692,7 @@ void SpirvShaderTranslator::StartTranslation() {
   builder_->addDecoration(uniform_system_constants_, spv::DecorationBinding,
                           int(kConstantBufferSystem));
   if (features_.spirv_version >= spv::Spv_1_4) {
-    main_interface_.push_back(uniform_system_constants_);
+    ScratchPush(&main_interface_, uniform_system_constants_);
   }
 
   bool memexport_used = IsMemoryExportUsed();
@@ -728,7 +728,7 @@ void SpirvShaderTranslator::StartTranslation() {
           int(is_pixel_shader() ? kConstantBufferFloatPixel
                                 : kConstantBufferFloatVertex));
       if (features_.spirv_version >= spv::Spv_1_4) {
-        main_interface_.push_back(uniform_float_constants_);
+        ScratchPush(&main_interface_, uniform_float_constants_);
       }
     }
 
@@ -766,7 +766,7 @@ void SpirvShaderTranslator::StartTranslation() {
                             spv::DecorationBinding,
                             int(kConstantBufferBoolLoop));
     if (features_.spirv_version >= spv::Spv_1_4) {
-      main_interface_.push_back(uniform_bool_loop_constants_);
+      ScratchPush(&main_interface_, uniform_bool_loop_constants_);
     }
 
     // Common uniform buffer - fetch constants (32 x 6 uints packed in std140 as
@@ -792,7 +792,7 @@ void SpirvShaderTranslator::StartTranslation() {
     builder_->addDecoration(uniform_fetch_constants_, spv::DecorationBinding,
                             int(kConstantBufferFetch));
     if (features_.spirv_version >= spv::Spv_1_4) {
-      main_interface_.push_back(uniform_fetch_constants_);
+      ScratchPush(&main_interface_, uniform_fetch_constants_);
     }
 
     // Common storage buffers - shared memory uint[], each 128 MB or larger,
@@ -834,7 +834,7 @@ void SpirvShaderTranslator::StartTranslation() {
                             int(kDescriptorSetSharedMemoryAndEdram));
     builder_->addDecoration(buffers_shared_memory_, spv::DecorationBinding, 0);
     if (features_.spirv_version >= spv::Spv_1_4) {
-      main_interface_.push_back(buffers_shared_memory_);
+      ScratchPush(&main_interface_, buffers_shared_memory_);
     }
   }
 
@@ -1115,21 +1115,13 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
       // instruction not being implemented as of October 18, 2020), send an
       // impossible program counter value (-1) to the OpPhi at the next
       // iteration.
-      if (main_switch_next_pc_phi_operands_.empty()) {
-        main_switch_next_pc_phi_operands_.push_back(
-            builder_->makeIntConstant(-1));
-      }
-      std::unique_ptr<spv::Instruction> main_loop_pc_next_op =
-          builder_->makeInstruction(
-              main_loop_pc_next_, type_int_,
-              main_switch_next_pc_phi_operands_.size() >= 2
-                  ? spv::OpPhi
-                  : spv::OpCopyObject);
-      for (spv::Id operand : main_switch_next_pc_phi_operands_) {
-        main_loop_pc_next_op->addIdOperand(operand);
+      if (!main_loop_pc_next_op_) {
+        main_loop_pc_next_op_ = builder_->makeInstruction(
+            main_loop_pc_next_, type_int_, spv::OpCopyObject);
+        main_loop_pc_next_op_->addIdOperand(builder_->makeIntConstant(-1));
       }
       builder_->getBuildPoint()->addInstruction(
-          std::move(main_loop_pc_next_op));
+          std::move(main_loop_pc_next_op_));
     }
     builder_->createBranch(main_loop_header_);
 
@@ -1331,8 +1323,13 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
   }
   spv::Instruction* entry_point =
       builder_->addEntryPoint(execution_model, function_main_, "main");
-  for (spv::Id interface_id : main_interface_) {
-    entry_point->addIdOperand(interface_id);
+  const size_t header_operands = size_t(entry_point->getNumOperands());
+  if (main_interface_.count > size_t(-1) - header_operands)
+    throw std::bad_alloc();
+  entry_point->reserveOperands(header_operands + main_interface_.count);
+  const xe_spv_word_view interface_ids = xe_spv_scratch_view(&main_interface_);
+  for (size_t i = 0; i < interface_ids.count; ++i) {
+    entry_point->addIdOperand(interface_ids.words[i]);
   }
 
   if (!is_depth_only_fragment_shader_) {
@@ -1400,6 +1397,14 @@ void SpirvShaderTranslator::PostTranslation() {
   }
 }
 
+void SpirvShaderTranslator::AppendMainLoopIncoming(spv::Id next_pc) {
+  if (!main_loop_pc_next_op_) {
+    main_loop_pc_next_op_ = builder_->makeInstruction(
+        main_loop_pc_next_, type_int_, spv::OpPhi);
+  }
+  main_loop_pc_next_op_->addIdOperand(next_pc);
+  main_loop_pc_next_op_->addIdOperand(builder_->getBuildPoint()->getId());
+}
 void SpirvShaderTranslator::ProcessLabel(uint32_t cf_index) {
   if (cf_index == 0) {
     // 0 already added in the beginning.
@@ -1430,10 +1435,7 @@ void SpirvShaderTranslator::ProcessLabel(uint32_t cf_index) {
     // fall-through inside the main loop makes the NVIDIA shader compiler emit a
     // non-terminating loop. Instead re-enter the loop with this label as the
     // program counter, like an unconditional jump to it does.
-    main_switch_next_pc_phi_operands_.push_back(
-        builder_->makeIntConstant(int(cf_index)));
-    main_switch_next_pc_phi_operands_.push_back(
-        builder_->getBuildPoint()->getId());
+    AppendMainLoopIncoming(builder_->makeIntConstant(int(cf_index)));
     builder_->createBranch(main_loop_continue_);
   }
   function.addBlock(new_case);
@@ -1552,10 +1554,7 @@ void SpirvShaderTranslator::ProcessLoopStartInstruction(
   skip_block.addPredecessor(&head_block);
   body_block.addPredecessor(&head_block);
   builder_->setBuildPoint(&skip_block);
-  main_switch_next_pc_phi_operands_.push_back(
-      builder_->makeIntConstant(int(instr.loop_skip_address)));
-  main_switch_next_pc_phi_operands_.push_back(
-      builder_->getBuildPoint()->getId());
+  AppendMainLoopIncoming(builder_->makeIntConstant(int(instr.loop_skip_address)));
   builder_->createBranch(main_loop_continue_);
   builder_->setBuildPoint(&body_block);
 }
@@ -1657,10 +1656,7 @@ void SpirvShaderTranslator::ProcessLoopEndInstruction(
           address_relative_stack_old, type_int4_, 0),
       var_main_loop_address_);
   // Jump back to the beginning of the loop body.
-  main_switch_next_pc_phi_operands_.push_back(
-      builder_->makeIntConstant(int(instr.loop_body_address)));
-  main_switch_next_pc_phi_operands_.push_back(
-      builder_->getBuildPoint()->getId());
+  AppendMainLoopIncoming(builder_->makeIntConstant(int(instr.loop_body_address)));
   builder_->createBranch(main_loop_continue_);
 
   // Break case.
@@ -1711,10 +1707,7 @@ void SpirvShaderTranslator::ProcessJumpInstruction(
     // Unreachable for some reason.
     return;
   }
-  main_switch_next_pc_phi_operands_.push_back(
-      builder_->makeIntConstant(int(instr.target_address)));
-  main_switch_next_pc_phi_operands_.push_back(
-      builder_->getBuildPoint()->getId());
+  AppendMainLoopIncoming(builder_->makeIntConstant(int(instr.target_address)));
   builder_->createBranch(main_loop_continue_);
 }
 
@@ -1896,7 +1889,7 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
         "xe_in_control_point_index");
     builder_->addDecoration(input_control_point_index_, spv::DecorationLocation,
                             0);
-    main_interface_.push_back(input_control_point_index_);
+    ScratchPush(&main_interface_, input_control_point_index_);
 
     // Tessellation coordinates (barycentric coordinates for the tessellated
     // vertex within the patch).
@@ -1904,13 +1897,13 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
         spv::NoPrecision, spv::StorageClassInput, type_float3_, "gl_TessCoord");
     builder_->addDecoration(input_tess_coord_, spv::DecorationBuiltIn,
                             static_cast<int>(spv::BuiltIn::TessCoord));
-    main_interface_.push_back(input_tess_coord_);
+    ScratchPush(&main_interface_, input_tess_coord_);
   } else {
     input_vertex_index_ = builder_->createVariable(
         spv::NoPrecision, spv::StorageClassInput, type_int_, "gl_VertexIndex");
     builder_->addDecoration(input_vertex_index_, spv::DecorationBuiltIn,
                             static_cast<int>(spv::BuiltIn::VertexIndex));
-    main_interface_.push_back(input_vertex_index_);
+    ScratchPush(&main_interface_, input_vertex_index_);
   }
 
   uint32_t output_location = 0;
@@ -1928,7 +1921,7 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
       builder_->addDecoration(interpolator, spv::DecorationLocation,
                               int(output_location));
       builder_->addDecoration(interpolator, spv::DecorationInvariant);
-      main_interface_.push_back(interpolator);
+      ScratchPush(&main_interface_, interpolator);
       ++output_location;
     }
   }
@@ -1946,7 +1939,7 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
                               spv::DecorationLocation, int(output_location));
       builder_->addDecoration(output_point_coordinates_,
                               spv::DecorationInvariant);
-      main_interface_.push_back(output_point_coordinates_);
+      ScratchPush(&main_interface_, output_point_coordinates_);
       ++output_location;
     } else {
       // Create the point size output. Not using gl_PointSize from gl_PerVertex
@@ -1959,7 +1952,7 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
       builder_->addDecoration(output_point_size_, spv::DecorationLocation,
                               int(output_location));
       builder_->addDecoration(output_point_size_, spv::DecorationInvariant);
-      main_interface_.push_back(output_point_size_);
+      ScratchPush(&main_interface_, output_point_size_);
       ++output_location;
     }
   }
@@ -2030,7 +2023,7 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
   output_per_vertex_ = builder_->createVariable(
       spv::NoPrecision, spv::StorageClassOutput, type_struct_per_vertex, "");
   builder_->addDecoration(output_per_vertex_, spv::DecorationInvariant);
-  main_interface_.push_back(output_per_vertex_);
+  ScratchPush(&main_interface_, output_per_vertex_);
 }
 
 void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
@@ -3293,7 +3286,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
                             int(kDescriptorSetSharedMemoryAndEdram));
     builder_->addDecoration(buffer_edram_, spv::DecorationBinding, 2);
     if (features_.spirv_version >= spv::Spv_1_4) {
-      main_interface_.push_back(buffer_edram_);
+      ScratchPush(&main_interface_, buffer_edram_);
     }
   }
 
@@ -3323,7 +3316,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
                             int(kDescriptorSetSharedMemoryAndEdram));
     builder_->addDecoration(buffer_zpd_counter_, spv::DecorationBinding, 1);
     if (features_.spirv_version >= spv::Spv_1_4) {
-      main_interface_.push_back(buffer_zpd_counter_);
+      ScratchPush(&main_interface_, buffer_zpd_counter_);
     }
   }
 
@@ -3355,7 +3348,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
                                    type_float3_, "gl_BaryCoordKHR");
       builder_->addDecoration(input_barycentric_coord_, spv::DecorationBuiltIn,
                               static_cast<int>(spv::BuiltInBaryCoordKHR));
-      main_interface_.push_back(input_barycentric_coord_);
+      ScratchPush(&main_interface_, input_barycentric_coord_);
 
       // Create per-vertex interpolator inputs as float4[3] arrays with
       // PerVertexKHR decoration.
@@ -3378,7 +3371,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
                                 spv::DecorationPerVertexKHR);
         // Note: Centroid decoration is not applicable with PerVertexKHR since
         // we're doing manual interpolation.
-        main_interface_.push_back(interpolator_per_vertex);
+        ScratchPush(&main_interface_, interpolator_per_vertex);
         ++input_location;
       }
     } else {
@@ -3398,7 +3391,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
             (UINT32_C(1) << interpolator_index)) {
           builder_->addDecoration(interpolator, spv::DecorationCentroid);
         }
-        main_interface_.push_back(interpolator);
+        ScratchPush(&main_interface_, interpolator);
         ++input_location;
       }
     }
@@ -3411,7 +3404,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
                                      type_float2_, "xe_in_point_coordinates");
         builder_->addDecoration(input_point_coordinates_,
                                 spv::DecorationLocation, int(input_location));
-        main_interface_.push_back(input_point_coordinates_);
+        ScratchPush(&main_interface_, input_point_coordinates_);
       }
       ++input_location;
     }
@@ -3443,7 +3436,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
       builder_->addDecoration(input_fragment_coordinates_,
                               spv::DecorationSample);
     }
-    main_interface_.push_back(input_fragment_coordinates_);
+    ScratchPush(&main_interface_, input_fragment_coordinates_);
   }
 
   // Is front facing.
@@ -3454,7 +3447,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
         spv::NoPrecision, spv::StorageClassInput, type_bool_, "gl_FrontFacing");
     builder_->addDecoration(input_front_facing_, spv::DecorationBuiltIn,
                             static_cast<int>(spv::BuiltIn::FrontFacing));
-    main_interface_.push_back(input_front_facing_);
+    ScratchPush(&main_interface_, input_front_facing_);
   }
 
   // Sample mask input.
@@ -3468,7 +3461,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
     builder_->addDecoration(input_sample_mask_, spv::DecorationFlat);
     builder_->addDecoration(input_sample_mask_, spv::DecorationBuiltIn,
                             static_cast<int>(spv::BuiltIn::SampleMask));
-    main_interface_.push_back(input_sample_mask_);
+    ScratchPush(&main_interface_, input_sample_mask_);
   }
 
   if (!is_depth_only_fragment_shader_) {
@@ -3506,7 +3499,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
         // computations.
         builder_->addDecoration(output_fragment_data_rt,
                                 spv::DecorationInvariant);
-        main_interface_.push_back(output_fragment_data_rt);
+        ScratchPush(&main_interface_, output_fragment_data_rt);
       }
     }
   }
@@ -3521,7 +3514,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
     builder_->addDecoration(output_fragment_depth_, spv::DecorationBuiltIn,
                             static_cast<int>(spv::BuiltIn::FragDepth));
     builder_->addDecoration(output_fragment_depth_, spv::DecorationInvariant);
-    main_interface_.push_back(output_fragment_depth_);
+    ScratchPush(&main_interface_, output_fragment_depth_);
   }
 
   // Sample mask output for alpha-to-coverage.
@@ -3537,7 +3530,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
     builder_->addDecoration(output_fragment_sample_mask_,
                             spv::DecorationBuiltIn,
                             static_cast<int>(spv::BuiltIn::SampleMask));
-    main_interface_.push_back(output_fragment_sample_mask_);
+    ScratchPush(&main_interface_, output_fragment_sample_mask_);
   }
 }
 

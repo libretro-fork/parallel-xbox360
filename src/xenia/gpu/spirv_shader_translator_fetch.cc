@@ -3123,7 +3123,7 @@ size_t SpirvShaderTranslator::FindOrAddTextureBinding(
   builder_->addDecoration(new_texture_binding.variable, spv::DecorationBinding,
                           int(new_texture_binding_index));
   if (features_.spirv_version >= spv::Spv_1_4) {
-    main_interface_.push_back(new_texture_binding.variable);
+    ScratchPush(&main_interface_, new_texture_binding.variable);
   }
   return new_texture_binding_index;
 }
@@ -3178,7 +3178,7 @@ size_t SpirvShaderTranslator::FindOrAddSamplerBinding(
   // The binding indices will be specified later after all textures are added as
   // samplers are located after images in the descriptor set.
   if (features_.spirv_version >= spv::Spv_1_4) {
-    main_interface_.push_back(new_sampler_binding.variable);
+    ScratchPush(&main_interface_, new_sampler_binding.variable);
   }
   return new_sampler_binding_index;
 }

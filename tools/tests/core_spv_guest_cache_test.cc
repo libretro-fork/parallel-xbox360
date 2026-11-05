@@ -12,6 +12,7 @@ int main() {
   FILE* output = std::fopen(path, "wb");
   CHECK(output);
   size_t translated = 0;
+  size_t with_switch = 0;
   for (unsigned profile = 0; profile < 2; ++profile) {
     xe::gpu::SpirvShaderTranslator translator(
         xe::gpu::SpirvShaderTranslator::Features(true),
@@ -22,6 +23,7 @@ int main() {
       xe::gpu::Shader shader(type, hash, words, count);
       xe::StringBuffer disassembly;
       shader.AnalyzeUcode(disassembly);
+      if (!shader.label_addresses().empty()) ++with_switch;
       xe::gpu::SpirvShaderTranslator::Modification modification(
           type == xe::gpu::xenos::ShaderType::kPixel
               ? translator.GetDefaultPixelShaderModification(64)
@@ -46,4 +48,5 @@ int main() {
   }
   CHECK(std::fclose(output) == 0);
   std::printf("PASS: %zu cached guest translations across host-RT and interlock profiles\n", translated);
+  std::printf("Guest translations with control-flow labels: %zu\n", with_switch);
 }

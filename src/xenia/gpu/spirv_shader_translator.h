@@ -572,6 +572,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     xe_spv_scratch_close(&id_scratch_util_);
     xe_spv_scratch_close(&literal_scratch_);
     xe_spv_scratch_close(&literal_scratch_util_);
+    xe_spv_scratch_close(&main_interface_);
   }
 
   uint64_t GetDefaultVertexShaderModification(
@@ -1348,7 +1349,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // For FSI mode, sample mask is handled via main_fsi_sample_mask_.
   spv::Id output_fragment_sample_mask_;
 
-  std::vector<spv::Id> main_interface_;
+  xe_spv_scratch main_interface_ = {};
   spv::Function* function_main_;
   spv::Id main_system_constant_flags_;
   // bool.
@@ -1469,7 +1470,10 @@ class SpirvShaderTranslator : public ShaderTranslator {
   spv::Block* main_switch_header_;
   std::unique_ptr<spv::Instruction> main_switch_op_;
   spv::Block* main_switch_merge_;
-  std::vector<spv::Id> main_switch_next_pc_phi_operands_;
+  // Incoming pairs are written directly into the instruction that will own them.
+  // Declared after builder_ so exceptional destruction retires it first.
+  std::unique_ptr<spv::Instruction> main_loop_pc_next_op_;
+  void AppendMainLoopIncoming(spv::Id next_pc);
 
   // If the exec bool constant / predicate conditional is open, block after it
   // (not added to the function yet).

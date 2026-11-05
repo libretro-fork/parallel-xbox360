@@ -13,12 +13,25 @@ struct Worker {
   spv::InstructionArena arena;
   std::unique_ptr<spv::Builder> builder;
   std::unique_ptr<spv::Instruction> pending;
-  void reset() { pending.reset(); builder.reset(); }
+  std::unique_ptr<spv::Instruction> pending_phi;
+  void reset() { pending.reset(); pending_phi.reset(); builder.reset(); }
   void start() {
     reset();
     builder = std::make_unique<spv::Builder>(spv::Spv_1_3, 0, nullptr, arena.get());
     pending = builder->makeInstruction(spv::Op::OpSwitch);
     pending->reserveOperands(128);
+    pending_phi = builder->makeInstruction(7, 8, spv::Op::OpPhi);
+    for (unsigned i = 0; i < 200; ++i) {
+      pending_phi->addIdOperand(i + 1);
+      pending_phi->addIdOperand(i + 301);
+    }
+    for (unsigned i = 0; i < 200; ++i) {
+      if (!pending_phi->isIdOperand(2 * i) ||
+          !pending_phi->isIdOperand(2 * i + 1) ||
+          pending_phi->getIdOperand(2 * i) != i + 1 ||
+          pending_phi->getIdOperand(2 * i + 1) != i + 301)
+        std::abort();
+    }
   }
 };
 int main(int argc, char**) {
