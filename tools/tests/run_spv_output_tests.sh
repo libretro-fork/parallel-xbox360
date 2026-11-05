@@ -137,6 +137,8 @@ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -include "$root/tools/tests/core_spv_ar
 case "$san" in *address*)
  if "$out/arena-unit" uaf > "$out/uaf-c.log" 2>&1; then echo "missed C arena UAF"; exit 1; fi
  grep -q 'use-after-poison' "$out/uaf-c.log"
+ if "$out/arena-unit" finish-uaf > "$out/uaf-finish.log" 2>&1; then echo "missed terminal arena UAF"; exit 1; fi
+ grep -q 'use-after-poison' "$out/uaf-finish.log"
  if "$out/arena-bridge" uaf > "$out/uaf-cpp.log" 2>&1; then echo "missed typed arena UAF"; exit 1; fi
  grep -q 'use-after-poison' "$out/uaf-cpp.log"
  echo "PASS: ASan catches retired C and typed instruction access"

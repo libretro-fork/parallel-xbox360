@@ -1,5 +1,5 @@
-/* Single-owner reusable instruction storage. End only after all typed owners
- * have destroyed their records; node bytes are retained until close. */
+/* Single-owner reusable storage. Retire explicit typed owners before terminal
+ * cleanup of remaining records. Node storage is retained until close. */
 #ifndef XE_CORE_SPV_ARENA_H
 #define XE_CORE_SPV_ARENA_H
 #include <stddef.h>
@@ -30,6 +30,10 @@ int xe_spv_arena_begin(xe_spv_arena *arena);
 void *xe_spv_arena_alloc(xe_spv_arena *arena, uint32_t *arena_offset);
 /* destroy must retire its record; null is accepted only if all are retired. */
 int xe_spv_arena_end(xe_spv_arena *arena, void (*destroy)(void *record));
+/* Remaining records are arena-owned. Callback only destroys payload; it must
+ * not allocate, retire or access other records in this arena, or throw. No live
+ * external typed owner may remain. The arena retires/poisons the records. */
+int xe_spv_arena_finish(xe_spv_arena *arena, void (*destroy_payload)(void *record));
 int xe_spv_arena_close(xe_spv_arena *arena);
 void xe_spv_arena_retire(void *record);
 /* On-demand occupancy query: no per-record profiling counter in the allocator. */

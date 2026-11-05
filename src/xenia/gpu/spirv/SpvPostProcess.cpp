@@ -459,8 +459,8 @@ void Builder::postProcessFeatures() {
 
     // Add Aliased decoration if there's more than one Workgroup Block variable.
     if (capabilities.find(spv::Capability::WorkgroupMemoryExplicitLayoutKHR) != capabilities.end()) {
-        assert(entryPoints.size() == 1);
-        auto &ep = entryPoints[0];
+        Instruction* ep = firstInstruction(entryPoints);
+        assert(ep && !ep->getNextInstruction());
 
         std::vector<Id> workgroup_variables;
         for (int i = 0; i < (int)ep->getNumOperands(); i++) {

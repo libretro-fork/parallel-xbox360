@@ -85,7 +85,7 @@ Id Builder::import(const char* name)
     import->addStringOperand(name);
     module.mapInstruction(import);
 
-    imports.push_back(std::unique_ptr<Instruction>(import));
+    appendInstruction(imports, std::unique_ptr<Instruction>(import));
     return import->getResultId();
 }
 
@@ -97,7 +97,7 @@ Id Builder::makeVoidType()
         Id typeId = getUniqueId();
         type = createInstruction(typeId, NoType, Op::OpTypeVoid);
         groupedTypes[enumCast(Op::OpTypeVoid)].push_back(type);
-        constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+        appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
         // Core OpTypeVoid used for debug void type
         if (emitNonSemanticShaderDebugInfo)
@@ -114,7 +114,7 @@ Id Builder::makeBoolType()
     if (groupedTypes[enumCast(Op::OpTypeBool)].size() == 0) {
         type = createInstruction(getUniqueId(), NoType, Op::OpTypeBool);
         groupedTypes[enumCast(Op::OpTypeBool)].push_back(type);
-        constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+        appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
 
         if (emitNonSemanticShaderDebugInfo) {
@@ -135,7 +135,7 @@ Id Builder::makeSamplerType()
     if (groupedTypes[enumCast(Op::OpTypeSampler)].size() == 0) {
         type = createInstruction(getUniqueId(), NoType, Op::OpTypeSampler);
         groupedTypes[enumCast(Op::OpTypeSampler)].push_back(type);
-        constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+        appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
     } else
         type = groupedTypes[enumCast(Op::OpTypeSampler)].back();
@@ -166,7 +166,7 @@ Id Builder::makePointer(StorageClass storageClass, Id pointee)
     type->addImmediateOperand(storageClass);
     type->addIdOperand(pointee);
     groupedTypes[enumCast(Op::OpTypePointer)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     if (emitNonSemanticShaderDebugInfo) {
@@ -184,7 +184,7 @@ Id Builder::makeForwardPointer(StorageClass storageClass)
     // storage type. Somebody higher up in the stack must keep track.
     Instruction* type = createInstruction(getUniqueId(), NoType, Op::OpTypeForwardPointer);
     type->addImmediateOperand(storageClass);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     if (emitNonSemanticShaderDebugInfo) {
@@ -210,7 +210,7 @@ Id Builder::makePointerFromForwardPointer(StorageClass storageClass, Id forwardP
     type->addImmediateOperand(storageClass);
     type->addIdOperand(pointee);
     groupedTypes[enumCast(Op::OpTypePointer)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     // If we are emitting nonsemantic debuginfo, we need to patch the debug pointer type
@@ -242,7 +242,7 @@ Id Builder::makeIntegerType(int width, bool hasSign)
     type->addImmediateOperand(width);
     type->addImmediateOperand(hasSign ? 1 : 0);
     groupedTypes[enumCast(Op::OpTypeInt)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     // deal with capabilities
@@ -284,7 +284,7 @@ Id Builder::makeFloatType(int width)
     type = createInstruction(getUniqueId(), NoType, Op::OpTypeFloat);
     type->addImmediateOperand(width);
     groupedTypes[enumCast(Op::OpTypeFloat)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     // deal with capabilities
@@ -327,7 +327,7 @@ Id Builder::makeBFloat16Type()
     type->addImmediateOperand(16);
     type->addImmediateOperand(FPEncoding::BFloat16KHR);
     groupedTypes[enumCast(Op::OpTypeFloat)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     addExtension(spv::E_SPV_KHR_bfloat16);
@@ -364,7 +364,7 @@ Id Builder::makeFloatE5M2Type()
     type->addImmediateOperand(8);
     type->addImmediateOperand(FPEncoding::Float8E5M2EXT);
     groupedTypes[enumCast(Op::OpTypeFloat)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     addExtension(spv::E_SPV_EXT_float8);
@@ -401,7 +401,7 @@ Id Builder::makeFloatE4M3Type()
     type->addImmediateOperand(8);
     type->addImmediateOperand(FPEncoding::Float8E4M3EXT);
     groupedTypes[enumCast(Op::OpTypeFloat)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     addExtension(spv::E_SPV_EXT_float8);
@@ -440,7 +440,7 @@ Id Builder::makeStructTypeView(xe_spv_word_view view, const char* name, bool com
     for (int op = 0; op < (int)members.size(); ++op)
         type->addIdOperand(members[op]);
     groupedTypes[enumCast(Op::OpTypeStruct)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
     addName(type->getResultId(), name);
 
@@ -494,7 +494,7 @@ Id Builder::makeVectorType(Id component, int size)
     type->addIdOperand(component);
     type->addImmediateOperand(size);
     groupedTypes[enumCast(Op::OpTypeVector)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     if (emitNonSemanticShaderDebugInfo)
@@ -527,7 +527,7 @@ Id Builder::makeMatrixType(Id component, int cols, int rows)
     type->addIdOperand(column);
     type->addImmediateOperand(cols);
     groupedTypes[enumCast(Op::OpTypeMatrix)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     if (emitNonSemanticShaderDebugInfo)
@@ -562,7 +562,7 @@ Id Builder::makeCooperativeMatrixTypeKHR(Id component, Id scope, Id rows, Id col
     type->addIdOperand(cols);
     type->addIdOperand(use);
     groupedTypes[enumCast(Op::OpTypeCooperativeMatrixKHR)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     if (emitNonSemanticShaderDebugInfo)
@@ -573,14 +573,14 @@ Id Builder::makeCooperativeMatrixTypeKHR(Id component, Id scope, Id rows, Id col
             Id id2 = debugId[id];
             for (auto &t : groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic]) {
                 if (t->getResultId() == id2) {
-                    for (auto &s : strings) {
+                    for (Instruction* s = firstInstruction(strings); s; s = s->getNextInstruction()) {
                         if (s->getResultId() == t->getIdOperand(2)) {
                             return s->getNameString();
                         }
                     }
                 }
             }
-            for (auto &t : names) {
+            for (Instruction* t = firstInstruction(names); t; t = t->getNextInstruction()) {
                 if (t->getIdOperand(0) == id) {
                     return t->getNameString();
                 }
@@ -624,7 +624,7 @@ Id Builder::makeCooperativeMatrixTypeNV(Id component, Id scope, Id rows, Id cols
     type->addIdOperand(rows);
     type->addIdOperand(cols);
     groupedTypes[enumCast(Op::OpTypeCooperativeMatrixNV)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -657,7 +657,7 @@ Id Builder::makeCooperativeVectorTypeNV(Id componentType, Id components)
     type->addIdOperand(componentType);
     type->addIdOperand(components);
     groupedTypes[enumCast(Op::OpTypeCooperativeVectorNV)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -679,7 +679,7 @@ Id Builder::makeTensorTypeARM(Id elementType, Id rank)
     groupedTypes[enumCast(Op::OpTypeTensorARM)].push_back(type.get());
     module.mapInstruction(type.get());
     Id resultID = type->getResultId();
-    constantsTypesGlobals.push_back(std::move(type));
+    appendInstruction(constantsTypesGlobals, std::move(type));
     return resultID;
 }
 
@@ -710,7 +710,7 @@ Id Builder::makeGenericType(spv::Op opcode, std::vector<spv::IdImmediate>& opera
             type->addImmediateOperand(operands[op].word);
     }
     groupedTypes[enumCast(opcode)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -740,7 +740,7 @@ Id Builder::makeArrayType(Id element, Id sizeId, int stride)
     type->addIdOperand(element);
     type->addIdOperand(sizeId);
     groupedTypes[enumCast(Op::OpTypeArray)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     if (stride != 0) {
@@ -760,7 +760,7 @@ Id Builder::makeRuntimeArray(Id element)
 {
     Instruction* type = createInstruction(getUniqueId(), NoType, Op::OpTypeRuntimeArray);
     type->addIdOperand(element);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     if (emitNonSemanticShaderDebugInfo)
@@ -812,7 +812,7 @@ Id Builder::makeFunctionType(Id returnType, const std::vector<Id>& paramTypes)
     for (int p = 0; p < (int)paramTypes.size(); ++p)
         type->addIdOperand(paramTypes[p]);
     groupedTypes[enumCast(Op::OpTypeFunction)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     // make debug type and map it
@@ -843,7 +843,7 @@ Id Builder::makeDebugFunctionType(Id returnType, const std::vector<Id>& paramTyp
             type->addIdOperand(debugId[paramType]);
         }
     }
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
     return typeId;
 }
@@ -879,7 +879,7 @@ Id Builder::makeImageType(Id sampledType, Dim dim, bool depth, bool arrayed, boo
     type->addImmediateOperand((unsigned int)format);
 
     groupedTypes[enumCast(Op::OpTypeImage)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     // deal with capabilities
@@ -962,7 +962,7 @@ Id Builder::makeSampledImageType(Id imageType)
     type->addIdOperand(imageType);
 
     groupedTypes[enumCast(Op::OpTypeSampledImage)].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     if (emitNonSemanticShaderDebugInfo)
@@ -984,7 +984,7 @@ Id Builder::makeDebugInfoNone()
     inst->addIdOperand(nonSemanticShaderDebugInfo);
     inst->addImmediateOperand(NonSemanticShaderDebugInfo100DebugInfoNone);
 
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(inst));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(inst));
     module.mapInstruction(inst);
 
     debugInfoNone = inst->getResultId();
@@ -1015,7 +1015,7 @@ Id Builder::makeBoolDebugType(int const size)
     type->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100None)); // flags id
 
     groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -1056,7 +1056,7 @@ Id Builder::makeIntegerDebugType(int const width, bool const hasSign)
     type->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100None)); // flags id
 
     groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -1092,7 +1092,7 @@ Id Builder::makeFloatDebugType(int const width)
     type->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100None)); // flags id
 
     groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -1121,7 +1121,7 @@ Id Builder::makeSequentialDebugType(Id const baseType, Id const componentCount, 
     type->addIdOperand(componentCount); // component count
 
     groupedDebugTypes[sequenceType].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -1158,7 +1158,7 @@ Id Builder::makeMatrixDebugType(Id const vectorType, int const vectorCount, bool
     type->addIdOperand(makeBoolConstant(columnMajor)); // column-major id
 
     groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeMatrix].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -1182,7 +1182,7 @@ Id Builder::makeMemberDebugType(Id const memberType, DebugTypeLoc const& debugTy
     type->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100FlagIsPublic)); // flags id
 
     groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeMember].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -1233,7 +1233,7 @@ Id Builder::makeCompositeDebugType(std::span<const Id> memberTypes, char const*c
     }
 
     groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeComposite].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -1262,7 +1262,7 @@ Id Builder::makePointerDebugType(StorageClass storageClass, Id const baseType)
     type->addIdOperand(makeUintConstant(0));
 
     groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypePointer].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -1285,7 +1285,7 @@ Id Builder::makeForwardPointerDebugType(StorageClass storageClass)
     type->addIdOperand(makeUintConstant(0));
 
     groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypePointer].push_back(type);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
     return type->getResultId();
@@ -1300,7 +1300,7 @@ Id Builder::makeDebugSource(const Id fileName) {
     sourceInst->addIdOperand(nonSemanticShaderDebugInfo);
     sourceInst->addImmediateOperand(NonSemanticShaderDebugInfo100DebugSource);
     sourceInst->addIdOperand(fileName);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(sourceInst));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(sourceInst));
     module.mapInstruction(sourceInst);
     if (emitNonSemanticShaderDebugSource) {
         const int maxWordCount = 0xFFFF;
@@ -1322,7 +1322,7 @@ Id Builder::makeDebugSource(const Id fileName) {
                         sourceContinuedInst->addIdOperand(nonSemanticShaderDebugInfo);
                         sourceContinuedInst->addImmediateOperand(NonSemanticShaderDebugInfo100DebugSourceContinued);
                         sourceContinuedInst->addIdOperand(sourceId);
-                        constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(sourceContinuedInst));
+                        appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(sourceContinuedInst));
                         module.mapInstruction(sourceContinuedInst);
                     }
                     nextByte += subString.size();
@@ -1359,7 +1359,7 @@ Id Builder::makeDebugCompilationUnit() {
     sourceInst->addIdOperand(makeUintConstant(4)); // TODO(greg-lunarg): Get rid of magic number
     sourceInst->addIdOperand(makeDebugSource(mainFileId));
     sourceInst->addIdOperand(makeUintConstant(sourceLang));
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(sourceInst));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(sourceInst));
     module.mapInstruction(sourceInst);
     nonSemanticShaderCompilationUnitId = resultId;
 
@@ -1389,7 +1389,7 @@ Id Builder::createDebugGlobalVariable(Id const type, char const*const name, Id c
     inst->addIdOperand(variable); // variable id
     inst->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100FlagIsDefinition)); // flags id
 
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(inst));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(inst));
     module.mapInstruction(inst);
 
     return inst->getResultId();
@@ -1415,7 +1415,7 @@ Id Builder::createDebugLocalVariable(Id type, char const*const name, size_t cons
         inst->addIdOperand(makeUintConstant(argNumber));
     }
 
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(inst));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(inst));
     module.mapInstruction(inst);
 
     return inst->getResultId();
@@ -1431,7 +1431,7 @@ Id Builder::makeDebugExpression()
     inst->addIdOperand(nonSemanticShaderDebugInfo);
     inst->addImmediateOperand(NonSemanticShaderDebugInfo100DebugExpression);
 
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(inst));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(inst));
     module.mapInstruction(inst);
 
     debugExpression = inst->getResultId();
@@ -1473,7 +1473,7 @@ Id Builder::makeAccelerationStructureType()
     if (groupedTypes[enumCast(Op::OpTypeAccelerationStructureKHR)].size() == 0) {
         type = createInstruction(getUniqueId(), NoType, Op::OpTypeAccelerationStructureKHR);
         groupedTypes[enumCast(Op::OpTypeAccelerationStructureKHR)].push_back(type);
-        constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+        appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
         if (emitNonSemanticShaderDebugInfo) {
             spv::Id debugType = makeCompositeDebugType({}, "accelerationStructure", NonSemanticShaderDebugInfo100Structure, true);
@@ -1492,7 +1492,7 @@ Id Builder::makeRayQueryType()
     if (groupedTypes[enumCast(Op::OpTypeRayQueryKHR)].size() == 0) {
         type = createInstruction(getUniqueId(), NoType, Op::OpTypeRayQueryKHR);
         groupedTypes[enumCast(Op::OpTypeRayQueryKHR)].push_back(type);
-        constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+        appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
         if (emitNonSemanticShaderDebugInfo) {
             spv::Id debugType = makeCompositeDebugType({}, "rayQuery", NonSemanticShaderDebugInfo100Structure, true);
@@ -1511,7 +1511,7 @@ Id Builder::makeHitObjectNVType()
     if (groupedTypes[enumCast(Op::OpTypeHitObjectNV)].size() == 0) {
         type = createInstruction(getUniqueId(), NoType, Op::OpTypeHitObjectNV);
         groupedTypes[enumCast(Op::OpTypeHitObjectNV)].push_back(type);
-        constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+        appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
     } else {
         type = groupedTypes[enumCast(Op::OpTypeHitObjectNV)].back();
@@ -1806,7 +1806,7 @@ Id Builder::makeNullConstant(Id typeId)
 
     // Make it
     Instruction* c = createInstruction(getUniqueId(), typeId, Op::OpConstantNull);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(c));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(c));
     nullConstants.push_back(c);
     module.mapInstruction(c);
 
@@ -1835,7 +1835,7 @@ Id Builder::makeBoolConstant(bool b, bool specConstant)
 
     // Make it
     Instruction* c = createInstruction(getUniqueId(), typeId, opcode);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(c));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(c));
     groupedConstants[enumCast(Op::OpTypeBool)].push_back(c);
     module.mapInstruction(c);
 
@@ -1856,7 +1856,7 @@ Id Builder::makeIntConstant(Id typeId, unsigned value, bool specConstant)
 
     Instruction* c = createInstruction(getUniqueId(), typeId, opcode);
     c->addImmediateOperand(value);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(c));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(c));
     groupedConstants[enumCast(Op::OpTypeInt)].push_back(c);
     module.mapInstruction(c);
 
@@ -1882,7 +1882,7 @@ Id Builder::makeInt64Constant(Id typeId, unsigned long long value, bool specCons
     c->reserveOperands(2);
     c->addImmediateOperand(op1);
     c->addImmediateOperand(op2);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(c));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(c));
     groupedConstants[enumCast(Op::OpTypeInt)].push_back(c);
     module.mapInstruction(c);
 
@@ -1907,7 +1907,7 @@ Id Builder::makeFloatConstant(float f, bool specConstant)
 
     Instruction* c = createInstruction(getUniqueId(), typeId, opcode);
     c->addImmediateOperand(value);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(c));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(c));
     groupedConstants[enumCast(Op::OpTypeFloat)].push_back(c);
     module.mapInstruction(c);
 
@@ -1936,7 +1936,7 @@ Id Builder::makeDoubleConstant(double d, bool specConstant)
     c->reserveOperands(2);
     c->addImmediateOperand(op1);
     c->addImmediateOperand(op2);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(c));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(c));
     groupedConstants[enumCast(Op::OpTypeFloat)].push_back(c);
     module.mapInstruction(c);
 
@@ -1964,7 +1964,7 @@ Id Builder::makeFloat16Constant(float f16, bool specConstant)
 
     Instruction* c = createInstruction(getUniqueId(), typeId, opcode);
     c->addImmediateOperand(value);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(c));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(c));
     groupedConstants[enumCast(Op::OpTypeFloat)].push_back(c);
     module.mapInstruction(c);
 
@@ -1995,7 +1995,7 @@ Id Builder::makeBFloat16Constant(float bf16, bool specConstant)
 
     Instruction* c = createInstruction(getUniqueId(), typeId, opcode);
     c->addImmediateOperand(value);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(c));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(c));
     groupedConstants[enumCast(Op::OpTypeFloat)].push_back(c);
     module.mapInstruction(c);
 
@@ -2023,7 +2023,7 @@ Id Builder::makeFloatE5M2Constant(float fe5m2, bool specConstant)
 
     Instruction* c = createInstruction(getUniqueId(), typeId, opcode);
     c->addImmediateOperand(value);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(c));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(c));
     groupedConstants[enumCast(Op::OpTypeFloat)].push_back(c);
     module.mapInstruction(c);
 
@@ -2051,7 +2051,7 @@ Id Builder::makeFloatE4M3Constant(float fe4m3, bool specConstant)
 
     Instruction* c = createInstruction(getUniqueId(), typeId, opcode);
     c->addImmediateOperand(value);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(c));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(c));
     groupedConstants[enumCast(Op::OpTypeFloat)].push_back(c);
     module.mapInstruction(c);
 
@@ -2210,7 +2210,7 @@ Id Builder::makeCompositeConstantView(Id typeId, xe_spv_word_view view, bool spe
     c->reserveOperands(members.size());
     for (size_t op = 0; op < numMembers; ++op)
         c->addIdOperand(members[op]);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(c));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(c));
     if (typeClass == Op::OpTypeStruct)
         groupedStructConstants[typeId].push_back(c);
     else
@@ -2228,7 +2228,7 @@ Instruction* Builder::addEntryPoint(ExecutionModel model, Function* function, co
     entryPoint->addIdOperand(function->getId());
     entryPoint->addStringOperand(name);
 
-    entryPoints.push_back(std::unique_ptr<Instruction>(entryPoint));
+    appendInstruction(entryPoints, std::unique_ptr<Instruction>(entryPoint));
 
     return entryPoint;
 }
@@ -2251,7 +2251,7 @@ void Builder::addExecutionMode(Function* entryPoint, ExecutionMode mode, int val
     if (value3 >= 0)
         instr->addImmediateOperand(value3);
 
-    executionModes.push_back(std::unique_ptr<Instruction>(instr));
+    appendInstruction(executionModes, std::unique_ptr<Instruction>(instr));
 }
 
 void Builder::addExecutionMode(Function* entryPoint, ExecutionMode mode, const std::vector<unsigned>& literals)
@@ -2267,7 +2267,7 @@ void Builder::addExecutionMode(Function* entryPoint, ExecutionMode mode, const s
     for (auto literal : literals)
         instr->addImmediateOperand(literal);
 
-    executionModes.push_back(std::unique_ptr<Instruction>(instr));
+    appendInstruction(executionModes, std::unique_ptr<Instruction>(instr));
 }
 
 void Builder::addExecutionModeId(Function* entryPoint, ExecutionMode mode, const std::vector<Id>& operandIds)
@@ -2283,7 +2283,7 @@ void Builder::addExecutionModeId(Function* entryPoint, ExecutionMode mode, const
     for (auto operandId : operandIds)
         instr->addIdOperand(operandId);
 
-    executionModes.push_back(std::unique_ptr<Instruction>(instr));
+    appendInstruction(executionModes, std::unique_ptr<Instruction>(instr));
 }
 
 void Builder::addName(Id id, const char* string)
@@ -2293,7 +2293,7 @@ void Builder::addName(Id id, const char* string)
     name->addIdOperand(id);
     name->addStringOperand(string);
 
-    names.push_back(std::unique_ptr<Instruction>(name));
+    appendInstruction(names, std::unique_ptr<Instruction>(name));
 }
 
 void Builder::addMemberName(Id id, int memberNumber, const char* string)
@@ -2304,7 +2304,7 @@ void Builder::addMemberName(Id id, int memberNumber, const char* string)
     name->addImmediateOperand(memberNumber);
     name->addStringOperand(string);
 
-    names.push_back(std::unique_ptr<Instruction>(name));
+    appendInstruction(names, std::unique_ptr<Instruction>(name));
 }
 
 void Builder::addDecoration(Id id, Decoration decoration, int num)
@@ -2664,7 +2664,7 @@ Id Builder::makeDebugFunction([[maybe_unused]] Function* function, Id nameId, Id
     type->addIdOperand(nameId); // linkage name
     type->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100FlagIsPublic));
     type->addIdOperand(makeUintConstant(currentLine)); 
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(type));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
     return funcId;
 }
@@ -2681,7 +2681,7 @@ Id Builder::makeDebugLexicalBlock(uint32_t line, uint32_t column) {
     lex->addIdOperand(makeUintConstant(line));
     lex->addIdOperand(makeUintConstant(column)); // column
     lex->addIdOperand(currentDebugScopeId.top()); // scope
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(lex));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(lex));
     module.mapInstruction(lex);
     return lexId;
 }
@@ -2834,7 +2834,7 @@ Id Builder::createVariable(Decoration precision, StorageClass storageClass, Id t
         break;
 
     default:
-        constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(inst));
+        appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(inst));
         module.mapInstruction(inst);
 
         if (emitNonSemanticShaderDebugInfo)
@@ -3265,7 +3265,7 @@ Id Builder::createSpecConstantOpView(Op opCode, Id typeId, xe_spv_word_view oper
     for (auto it = literals.begin(); it != literals.end(); ++it)
         op->addImmediateOperand(*it);
     module.mapInstruction(op);
-    constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(op));
+    appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(op));
 
     // OpSpecConstantOp's using 8 or 16 bit types require the associated capability
     if (containsType(typeId, Op::OpTypeInt, 8))
@@ -4619,7 +4619,6 @@ template <class Output> void Builder::dumpInternal(Output& out, xe_spv_plan* pla
     dumpInstructions(out, decorations);
 
     dumpInstructions(out, constantsTypesGlobals);
-    dumpInstructions(out, externals);
 
     // The functions
     for (const auto& function : functions)
@@ -4878,6 +4877,11 @@ template <class Output> void Builder::dumpSourceInstructions(Output& out) const
         dumpSourceInstructions(iItr->first, *iItr->second, out);
 }
 
+template <class Output> void Builder::dumpInstructions(Output& out, const xe_spv_instruction_chain& instructions) const
+{
+    for (Instruction* instruction = firstInstruction(instructions); instruction; instruction = instruction->getNextInstruction())
+        instruction->dump(out);
+}
 template <class Output, class Range> void Builder::dumpInstructions(Output& out, const Range& instructions) const
 {
     for (const auto& inst : instructions) {

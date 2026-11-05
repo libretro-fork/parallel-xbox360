@@ -1,0 +1,72 @@
+Borrowed global SPIR-V lists / arena payload sweep, Windows x64, 2026-11-05
+Parent: complete 486f15fde archive. Current: six plain C89 lists, no externals field.
+Strings, imports, entry points, execution modes, names and constants/types/globals
+reuse each arena instruction's existing link. Lists borrow their module arena;
+there is no owning pointer array, array growth/copy or separate list teardown.
+Sorted decoration ownership is unchanged. Other canonical lookup and function/
+CFG adjacency containers still allocate. No instruction payload is copied here.
+Module shutdown runs after explicit typed owners and lookup containers. A C89
+bitmap sweep calls the payload destructor exactly once for each remaining record,
+clears live bits per 32 records and poisons pages after cleanup. Payload destruction
+only frees each record's owned operand allocation; it has no cross-record order
+requirement. This deliberately changes global cleanup order to page/bitmap order.
+The retiring-callback arena_end API remains available; the payload-only finish
+API forbids allocation/retirement/other-record access from its callback.
+Instruction 64, Block 136, Function 208 and Module 80 remain unchanged on tested x64.
+Builder 2072->2000 bytes: six descriptors save 48 B, unused externals vector saves 24 B.
+
+GCC16.2 -O2 C++20, retained warmed arena. Construction includes builder teardown;
+1000 modules/sample with 1/71/257 one-block functions. Seven alternating pairs.
+Counts include C++new+C arena/index/output/plan hooks, exclude operand malloc and
+allocator headers. Peak includes untimed golden serialization, not OS RSS.
+Retained covers workspace/output after module destruction. All tracked heap
+returns to its initial value after close. Old/current fixture output matches.
+revision functions calls requested_bytes retained_bytes peak_tracked_bytes median_ms range_ms
+parent 1 20000 2368000 9475 11835 .951 .935...970
+current 1 15000 2320000 9475 11795 .875 .867...906
+parent 71 174000 30512000 32497 63273 7.608 7.483..8.341
+current 71 162000 28432000 32497 62217 7.357 7.228..8.233
+parent 257 550000 106784000 103483 211299 47.614 46.805..49.673
+current 257 536000 98560000 103483 207171 50.978 50.480..51.162
+The 257-function constructor is 7.06% slower despite fewer allocations and 7.70%
+fewer requested bytes. This tradeoff is retained explicitly; no universal speedup
+claim. Most counted allocations in this case still come from Function/Block heap
+objects. Single-function counted requests fall 25%; this is not a general claim.
+
+Serialization excludes construction: 10000 fresh outputs/sample, five samples.
+All direct-owned output allocation counts and bytes match. variant5 has 513 blocks.
+revision output_bytes calls requested_bytes median_ms range_ms
+parent 328 10000 3280000 1.658 1.611..1.710
+current 328 10000 3280000 1.602 1.571..1.620
+parent 5432 10000 54320000 13.471 13.301..13.992
+current 5432 10000 54320000 13.163 13.135..13.176
+parent 13624 10001 136249216 105.787 104.851..106.432
+current 13624 10001 136249216 107.860 107.579..110.049
+The large serializer median is 1.96% slower in this run; small cases are faster.
+Compilers for independent checks overlap portions of timing; these are microbenchmarks.
+
+Actual full-Make-linked offline cache: 2256 guest translations across host-RT and
+interlock, byte-identical 146448252 B output. Existing read-only user cache; no GPU,
+game or frontend. Parent spv-instruction-cache/test.exe, current spv-global-sweep-cache/test.exe.
+One warm process each, five alternating measured pairs, output=NUL; input reads,
+initialization, analysis and translation remain included. CPU steps 15.625 ms.
+revision sample cpu_ms wall_ms
+parent 0 546.875 544.1131
+current 0 546.875 546.5272
+current 1 546.875 545.1780
+parent 1 562.500 543.1588
+parent 2 531.250 541.1384
+current 2 531.250 542.0179
+current 3 531.250 543.5784
+parent 3 531.250 544.1779
+parent 4 531.250 541.2699
+current 4 531.250 543.2951
+CPU median 531.25 ms both. Wall median 543.1588->543.5784ms, overlapping ranges.
+Comparable, no overall speedup established. Only 2 cached translations have control
+flow labels; the cache does not establish all complex-CFG or preloaded-binding behavior.
+No gameplay FPS/frame-time, GPU timing, hardware cache-miss or OS RSS claims.
+
+Reproduce with BASELINE_ROOT=<complete 486f15fde archive> sh tools/tests/run_spv_binary_bench.sh.
+Set TEST_SOURCE=<absolute tools/tests/core_spv_block_chain_bench.cc> for construction.
+Alternate already-built parent/current tests for paired timing; compare generated
+SPIR-V separately. run_spv_guest_cache_bench.ps1 measures already-built cache fixtures.

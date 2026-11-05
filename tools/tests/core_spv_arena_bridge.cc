@@ -246,6 +246,35 @@ int main(int argc, char**) {
     CHECK(block->getFirstLocalVariable() == local && !local->getNextInstruction());
     CHECK(!local->getBlock());
   }
+  for (unsigned unwind = 0; unwind < 2; ++unwind) {
+    const size_t initial = xe_spv_test_live();
+    try {
+      spv::Builder builder(spv::Spv_1_3, 0, nullptr);
+      xe_spv_instruction_chain first = {}, second = {};
+      spv::Instruction* heads[2] = {};
+      for (unsigned i = 0; i < 2048; ++i) {
+        auto record = builder.makeInstruction(spv::Op::OpNop);
+        // Heap operands prove typed cleanup, not just arena-page release.
+        record->reserveOperands(16);
+        record->addImmediateOperand(i);
+        if (i < 2) heads[i] = record.get();
+        builder.appendInstruction(i & 1 ? second : first, std::move(record));
+        if (unwind && i == 1023) throw std::bad_alloc();
+      }
+      CHECK(builder.firstInstruction(first) == heads[0] && builder.firstInstruction(second) == heads[1]);
+      unsigned counts[2] = {};
+      for (unsigned owner = 0; owner < 2; ++owner) {
+        for (auto* i = builder.firstInstruction(owner ? second : first); i; i = i->getNextInstruction()) {
+          CHECK(i->getImmediateOperand(0) == 2 * counts[owner] + owner);
+          CHECK(!i->getBlock());
+          ++counts[owner];
+        }
+        CHECK(counts[owner] == 1024);
+      }
+    } catch (const std::bad_alloc&) { CHECK(unwind); }
+    CHECK(xe_spv_test_live() == initial);
+  }
+  std::puts("PASS: separate borrowed global lists, stable order and arena-owned typed operand unwind");
   std::puts("PASS: typed instruction ownership, label identity, splice and canonical rewrites");
   std::puts("PASS: typed block-chain adoption, duplicate/foreign rejection and creation order");
   std::puts("PASS: 0/1/4/9/70 parameters and partial-parameter construction cleanup");

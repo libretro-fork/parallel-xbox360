@@ -98,6 +98,17 @@ public:
         return std::unique_ptr<Instruction>(createInstruction(code));
     }
 
+    // All records belong to this builder's module arena. This list is a borrowed
+    // ordering view; the terminal bitmap sweep destroys the payload once.
+    static Instruction* firstInstruction(const xe_spv_instruction_chain& list) noexcept {
+        return static_cast<Instruction*>(list.head);
+    }
+    static void appendInstruction(xe_spv_instruction_chain& list, std::unique_ptr<Instruction> instruction) noexcept {
+        assert(instruction && instruction->getOpCode() != Op::OpLabel && !instruction->getNextInstruction());
+        xe_spv_instruction_append(&list, instruction.get(), Instruction::nextSlot);
+        instruction.release();
+    }
+
     static const int maxMatrixSize = 4;
 
     unsigned int getSpvVersion() const { return spvVersion; }
@@ -116,7 +127,7 @@ public:
         Instruction* fileString = createInstruction(strId, NoType, Op::OpString);
         const char* file_c_str = str.c_str();
         fileString->addStringOperand(file_c_str);
-        strings.push_back(std::unique_ptr<Instruction>(fileString));
+        appendInstruction(strings, std::unique_ptr<Instruction>(fileString));
         module.mapInstruction(fileString);
         stringIds[file_c_str] = strId;
         return strId;
@@ -974,6 +985,7 @@ public:
     template <class Output> void dumpSourceInstructions(Output&) const;
     template <class Output> void dumpSourceInstructions(const spv::Id fileId, const std::string& text, Output&) const;
     void dumpSourceInstructions(const spv::Id fileId, const std::string& text, xe_spv_count&) const;
+    template <class Output> void dumpInstructions(Output& out, const xe_spv_instruction_chain& instructions) const;
     template <class Output, class Range> void dumpInstructions(Output& out, const Range& instructions) const;
     template <class Output> void dumpModuleProcesses(Output&) const;
     spv::MemoryAccessMask sanitizeMemoryAccessForStorageClass(spv::MemoryAccessMask memoryAccess, StorageClass sc)
@@ -1034,14 +1046,13 @@ public:
     AccessChain accessChain;
 
     // special blocks of instructions for output
-    std::vector<std::unique_ptr<Instruction> > strings;
-    std::vector<std::unique_ptr<Instruction> > imports;
-    std::vector<std::unique_ptr<Instruction> > entryPoints;
-    std::vector<std::unique_ptr<Instruction> > executionModes;
-    std::vector<std::unique_ptr<Instruction> > names;
+    xe_spv_instruction_chain strings = {};
+    xe_spv_instruction_chain imports = {};
+    xe_spv_instruction_chain entryPoints = {};
+    xe_spv_instruction_chain executionModes = {};
+    xe_spv_instruction_chain names = {};
     std::set<std::unique_ptr<Instruction>, DecorationInstructionLessThan> decorations;
-    std::vector<std::unique_ptr<Instruction> > constantsTypesGlobals;
-    std::vector<std::unique_ptr<Instruction> > externals;
+    xe_spv_instruction_chain constantsTypesGlobals = {};
     std::vector<std::unique_ptr<Function> > functions;
 
     // not output, internally used for quick & dirty canonical (unique) creation

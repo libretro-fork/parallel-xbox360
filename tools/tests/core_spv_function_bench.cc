@@ -59,8 +59,8 @@ int main(int argc, char** argv) {
     uint64_t elapsed = xe_bench_time() - start;
     if (xe_bench_live() != warmed || workspace.get()->reserved_records != pages) return 3;
 #ifdef XE_SPV_BLOCK_CHAIN_BENCH
-    std::printf("block_bytes=%zu function_bytes=%zu peak_tracked=%zu ",
-        sizeof(spv::Block), sizeof(spv::Function), xe_bench_peak() - initial);
+    std::printf("block_bytes=%zu function_bytes=%zu builder_bytes=%zu peak_tracked=%zu ",
+        sizeof(spv::Block), sizeof(spv::Function), sizeof(spv::Builder), xe_bench_peak() - initial);
 #endif
 #ifdef XE_SPV_PARAMETER_BENCH
     std::printf("parameters=%u function_bytes=%zu peak_tracked=%zu ",

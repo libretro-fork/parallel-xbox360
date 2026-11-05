@@ -607,11 +607,12 @@ public:
         static_assert(offsetof(Instruction, arenaOffset) == XE_SPV_RECORD_ARENA_OFFSET);
         if (!xe_spv_arena_begin(arena)) throw std::bad_alloc();
     }
-    // Builder's typed owner fields are declared AFTER this module, so they are
-    // destroyed first. Reclaim any record left unadopted by an exception last.
+    // Builder fields are destroyed first. Global instruction lists only borrow
+    // arena records; sweep their payloads and exceptional orphans last. Their
+    // destructor only frees operand storage, so no cross-record order is needed.
     ~Module()
     {
-        const bool ended = xe_spv_arena_end(arena, destroyRecord) != 0;
+        const bool ended = xe_spv_arena_finish(arena, destroyRecord) != 0;
         assert(ended);
         if (!borrowed && ended) {
             const bool closed = xe_spv_arena_close(arena) != 0;
@@ -655,7 +656,7 @@ public:
     }
 
 protected:
-    static void destroyRecord(void* record) { delete static_cast<Instruction*>(record); }
+    static void destroyRecord(void* record) { static_cast<Instruction*>(record)->~Instruction(); }
     xe_spv_arena localArena = {};
     xe_spv_arena* arena;
     bool borrowed;

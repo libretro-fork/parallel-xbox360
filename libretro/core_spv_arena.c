@@ -86,16 +86,27 @@ void *xe_spv_arena_alloc(xe_spv_arena *arena, uint32_t *arena_offset)
    return record;
 }
 
-int xe_spv_arena_end(xe_spv_arena *arena, void (*destroy)(void *record))
+static int arena_end(xe_spv_arena *arena, void (*destroy)(void *record), int payload_only)
 {
    xe_spv_arena_page *page;
    size_t i, slot;
    uint32_t mask;
    if (!arena->in_use) return 0;
    for (page = arena->head; page; page = page->next) {
-      /* Normal typed owners have already retired everything: skip 32 records
-       * at a time, visiting only orphan bits during exception cleanup. */
+      /* Skip empty groups. Borrowed global lists need no separate ownership
+       * walk: payload-only cleanup snapshots each live bitmap once. */
       for (i = 0; i < XE_SPV_RECORDS_PER_PAGE / 32; ++i) {
+         if (payload_only) {
+            mask = page->live[i];
+            if (mask && !destroy) return 0;
+            while (mask) {
+               slot = 31 - compat_clz_u32(mask);
+               destroy(page->records + (i * 32 + slot) * XE_SPV_RECORD_BYTES);
+               mask &= ~(UINT32_C(1) << slot);
+            }
+            page->live[i] = 0;
+            continue;
+         }
          while (page->live[i]) {
             if (!destroy) return 0;
             slot = 31 - compat_clz_u32(page->live[i]);
@@ -112,6 +123,14 @@ int xe_spv_arena_end(xe_spv_arena *arena, void (*destroy)(void *record))
    return 1;
 }
 
+int xe_spv_arena_end(xe_spv_arena *arena, void (*destroy)(void *record))
+{
+   return arena_end(arena, destroy, 0);
+}
+int xe_spv_arena_finish(xe_spv_arena *arena, void (*destroy_payload)(void *record))
+{
+   return arena_end(arena, destroy_payload, 1);
+}
 int xe_spv_arena_close(xe_spv_arena *arena)
 {
    xe_spv_arena_page *page, *next;
