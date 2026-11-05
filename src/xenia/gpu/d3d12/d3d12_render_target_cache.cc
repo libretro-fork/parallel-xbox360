@@ -8,6 +8,7 @@
  */
 
 #include "xenia/gpu/d3d12/d3d12_render_target_cache.h"
+#include <new>
 
 #include <cstdint>
 #include <cstring>
@@ -115,6 +116,10 @@ static constexpr D3D12RenderTargetCache::ResolveCopyShaderCode
 D3D12RenderTargetCache::~D3D12RenderTargetCache() { Shutdown(true); }
 
 bool D3D12RenderTargetCache::Initialize() {
+  if (!xe_gpu_worklist_init(&dump_rectangles_, kResolveWorkCapacity,
+          sizeof(ResolveCopyDumpRectangle)) ||
+      !xe_gpu_worklist_init(&dump_invocations_, kResolveWorkCapacity,
+          sizeof(DumpInvocation))) return false;
   const ui::d3d12::D3D12Provider& provider =
       command_processor_.GetD3D12Provider();
   ID3D12Device* device = provider.GetDevice();
@@ -955,6 +960,8 @@ bool D3D12RenderTargetCache::Initialize() {
 }
 
 void D3D12RenderTargetCache::Shutdown(bool from_destructor) {
+  xe_gpu_worklist_close(&dump_invocations_);
+  xe_gpu_worklist_close(&dump_rectangles_);
   // The command processor has completed GPU work before cache destruction.
   xe_gpu_retire_collect(&retired_resources_, UINT64_MAX);
   DestroyAllRenderTargets(true);
@@ -3515,7 +3522,7 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
 
 bool D3D12RenderTargetCache::PrepareDumpSourceDescriptors() {
   // Clear previously set temporary indices.
-  for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+  for (const ResolveCopyDumpRectangle& rectangle : DumpRectangles()) {
     auto& d3d12_rt = *static_cast<D3D12RenderTarget*>(rectangle.render_target);
     d3d12_rt.SetTemporarySortIndex(UINT32_MAX);
     d3d12_rt.SetTemporarySRVDescriptorIndex(UINT32_MAX);
@@ -3523,7 +3530,7 @@ bool D3D12RenderTargetCache::PrepareDumpSourceDescriptors() {
   }
   current_temporary_descriptors_cpu_.clear();
   uint32_t rt_sort_index = 0;
-  for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+  for (const ResolveCopyDumpRectangle& rectangle : DumpRectangles()) {
     auto& d3d12_rt = *static_cast<D3D12RenderTarget*>(rectangle.render_target);
     if (d3d12_rt.temporary_sort_index() == UINT32_MAX) {
       d3d12_rt.SetTemporarySortIndex(rt_sort_index++);
@@ -3569,17 +3576,19 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
     D3D12SharedMemory& shared_memory, D3D12TextureCache& texture_cache) {
   assert_true(GetPath() == Path::kHostRenderTargets);
 
-  GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
-                                 dump_pitch, dump_rectangles_);
-  if (dump_rectangles_.empty()) {
+  if (!GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
+          dump_pitch, &dump_rectangles_)) {
+    XELOGE("Resolve ownership worklist capacity exceeded");
+    return false;
+  }
+  if (!dump_rectangles_.count) {
     return false;
   }
 
   // Everything that can fail has to be settled before the first dispatch is
   // encoded - falling back after that would resolve part of the range twice.
-  dump_invocations_.clear();
-  dump_invocations_.reserve(dump_rectangles_.size());
-  for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+  xe_gpu_worklist_reset(&dump_invocations_);
+  for (const ResolveCopyDumpRectangle& rectangle : DumpRectangles()) {
     RenderTargetKey rt_key =
         static_cast<D3D12RenderTarget*>(rectangle.render_target)->key();
     EdramDumpShaderKey pipeline_key;
@@ -3592,7 +3601,12 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
     if (!GetOrCreateDumpPipeline(pipeline_key)) {
       return false;
     }
-    dump_invocations_.emplace_back(rectangle, pipeline_key);
+    void* slot = xe_gpu_worklist_append(&dump_invocations_);
+    if (!slot) {
+      XELOGE("Resolve invocation worklist capacity exceeded");
+      return false;
+    }
+    new (slot) DumpInvocation(&rectangle, pipeline_key);
   }
 
   // Committing starting with the beginning of the potentially written extent,
@@ -3631,7 +3645,7 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
   } else {
     shared_memory.UseForWriting();
   }
-  for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+  for (const ResolveCopyDumpRectangle& rectangle : DumpRectangles()) {
     auto& d3d12_rt = *static_cast<D3D12RenderTarget*>(rectangle.render_target);
     command_processor_.PushTransitionBarrier(
         d3d12_rt.resource(),
@@ -3641,7 +3655,7 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
   }
 
   // Sort the invocations to reduce context and binding switches.
-  std::sort(dump_invocations_.begin(), dump_invocations_.end());
+  std::sort(DumpInvocations().begin(), DumpInvocations().end());
 
   // One destination and one rectangle for the whole resolve.
   uint32_t resolve_constants[kEdramDumpShaderPushConstantCount] = {};
@@ -3670,8 +3684,8 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
   bool pitches_set = false;
   bool resolve_constants_set = false;
   EdramDumpShaderPitches last_pitches;
-  for (const DumpInvocation& invocation : dump_invocations_) {
-    const ResolveCopyDumpRectangle& rectangle = invocation.rectangle;
+  for (const DumpInvocation& invocation : DumpInvocations()) {
+    const ResolveCopyDumpRectangle& rectangle = *invocation.rectangle;
     auto& d3d12_rt = *static_cast<D3D12RenderTarget*>(rectangle.render_target);
     RenderTargetKey rt_key = d3d12_rt.key();
     EdramDumpShaderKey pipeline_key = invocation.pipeline_key;
@@ -3835,9 +3849,12 @@ void D3D12RenderTargetCache::DumpRenderTargets(uint32_t dump_base,
   SCOPE_profile_cpu_f("gpu");
   assert_true(GetPath() == Path::kHostRenderTargets);
 
-  GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
-                                 dump_pitch, dump_rectangles_);
-  if (dump_rectangles_.empty()) {
+  if (!GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
+          dump_pitch, &dump_rectangles_)) {
+    XELOGE("Resolve ownership worklist capacity exceeded");
+    return;
+  }
+  if (!dump_rectangles_.count) {
     return;
   }
 
@@ -3850,9 +3867,8 @@ void D3D12RenderTargetCache::DumpRenderTargets(uint32_t dump_base,
   }
 
   TransitionEdramBuffer(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-  dump_invocations_.clear();
-  dump_invocations_.reserve(dump_rectangles_.size());
-  for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+  xe_gpu_worklist_reset(&dump_invocations_);
+  for (const ResolveCopyDumpRectangle& rectangle : DumpRectangles()) {
     auto& d3d12_rt = *static_cast<D3D12RenderTarget*>(rectangle.render_target);
     command_processor_.PushTransitionBarrier(
         d3d12_rt.resource(),
@@ -3868,11 +3884,17 @@ void D3D12RenderTargetCache::DumpRenderTargets(uint32_t dump_base,
     pipeline_key.is_depth = rt_key.is_depth;
     pipeline_key.source_scale_native = rt_key.scale_native;
     pipeline_key.native_layout = uint32_t(native_layout);
-    dump_invocations_.emplace_back(rectangle, pipeline_key);
+    void* slot = xe_gpu_worklist_append(&dump_invocations_);
+    if (!slot) {
+      XELOGE("Resolve invocation worklist capacity exceeded");
+      command_processor_.PopDebugMarker();
+      return;
+    }
+    new (slot) DumpInvocation(&rectangle, pipeline_key);
   }
 
   // Sort the invocations to reduce context and binding switches.
-  std::sort(dump_invocations_.begin(), dump_invocations_.end());
+  std::sort(DumpInvocations().begin(), DumpInvocations().end());
 
   // Dump the render targets.
   DeferredCommandList& command_list =
@@ -3889,8 +3911,8 @@ void D3D12RenderTargetCache::DumpRenderTargets(uint32_t dump_base,
   bool offsets_set = false;
   EdramDumpShaderOffsets last_offsets;
   EdramDumpShaderPitches last_pitches;
-  for (const DumpInvocation& invocation : dump_invocations_) {
-    const ResolveCopyDumpRectangle& rectangle = invocation.rectangle;
+  for (const DumpInvocation& invocation : DumpInvocations()) {
+    const ResolveCopyDumpRectangle& rectangle = *invocation.rectangle;
     auto& d3d12_rt = *static_cast<D3D12RenderTarget*>(rectangle.render_target);
     RenderTargetKey rt_key = d3d12_rt.key();
     EdramDumpShaderKey pipeline_key = invocation.pipeline_key;

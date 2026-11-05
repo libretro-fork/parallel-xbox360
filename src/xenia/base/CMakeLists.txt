@@ -15,6 +15,7 @@ target_include_directories(xenia-base PRIVATE "${PROJECT_SOURCE_DIR}/third_party
 target_sources(xenia-base PRIVATE "${PROJECT_SOURCE_DIR}/libretro/core_vblank.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_socket_worker.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_gpu_retire.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_gpu_worklist.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_gpu_spans.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_vk_heap.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_pause_gate.c"

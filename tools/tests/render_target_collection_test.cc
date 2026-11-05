@@ -28,6 +28,15 @@ class RenderTargetCollectionTest final : public RenderTargetCache {
   unsigned destroyed_ = 0, retired_ = 0, created_ = 0;
   xe_gpu_retire_queue retirement_ = {};
   static void Release(void* target) { delete static_cast<Target*>(target); }
+  void CollectReference(uint32_t base,uint32_t width,uint32_t rows,uint32_t pitch,
+                        std::vector<ResolveCopyDumpRectangle>& output) {
+    output.clear();
+    VisitResolveCopyRectangles(base,width,rows,pitch,
+        [](void* context,const ResolveCopyDumpRectangle* rectangle) -> bool {
+          static_cast<std::vector<ResolveCopyDumpRectangle>*>(context)->push_back(*rectangle);
+          return true;
+        },&output);
+  }
  public:
   RenderTargetCollectionTest(const RegisterFile& registers, const Memory& memory)
       : RenderTargetCache(registers,memory,nullptr,2,2) { InitializeCommon(); }
@@ -210,7 +219,7 @@ class RenderTargetCollectionTest final : public RenderTargetCache {
       info.height_div_8 = (i % 4 + 1) * 2;
       uint32_t base, width, rows, pitch;
       info.GetCopyEdramTileSpan(base,width,rows,pitch);
-      GetResolveCopyRectanglesToDump(base,width,rows,pitch,rectangles);
+      CollectReference(base,width,rows,pitch,rectangles);
       bool expected_native = !rectangles.empty();
       uint64_t tiles = 0;
       DirectResolveEligibility expected = rectangles.empty()
@@ -247,6 +256,58 @@ class RenderTargetCollectionTest final : public RenderTargetCache {
     xe_gpu_retire_collect(&retirement_,42);
     CHECK(destroyed_ == created_);
   }
+  void RunFixedResolveStorage() {
+    xe_gpu_worklist fixed = {}, tiny = {};
+    CHECK(xe_gpu_worklist_init(&fixed,kResolveWorkCapacity,
+                              sizeof(ResolveCopyDumpRectangle)));
+    CHECK(xe_gpu_worklist_init(&tiny,1,sizeof(ResolveCopyDumpRectangle)));
+    void* storage = fixed.data;
+    RenderTargetKey keys[2];
+    for (unsigned i=0;i<2;++i) {
+      keys[i].key = 0;
+      keys[i].pitch_tiles_at_32bpp = 32;
+      keys[i].base_tiles = i;
+      keys[i].scale_native = i;
+      CHECK(GetOrCreateRenderTarget(keys[i]));
+    }
+    ownership_ranges_.clear();
+    for (uint32_t tile=0;tile<xenos::kEdramTileCount;++tile)
+      ownership_ranges_.emplace(tile,OwnershipRange(tile+1,keys[tile&1],{},{}));
+    std::vector<ResolveCopyDumpRectangle> reference;
+    reference.reserve(kResolveWorkCapacity);
+    for (unsigned pass=0;pass<10000;++pass) {
+      uint32_t base = pass % xenos::kEdramTileCount;
+      uint32_t width = (pass/11)%32+1;
+      uint32_t rows = (pass/17)%32+1;
+      if (pass < 2) { base = pass ? xenos::kEdramTileCount-1 : 0; width=32; rows=64; }
+      CollectReference(base,width,rows,32,reference);
+      count_query_allocations = true;
+      bool ok = GetResolveCopyRectanglesToDump(base,width,rows,32,&fixed);
+      count_query_allocations = false;
+      CHECK(ok && !query_allocations && fixed.data == storage);
+      CHECK(fixed.count == reference.size() && fixed.count <= kResolveWorkCapacity);
+      if (pass < 2) CHECK(fixed.count == xenos::kEdramTileCount);
+      const auto* records = static_cast<const ResolveCopyDumpRectangle*>(fixed.data);
+      for (size_t i=0;i<fixed.count;++i) {
+        CHECK(records[i].render_target == reference[i].render_target);
+        CHECK(records[i].row_first == reference[i].row_first);
+        CHECK(records[i].rows == reference[i].rows);
+        CHECK(records[i].row_first_start == reference[i].row_first_start);
+        CHECK(records[i].row_last_end == reference[i].row_last_end);
+      }
+    }
+    CHECK(!GetResolveCopyRectanglesToDump(0,32,64,32,&tiny));
+    CHECK(tiny.failed && tiny.count == 1);
+    CHECK(GetResolveCopyRectanglesToDump(0,0,0,32,&tiny));
+    CHECK(!tiny.failed && !tiny.count);
+    xe_gpu_worklist_close(&tiny);
+    xe_gpu_worklist_close(&fixed);
+    ownership_ranges_.clear();
+    ownership_ranges_.emplace(0,OwnershipRange(xenos::kEdramTileCount,{},{},{}));
+    ClearCache();
+    xe_gpu_retire_collect(&retirement_,42);
+    CHECK(destroyed_ == created_);
+  }
 };
 } }
 int main() {
@@ -256,7 +317,9 @@ int main() {
   test.Run();
   test.RunReuse();
   test.RunResolveQueries();
+  test.RunFixedResolveStorage();
   std::puts("PASS: ownership/fence lifetime; 20000 moving EDRAM bases reuse four images without map growth; incompatible shapes remain distinct");
   std::puts("PASS: 10000 resolve cases match collected-rectangle semantics with zero query allocations");
+  std::puts("PASS: 10000 fixed-storage resolves match vector output; maximum EDRAM fragmentation/wrap, stable storage and overflow rejection");
   return 0;
 }

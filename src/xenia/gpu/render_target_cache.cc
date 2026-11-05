@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <new>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
@@ -1325,16 +1326,20 @@ void RenderTargetCache::GetHostDepthStoreRectangleInfo(
   group_count_y_out = (transfer_rectangle.height_pixels * pixel_size_y) >> 3;
 }
 
-void RenderTargetCache::GetResolveCopyRectanglesToDump(
+bool RenderTargetCache::GetResolveCopyRectanglesToDump(
     uint32_t base, uint32_t row_length, uint32_t rows, uint32_t pitch,
-    std::vector<ResolveCopyDumpRectangle>& rectangles_out) const {
-  rectangles_out.clear();
+    xe_gpu_worklist* rectangles_out) const {
+  if (!rectangles_out || !rectangles_out->data ||
+      rectangles_out->stride != sizeof(ResolveCopyDumpRectangle)) return false;
+  xe_gpu_worklist_reset(rectangles_out);
   VisitResolveCopyRectangles(base, row_length, rows, pitch,
       [](void* context, const ResolveCopyDumpRectangle* rectangle) -> bool {
-        static_cast<std::vector<ResolveCopyDumpRectangle>*>(context)
-            ->push_back(*rectangle);
+        void* slot = xe_gpu_worklist_append(static_cast<xe_gpu_worklist*>(context));
+        if (!slot) return false;
+        new (slot) ResolveCopyDumpRectangle(*rectangle);
         return true;
-      }, &rectangles_out);
+      }, rectangles_out);
+  return !rectangles_out->failed;
 }
 
 void RenderTargetCache::VisitResolveCopyRectangles(

@@ -121,6 +121,10 @@ VulkanRenderTargetCache::VulkanRenderTargetCache(
 VulkanRenderTargetCache::~VulkanRenderTargetCache() { Shutdown(true); }
 
 bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
+  if (!xe_gpu_worklist_init(&dump_rectangles_, kResolveWorkCapacity,
+          sizeof(ResolveCopyDumpRectangle)) ||
+      !xe_gpu_worklist_init(&dump_invocations_, kResolveWorkCapacity,
+          sizeof(DumpInvocation))) return false;
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
 
@@ -881,6 +885,8 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
 }
 
 void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
+  xe_gpu_worklist_close(&dump_invocations_);
+  xe_gpu_worklist_close(&dump_rectangles_);
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
@@ -3897,17 +3903,19 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
     }
   }
 
-  GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
-                                 dump_pitch, dump_rectangles_);
-  if (dump_rectangles_.empty()) {
+  if (!GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
+          dump_pitch, &dump_rectangles_)) {
+    XELOGE("Resolve ownership worklist capacity exceeded");
+    return false;
+  }
+  if (!dump_rectangles_.count) {
     return false;
   }
 
   // Every pipeline has to exist before anything is encoded - once the first
   // dispatch is in, falling back would resolve the same range twice.
-  dump_invocations_.clear();
-  dump_invocations_.reserve(dump_rectangles_.size());
-  for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+  xe_gpu_worklist_reset(&dump_invocations_);
+  for (const ResolveCopyDumpRectangle& rectangle : DumpRectangles()) {
     RenderTargetKey rt_key =
         static_cast<VulkanRenderTarget*>(rectangle.render_target)->key();
     EdramDumpShaderKey pipeline_key;
@@ -3920,7 +3928,12 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
     if (GetDumpPipeline(pipeline_key) == VK_NULL_HANDLE) {
       return false;
     }
-    dump_invocations_.emplace_back(rectangle, pipeline_key);
+    void* slot = xe_gpu_worklist_append(&dump_invocations_);
+    if (!slot) {
+      XELOGE("Resolve invocation worklist capacity exceeded");
+      return false;
+    }
+    new (slot) DumpInvocation(&rectangle, pipeline_key);
   }
 
   // A scaled destination is a window into the resolution-scaled buffer
@@ -4001,12 +4014,12 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
   }
 
   // Clear previously set temporary indices.
-  for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+  for (const ResolveCopyDumpRectangle& rectangle : DumpRectangles()) {
     static_cast<VulkanRenderTarget*>(rectangle.render_target)
         ->SetTemporarySortIndex(UINT32_MAX);
   }
   uint32_t rt_sort_index = 0;
-  for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+  for (const ResolveCopyDumpRectangle& rectangle : DumpRectangles()) {
     auto& vulkan_rt =
         *static_cast<VulkanRenderTarget*>(rectangle.render_target);
     RenderTargetKey rt_key = vulkan_rt.key();
@@ -4028,7 +4041,7 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
   }
 
   // Sort the invocations to reduce context and binding switches.
-  std::sort(dump_invocations_.begin(), dump_invocations_.end());
+  std::sort(DumpInvocations().begin(), DumpInvocations().end());
 
   // The resolve is one destination and one rectangle for every invocation.
   uint32_t resolve_push_constants[kEdramDumpShaderPushConstantCount];
@@ -4054,8 +4067,8 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
   EdramDumpShaderPitches last_pitches;
   EdramDumpShaderOffsets last_offsets;
   bool pitches_bound = false, offsets_bound = false;
-  for (const DumpInvocation& invocation : dump_invocations_) {
-    const ResolveCopyDumpRectangle& rectangle = invocation.rectangle;
+  for (const DumpInvocation& invocation : DumpInvocations()) {
+    const ResolveCopyDumpRectangle& rectangle = *invocation.rectangle;
     auto& vulkan_rt =
         *static_cast<VulkanRenderTarget*>(rectangle.render_target);
     RenderTargetKey rt_key = vulkan_rt.key();
@@ -4381,9 +4394,12 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
   SCOPE_profile_cpu_f("gpu");
   assert_true(GetPath() == Path::kHostRenderTargets);
 
-  GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
-                                 dump_pitch, dump_rectangles_);
-  if (dump_rectangles_.empty()) {
+  if (!GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
+          dump_pitch, &dump_rectangles_)) {
+    XELOGE("Resolve ownership worklist capacity exceeded");
+    return;
+  }
+  if (!dump_rectangles_.count) {
     return;
   }
 
@@ -4391,14 +4407,13 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
       "DumpRenderTargets (EDRAM Write): base tile %u", dump_base);
 
   // Clear previously set temporary indices.
-  for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+  for (const ResolveCopyDumpRectangle& rectangle : DumpRectangles()) {
     static_cast<VulkanRenderTarget*>(rectangle.render_target)
         ->SetTemporarySortIndex(UINT32_MAX);
   }
   // Gather all needed barriers and info needed to sort the invocations.
   UseEdramBuffer(EdramBufferUsage::kComputeWrite);
-  dump_invocations_.clear();
-  dump_invocations_.reserve(dump_rectangles_.size());
+  xe_gpu_worklist_reset(&dump_invocations_);
   constexpr VkPipelineStageFlags kRenderTargetDstStageMask =
       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
   constexpr VkAccessFlags kRenderTargetDstAccessMask =
@@ -4406,7 +4421,7 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
   constexpr VkImageLayout kRenderTargetNewLayout =
       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   uint32_t rt_sort_index = 0;
-  for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+  for (const ResolveCopyDumpRectangle& rectangle : DumpRectangles()) {
     auto& vulkan_rt =
         *static_cast<VulkanRenderTarget*>(rectangle.render_target);
     RenderTargetKey rt_key = vulkan_rt.key();
@@ -4433,11 +4448,17 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
     pipeline_key.is_depth = rt_key.is_depth;
     pipeline_key.source_scale_native = rt_key.scale_native;
     pipeline_key.native_layout = uint32_t(native_layout);
-    dump_invocations_.emplace_back(rectangle, pipeline_key);
+    void* slot = xe_gpu_worklist_append(&dump_invocations_);
+    if (!slot) {
+      XELOGE("Resolve invocation worklist capacity exceeded");
+      command_processor_.PopDebugMarker();
+      return;
+    }
+    new (slot) DumpInvocation(&rectangle, pipeline_key);
   }
 
   // Sort the invocations to reduce context and binding switches.
-  std::sort(dump_invocations_.begin(), dump_invocations_.end());
+  std::sort(DumpInvocations().begin(), DumpInvocations().end());
 
   // Dump the render targets.
   DeferredCommandBuffer& command_buffer =
@@ -4447,8 +4468,8 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
   EdramDumpShaderPitches last_pitches;
   EdramDumpShaderOffsets last_offsets;
   bool pitches_bound = false, offsets_bound = false;
-  for (const DumpInvocation& invocation : dump_invocations_) {
-    const ResolveCopyDumpRectangle& rectangle = invocation.rectangle;
+  for (const DumpInvocation& invocation : DumpInvocations()) {
+    const ResolveCopyDumpRectangle& rectangle = *invocation.rectangle;
     auto& vulkan_rt =
         *static_cast<VulkanRenderTarget*>(rectangle.render_target);
     RenderTargetKey rt_key = vulkan_rt.key();

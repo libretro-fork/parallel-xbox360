@@ -9,6 +9,7 @@
 
 #ifndef XENIA_GPU_RENDER_TARGET_CACHE_H_
 #define XENIA_GPU_RENDER_TARGET_CACHE_H_
+#include "libretro/core_gpu_worklist.h"
 
 #include <cmath>
 #include <cstdint>
@@ -675,9 +676,12 @@ class RenderTargetCache {
   // render target texture rectangle - textures may have any pitch they need)
   // from ResolveInfo::GetCopyEdramTileSpan and render targets owning them to
   // rectangles_out.
-  void GetResolveCopyRectanglesToDump(
+  // The wrapped physical extents are disjoint. Every emitted rectangle owns
+  // at least one tile, so together they cannot outnumber the EDRAM tiles.
+  enum { kResolveWorkCapacity = xenos::kEdramTileCount };
+  bool GetResolveCopyRectanglesToDump(
       uint32_t base, uint32_t row_length, uint32_t rows, uint32_t pitch,
-      std::vector<ResolveCopyDumpRectangle>& rectangles_out) const;
+      xe_gpu_worklist* rectangles_out) const;
   // The visitor borrows one stack rectangle at a time; false stops the walk.
   void VisitResolveCopyRectangles(
       uint32_t base, uint32_t row_length, uint32_t rows, uint32_t pitch,

@@ -17,6 +17,8 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <span>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -467,9 +469,9 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   };
 
   struct DumpInvocation {
-    ResolveCopyDumpRectangle rectangle;
+    const ResolveCopyDumpRectangle* rectangle;
     EdramDumpShaderKey pipeline_key;
-    DumpInvocation(const ResolveCopyDumpRectangle& rectangle,
+    DumpInvocation(const ResolveCopyDumpRectangle* rectangle,
                    const EdramDumpShaderKey& pipeline_key)
         : rectangle(rectangle), pipeline_key(pipeline_key) {}
     bool operator<(const DumpInvocation& other_invocation) const {
@@ -478,24 +480,37 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
       if (pipeline_key != other_invocation.pipeline_key) {
         return pipeline_key < other_invocation.pipeline_key;
       }
-      assert_not_null(rectangle.render_target);
+      assert_not_null(rectangle->render_target);
       uint32_t render_target_index =
-          static_cast<const D3D12RenderTarget*>(rectangle.render_target)
+          static_cast<const D3D12RenderTarget*>(rectangle->render_target)
               ->temporary_sort_index();
       const ResolveCopyDumpRectangle& other_rectangle =
-          other_invocation.rectangle;
+          *other_invocation.rectangle;
       uint32_t other_render_target_index =
           static_cast<const D3D12RenderTarget*>(other_rectangle.render_target)
               ->temporary_sort_index();
       if (render_target_index != other_render_target_index) {
         return render_target_index < other_render_target_index;
       }
-      if (rectangle.row_first != other_rectangle.row_first) {
-        return rectangle.row_first < other_rectangle.row_first;
+      if (rectangle->row_first != other_rectangle.row_first) {
+        return rectangle->row_first < other_rectangle.row_first;
       }
-      return rectangle.row_first_start < other_rectangle.row_first_start;
+      return rectangle->row_first_start < other_rectangle.row_first_start;
     }
   };
+  std::span<ResolveCopyDumpRectangle> DumpRectangles() {
+    return {static_cast<ResolveCopyDumpRectangle*>(dump_rectangles_.data),
+            dump_rectangles_.count};
+  }
+  std::span<DumpInvocation> DumpInvocations() {
+    return {static_cast<DumpInvocation*>(dump_invocations_.data),
+            dump_invocations_.count};
+  }
+  static_assert(std::is_trivially_destructible<ResolveCopyDumpRectangle>::value);
+  static_assert(std::is_trivially_destructible<DumpInvocation>::value);
+  static_assert(alignof(ResolveCopyDumpRectangle) <= alignof(std::max_align_t));
+  static_assert(alignof(DumpInvocation) <= alignof(std::max_align_t));
+  static_assert(sizeof(DumpInvocation) < sizeof(ResolveCopyDumpRectangle) + sizeof(EdramDumpShaderKey));
 
   // Returns:
   // - A pointer to 1 pipeline for writing color or depth (or stencil via
@@ -630,8 +645,8 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   std::vector<TransferInvocation> current_transfer_invocations_;
 
   // Temporary storage for DumpRenderTargets.
-  std::vector<ResolveCopyDumpRectangle> dump_rectangles_;
-  std::vector<DumpInvocation> dump_invocations_;
+  xe_gpu_worklist dump_rectangles_ = {};
+  xe_gpu_worklist dump_invocations_ = {};
 
   ID3D12RootSignature* dump_root_signature_color_ = nullptr;
   ID3D12RootSignature* dump_root_signature_depth_ = nullptr;
