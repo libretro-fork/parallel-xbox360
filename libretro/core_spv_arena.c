@@ -43,6 +43,7 @@ typedef struct payload_pool {
 typedef struct xe_spv_object_state {
    object_pool pool[2];
    payload_pool payloads;
+   xe_spv_constant_cache constants;
 } xe_spv_object_state;
 
 enum { PAYLOAD_PAGE_BYTES = 16384 };
@@ -60,6 +61,26 @@ static xe_spv_object_state *object_state(xe_spv_arena *arena)
       if (arena->objects) memset(arena->objects, 0, sizeof(*arena->objects));
    }
    return arena->objects;
+}
+xe_spv_constant_cache *xe_spv_arena_constants(xe_spv_arena *arena, size_t extra)
+{
+   xe_spv_object_state *state;
+   xe_spv_constant_cache *cache;
+   if (!arena->in_use || !(state = object_state(arena))) return NULL;
+   cache = &state->constants;
+   if (!cache->epoch) xe_spv_constant_cache_reset(cache);
+   if (extra > (size_t)-1 - cache->count ||
+       !xe_spv_constant_cache_reserve(cache, cache->count + extra,
+          XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE)) return NULL;
+   return cache;
+}
+int xe_spv_arena_reserve_constants(xe_spv_arena *arena, size_t count)
+{
+   xe_spv_object_state *state = object_state(arena);
+   if (!state) return 0;
+   if (!state->constants.epoch) xe_spv_constant_cache_reset(&state->constants);
+   return xe_spv_constant_cache_reserve(&state->constants, count,
+         XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
 }
 static payload_page *payload_grow(payload_pool *pool, size_t minimum)
 {
@@ -303,6 +324,7 @@ static void objects_close(xe_spv_arena *arena)
       UNPOISON(payload->data, payload->capacity);
       XE_SPV_ARENA_FREE(payload);
    }
+   XE_SPV_ARENA_FREE(arena->objects->constants.slots);
    XE_SPV_ARENA_FREE(arena->objects);
    arena->objects = NULL;
 }
@@ -412,6 +434,7 @@ static int arena_end(xe_spv_arena *arena, void (*destroy)(void *record), int pay
    }
    xe_spv_index_reset(&arena->index);
    payloads_end(arena);
+   if (arena->objects) xe_spv_constant_cache_reset(&arena->objects->constants);
    arena->in_use = 0;
    arena->cursor = NULL;
    return 1;

@@ -41,6 +41,39 @@ struct Worker {
   }
 };
 int main(int argc, char** argv) {
+  {
+    const size_t before = xe_spv_test_pages();
+    {
+      spv::InstructionArena workspace(2048);
+      size_t warmed = 0;
+      for (unsigned round = 0; round < 20; ++round) {
+        spv::Builder builder(spv::Spv_1_3, 0, nullptr, workspace.get());
+        auto type = builder.makeUintType(32);
+        for (unsigned i = 0; i < 192; ++i) {
+          auto constant = builder.makeUintConstant(i);
+          CHECK(builder.getTypeId(constant) == type);
+          CHECK(builder.makeUintConstant(i) == constant);
+        }
+        if (!round) {
+          // Capacity is exactly at its 75% publication limit. Failing growth
+          // must leave the existing keys intact and permit a later retry.
+          auto* cache = xe_spv_arena_constants(workspace.get(), 0);
+          CHECK(cache && cache->count == 192 && cache->capacity == 256);
+          xe_spv_test_page_fail_after(xe_spv_test_page_calls());
+          bool failed = false;
+          try { builder.makeUintConstant(192); } catch (const std::bad_alloc&) { failed = true; }
+          xe_spv_test_page_fail_after(size_t(-1));
+          CHECK(failed && cache->count == 192);
+          CHECK(builder.makeUintConstant(0));
+        }
+        CHECK(builder.getTypeId(builder.makeUintConstant(192)) == type);
+        if (round == 1) warmed = xe_spv_test_page_calls();
+        if (round > 1) CHECK(warmed == xe_spv_test_page_calls());
+      }
+    }
+    CHECK(xe_spv_test_pages() == before);
+    std::puts("PASS: reusable constant-cache epochs, stale-record exclusion and growth failure/retry");
+  }
   xe_spv_arena arena = {};
   CHECK(xe_spv_arena_reserve(&arena, 512));
   size_t allocations = (arena.reserved_records / XE_SPV_RECORDS_PER_PAGE);

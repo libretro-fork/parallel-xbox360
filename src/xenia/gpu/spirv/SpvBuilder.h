@@ -976,8 +976,9 @@ public:
  protected:
     Id findScalarConstant(Op typeClass, Op opcode, Id typeId, unsigned value);
     Id findScalarConstant(Op typeClass, Op opcode, Id typeId, unsigned v1, unsigned v2);
-    Id findCompositeConstant(Op typeClass, Op opcode, Id typeId, std::span<const Id> comps, size_t numMembers);
-    Id findStructConstant(Id typeId, std::span<const Id> comps);
+    Id findConstant(Op opcode, Id typeId, xe_spv_word_view words);
+    static int equalConstant(const void* record, const xe_spv_constant_key* key);
+    void publishConstant(Instruction* constant, bool cache);
     Id collapseAccessChain();
     void remapDynamicSwizzle();
     void transferAccessChainSwizzle(bool dynamic);
@@ -1060,16 +1061,10 @@ public:
 
     // not output, internally used for quick & dirty canonical (unique) creation
 
-    // map type opcodes to constant inst.
-    std::unordered_map<unsigned int, std::vector<Instruction*>> groupedConstants;
-    // map struct-id to constant instructions
-    std::unordered_map<unsigned int, std::vector<Instruction*>> groupedStructConstants;
     // map type opcodes to type instructions
     std::unordered_map<unsigned int, std::vector<Instruction*>> groupedTypes;
     // map type opcodes to debug type instructions
     std::unordered_map<unsigned int, std::vector<Instruction*>> groupedDebugTypes;
-    // list of OpConstantNull instructions
-    std::vector<Instruction*> nullConstants;
 
     // Track which types have explicit layouts, to avoid reusing in storage classes without layout.
     // Currently only tracks array types.

@@ -1,0 +1,102 @@
+Retained exact-key shader constant cache, 2026-11-05
+Parent: complete 985d56eb9973e7cb8caa4f2029a7d44cde9f5161 sources.
+Windows x64 GCC 16.2 -O2; native MSVC and WSL ASan/UBSan checked separately.
+
+Two unordered maps of instruction vectors and the null-constant vector are gone.
+One exclusive C89 open-addressed table indexes regular scalar, bool, composite,
+struct and null constants. Slots store only a borrowed record pointer, 32-bit hash
+and epoch (16 bytes on measured x64). Exact comparison checks opcode, type ID,
+operand count and raw operand words after a hash match. Operand bits distinguish
+signed zero and NaN payloads; 64-bit high words and composite member order remain
+part of the key. Words remain owned by immutable instruction operands, with no
+key-payload allocation/copy. Instruction/global output order is unchanged.
+
+Specialization constants bypass canonical lookup/insertion to keep unique IDs.
+An old struct lookup ignored opcode and could return an earlier specialization
+constant as a regular constant. The new exact lookup fixes this; the comparison
+script reproduces the old alias and verifies the corrected separate IDs. Ordinary
+fixture bytes and actual game translation bytes below remain identical. Folded
+replicated composites reserve only their encoded member count, not the expanded
+caller member count.
+
+A workspace retains table high-water capacity in its C arena state. Cold x64
+compiler setup prefaults 256 slots (4 KiB), enough for 192 regular constants at
+the 75% load limit. Larger modules grow with checked allocation. Growth rehashes
+only slot metadata, never operands. Failed growth retains all existing entries;
+publication reserves first, completes the throwing ID map, then inserts/appends
+without allocation. Module end advances the epoch; no reset reads retired record
+payloads. Epoch wrap clears slot metadata. Arena close frees the table through
+the same allocator as growth. Lookup is single-compiling-owner, without locks,
+atomics or release profiling/logging counters. Other type/debug maps and shader
+metadata still allocate; this does not eradicate all runtime allocation.
+
+GCC x64 Builder 2000 -> 1864 bytes; Instruction 64, Block 136, Function 136 and
+Module 88 unchanged. The C arena object state gains 32 bytes. Reusable storage
+trades a larger retained footprint for eliminating per-module constant-container
+allocation and repeated linear scans. Retained capacity is not a memory leak.
+
+Construction workload: 16/256/2048 distinct integer and float values plus pair
+composites (40/640/5120 total constants), then three complete repeated-lookup
+passes. Counted construction includes all builder cleanup, excludes serialization
+and file I/O. A warm untimed dump writes each module for exact byte comparison.
+Seven alternating quiet parent/current pairs after all compilers stopped. Each
+revision uses its own complete C/IR source snapshot and the same typed fixture.
+All C++ new and C operand, arena, index, plan and output allocations are hooked;
+allocator headers/retained free blocks and driver memory are excluded. Tracked
+live storage returns to the initial state at close; workspace high-water memory
+stays constant across repeats.
+
+constants/revision / modules / calls / requested bytes / retained / peak / ms
+40, current     modules=1000 calls=18000 requested=2112000 retained=46388 peak=48500 ms=2.933 (2.874..2.982)
+40, parent      modules=1000 calls=36000 requested=2952000 retained=42260 peak=44948 ms=7.679 (7.507..8.002)
+640, current    modules=1000 calls=18000 requested=2112000 retained=150540 peak=152652 ms=41.328 (41.162..42.540)
+640, parent     modules=1000 calls=48000 requested=12552000 retained=134124 peak=142092 ms=1094.562 (1090.582..1105.756)
+5120, current   modules=100 calls=1800 requested=211200 retained=920148 peak=922260 ms=35.836 (35.626..36.639)
+5120, parent    modules=100 calls=5700 requested=8423200 retained=789044 peak=836436 ms=6742.570 (6726.040..6797.861)
+
+The medians are about 2.62x/26.48x/188.15x faster for these deliberately
+constant-heavy synthetic construction/lookup workloads. This is not a claim
+about overall translation, driver compilation, gameplay, FPS or stutter. Current
+allocation requests are 18 per module versus 36/48/57 (50%/62.5%/68.42% fewer).
+The largest requested-byte reduction is 97.49%. Other allocations remain.
+
+Retained bytes increase by 4128/16416/131104: 4/16/128 KiB slot storage plus the
+32-byte state. Peak tracked storage also increases by 3552/10560/85824 bytes.
+These tradeoffs are explicit; no RSS/cache-miss/register-spill improvement has
+been measured. Serialization throughput was not separately remeasured here.
+
+Validation:
+- Full Windows Make -j5, native MSVC /TC C89-shaped cache/storage and typed checks.
+- C89 strict/pedantic unit: forced hash collisions and wraparound probes, failed
+  growth and overflow requests, epoch wrap, 80000 warm inserts without allocation.
+- Actual typed arena: 20 module leases exclude stale records, fail growth at
+  the 192-entry limit and retry safely; later leases need no new table pages.
+- Exact bool/type/32-/64-bit/NaN/signed-zero/composite-order/null/specialization
+  fixtures. 616 ordinary bytes match the old source snapshot; the 756-byte fixed
+  specialization case is tested separately because the old behavior is wrong.
+- Complete WSL ASan/UBSan suite: 5248 standard/wide helper modules, source/views,
+  specialization and linkage cases, constructor/publication/owner faults and
+  expected failures on retired record/object/payload access.
+- All 18432 native MSVC geometry variants; 109668864 bytes retain golden SHA256
+  427B071C7E7868566596FF55270BBCA9AAB31F54C714CA552E928DFE349E69E0.
+- Actual rebuilt Make objects: 1410 Tekken translations (2 control-flow cases),
+  81581628 bytes; 210 Tomb Raider translations (96 control-flow cases), 93646888
+  bytes. Both match existing reference outputs exactly. User-local shader-cache
+  inputs are not distributed in the repository or mailbox patch.
+- No frontend/game/driver launched; installed DLL untouched. Audio cadence,
+  presentation, guest timing, texture-watch and shutdown behavior are unchanged.
+  ARM/device-runtime behavior and overall game performance remain unmeasured.
+
+Reproduce key/output/old-bug checks:
+ sh tools/tests/run_spv_constant_compare.sh
+Optionally set BASELINE_ROOT to a complete parent archive and SANITIZER as desired.
+Native suite: tools/tests/run_spv_output_tests.cmd from an x64 VS developer prompt.
+Full sanitizer/output suite: tools/tests/run_spv_output_tests.sh with the documented
+baseline archive, TEST_BUILD_DIR, SANITIZER and SPIRV_VALIDATOR environment.
+Reproduce construction with tools/tests/run_spv_binary_bench.sh and:
+ BASELINE_ROOT=<complete 985d56eb9 archive>
+ CAPTURE_OPERANDS=1
+ TEST_SOURCE=tools/tests/core_spv_constant_bench.cc
+After compilation, alternate variants 0/4/5 of parent/current executables in seven
+quiet pairs and compare module files. The largest uses 100 modules/sample; the
+other cases use 1000. Output timing is not included in these construction numbers.

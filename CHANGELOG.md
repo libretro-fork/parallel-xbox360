@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Shader constant lookup now uses a retained C89 exact-key table, removing two maps of vectors, the null-constant vector, and repeated linear scans. Keys borrow existing operand words; module resets invalidate them by epoch. Compiler workspaces prefault 4 KiB and retain larger checked capacity, so retained metadata can increase. Regular struct constants no longer accidentally reuse specialization IDs. Cached game shader bytes and performance/memory tradeoffs are tested separately; audio and presentation scheduling are unchanged.
+
 - Shader linkage spelling now borrows the existing module-owned name instruction instead of allocating and copying a second prefix string. Counted output preserves import/export/ODR names and padding even after caller text is overwritten. Function records shrink from 152 to 136 bytes on measured GCC x64 builds; no audio or presentation scheduling changes.
 
 - Shader function ownership now uses a C89 head/tail chain instead of a vector, removing ownership-array allocation and growth copies. Links reuse the inline function header's spare pointer slot; emission and post-processing keep creation order. Removed an unused per-function precision set, including its empty-tree allocation on MSVC; actual parameter decorations are still emitted. Function records shrink from 208 to 152 bytes on measured GCC x64 builds. Construction, serialization and retained-memory measurements are recorded separately; the working texture-watch fix and audio schedule are unchanged.

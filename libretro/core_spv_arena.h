@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <retro_inline.h>
 #include "core_spv_index.h"
+#include "core_spv_constant_cache.h"
 #if defined(__SANITIZE_ADDRESS__)
 #define XE_SPV_ARENA_ASAN 1
 #elif defined(__has_feature)
@@ -53,6 +54,10 @@ void xe_spv_arena_retire(void *record);
 /* Payload workspace remains exclusive to the same active module lease. The
  * resize callback may extend its latest live allocation without moving words. */
 int xe_spv_arena_reserve_payloads(xe_spv_arena *arena, size_t bytes);
+/* Borrowed only for this module lease. extra reserves publication slots without
+ * copying operands; capacity survives subsequent leases until arena close. */
+xe_spv_constant_cache *xe_spv_arena_constants(xe_spv_arena *arena, size_t extra);
+int xe_spv_arena_reserve_constants(xe_spv_arena *arena, size_t count);
 void *xe_spv_arena_record_owner(const void *record, uint32_t offset);
 void *xe_spv_arena_payload_realloc(void *context, void *old, size_t old_bytes, size_t bytes);
 /* Checks live instruction slots without reading candidate payload bytes. */

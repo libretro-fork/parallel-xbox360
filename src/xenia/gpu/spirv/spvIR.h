@@ -49,6 +49,7 @@
 
 #include "spirv.hpp11"
 #include "libretro/core_spv_operands.h"
+#include "libretro/core_spv_words.h"
 #include "libretro/core_spv_binary.h"
 #include "libretro/core_spv_size.h"
 #include "libretro/core_spv_plan.h"
@@ -236,6 +237,9 @@ public:
         return (int)operands.count;
     }
     Id getResultId() const { return resultId; }
+    xe_spv_word_view getOperandsView() const {
+        return xe_spv_words_view(xe_spv_operands_const_words(&operands), operands.count);
+    }
     Id getTypeId() const { return typeId; }
     Id getIdOperand(int op) const {
         assert(xe_spv_operands_is_id(&operands, op));
@@ -664,6 +668,11 @@ public:
         return xe_spv_arena_owns_record(arena, instruction) != 0;
     }
     void forgetInstruction(Id id) { xe_spv_index_unmap(&arena->index, id); }
+    xe_spv_constant_cache* constantCache(size_t extra = 0) {
+        xe_spv_constant_cache* cache = xe_spv_arena_constants(arena, extra);
+        if (!cache) throw std::bad_alloc();
+        return cache;
+    }
     void mapInstruction(Instruction *instruction)
     {
         if (!xe_spv_index_set(&arena->index, instruction->getResultId(), instruction))

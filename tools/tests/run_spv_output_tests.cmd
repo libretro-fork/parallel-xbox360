@@ -5,6 +5,10 @@ for %%R in ("%~dp0..\..") do set ROOT=%%~fR
 pushd "%ROOT%"
 set OUT=build\tests\spv-output-msvc
 if not exist %OUT% mkdir %OUT%
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_constant_cache_test.c /Fo%OUT%\constant-unit.obj /Fe%OUT%\constant-unit.exe
+if errorlevel 1 goto fail
+%OUT%\constant-unit.exe
+if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_payload_test.c /Fo%OUT%\payload-unit.obj /Fe%OUT%\payload-unit.exe
 if errorlevel 1 goto fail
 %OUT%\payload-unit.exe
@@ -86,6 +90,10 @@ echo PASS: native MSVC borrowed inputs and unrelated access-chain state
 cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_linkage_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\linkage.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
 if errorlevel 1 goto fail
 %OUT%\linkage.exe %OUT%\linkage.bin
+if errorlevel 1 goto fail
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_constant_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\constant.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+if errorlevel 1 goto fail
+%OUT%\constant.exe %OUT%\constant.bin 1
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /I. /FItools/tests/core_spv_arena_test_alloc.h /c libretro/core_spv_operands.c /Fo%OUT%\operands-fault.obj
 if errorlevel 1 goto fail
