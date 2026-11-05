@@ -380,7 +380,8 @@ void DecanonicalizeSample(SpirvBuilder& builder, spv::Id type_uint,
 
 bool BuildEdramTransferShaderSpirv(
     EdramTransferShaderKey key, const EdramTransferShaderOptions& options,
-    xe_spv_binary& shader_code) {
+    xe_spv_binary& shader_code,
+    xe_spv_arena* instruction_arena) {
   xe_spv_binary_reset(&shader_code);
   // At most four push constants or color/phi constituents.
   static_assert(size_t(kEdramTransferUsedPushConstantDwordCount) <= size_t(XE_SPV_HELPER_WORD_CAPACITY));
@@ -389,7 +390,7 @@ bool BuildEdramTransferShaderSpirv(
   const uint32_t coordinate_channels[2] = {0, 1};
   SpirvBuilder builder(options.spirv_version,
                        (SpirvShaderTranslator::kSpirvMagicToolId << 16) | 1,
-                       nullptr);
+                       nullptr, instruction_arena);
   spv::Id ext_inst_glsl_std_450 = builder.import("GLSL.std.450");
   builder.addCapability(spv::CapabilityShader);
   builder.setMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);

@@ -42,7 +42,7 @@ spv::Id SpirvShaderTranslator::PreClampedFloat32To7e3(
   // denormal_biased_f32 = (f32 & 0x7FFFFF) | 0x800000
   spv::Id denormal_biased_f32;
   {
-    spv::Instruction* denormal_insert_instruction = new spv::Instruction(
+    spv::Instruction* denormal_insert_instruction = builder.createInstruction(
         builder.getUniqueId(), type_uint, spv::OpBitFieldInsert);
     denormal_insert_instruction->addIdOperand(f32_scalar);
     denormal_insert_instruction->addIdOperand(builder.makeUintConstant(1));
@@ -57,7 +57,7 @@ spv::Id SpirvShaderTranslator::PreClampedFloat32To7e3(
   spv::Id denormal_biased_f32_shift_amount;
   {
     spv::Instruction* denormal_shift_amount_instruction =
-        new spv::Instruction(builder.getUniqueId(), type_uint, spv::OpExtInst);
+        builder.createInstruction(builder.getUniqueId(), type_uint, spv::OpExtInst);
     denormal_shift_amount_instruction->addIdOperand(ext_inst_glsl_std_450);
     denormal_shift_amount_instruction->addImmediateOperand(GLSLstd450UMin);
     denormal_shift_amount_instruction->addIdOperand(builder.createBinOp(
@@ -122,7 +122,7 @@ spv::Id SpirvShaderTranslator::UnclampedFloat32To7e3(
 
   {
     spv::Instruction* clamp_instruction =
-        new spv::Instruction(builder.getUniqueId(), type_float, spv::OpExtInst);
+        builder.createInstruction(builder.getUniqueId(), type_float, spv::OpExtInst);
     clamp_instruction->addIdOperand(ext_inst_glsl_std_450);
     clamp_instruction->addImmediateOperand(GLSLstd450NClamp);
     clamp_instruction->addIdOperand(f32_scalar);
@@ -162,7 +162,7 @@ spv::Id SpirvShaderTranslator::Float7e3To32(SpirvBuilder& builder,
   spv::Id denormal_mantissa_msb;
   {
     spv::Instruction* denormal_mantissa_msb_instruction =
-        new spv::Instruction(builder.getUniqueId(), type_int, spv::OpExtInst);
+        builder.createInstruction(builder.getUniqueId(), type_int, spv::OpExtInst);
     denormal_mantissa_msb_instruction->addIdOperand(ext_inst_glsl_std_450);
     denormal_mantissa_msb_instruction->addImmediateOperand(GLSLstd450FindUMsb);
     denormal_mantissa_msb_instruction->addIdOperand(f10_mantissa);
@@ -210,7 +210,7 @@ spv::Id SpirvShaderTranslator::Float7e3To32(SpirvBuilder& builder,
   // Bias the exponent and construct the build the float32 number.
   spv::Id f32_shifted;
   {
-    spv::Instruction* f32_insert_instruction = new spv::Instruction(
+    spv::Instruction* f32_insert_instruction = builder.createInstruction(
         builder.getUniqueId(), type_uint, spv::OpBitFieldInsert);
     f32_insert_instruction->addIdOperand(f32_mantissa);
     f32_insert_instruction->addIdOperand(
@@ -258,7 +258,7 @@ spv::Id SpirvShaderTranslator::PreClampedDepthTo20e4(
   // denormal_biased_f32 = (f32 & 0x7FFFFF) | 0x800000
   spv::Id denormal_biased_f32;
   {
-    spv::Instruction* denormal_insert_instruction = new spv::Instruction(
+    spv::Instruction* denormal_insert_instruction = builder.createInstruction(
         builder.getUniqueId(), type_uint, spv::OpBitFieldInsert);
     denormal_insert_instruction->addIdOperand(f32_scalar);
     denormal_insert_instruction->addIdOperand(builder.makeUintConstant(1));
@@ -273,7 +273,7 @@ spv::Id SpirvShaderTranslator::PreClampedDepthTo20e4(
   spv::Id denormal_biased_f32_shift_amount;
   {
     spv::Instruction* denormal_shift_amount_instruction =
-        new spv::Instruction(builder.getUniqueId(), type_uint, spv::OpExtInst);
+        builder.createInstruction(builder.getUniqueId(), type_uint, spv::OpExtInst);
     denormal_shift_amount_instruction->addIdOperand(ext_inst_glsl_std_450);
     denormal_shift_amount_instruction->addImmediateOperand(GLSLstd450UMin);
     denormal_shift_amount_instruction->addIdOperand(builder.createBinOp(
@@ -355,7 +355,7 @@ spv::Id SpirvShaderTranslator::Depth20e4To32(SpirvBuilder& builder,
   spv::Id denormal_mantissa_msb;
   {
     spv::Instruction* denormal_mantissa_msb_instruction =
-        new spv::Instruction(builder.getUniqueId(), type_int, spv::OpExtInst);
+        builder.createInstruction(builder.getUniqueId(), type_int, spv::OpExtInst);
     denormal_mantissa_msb_instruction->addIdOperand(ext_inst_glsl_std_450);
     denormal_mantissa_msb_instruction->addImmediateOperand(GLSLstd450FindUMsb);
     denormal_mantissa_msb_instruction->addIdOperand(f24_mantissa);
@@ -404,7 +404,7 @@ spv::Id SpirvShaderTranslator::Depth20e4To32(SpirvBuilder& builder,
   // Bias the exponent and construct the build the float32 number.
   spv::Id f32_shifted;
   {
-    spv::Instruction* f32_insert_instruction = new spv::Instruction(
+    spv::Instruction* f32_insert_instruction = builder.createInstruction(
         builder.getUniqueId(), type_uint, spv::OpBitFieldInsert);
     f32_insert_instruction->addIdOperand(f32_mantissa);
     f32_insert_instruction->addIdOperand(
@@ -498,7 +498,7 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
                                      spv::SelectionControlDontFlattenMask);
       {
         std::unique_ptr<spv::Instruction> rt_0_written_branch_conditional_op =
-            std::make_unique<spv::Instruction>(spv::OpBranchConditional);
+            builder_->makeInstruction(spv::OpBranchConditional);
         rt_0_written_branch_conditional_op->addIdOperand(rt_0_written);
         rt_0_written_branch_conditional_op->addIdOperand(
             block_rt_0_alpha_tests_rt_written.getId());
@@ -1219,7 +1219,7 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
               {
                 std::unique_ptr<spv::Instruction>
                     result_composite_construct_op =
-                        std::make_unique<spv::Instruction>(
+                        builder_->makeInstruction(
                             builder_->getUniqueId(), type_float4_,
                             spv::OpCompositeConstruct);
                 result_composite_construct_op->addIdOperand(result_color);
@@ -1287,7 +1287,7 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
         color_rgb = if_gamma.createMergePhi(color_rgb_gamma, color_rgb);
         {
           std::unique_ptr<spv::Instruction> color_rgba_shuffle_op =
-              std::make_unique<spv::Instruction>(
+              builder_->makeInstruction(
                   builder_->getUniqueId(), type_float4_, spv::OpVectorShuffle);
           color_rgba_shuffle_op->addIdOperand(color_rgb);
           color_rgba_shuffle_op->addIdOperand(color);
@@ -2533,7 +2533,7 @@ void SpirvShaderTranslator::FSI_DepthStencilTest(
                                      spv::SelectionControlDontFlattenMask);
       {
         std::unique_ptr<spv::Instruction> stencil_op_switch_op =
-            std::make_unique<spv::Instruction>(spv::OpSwitch);
+            builder_->makeInstruction(spv::OpSwitch);
         stencil_op_switch_op->addIdOperand(stencil_op);
         // Make keep the default.
         stencil_op_switch_op->addIdOperand(block_stencil_op_keep.getId());
@@ -3003,7 +3003,7 @@ std::array<spv::Id, 2> SpirvShaderTranslator::FSI_ClampAndPackColor(
       spv::Id color_gamma;
       {
         std::unique_ptr<spv::Instruction> color_gamma_composite_construct_op =
-            std::make_unique<spv::Instruction>(builder_->getUniqueId(),
+            builder_->makeInstruction(builder_->getUniqueId(),
                                                type_float4_,
                                                spv::OpCompositeConstruct);
         color_gamma_composite_construct_op->addIdOperand(rgb_gamma);
@@ -3394,7 +3394,7 @@ spv::Id SpirvShaderTranslator::FSI_ApplyColorBlendFactor(
                                  spv::SelectionControlDontFlattenMask);
   {
     std::unique_ptr<spv::Instruction> factor_switch_op =
-        std::make_unique<spv::Instruction>(spv::OpSwitch);
+        builder_->makeInstruction(spv::OpSwitch);
     factor_switch_op->addIdOperand(factor);
     // Make one the default factor.
     factor_switch_op->addIdOperand(block_factor_one.getId());
@@ -3583,7 +3583,7 @@ spv::Id SpirvShaderTranslator::FSI_ApplyAlphaBlendFactor(
                                  spv::SelectionControlDontFlattenMask);
   {
     std::unique_ptr<spv::Instruction> factor_switch_op =
-        std::make_unique<spv::Instruction>(spv::OpSwitch);
+        builder_->makeInstruction(spv::OpSwitch);
     factor_switch_op->addIdOperand(factor);
     // Make one the default factor.
     factor_switch_op->addIdOperand(block_factor_one.getId());
@@ -3757,7 +3757,7 @@ spv::Id SpirvShaderTranslator::FSI_BlendColorOrAlphaWithUnclampedResult(
                                  spv::SelectionControlDontFlattenMask);
   {
     std::unique_ptr<spv::Instruction> equation_switch_op =
-        std::make_unique<spv::Instruction>(spv::OpSwitch);
+        builder_->makeInstruction(spv::OpSwitch);
     equation_switch_op->addIdOperand(equation);
     // Make addition the default.
     equation_switch_op->addIdOperand(block_equation_add.getId());

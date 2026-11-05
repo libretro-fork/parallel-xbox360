@@ -28,7 +28,7 @@ spv::Id SpirvBuilder::createQuadOp(spv::Op op_code, spv::Id type_id,
                                 std::vector<spv::Id>());
   }
   std::unique_ptr<spv::Instruction> op =
-      std::make_unique<spv::Instruction>(getUniqueId(), type_id, op_code);
+      makeInstruction(getUniqueId(), type_id, op_code);
   op->addIdOperand(operand1);
   op->addIdOperand(operand2);
   op->addIdOperand(operand3);
@@ -84,7 +84,7 @@ spv::Id SpirvBuilder::createUnaryBuiltinCall(spv::Id result_type,
                                              spv::Id builtins, int entry_point,
                                              spv::Id operand) {
   std::unique_ptr<spv::Instruction> instruction =
-      std::make_unique<spv::Instruction>(getUniqueId(), result_type,
+      makeInstruction(getUniqueId(), result_type,
                                          spv::OpExtInst);
   instruction->addIdOperand(builtins);
   instruction->addImmediateOperand(entry_point);
@@ -98,7 +98,7 @@ spv::Id SpirvBuilder::createBinBuiltinCall(spv::Id result_type,
                                            spv::Id builtins, int entry_point,
                                            spv::Id operand1, spv::Id operand2) {
   std::unique_ptr<spv::Instruction> instruction =
-      std::make_unique<spv::Instruction>(getUniqueId(), result_type,
+      makeInstruction(getUniqueId(), result_type,
                                          spv::OpExtInst);
   instruction->addIdOperand(builtins);
   instruction->addImmediateOperand(entry_point);
@@ -114,7 +114,7 @@ spv::Id SpirvBuilder::createTriBuiltinCall(spv::Id result_type,
                                            spv::Id operand1, spv::Id operand2,
                                            spv::Id operand3) {
   std::unique_ptr<spv::Instruction> instruction =
-      std::make_unique<spv::Instruction>(getUniqueId(), result_type,
+      makeInstruction(getUniqueId(), result_type,
                                          spv::OpExtInst);
   instruction->addIdOperand(builtins);
   instruction->addImmediateOperand(entry_point);
@@ -207,7 +207,7 @@ void SpirvBuilder::IfBuilder::makeEndIf(bool branchToMerge) {
   {
     spv::Block* falseBlock = elseBlock ? elseBlock : mergeBlock;
     std::unique_ptr<spv::Instruction> branch =
-        std::make_unique<spv::Instruction>(spv::OpBranchConditional);
+        builder.makeInstruction(spv::OpBranchConditional);
     branch->addIdOperand(condition);
     branch->addIdOperand(thenBlock->getId());
     branch->addIdOperand(falseBlock->getId());
@@ -288,7 +288,7 @@ void SpirvBuilder::SwitchBuilder::makeEndSwitch() {
   builder_.createSelectionMerge(merge_block_, selection_control_);
 
   std::unique_ptr<spv::Instruction> switch_instruction =
-      std::make_unique<spv::Instruction>(spv::OpSwitch);
+      builder_.makeInstruction(spv::OpSwitch);
   switch_instruction->addIdOperand(selector_);
   if (default_block_) {
     switch_instruction->addIdOperand(default_block_->getId());

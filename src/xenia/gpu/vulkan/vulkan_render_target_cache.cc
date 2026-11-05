@@ -122,7 +122,8 @@ VulkanRenderTargetCache::~VulkanRenderTargetCache() { Shutdown(true); }
 
 bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
   // Cold reserve; unusually large modules may grow this retained high-water mark.
-  if (!xe_spv_binary_reserve(&helper_shader_code_, 16384)) {
+  if (!xe_spv_binary_reserve(&helper_shader_code_, 16384) ||
+      !xe_spv_arena_reserve(&helper_instruction_arena_, 2048)) {
     Shutdown();
     return false;
   }
@@ -903,6 +904,9 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
 
 void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
   xe_spv_binary_close(&helper_shader_code_);
+  const bool arena_closed = xe_spv_arena_close(&helper_instruction_arena_) != 0;
+  assert_true(arena_closed);
+  (void)arena_closed;
   for (auto& transfers : clear_transfers_)
     xe_gpu_worklist_close(&transfers);
   xe_gpu_worklist_close(&current_transfer_invocations_);
@@ -2524,7 +2528,8 @@ VkShaderModule VulkanRenderTargetCache::GetTransferShader(
   options.no_discard_stencil = cvars::no_discard_stencil_in_transfer_pipelines;
 
   const bool generated =
-      BuildEdramTransferShaderSpirv(key, options, helper_shader_code_);
+      BuildEdramTransferShaderSpirv(key, options, helper_shader_code_,
+                                     &helper_instruction_arena_);
 
   // Create the shader module, and store the handle even if creation fails not
   // to try to create it again later.
@@ -3882,7 +3887,8 @@ VkPipeline VulkanRenderTargetCache::GetDumpPipeline(EdramDumpShaderKey key) {
   shader_options.depth_float24_convert_in_pixel_shader =
       depth_float24_convert_in_pixel_shader();
   const bool generated =
-      BuildEdramDumpShaderSpirv(key, shader_options, helper_shader_code_);
+      BuildEdramDumpShaderSpirv(key, shader_options, helper_shader_code_,
+                                 &helper_instruction_arena_);
 
   // Create the pipeline, and store the handle even if creation fails not to try
   // to create it again later.

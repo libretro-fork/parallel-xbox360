@@ -768,7 +768,7 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
   // Phi must be the first instructions in a block.
   EMIdArray eM_packed;
   for_each_eM([&](uint32_t eM_index) {
-    auto eM_packed_phi = std::make_unique<spv::Instruction>(
+    auto eM_packed_phi = builder_->makeInstruction(
         builder_->getUniqueId(), type_uint4_, spv::OpPhi);
     // Default case for an invalid format.
     eM_packed_phi->addIdOperand(const_uint4_0_);
@@ -782,7 +782,7 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
   });
   spv::Id element_bytes_log2;
   {
-    auto element_bytes_log2_phi = std::make_unique<spv::Instruction>(
+    auto element_bytes_log2_phi = builder_->makeInstruction(
         builder_->getUniqueId(), type_uint_, spv::OpPhi);
     // Default case for an invalid format (doesn't enter any element size
     // conditional, skipped).

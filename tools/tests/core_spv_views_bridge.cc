@@ -30,6 +30,18 @@ int main(int argc, char** argv) {
   Id zero = builder.makeUintConstant(0);
   Id one = builder.makeUintConstant(1);
   Id two = builder.makeUintConstant(2);
+  // Parameter records are owned by Function, rather than its block vectors.
+  // Exercise their construction, calls and teardown in both archived/current IR.
+  spv::Block* main_block = builder.getBuildPoint();
+  spv::Block* callee_entry;
+  std::vector<Id> parameters(9, uint_type);
+  auto callee = builder.makeFunctionEntry(spv::NoPrecision, uint_type, "callee",
+      parameters, {}, &callee_entry);
+  builder.makeReturn(true, callee->getParamId(0));
+  builder.leaveFunction();
+  builder.setBuildPoint(main_block);
+  std::vector<Id> arguments(9, one);
+  builder.createFunctionCall(callee, arguments);
   Id array = builder.makeArrayType(uint_type, builder.makeUintConstant(4), 0);
   Id members[3] = {uint_type, float_type, array};
 #ifdef XE_SPV_OUTPUT_LEGACY

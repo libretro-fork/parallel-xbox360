@@ -106,7 +106,8 @@ constexpr uint32_t ResolutionScaledGroupBlocksYLog2(
 
 bool BuildEdramDumpShaderSpirv(
     EdramDumpShaderKey key, const EdramDumpShaderOptions& options,
-    xe_spv_binary& shader_code) {
+    xe_spv_binary& shader_code,
+    xe_spv_arena* instruction_arena) {
   xe_spv_binary_reset(&shader_code);
   bool draw_resolution_scaled =
       options.resolution_scale_x > 1 || options.resolution_scale_y > 1;
@@ -118,7 +119,7 @@ bool BuildEdramDumpShaderSpirv(
 
   SpirvBuilder builder(options.spirv_version,
                        (SpirvShaderTranslator::kSpirvMagicToolId << 16) | 1,
-                       nullptr);
+                       nullptr, instruction_arena);
   spv::Id ext_inst_glsl_std_450 = builder.import("GLSL.std.450");
   builder.addCapability(spv::CapabilityShader);
   builder.setMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);

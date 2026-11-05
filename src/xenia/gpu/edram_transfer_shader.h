@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include "libretro/core_spv_binary.h"
+#include "libretro/core_spv_arena.h"
 
 #include "xenia/base/assert.h"
 #include "xenia/gpu/xenos.h"
@@ -298,7 +299,8 @@ struct EdramTransferShaderOptions {
 // Serializes into caller-owned reusable storage; false leaves no output.
 bool BuildEdramTransferShaderSpirv(
     EdramTransferShaderKey key, const EdramTransferShaderOptions& options,
-    xe_spv_binary& shader_code);
+    xe_spv_binary& shader_code,
+    xe_spv_arena* instruction_arena = nullptr);
 
 }  // namespace gpu
 }  // namespace xe

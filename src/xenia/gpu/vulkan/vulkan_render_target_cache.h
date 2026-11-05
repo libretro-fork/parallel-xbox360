@@ -774,6 +774,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // GPU-command-thread owned. Vulkan consumes words synchronously; no borrowed
   // word pointer survives shader/pipeline creation. Reused across both helpers.
   xe_spv_binary helper_shader_code_ = {};
+  xe_spv_arena helper_instruction_arena_ = {};
 
   // Temporary storage for Resolve.
   xe_gpu_worklist clear_transfers_[2] = {};

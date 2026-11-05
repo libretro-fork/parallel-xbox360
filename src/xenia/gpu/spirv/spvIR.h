@@ -50,6 +50,8 @@
 #include "spirv.hpp11"
 #include "libretro/core_spv_operands.h"
 #include "libretro/core_spv_binary.h"
+#include "libretro/core_spv_arena.h"
+#include <cstddef>
 #include <new>
 
 #include <algorithm>
@@ -101,9 +103,13 @@ struct IdImmediate {
 
 class Instruction final {
 public:
-    Instruction(Id resultId, Id typeId, Op opCode) : resultId(resultId), typeId(typeId), opCode(opCode), block(nullptr) { xe_spv_operands_init(&operands); }
-    explicit Instruction(Op opCode) : resultId(NoResult), typeId(NoType), opCode(opCode), block(nullptr) { xe_spv_operands_init(&operands); }
+    Instruction(Id resultId, Id typeId, Op opCode) : resultId(resultId), typeId(typeId), opCode(opCode), arenaOffset(0), block(nullptr) { xe_spv_operands_init(&operands); }
+    explicit Instruction(Op opCode) : resultId(NoResult), typeId(NoType), opCode(opCode), arenaOffset(0), block(nullptr) { xe_spv_operands_init(&operands); }
     ~Instruction() { if (operands.heap) xe_spv_operands_free(&operands); }
+    // All heap records come from their module arena. Stack temporaries remain valid.
+    static void* operator new(size_t) = delete;
+    static void* operator new[](size_t) = delete;
+    static void operator delete(void* record) noexcept { xe_spv_arena_retire(record); }
     void reserveOperands(size_t count) {
         if (!xe_spv_operands_reserve(&operands, count)) throw std::bad_alloc();
     }
@@ -274,6 +280,9 @@ protected:
     Id resultId;
     Id typeId;
     Op opCode;
+    // Relative allocation-header offset occupies former alignment padding.
+    uint32_t arenaOffset;
+    friend class Module;
     xe_spv_operands operands;
     Block* block;
 };
@@ -290,6 +299,9 @@ struct DebugSourceLocation {
 
 class Block final {
 public:
+    Instruction* createInstruction(Id result, Id type, Op code);
+    Instruction* createInstruction(Op code);
+
     Block(Id id, Function& parent);
     ~Block() = default;
 
@@ -352,7 +364,7 @@ public:
         assert(instructions.size() > 0);
         instructions.resize(1);
         successors.clear();
-        addInstruction(std::unique_ptr<Instruction>(new Instruction(Op::OpUnreachable)));
+        addInstruction(std::unique_ptr<Instruction>(createInstruction(Op::OpUnreachable)));
     }
     // Change this block into a canonical dead continue target branching to the
     // given header ID.  Delete instructions as necessary.  A canonical dead continue
@@ -366,7 +378,7 @@ public:
         successors.clear();
         // Add OpBranch back to the header.
         assert(header != nullptr);
-        Instruction* branch = new Instruction(Op::OpBranch);
+        Instruction* branch = createInstruction(Op::OpBranch);
         branch->addIdOperand(header->getId());
         addInstruction(std::unique_ptr<Instruction>(branch));
         successors.push_back(header);
@@ -447,6 +459,9 @@ void inReadableOrder(Block* root, std::function<void(Block*, ReachReason, Block*
 
 class Function final {
 public:
+    Instruction* createInstruction(Id result, Id type, Op code);
+    Instruction* createInstruction(Op code);
+
     Function(Id id, Id resultType, Id functionType, Id firstParam, LinkageType linkage, const std::string& name, Module& parent);
     ~Function()
     {
@@ -486,7 +501,7 @@ public:
         { return reducedPrecisionReturn ? Decoration::RelaxedPrecision : NoPrecision; }
 
     void setDebugLineInfo(Id fileName, int line, int column) {
-        lineInstruction = std::unique_ptr<Instruction>{new Instruction(Op::OpLine)};
+        lineInstruction = std::unique_ptr<Instruction>{createInstruction(Op::OpLine)};
         lineInstruction->reserveOperands(3);
         lineInstruction->addIdOperand(fileName);
         lineInstruction->addImmediateOperand(line);
@@ -554,9 +569,35 @@ protected:
 
 class Module final {
 public:
-    Module() {}
-    // Functions are owned by Builder; the module only indexes them.
-    ~Module() = default;
+    explicit Module(xe_spv_arena* externalArena = nullptr)
+        : arena(externalArena ? externalArena : &localArena), borrowed(externalArena != nullptr)
+    {
+        static_assert(sizeof(Instruction) <= XE_SPV_RECORD_BYTES);
+        static_assert(offsetof(Instruction, arenaOffset) == XE_SPV_RECORD_ARENA_OFFSET);
+        if (!xe_spv_arena_begin(arena)) throw std::bad_alloc();
+    }
+    // Builder's typed owner fields are declared AFTER this module, so they are
+    // destroyed first. Reclaim any record left unadopted by an exception last.
+    ~Module()
+    {
+        const bool ended = xe_spv_arena_end(arena, destroyRecord) != 0;
+        assert(ended);
+        if (!borrowed && ended) {
+            const bool closed = xe_spv_arena_close(arena) != 0;
+            assert(closed);
+            (void)closed;
+        }
+    }
+    Instruction* createInstruction(Id result, Id type, Op code)
+    {
+        uint32_t offset;
+        void* memory = xe_spv_arena_alloc(arena, &offset);
+        if (!memory) throw std::bad_alloc();
+        Instruction* instruction = ::new (memory) Instruction(result, type, code);
+        instruction->arenaOffset = offset;
+        return instruction;
+    }
+    Instruction* createInstruction(Op code) { return createInstruction(NoResult, NoType, code); }
 
     void addFunction(Function *fun) { functions.push_back(fun); }
 
@@ -587,6 +628,10 @@ public:
     }
 
 protected:
+    static void destroyRecord(void* record) { delete static_cast<Instruction*>(record); }
+    xe_spv_arena localArena = {};
+    xe_spv_arena* arena;
+    bool borrowed;
     Module(const Module&) = delete;
     Module& operator=(const Module&) = delete;
     std::vector<Function*> functions;
@@ -600,6 +645,15 @@ protected:
 //
 // Implementation (it's here due to circular type definitions).
 //
+
+__inline Instruction* Block::createInstruction(Id result, Id type, Op code)
+{ return parent.getParent().createInstruction(result, type, code); }
+__inline Instruction* Block::createInstruction(Op code)
+{ return parent.getParent().createInstruction(code); }
+__inline Instruction* Function::createInstruction(Id result, Id type, Op code)
+{ return parent.createInstruction(result, type, code); }
+__inline Instruction* Function::createInstruction(Op code)
+{ return parent.createInstruction(code); }
 
 // Add both
 // - the OpFunction instruction
@@ -621,7 +675,7 @@ __inline Function::Function(Id id, Id resultType, Id functionType, Id firstParam
     Instruction* typeInst = parent.getInstruction(functionType);
     int numParams = typeInst->getNumOperands() - 1;
     for (int p = 0; p < numParams; ++p) {
-        Instruction* param = new Instruction(firstParamId + p, typeInst->getIdOperand(p + 1), Op::OpFunctionParameter);
+        Instruction* param = parent.createInstruction(firstParamId + p, typeInst->getIdOperand(p + 1), Op::OpFunctionParameter);
         parent.mapInstruction(param);
         parameterInstructions.push_back(param);
     }
@@ -641,7 +695,7 @@ __inline void Function::addLocalVariable(std::unique_ptr<Instruction> inst)
 
 __inline Block::Block(Id id, Function& parent) : parent(parent), unreachable(false)
 {
-    instructions.push_back(std::unique_ptr<Instruction>(new Instruction(id, NoType, Op::OpLabel)));
+    instructions.push_back(std::unique_ptr<Instruction>(createInstruction(id, NoType, Op::OpLabel)));
     instructions.back()->setBlock(this);
     parent.getParent().mapInstruction(instructions.back().get());
 }

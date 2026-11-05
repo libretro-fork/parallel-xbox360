@@ -342,7 +342,7 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
         if (multiplicands_different != used_result_components) {
           if (different_count > 1) {
             std::unique_ptr<spv::Instruction> shuffle_op =
-                std::make_unique<spv::Instruction>(
+                builder_->makeInstruction(
                     builder_->getUniqueId(), result_type, spv::OpVectorShuffle);
             shuffle_op->addIdOperand(result);
             shuffle_op->addIdOperand(different_result);

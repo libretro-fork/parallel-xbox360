@@ -10,6 +10,7 @@ san=${SANITIZER-}
 ${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" \
  -c "$root/libretro/core_spv_operands.c" -o "$out/storage.o"
 ${CC:-cc} -std=c89 -O2 $san -c "$root/libretro/core_spv_binary.c" -o "$out/binary.o"
+${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_arena.c" -o "$out/arena.o"
 for mode in baseline current; do
  src="$root/src/xenia/gpu/spirv"
  if test "$mode" = baseline; then src="$out/base/src/xenia/gpu/spirv"; fi
@@ -17,7 +18,7 @@ for mode in baseline current; do
   -I"$root/third_party/libretro-common/include" \
   "$root/tools/tests/core_spv_module_bridge.cc" "$src/SpvBuilder.cpp" \
   "$src/SpvPostProcess.cpp" "$src/InReadableOrder.cpp" "$src/Logger.cpp" \
-  "$out/storage.o" "$out/binary.o" -o "$out/$mode.exe"
+  "$out/storage.o" "$out/binary.o" "$out/arena.o" -o "$out/$mode.exe"
  for variant in 0 1 2 3 4; do
   "$out/$mode.exe" "$out/$mode-$variant.spv" "$variant"
  done

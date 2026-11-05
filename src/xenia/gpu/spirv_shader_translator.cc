@@ -313,6 +313,8 @@ void SpirvShaderTranslator::Reset() {
   preloaded_resource_bindings_ = false;
   ShaderTranslator::Reset();
 
+  // A partial switch may still be owned outside the builder's IR graph.
+  main_switch_op_.reset();
   builder_.reset();
 
   uniform_float_constants_ = spv::NoResult;
@@ -371,7 +373,6 @@ void SpirvShaderTranslator::Reset() {
   main_fbo_depth_unbiased_ = spv::NoResult;
   main_fbo_depth_derivatives_.fill(spv::NoResult);
 
-  main_switch_op_.reset();
   main_switch_next_pc_phi_operands_.clear();
   main_rect_list_loop_header_ = nullptr;
   main_rect_list_loop_continue_ = nullptr;
@@ -1051,7 +1052,7 @@ void SpirvShaderTranslator::StartTranslation() {
         new spv::Block(builder_->getUniqueId(), *function_main_);
     builder_->createSelectionMerge(main_switch_merge_,
                                    spv::SelectionControlDontFlattenMask);
-    main_switch_op_ = std::make_unique<spv::Instruction>(spv::OpSwitch);
+    main_switch_op_ = builder_->makeInstruction(spv::OpSwitch);
     main_switch_op_->addIdOperand(main_loop_pc_current);
     main_switch_op_->addIdOperand(main_switch_merge_->getId());
     // The default case (the merge here) must have the header as a predecessor.
@@ -1118,7 +1119,7 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
             builder_->makeIntConstant(-1));
       }
       std::unique_ptr<spv::Instruction> main_loop_pc_next_op =
-          std::make_unique<spv::Instruction>(
+          builder_->makeInstruction(
               main_loop_pc_next_, type_int_,
               main_switch_next_pc_phi_operands_.size() >= 2
                   ? spv::OpPhi
@@ -1185,7 +1186,7 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
       function_main_->addBlock(main_rect_list_loop_continue_);
       builder_->setBuildPoint(main_rect_list_loop_continue_);
       std::unique_ptr<spv::Instruction> main_rect_list_vertex_index_next_op =
-          std::make_unique<spv::Instruction>(
+          builder_->makeInstruction(
               main_rect_list_loop_vertex_index_next_, type_int_, spv::OpIAdd);
       main_rect_list_vertex_index_next_op->addIdOperand(
           main_rect_list_loop_vertex_index_);
@@ -1538,7 +1539,7 @@ void SpirvShaderTranslator::ProcessLoopStartInstruction(
   builder_->createSelectionMerge(&body_block, spv::SelectionControlMaskNone);
   {
     std::unique_ptr<spv::Instruction> branch_conditional_op =
-        std::make_unique<spv::Instruction>(spv::OpBranchConditional);
+        builder_->makeInstruction(spv::OpBranchConditional);
     branch_conditional_op->addIdOperand(loop_count_zero);
     branch_conditional_op->addIdOperand(skip_block.getId());
     branch_conditional_op->addIdOperand(body_block.getId());
@@ -1600,7 +1601,7 @@ void SpirvShaderTranslator::ProcessLoopEndInstruction(
   builder_->createSelectionMerge(&break_block, spv::SelectionControlMaskNone);
   {
     std::unique_ptr<spv::Instruction> branch_conditional_op =
-        std::make_unique<spv::Instruction>(spv::OpBranchConditional);
+        builder_->makeInstruction(spv::OpBranchConditional);
     branch_conditional_op->addIdOperand(condition);
     // More likely to continue than to break.
     if (break_is_true) {
@@ -2966,7 +2967,7 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
     // Build XYZ of the position with W format handled.
     {
       std::unique_ptr<spv::Instruction> composite_construct_op =
-          std::make_unique<spv::Instruction>(
+          builder_->makeInstruction(
               builder_->getUniqueId(), type_float3_, spv::OpCompositeConstruct);
       composite_construct_op->addIdOperand(position_xy);
       composite_construct_op->addIdOperand(position_z);
@@ -2986,7 +2987,7 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
     spv::Id clip_space_position;
     {
       std::unique_ptr<spv::Instruction> composite_construct_op =
-          std::make_unique<spv::Instruction>(
+          builder_->makeInstruction(
               builder_->getUniqueId(), type_float4_, spv::OpCompositeConstruct);
       composite_construct_op->addIdOperand(position_xyz);
       composite_construct_op->addIdOperand(position_w);
@@ -3216,7 +3217,7 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
       // assertion in createCompositeConstruct, OpCompositeConstruct can
       // construct vectors not only from scalars, but also from other vectors.
       std::unique_ptr<spv::Instruction> composite_construct_op =
-          std::make_unique<spv::Instruction>(
+          builder_->makeInstruction(
               builder_->getUniqueId(), type_float4_, spv::OpCompositeConstruct);
       composite_construct_op->addIdOperand(point_position_xy);
       composite_construct_op->addIdOperand(
@@ -3250,7 +3251,7 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
       // assertion in createCompositeConstruct, OpCompositeConstruct can
       // construct vectors not only from scalars, but also from other vectors.
       std::unique_ptr<spv::Instruction> composite_construct_op =
-          std::make_unique<spv::Instruction>(
+          builder_->makeInstruction(
               builder_->getUniqueId(), type_float4_, spv::OpCompositeConstruct);
       composite_construct_op->addIdOperand(position_xyz);
       composite_construct_op->addIdOperand(position_w);
@@ -4614,7 +4615,7 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
       if (value_num_components > 1) {
         // Mixed non-constants and constants - vector source.
         std::unique_ptr<spv::Instruction> shuffle_op =
-            std::make_unique<spv::Instruction>(
+            builder_->makeInstruction(
                 builder_->getUniqueId(), target_type, spv::OpVectorShuffle);
         shuffle_op->addIdOperand(value);
         shuffle_op->addIdOperand(const_float2_0_1_);
@@ -4654,7 +4655,7 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
     //    composite inserts for scalar value.
     if (constant_components) {
       std::unique_ptr<spv::Instruction> shuffle_op =
-          std::make_unique<spv::Instruction>(builder_->getUniqueId(),
+          builder_->makeInstruction(builder_->getUniqueId(),
                                              target_type, spv::OpVectorShuffle);
       shuffle_op->addIdOperand(value_to_store);
       shuffle_op->addIdOperand(const_float2_0_1_);
@@ -4670,7 +4671,7 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
     if (non_constant_components) {
       if (value_num_components > 1) {
         std::unique_ptr<spv::Instruction> shuffle_op =
-            std::make_unique<spv::Instruction>(
+            builder_->makeInstruction(
                 builder_->getUniqueId(), target_type, spv::OpVectorShuffle);
         shuffle_op->addIdOperand(value_to_store);
         shuffle_op->addIdOperand(value);
@@ -4901,7 +4902,7 @@ spv::Id SpirvShaderTranslator::LoadUint32FromSharedMemory(
       builder_->makeIntConstant(
           int((uint32_t(1) << binding_address_bits) - 1)));
 
-  auto value_phi_op = std::make_unique<spv::Instruction>(
+  auto value_phi_op = builder_->makeInstruction(
       builder_->getUniqueId(), type_uint_, spv::OpPhi);
   // Zero if out of bounds.
   value_phi_op->addIdOperand(const_uint_0_);

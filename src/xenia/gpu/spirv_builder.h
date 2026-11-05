@@ -26,8 +26,8 @@ namespace gpu {
 class SpirvBuilder : public spv::Builder {
  public:
   SpirvBuilder(unsigned int spv_version, unsigned int user_number,
-               spv::SpvBuildLogger* logger)
-      : spv::Builder(spv_version, user_number, logger) {}
+               spv::SpvBuildLogger* logger, xe_spv_arena* instruction_arena = nullptr)
+      : spv::Builder(spv_version, user_number, logger, instruction_arena) {}
 
   // When true, createNoContraction* helpers emit plain operations.
   void SetAllowContraction(bool allow) { allow_contraction_ = allow; }

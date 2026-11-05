@@ -86,8 +86,17 @@ typedef enum {
 
 class Builder {
 public:
-    Builder(unsigned int spvVersion, unsigned int userNumber, SpvBuildLogger* logger);
+    Builder(unsigned int spvVersion, unsigned int userNumber, SpvBuildLogger* logger,
+            xe_spv_arena* instructionArena = nullptr);
     virtual ~Builder();
+    Instruction* createInstruction(Id result, Id type, Op code) { return module.createInstruction(result, type, code); }
+    Instruction* createInstruction(Op code) { return module.createInstruction(code); }
+    std::unique_ptr<Instruction> makeInstruction(Id result, Id type, Op code) {
+        return std::unique_ptr<Instruction>(createInstruction(result, type, code));
+    }
+    std::unique_ptr<Instruction> makeInstruction(Op code) {
+        return std::unique_ptr<Instruction>(createInstruction(code));
+    }
 
     static const int maxMatrixSize = 4;
 
@@ -104,7 +113,7 @@ public:
         if (sItr != stringIds.end())
             return sItr->second;
         spv::Id strId = getUniqueId();
-        Instruction* fileString = new Instruction(strId, NoType, Op::OpString);
+        Instruction* fileString = createInstruction(strId, NoType, Op::OpString);
         const char* file_c_str = str.c_str();
         fileString->addStringOperand(file_c_str);
         strings.push_back(std::unique_ptr<Instruction>(fileString));

@@ -399,7 +399,7 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
                                  spv::SelectionControlDontFlattenMask);
     {
       std::unique_ptr<spv::Instruction> branch_conditional_op(
-          std::make_unique<spv::Instruction>(spv::OpBranchConditional));
+          builder.makeInstruction(spv::OpBranchConditional));
       branch_conditional_op->addIdOperand(position_is_nan);
       branch_conditional_op->addIdOperand(discard_then_block.getId());
       branch_conditional_op->addIdOperand(discard_merge_block.getId());
@@ -455,7 +455,7 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
                                  spv::SelectionControlDontFlattenMask);
     {
       std::unique_ptr<spv::Instruction> branch_conditional_op(
-          std::make_unique<spv::Instruction>(spv::OpBranchConditional));
+          builder.makeInstruction(spv::OpBranchConditional));
       branch_conditional_op->addIdOperand(cull_condition);
       branch_conditional_op->addIdOperand(discard_then_block.getId());
       branch_conditional_op->addIdOperand(discard_merge_block.getId());
@@ -532,7 +532,7 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
                                    spv::SelectionControlDontFlattenMask);
       {
         std::unique_ptr<spv::Instruction> branch_conditional_op(
-            std::make_unique<spv::Instruction>(spv::OpBranchConditional));
+            builder.makeInstruction(spv::OpBranchConditional));
         branch_conditional_op->addIdOperand(point_size_not_zero);
         branch_conditional_op->addIdOperand(
             point_size_zero_merge_block.getId());
@@ -1106,7 +1106,7 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
                                    spv::SelectionControlDontFlattenMask);
       {
         std::unique_ptr<spv::Instruction> branch_conditional_op(
-            std::make_unique<spv::Instruction>(spv::OpBranchConditional));
+            builder.makeInstruction(spv::OpBranchConditional));
         branch_conditional_op->addIdOperand(line_length_positive);
         branch_conditional_op->addIdOperand(
             line_degenerate_merge_block.getId());

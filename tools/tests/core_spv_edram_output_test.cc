@@ -5,6 +5,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+#ifdef XE_SPV_ARENA_TEST
+static xe_spv_arena instruction_arena;
+static size_t cold_pages, largest_instruction_count;
+#define INSTRUCTION_ARENA_ARGUMENT , &instruction_arena
+#else
+#define INSTRUCTION_ARENA_ARGUMENT
+#endif
 #ifdef XE_SPV_OUTPUT_ALLOCATIONS
 #include "core_pipeline_bench_profile.h"
 #include "xenia/gpu/spirv/spvIR.h"
@@ -24,6 +31,11 @@ static FILE* output;
 static xe_spv_binary storage;
 #endif
 static void record(const uint32_t* words, size_t count) {
+#ifdef XE_SPV_ARENA_TEST
+  if (instruction_arena.in_use || (instruction_arena.reserved_records / XE_SPV_RECORDS_PER_PAGE) != cold_pages) std::abort();
+  if (xe_spv_arena_used(&instruction_arena) > largest_instruction_count)
+    largest_instruction_count = xe_spv_arena_used(&instruction_arena);
+#endif
   uint32_t length = uint32_t(count);
   if (count < 5 || words[0] != 0x07230203 ||
       fwrite(&length, sizeof(length), 1, output) != 1 ||
@@ -42,6 +54,10 @@ int main(int argc, char** argv) {
   unsigned pass, f, msaa, bits, mode;
   if ((argc != 2 && argc != 3) || !(output = fopen(argv[1], "wb"))) return 1;
   const bool wide_scale = argc == 3;
+#ifdef XE_SPV_ARENA_TEST
+  if (!xe_spv_arena_reserve(&instruction_arena, 2048)) return 8;
+  cold_pages = (instruction_arena.reserved_records / XE_SPV_RECORDS_PER_PAGE);
+#endif
 #ifndef XE_SPV_OUTPUT_LEGACY
   if (!xe_spv_binary_reserve(&storage, 16384)) return 2;
   uint32_t* stable = nullptr;
@@ -65,7 +81,7 @@ int main(int argc, char** argv) {
       std::vector<uint32_t> words = BuildEdramDumpShaderSpirv(key, options);
       record(words.data(), words.size());
 #else
-      if (!BuildEdramDumpShaderSpirv(key, options, storage)) return 3;
+      if (!BuildEdramDumpShaderSpirv(key, options, storage INSTRUCTION_ARENA_ARGUMENT)) return 3;
       record(storage.words, storage.count);
 #endif
     }
@@ -94,7 +110,7 @@ int main(int argc, char** argv) {
       std::vector<uint32_t> words = BuildEdramTransferShaderSpirv(key, options);
       record(words.data(), words.size());
 #else
-      if (!BuildEdramTransferShaderSpirv(key, options, storage)) return 4;
+      if (!BuildEdramTransferShaderSpirv(key, options, storage INSTRUCTION_ARENA_ARGUMENT)) return 4;
       record(storage.words, storage.count);
 #endif
     }
@@ -106,13 +122,18 @@ int main(int argc, char** argv) {
 #ifndef XE_SPV_OUTPUT_LEGACY
   xe_spv_binary_close(&storage);
 #endif
+#ifdef XE_SPV_ARENA_TEST
+  printf("Arena: %zu cold pages, %zu peak records, zero page allocations during generation\n",
+         cold_pages, largest_instruction_count);
+  if (!xe_spv_arena_close(&instruction_arena)) return 9;
+#endif
   if (fclose(output)) return 6;
   printf("PASS: %u helper modules (%s), largest %zu words\n",
          modules, wide_scale ? "wide scale" : "standard scale", largest);
 #ifdef XE_SPV_OUTPUT_ALLOCATIONS
-  printf("C++ new calls across %u modules: %zu; tracked live bytes: %zu\n",
+  printf("Tracked C++ new + arena-page allocations across %u modules: %zu; live bytes: %zu\n",
          modules, xe_bench_allocations() - before, xe_bench_live());
-  printf("C++ requested bytes: %zu; peak tracked live bytes: %zu\n",
+  printf("Tracked C++ + arena requested bytes: %zu; peak tracked live bytes: %zu\n",
          xe_bench_requested() - bytes_before, xe_bench_peak());
 #endif
   return 0;

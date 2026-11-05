@@ -314,7 +314,7 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
         // of November 5, 2020 - can construct vectors by concatenating vectors,
         // not just from individual scalars.
         std::unique_ptr<spv::Instruction> composite_construct_op =
-            std::make_unique<spv::Instruction>(builder_->getUniqueId(),
+            builder_->makeInstruction(builder_->getUniqueId(),
                                                result_type,
                                                spv::OpCompositeConstruct);
         composite_construct_op->addIdOperand(word_needed_component_values[0]);
@@ -548,7 +548,7 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
       // November 5, 2020 - can construct vectors by concatenating vectors, not
       // just from individual scalars.
       std::unique_ptr<spv::Instruction> composite_construct_op =
-          std::make_unique<spv::Instruction>(
+          builder_->makeInstruction(
               builder_->getUniqueId(),
               type_float_vectors_[xe::bit_count(used_result_components) - 1],
               spv::OpCompositeConstruct);
@@ -1579,7 +1579,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
           builder_->setBuildPoint(&block_dimension_merge);
           {
             std::unique_ptr<spv::Instruction> z_phi_op =
-                std::make_unique<spv::Instruction>(builder_->getUniqueId(),
+                builder_->makeInstruction(builder_->getUniqueId(),
                                                    type_float_, spv::OpPhi);
             z_phi_op->addIdOperand(z_3d);
             z_phi_op->addIdOperand((block_dimension_3d ? *block_dimension_3d
@@ -1644,7 +1644,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                                        spv::SelectionControlMaskNone);
         {
           std::unique_ptr<spv::Instruction> ma_switch_op =
-              std::make_unique<spv::Instruction>(spv::OpSwitch);
+              builder_->makeInstruction(spv::OpSwitch);
           ma_switch_op->addIdOperand(face_axis);
           // Make Z the default.
           ma_switch_op->addIdOperand(block_ma_z.getId());
@@ -1682,7 +1682,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
         builder_->setBuildPoint(&block_ma_merge);
         {
           std::unique_ptr<spv::Instruction> x_phi_op =
-              std::make_unique<spv::Instruction>(builder_->getUniqueId(),
+              builder_->makeInstruction(builder_->getUniqueId(),
                                                  type_float_, spv::OpPhi);
           x_phi_op->addIdOperand(face_sign);
           x_phi_op->addIdOperand(block_ma_x.getId());
@@ -1695,7 +1695,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
         }
         {
           std::unique_ptr<spv::Instruction> y_phi_op =
-              std::make_unique<spv::Instruction>(builder_->getUniqueId(),
+              builder_->makeInstruction(builder_->getUniqueId(),
                                                  type_float_, spv::OpPhi);
           y_phi_op->addIdOperand(ma_x_y);
           y_phi_op->addIdOperand(block_ma_x.getId());
@@ -1708,7 +1708,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
         }
         {
           std::unique_ptr<spv::Instruction> z_phi_op =
-              std::make_unique<spv::Instruction>(builder_->getUniqueId(),
+              builder_->makeInstruction(builder_->getUniqueId(),
                                                  type_float_, spv::OpPhi);
           z_phi_op->addIdOperand(ma_x_z);
           z_phi_op->addIdOperand(block_ma_x.getId());
@@ -2468,7 +2468,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                 builder_->setBuildPoint(&block_z_merge);
                 {
                   std::unique_ptr<spv::Instruction> filter_phi_op =
-                      std::make_unique<spv::Instruction>(
+                      builder_->makeInstruction(
                           builder_->getUniqueId(), type_float4_, spv::OpPhi);
                   filter_phi_op->addIdOperand(
                       sample_result_unsigned_stacked_filtered);
@@ -2481,7 +2481,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                 }
                 {
                   std::unique_ptr<spv::Instruction> filter_phi_op =
-                      std::make_unique<spv::Instruction>(
+                      builder_->makeInstruction(
                           builder_->getUniqueId(), type_float4_, spv::OpPhi);
                   filter_phi_op->addIdOperand(
                       sample_result_signed_stacked_filtered);
@@ -2652,7 +2652,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                 &block_sign_merge, spv::SelectionControlDontFlattenMask);
             {
               std::unique_ptr<spv::Instruction> sign_switch_op =
-                  std::make_unique<spv::Instruction>(spv::OpSwitch);
+                  builder_->makeInstruction(spv::OpSwitch);
               sign_switch_op->addIdOperand(
                   swizzled_signs[result_component_index]);
               // Make unsigned (do nothing, take the unsigned component in the
@@ -2748,7 +2748,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
             builder_->setBuildPoint(&block_sign_merge);
             {
               std::unique_ptr<spv::Instruction> sign_phi_op =
-                  std::make_unique<spv::Instruction>(builder_->getUniqueId(),
+                  builder_->makeInstruction(builder_->getUniqueId(),
                                                      type_float_, spv::OpPhi);
               if (block_sign_signed) {
                 sign_phi_op->addIdOperand(sample_result_component_signed);

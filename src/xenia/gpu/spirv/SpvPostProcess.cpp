@@ -517,7 +517,7 @@ void Builder::postProcessSamplers()
                     {
                         Instruction *opSampImg = sampledImageInstrs[i->getIdOperand(opnum)];
                         if (i->getBlock() != opSampImg->getBlock()) {
-                            Instruction *newInstr = new Instruction(getUniqueId(),
+                            Instruction *newInstr = createInstruction(getUniqueId(),
                                                                     opSampImg->getTypeId(),
                                                                     spv::Op::OpSampledImage);
                             newInstr->addIdOperand(opSampImg->getIdOperand(0));
