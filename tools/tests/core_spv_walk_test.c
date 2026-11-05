@@ -40,6 +40,7 @@ static int visit(void *opaque, const void *value, int reason, const void *header
 int main(void)
 {
    node nodes[1024];
+   unsigned char borrowed[1026];
    context c;
    xe_spv_walk_ops ops = {index_of, successors, successor, targets, visit};
    size_t i, round, before;
@@ -77,6 +78,19 @@ int main(void)
    CHECK(c.count == 2 && allocations == frees);
    before = frees; fail = 1; c.count = 0;
    CHECK(!xe_spv_walk_graph(&ops, &c, nodes, 1024) && !c.count && frees == before);
+   /* Caller-owned flags must not allocate, touch guards or retain old state. */
+   memset(borrowed, 0xA5, sizeof(borrowed));
+   for (round = 0; round < 1000; ++round) {
+      c.count = 0; c.fail_after = -1;
+      CHECK(xe_spv_walk_graph_states(&ops, &c, nodes, 1024, borrowed + 1, 1024));
+      CHECK(c.count == 1024 && borrowed[0] == 0xA5 && borrowed[1025] == 0xA5);
+   }
+   c.count = 0; c.fail_after = 2;
+   CHECK(!xe_spv_walk_graph_states(&ops, &c, nodes, 1024, borrowed + 1, 1024));
+   CHECK(c.count == 2 && borrowed[0] == 0xA5 && borrowed[1025] == 0xA5);
+   CHECK(!xe_spv_walk_graph_states(&ops, &c, nodes, 1024, borrowed + 1, 1023));
+   CHECK(!xe_spv_walk_graph_states(&ops, &c, nodes, 1024, NULL, 1024));
+   CHECK(frees == before);
    fail = 0; c.fail_after = -1;
    nodes[0].index = 1024;
    before = frees;

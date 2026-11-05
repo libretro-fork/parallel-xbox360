@@ -100,7 +100,7 @@ static int visit(void* opaque, const void* node, int reason, const void* header)
 }
 }
 
-void spv::inReadableOrder(Block* root, std::function<void(Block*, ReachReason, Block*)> callback)
+void spv::inReadableOrder(Block* root, std::function<void(Block*, ReachReason, Block*)> callback, xe_spv_plan* workspace)
 {
     static_assert(int(ReachViaControlFlow) == XE_SPV_WALK_CONTROL &&
                   int(ReachDeadContinue) == XE_SPV_WALK_DEAD_CONTINUE &&
@@ -108,7 +108,14 @@ void spv::inReadableOrder(Block* root, std::function<void(Block*, ReachReason, B
     if (!root) throw std::bad_alloc();
     WalkContext context = {&root->getParent(), &callback, {}};
     const xe_spv_walk_ops operations = {nodeIndex, successorCount, successor, targets, visit};
-    int success = xe_spv_walk_graph(&operations, &context, root, context.function->getBlocks().size());
+    const size_t count = context.function->getBlocks().size();
+    int success;
+    if (workspace && count > XE_SPV_WALK_INLINE) {
+        success = xe_spv_walk_graph_states(&operations, &context, root, count,
+            xe_spv_plan_states(workspace, count), workspace->capacity);
+    } else {
+        success = xe_spv_walk_graph(&operations, &context, root, count);
+    }
     if (context.exception) std::rethrow_exception(context.exception);
     if (!success) throw std::bad_alloc();
 }

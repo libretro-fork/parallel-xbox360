@@ -69,11 +69,25 @@ static INLINE int xe_spv_walk_visit(xe_spv_walk_state *walk, const void *node,
    }
    return 1;
 }
+/* Borrowed scratch is exclusive and must remain fixed for the whole walk. */
+static INLINE int xe_spv_walk_graph_states(const xe_spv_walk_ops *ops, void *context,
+      const void *root, size_t count, unsigned char *states, size_t capacity)
+{
+   xe_spv_walk_state walk;
+   if (!states || count > capacity || !count || !root || !ops ||
+       !ops->index || !ops->successors || !ops->successor ||
+       !ops->targets || !ops->visit) return 0;
+   memset(states, 0, count);
+   walk.ops = ops;
+   walk.context = context;
+   walk.states = states;
+   walk.count = count;
+   return xe_spv_walk_visit(&walk, root, XE_SPV_WALK_CONTROL, NULL);
+}
 static INLINE int xe_spv_walk_graph(const xe_spv_walk_ops *ops, void *context,
       const void *root, size_t count)
 {
    unsigned char local[XE_SPV_WALK_INLINE], *states = local;
-   xe_spv_walk_state walk;
    int result;
    if (!count || !root || !ops || !ops->index || !ops->successors ||
        !ops->successor || !ops->targets || !ops->visit) return 0;
@@ -81,12 +95,7 @@ static INLINE int xe_spv_walk_graph(const xe_spv_walk_ops *ops, void *context,
       states = (unsigned char *)XE_SPV_WALK_ALLOC(count);
       if (!states) return 0;
    }
-   memset(states, 0, count);
-   walk.ops = ops;
-   walk.context = context;
-   walk.states = states;
-   walk.count = count;
-   result = xe_spv_walk_visit(&walk, root, XE_SPV_WALK_CONTROL, NULL);
+   result = xe_spv_walk_graph_states(ops, context, root, count, states, count);
    if (states != local) XE_SPV_WALK_FREE(states);
    return result;
 }

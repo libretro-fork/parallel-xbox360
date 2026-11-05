@@ -1,0 +1,29 @@
+Retained CFG flags benchmark, Windows x86-64, 2026-11-05
+Parent: complete 320090a1b source archive. Current: flags and borrowed order share retained storage.
+GCC16.2 -O2 C++20, sequential builds/runs, five samples of 10000 fresh output modules.
+Same three fixtures: one-block 328/5432-byte modules, 513-block 13624-byte module.
+Counts include C++ new, output realloc, traversal scratch and plan growth; operand malloc is excluded.
+First planned serialization growth is included; the following 9999 reuse its capacity.
+Each current heap slot uses pointer-size + one flag byte. 1024 slots retain 9216 bytes on x64
+versus 8192 bytes of retained pointers plus 513 temporary flag bytes per walk previously.
+The larger single-function fixture now reserves once before callbacks instead of four growing allocations.
+Peak-output column excludes retained plan and traversal scratch; it is not whole-process RSS.
+The 10001 current large-graph requests are 10000 final outputs and one initial plan allocation.
+Unplanned traversals still use temporary state for graphs larger than 256 blocks.
+Instruction counting and emission remain separate; the word-then-copy mode remains faster on the large graph.
+No gameplay FPS, GPU memory or latency claim.
+Reproduce: BASELINE_ROOT=<complete 320090a1b source archive> sh tools/tests/run_spv_binary_bench.sh
+
+revision mode bytes calls requested_bytes peak_output_bytes median_ms range_ms
+current direct-owned 328 10000 3280000 328 1.687 1.665..1.749
+current direct-owned 5432 10000 54320000 5432 14.740 14.535..14.918
+current direct-owned 13624 10001 136249216 13624 114.287 113.964..115.212
+current word-then-copy 328 90000 13480000 840 3.386 3.367..3.426
+current word-then-copy 5432 130000 218120000 13624 16.957 16.879..17.039
+current word-then-copy 13624 150000 469010000 30008 81.587 78.427..84.039
+parent direct-owned 328 10000 3280000 328 1.645 1.623..1.647
+parent direct-owned 5432 10000 54320000 5432 14.633 14.421..14.655
+parent direct-owned 13624 20004 141385360 13624 115.399 114.489..118.909
+parent word-then-copy 328 90000 13480000 840 3.531 3.497..3.602
+parent word-then-copy 5432 130000 218120000 13624 17.100 17.043..17.206
+parent word-then-copy 13624 150000 469010000 30008 85.148 82.749..87.345

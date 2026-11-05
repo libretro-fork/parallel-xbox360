@@ -463,7 +463,7 @@ enum ReachReason {
 // - the reason we reached the block,
 // - if the reason was that block is an unreachable continue or unreachable merge block
 //   then the last parameter is the corresponding header block.
-void inReadableOrder(Block* root, std::function<void(Block*, ReachReason, Block* header)> callback);
+void inReadableOrder(Block* root, std::function<void(Block*, ReachReason, Block* header)> callback, xe_spv_plan* workspace = nullptr);
 
 //
 // SPIR-V IR Function.
@@ -564,10 +564,11 @@ public:
                 static_cast<const Block*>(node)->dump(out);
             }
         } else {
+            if (plan && !xe_spv_plan_function(plan, blocks.size())) throw std::bad_alloc();
             inReadableOrder(blocks[0], [&](const Block* b, ReachReason, Block*) {
                 if (plan && !xe_spv_plan_push(plan, b)) throw std::bad_alloc();
                 b->dump(out);
-            });
+            }, plan);
             if (plan && !xe_spv_plan_push(plan, nullptr)) throw std::bad_alloc();
         }
         Instruction end(0, 0, Op::OpFunctionEnd);

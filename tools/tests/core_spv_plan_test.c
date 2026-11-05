@@ -21,6 +21,7 @@ int main(void)
    xe_spv_plan plan = {0};
    size_t i, pass, warm;
    const void *node, **stable;
+   unsigned char *states;
    int values[1024];
    for (i = 0; i < 64; ++i)
       if (!xe_spv_plan_push(&plan, &values[i])) return 1;
@@ -34,20 +35,27 @@ int main(void)
    for (i = 0; i < 1024; ++i)
       if (!xe_spv_plan_next(&plan, &node) || node != &values[i]) return 6;
    if (!xe_spv_plan_next(&plan, &node) || node || xe_spv_plan_next(&plan, &node)) return 7;
+   if (xe_spv_plan_reserve(&plan, (size_t)-1) ||
+       xe_spv_plan_function(&plan, (size_t)-1)) return 12;
    warm = allocations;
    stable = plan.heap;
    denied = 1;
    for (pass = 0; pass < 10000; ++pass) {
       xe_spv_plan_reset(&plan);
+      if (!xe_spv_plan_function(&plan, 1024)) return 13;
+      states = xe_spv_plan_states(&plan, 1024);
+      if (!states || xe_spv_plan_states(&plan, (size_t)-1)) return 14;
+      memset(states, 0xA5, 1024);
       for (i = 0; i < 1024; ++i)
          if (!xe_spv_plan_push(&plan, &values[i])) return 8;
       if (!xe_spv_plan_push(&plan, NULL) || allocations != warm || plan.heap != stable) return 9;
+      for (i = 0; i < 1024; ++i) if (states[i] != 0xA5) return 15;
    }
    xe_spv_plan_reset(&plan);
    if (plan.cursor || plan.count || xe_spv_plan_next(&plan, &node)) return 10;
    xe_spv_plan_close(&plan);
    xe_spv_plan_close(&plan);
    if (allocations != frees) return 11;
-   puts("PASS: borrowed emission order, inline storage, growth failure and 10000 allocation-free warm reuses");
+   puts("PASS: borrowed emission order, inline storage, growth failure and 10000 allocation-free warm reuses with disjoint traversal flags");
    return 0;
 }
