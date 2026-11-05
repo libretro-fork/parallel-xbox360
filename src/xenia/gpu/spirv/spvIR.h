@@ -117,12 +117,17 @@ public:
     static void* operator new[](size_t) = delete;
     static void operator delete(void* record) noexcept { xe_spv_arena_retire(record); }
     void reserveOperands(size_t count) {
-        if (!xe_spv_operands_reserve(&operands, count)) throw std::bad_alloc();
+        if (count <= operands.capacity) return;
+        if (!xe_spv_operands_reserve_with(&operands, count,
+                arenaOffset ? xe_spv_arena_payload_realloc : nullptr,
+                arenaOffset ? xe_spv_arena_record_owner(this, arenaOffset) : nullptr))
+            throw std::bad_alloc();
     }
     void addIdOperand(Id id) {
         // ids can't be 0
         assert(id);
-        if (!xe_spv_operands_append(&operands, id, 1)) throw std::bad_alloc();
+        if (operands.count == operands.capacity) growOperands();
+        xe_spv_operands_append_reserved(&operands, id, 1);
     }
     // This method is potentially dangerous as it can break assumptions
     // about SSA and lack of forward references.
@@ -133,7 +138,8 @@ public:
     }
 
     void addImmediateOperand(unsigned int immediate) {
-        if (!xe_spv_operands_append(&operands, immediate, 0)) throw std::bad_alloc();
+        if (operands.count == operands.capacity) growOperands();
+        xe_spv_operands_append_reserved(&operands, immediate, 0);
     }
 
     void addImmediateOperand(spv::StorageClass immediate) {
@@ -208,6 +214,9 @@ public:
     }
     void addStringOperand(const char* str, size_t bytes)
     {
+        size_t capacity = xe_spv_operands_string_capacity(&operands, bytes);
+        if (!capacity || (bytes && !str)) throw std::bad_alloc();
+        reserveOperands(capacity);
         if (!xe_spv_operands_string(&operands, str, bytes)) throw std::bad_alloc();
     }
     bool isIdOperand(int op) const { return xe_spv_operands_is_id(&operands, op); }
@@ -279,6 +288,11 @@ void dump(xe_spv_count& out) const
     }
 
 protected:
+    void growOperands() {
+        size_t capacity = xe_spv_operands_growth_capacity(&operands);
+        if (!capacity) throw std::bad_alloc();
+        reserveOperands(capacity);
+    }
     Instruction(const Instruction&) = delete;
     Instruction& operator=(const Instruction&) = delete;
     Id resultId;

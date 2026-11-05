@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Arena-backed shader instructions reuse C89 operand-payload pages instead of allocating each larger operand buffer separately. The latest buffer can grow in place without copying its words; larger or non-tail growth remains checked. Compiler and geometry workspaces prefault 16 KiB and retain their high-water capacity until shutdown. Stack instructions keep ordinary heap ownership. Record sizes remain unchanged, and sanitizer checks cover retired payloads as well as instruction records. Other metadata and driver allocations remain; the confirmed texture-watch race fix and audio scheduling are preserved.
+
 - Fixed texture-watch cancellation racing with CPU invalidation, which could recycle a watch twice and corrupt its free list during loading or eviction. Both owner handle slots are now read, cleared and cancelled under one existing critical-region acquisition. Vulkan and D3D12 share the fix. An offline forced-interleaving test reproduces duplicate live watch allocation with the old code and verifies safe reuse with the fix.
 
 - Shader names and other literal strings reserve their final operand span once, avoiding repeated growth copies while encoding. Debug-source chunks borrow the original text instead of allocating substrings; C89 output writes them and extension strings straight into final storage without temporary instruction buffers. A fixed two-ID array also replaces result-struct scratch allocation. Literal flag bits, padding, wire limits and failure rollback remain checked. Offline shader bytes match; allocation and CPU measurements are recorded separately. Other operand/container/driver allocations remain, and audio scheduling is unchanged.

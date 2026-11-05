@@ -130,6 +130,8 @@ echo "PASS: parent/current EDRAM output byte-for-byte, stable high-water storage
 echo "PASS: eight archived-vector/borrowed-view modules, overwritten inputs and nested access chains"
 
 # Fault-injected operand ownership is isolated from profiling adapters.
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_payload_test.c" -o "$out/payload-unit"
+"$out/payload-unit"
 ${CC:-cc} -std=c89 -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" -include "$root/tools/tests/core_spv_arena_test_alloc.h" -c "$root/libretro/core_spv_arena.c" -o "$out/arena-plain.o"
 ${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -include "$root/tools/tests/core_spv_arena_test_alloc.h" -c "$root/libretro/core_spv_operands.c" -o "$out/operands-fault.o"
 ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -include "$root/tools/tests/core_spv_arena_test_alloc.h" -I"$root" -I"$root/src" -I"$root/third_party/libretro-common/include" \
@@ -137,6 +139,10 @@ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -include "$root/tools/tests/core_spv_ar
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-plain.o" "$out/size.o" "$out/operands-fault.o" "$out/fault.o" -o "$out/arena-bridge"
 "$out/arena-bridge"
 case "$san" in *address*)
+ for lifetime in grow-uaf free-uaf end-uaf; do
+  if "$out/payload-unit" "$lifetime" > "$out/payload-$lifetime.log" 2>&1; then echo "missed payload UAF"; exit 1; fi
+  grep -q 'use-after-poison' "$out/payload-$lifetime.log"
+ done
  if "$out/object-unit" uaf > "$out/uaf-objects.log" 2>&1; then echo "missed pooled object UAF"; exit 1; fi
  grep -q 'use-after-poison' "$out/uaf-objects.log"
  if "$out/arena-unit" uaf > "$out/uaf-c.log" 2>&1; then echo "missed C arena UAF"; exit 1; fi
@@ -145,5 +151,7 @@ case "$san" in *address*)
  grep -q 'use-after-poison' "$out/uaf-finish.log"
  if "$out/arena-bridge" uaf > "$out/uaf-cpp.log" 2>&1; then echo "missed typed arena UAF"; exit 1; fi
  grep -q 'use-after-poison' "$out/uaf-cpp.log"
+ if "$out/arena-bridge" payload-uaf > "$out/uaf-payload-cpp.log" 2>&1; then echo "missed typed payload UAF"; exit 1; fi
+ grep -q 'use-after-poison' "$out/uaf-payload-cpp.log"
  echo "PASS: ASan catches retired C and typed instruction access"
  ;; esac

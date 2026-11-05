@@ -34,35 +34,42 @@ struct Worker {
     }
   }
 };
-int main(int argc, char**) {
+int main(int argc, char** argv) {
   xe_spv_arena arena = {};
   CHECK(xe_spv_arena_reserve(&arena, 512));
   size_t allocations = (arena.reserved_records / XE_SPV_RECORDS_PER_PAGE);
+  size_t warmed_payload_calls = 0;
   for (unsigned round = 0; round < 200; ++round) {
     try {
       spv::Builder builder(spv::Spv_1_3, 0, nullptr, &arena);
-      auto pending = builder.makeInstruction(spv::Op::OpNop);
+      auto pending = builder.makeInstruction(spv::Op::OpString);
       pending->reserveOperands(100);
-      CHECK(xe_spv_test_live() == 1);
+      pending->addImmediateOperand(0x41414141);
+      CHECK(xe_spv_test_live() == 0);
       for (unsigned i = 0; i < 300; ++i) {
         auto orphan = builder.createInstruction(spv::Op::OpNop);
         CHECK(!(uintptr_t(orphan) & 63));
         orphan->addImmediateOperand(i);
         orphan->reserveOperands(100);
       }
-      CHECK(xe_spv_test_live() == 301);
+      CHECK(xe_spv_test_live() == 0 && xe_spv_arena_used(&arena) == 301);
       spv::Instruction* retired = pending.get();
+      const char* retired_payload = pending->getNameString();
       pending.reset();
+      if (argc > 1 && !std::strcmp(argv[1], "payload-uaf"))
+        return int(*static_cast<const volatile char*>(retired_payload));
       if (argc > 1) return int(retired->getNumOperands());
-      CHECK(xe_spv_test_live() == 300);
+      CHECK(xe_spv_test_live() == 0);
       bool rejected = false;
       try { spv::Builder overlap(spv::Spv_1_3, 0, nullptr, &arena); }
       catch (const std::bad_alloc&) { rejected = true; }
-      CHECK(rejected && arena.in_use && xe_spv_test_live() == 300);
+      CHECK(rejected && arena.in_use && xe_spv_test_live() == 0);
       if (round & 1) throw std::bad_alloc();
     } catch (const std::bad_alloc&) {}
     CHECK(!arena.in_use && xe_spv_test_live() == 0);
     CHECK((arena.reserved_records / XE_SPV_RECORDS_PER_PAGE) == allocations);
+    if (!round) warmed_payload_calls = xe_spv_test_page_calls();
+    CHECK(xe_spv_test_page_calls() == warmed_payload_calls);
   }
   for (unsigned count : {0u, 1u, 4u, 9u, 70u}) {
     spv::Builder builder(spv::Spv_1_3, 0, nullptr, &arena);
@@ -84,11 +91,14 @@ int main(int argc, char**) {
     auto orphan = builder.createInstruction(spv::Op::OpNop);
     orphan->reserveOperands(16);
     orphan->addImmediateOperand(77);
-    xe_spv_test_fail_next();
+    const size_t payload_pages = xe_spv_test_pages();
+    xe_spv_test_page_fail_after(xe_spv_test_page_calls());
     bool failed = false;
-    try { orphan->reserveOperands(256); }
+    try { orphan->reserveOperands(1000000); }
     catch (const std::bad_alloc&) { failed = true; }
-    CHECK(failed && orphan->getImmediateOperand(0) == 77);
+    xe_spv_test_page_fail_after(size_t(-1));
+    CHECK(failed && orphan->getImmediateOperand(0) == 77 &&
+        orphan->getNumOperands() == 1 && xe_spv_test_pages() == payload_pages);
   }
   CHECK(!arena.in_use && xe_spv_test_live() == 0);
   // The translator Reset contract: pending detached owners precede builder reset.

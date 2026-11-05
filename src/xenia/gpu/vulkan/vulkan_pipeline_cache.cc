@@ -118,6 +118,7 @@ bool VulkanPipelineCache::Initialize() {
 
   if (!xe_spv_binary_reserve(&geometry_shader_code_, 4096) ||
       !xe_spv_arena_reserve(&geometry_instruction_arena_, 1024) ||
+      !xe_spv_arena_reserve_payloads(&geometry_instruction_arena_, 16384) ||
       !xe_spv_arena_reserve_objects(&geometry_instruction_arena_,
           sizeof(spv::Block), 64, sizeof(spv::Function), 32)) {
     xe_spv_binary_close(&geometry_shader_code_);

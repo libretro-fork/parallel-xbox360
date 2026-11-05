@@ -50,6 +50,11 @@ int xe_spv_arena_end(xe_spv_arena *arena, void (*destroy)(void *record));
 int xe_spv_arena_finish(xe_spv_arena *arena, void (*destroy_payload)(void *record));
 int xe_spv_arena_close(xe_spv_arena *arena);
 void xe_spv_arena_retire(void *record);
+/* Payload workspace remains exclusive to the same active module lease. The
+ * resize callback may extend its latest live allocation without moving words. */
+int xe_spv_arena_reserve_payloads(xe_spv_arena *arena, size_t bytes);
+void *xe_spv_arena_record_owner(const void *record, uint32_t offset);
+void *xe_spv_arena_payload_realloc(void *context, void *old, size_t old_bytes, size_t bytes);
 /* Checks live instruction slots without reading candidate payload bytes. */
 int xe_spv_arena_owns_record(const xe_spv_arena *arena, const void *record);
 /* On-demand occupancy query: no per-record profiling counter in the allocator. */

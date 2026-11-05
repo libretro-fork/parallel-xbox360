@@ -15,13 +15,14 @@ for capture in tracked plain; do
  else cppflags=-DXE_SPV_BENCH_PLAIN; fi
  ${CC:-cc} -std=c89 -O3 -I"$common" -include "$profile" $cflags \
   -c "$root/libretro/core_spv_operands.c" -o "$out/storage-$capture.o"
+ ${CC:-cc} -std=c89 -O3 -I"$common" -c "$root/libretro/core_spv_arena.c" -o "$out/arena-$capture.o"
  for mode in baseline current; do
   src="$root/src"
   if test "$mode" = baseline; then src="$out/base"; fi
   ${CXX:-c++} -std=c++20 -O3 -DNDEBUG $cppflags -I"$src" -I"$root" -I"$root/src" \
    -I"$root/src/xenia/gpu/spirv" -I"$root/tools/tests" -I"$common" \
    "$root/tools/tests/core_spv_operands_bench.cc" "$out/profile.o" "$out/storage-$capture.o" \
-   -o "$out/$mode-$capture.exe"
+   "$out/arena-$capture.o" -o "$out/$mode-$capture.exe"
  done
 done
 if test "${BUILD_ONLY:-0}" != 1; then

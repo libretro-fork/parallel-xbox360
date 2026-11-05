@@ -1,0 +1,87 @@
+Reusable C89 operand payloads, Windows x64, 2026-11-05
+Parent: complete 4dcf6a696 source archive, including the texture-watch race fix.
+
+Arena instructions allocate combined operand words/flags from exclusive retained
+payload pages. Each instruction page has an owner pointer; the existing relative
+record offset locates it only on the slow reserve/grow path. No instruction field
+or pointer tag is added: local_flags[0], unused when heap words exist, records the
+pooled allocation kind after inline ID bits have been copied to the packed map.
+Instruction 64 / Block 136 / Function 208 / Module 88 / Builder 2008 x64 sizes remain unchanged.
+The out-of-line arena state adds 56 bytes and each instruction page adds 8 bytes.
+
+The latest live payload may extend in place. Its packed flag map moves with
+memmove when capacity changes; its operand words and borrowed address do not
+move. Non-tail growth copies only initialized words/flag bytes into a checked
+replacement. Old pooled spans retire without calling free on interior pointers.
+No callback frees the previous allocation. Ordinary malloc-backed stack records
+and transitions between ordinary/pooled owners preserve their own release rules.
+The counted string encoder first reserves through its instruction's workspace.
+
+Cold InstructionArena and Vulkan geometry setup reserve 16 KiB of payload space.
+Larger payloads add checked pages without relocating existing spans. All typed
+payloads retire before module end poisons/resets page metadata. Warm leases do
+not clear or copy page contents. Workspace close releases the retained pages
+after module cleanup; active-lease/object guards still reject premature close.
+ASan builds pad spans and add redzones, poisoning freed/replaced spans and entire
+ended leases; release builds have no poisoning or redzone overhead. This trades
+higher retained memory for fewer shader-time allocations, not lower process RSS.
+
+C89 tests cover two workspaces, 100 allocation-free warm leases, stable tail growth,
+copied non-tail growth, overlapping flag-map relocation at 65->66 words, alignment,
+allocator-kind transitions, initialization/growth OOM, overflow, rejected active
+close/end and unchanged live data after failed reserve. Negative ASan cases read
+freed, replaced and ended-lease payloads and must report use-after-poison. Typed
+tests verify retired payload views separately from retired instruction records,
+orphan/exception cleanup, partial reserves and stable high-water reuse. Previous
+malloc-count assertions are replaced by zero per-record malloc and stable page
+counts; allocation faults now target actual payload-page growth. Stack heap
+failure tests remain in the standalone operand suite.
+
+Shader comparison covers all 18432 geometry variants and 128 validator modules,
+5248 EDRAM helper modules, sampler/view/control-flow cases and 1410 actual cached
+guest translations across host-RT/interlock profiles. Byte output remains the
+same. Native MSVC C89/typed checks and full Make-j5 are part of validation.
+No GPU/frontend/game is launched. The installed confirmed-working Tomb Raider
+core is kept intact while these allocator changes are checked offline.
+
+Paired allocation/time measurements and limits follow below.
+
+Seven alternating parent/current pairs after all compiler jobs completed.
+GCC 16.2 -O2, 1000 constructions per sample, same 73-byte names, untimed warm
+module/output. Both revisions compile their own complete builder and C sources.
+Counts include C++new and C operand/arena/index/plan/output allocation hooks,
+excluding allocator headers and driver work. All three golden outputs match;
+tracked live storage returns to its initial value after workspace close.
+
+revision functions calls requested_bytes retained_bytes peak_bytes median_ms range_ms
+parent 1 14000 2009000 27105 29114 .784 .763..830
+current 1 13000 1976000 43592 45568 .744 .722..754
+parent 71 91000 9851000 79956 91095 7.053 6.881..7.321
+current 71 20000 4008000 96459 101755 5.502 5.450..5.765
+parent 257 279000 31433000 238701 275262 23.785 22.921..23.953
+current 257 22000 10152000 271675 286955 17.535 17.034..18.232
+
+Largest fixture: 92.11% fewer allocation requests, 67.70% fewer requested bytes,
+26.28% less construction time (1.36x throughput). Retention rises 32974 bytes and
+tracked peak rises 11693 bytes. Other metadata allocation remains; this is not
+eradication of all mid-game allocations, lower RSS, gameplay FPS/framepacing,
+GPU performance, cache-miss/register-spill or universal-platform speed evidence.
+
+Use CAPTURE_OPERANDS=1 and EXTRA_CXXFLAGS='-DXE_SPV_LONG_NAME_BENCH -DXE_SPV_BLOCK_CHAIN_BENCH'
+with TEST_SOURCE="$PWD/tools/tests/core_spv_function_bench.cc" and a complete
+BASELINE_ROOT in tools/tests/run_spv_binary_bench.sh. Alternate built test
+executables with variants 0/4/5 for paired samples; compare their output files.
+
+Actual cached translation checks use identical read-only input snapshots with
+pre-pool and current core-object fixtures. Tekken: 1410 translations, two with
+control-flow labels, output 81581628 bytes. Tomb Raider:Legend: 210 translations,
+96 with control-flow labels, output 93646888 bytes, including its large pixel
+shader inputs. Both output streams match byte-for-byte. The pre-pool executable
+predates the unrelated watch-cancellation fix; it does not execute that path.
+These checks prove shader output/lifetime behavior, not gameplay timing.
+
+ASan/UBSan negative cases cover pooled growth/free/lease-end and typed borrowed
+payload retirement, in addition to the existing record/object UAF tests. Native
+MSVC C89 /W4 /WX payload tests and typed lifetime suite pass. Final MSVC geometry
+bytes also match the pre-change GCC stream. Whole-core GPU/ARM runtime, actual
+process RSS and hardware cache/spill counters are not measured here.
