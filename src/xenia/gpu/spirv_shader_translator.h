@@ -21,6 +21,7 @@
 #include "xenia/base/platform.h"
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/shader_translator.h"
+#include "xenia/gpu/spirv/InstructionArena.h"
 #include "xenia/gpu/spirv_builder.h"
 #include "xenia/gpu/xenos.h"
 
@@ -1093,6 +1094,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
   bool is_depth_only_fragment_shader_ = false;
   bool is_viz_survey_fragment_shader_ = false;
 
+  // Destroyed after builder_ and main_switch_op_; Reset retains its pages.
+  spv::InstructionArena instruction_arena_;
   std::unique_ptr<SpirvBuilder> builder_;
   std::unique_lock<std::mutex> resource_bindings_lock_;
   bool preloaded_resource_bindings_ = false;

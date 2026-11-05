@@ -101,7 +101,7 @@ echo "PASS: parent/current EDRAM output byte-for-byte, stable high-water storage
 echo "PASS: eight archived-vector/borrowed-view modules, overwritten inputs and nested access chains"
 
 # Fault-injected operand ownership is isolated from profiling adapters.
-${CC:-cc} -std=c89 -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_arena.c" -o "$out/arena-plain.o"
+${CC:-cc} -std=c89 -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" -include "$root/tools/tests/core_spv_arena_test_alloc.h" -c "$root/libretro/core_spv_arena.c" -o "$out/arena-plain.o"
 ${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -include "$root/tools/tests/core_spv_arena_test_alloc.h" -c "$root/libretro/core_spv_operands.c" -o "$out/operands-fault.o"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -c "$root/tools/tests/core_spv_arena_test_alloc.c" -o "$out/fault.o"
 ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src" -I"$root/third_party/libretro-common/include" \

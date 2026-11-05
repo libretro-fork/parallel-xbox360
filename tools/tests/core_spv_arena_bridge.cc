@@ -1,5 +1,6 @@
 /* Typed lifetime interop over the production C89 allocator. */
 #include "xenia/gpu/spirv/SpvBuilder.h"
+#include "xenia/gpu/spirv/InstructionArena.h"
 #include "core_spv_arena_test_alloc.h"
 #include <cstdio>
 #include <cstring>
@@ -7,6 +8,19 @@
 static_assert(sizeof(spv::Instruction) == 64);
 static_assert(std::is_standard_layout_v<spv::Instruction>);
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "line %d: %s\n", __LINE__, #x); return 1; } } while (0)
+// Match the production translator's declaration and reverse destruction order.
+struct Worker {
+  spv::InstructionArena arena;
+  std::unique_ptr<spv::Builder> builder;
+  std::unique_ptr<spv::Instruction> pending;
+  void reset() { pending.reset(); builder.reset(); }
+  void start() {
+    reset();
+    builder = std::make_unique<spv::Builder>(spv::Spv_1_3, 0, nullptr, arena.get());
+    pending = builder->makeInstruction(spv::Op::OpSwitch);
+    pending->reserveOperands(128);
+  }
+};
 int main(int argc, char**) {
   xe_spv_arena arena = {};
   CHECK(xe_spv_arena_reserve(&arena, 512));
@@ -71,6 +85,49 @@ int main(int argc, char**) {
   }
   CHECK(!arena.in_use && xe_spv_test_live() == 0);
   CHECK(xe_spv_arena_close(&arena));
+  CHECK(xe_spv_test_pages() == 0);
+  // Constructor failure after several pages must release its partial reserve.
+  xe_spv_test_page_fail_after(xe_spv_test_page_calls() + 3);
+  bool failed = false;
+  try { Worker worker; }
+  catch (const std::bad_alloc&) { failed = true; }
+  CHECK(failed && xe_spv_test_pages() == 0);
+  xe_spv_test_page_fail_after(size_t(-1));
+  for (unsigned unwind = 0; unwind < 2; ++unwind) {
+    try {
+      Worker first, second;
+      size_t calls = xe_spv_test_page_calls();
+      for (unsigned i = 0; i < 200; ++i) {
+        first.start(); second.start();
+        CHECK(first.arena.get()->head != second.arena.get()->head);
+        for (unsigned j = 0; j < 1200; ++j) {
+          first.builder->createInstruction(spv::Op::OpNop);
+          second.builder->createInstruction(spv::Op::OpNop);
+        }
+        CHECK(xe_spv_test_page_calls() == calls);
+      }
+      if (unwind) throw std::bad_alloc();
+      // Destruction also covers active builders and detached instruction owners.
+    } catch (const std::bad_alloc&) {}
+    CHECK(xe_spv_test_pages() == 0 && xe_spv_test_live() == 0);
+  }
+  {
+    Worker worker;
+    worker.start();
+    for (unsigned i = 0; i < 2300; ++i)
+      worker.builder->createInstruction(spv::Op::OpNop);
+    size_t calls = xe_spv_test_page_calls();
+    CHECK(worker.arena.get()->reserved_records > 2048);
+    for (unsigned round = 0; round < 100; ++round) {
+      worker.start();
+      for (unsigned i = 0; i < 2300; ++i)
+        worker.builder->createInstruction(spv::Op::OpNop);
+      CHECK(xe_spv_test_page_calls() == calls);
+    }
+  }
+  CHECK(xe_spv_test_pages() == 0 && xe_spv_test_live() == 0);
   std::puts("PASS: 60200 arena records, orphan/exception cleanup, operand fault and pending-owner reset");
+  std::puts("PASS: two retained worker arenas, 960000 records without page growth, partial-construction and active-owner unwind");
+  std::puts("PASS: larger-than-reserve modules retain their checked high-water pages");
   return 0;
 }

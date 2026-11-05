@@ -489,7 +489,8 @@ void SpirvShaderTranslator::StartTranslation() {
   }
   // TODO(Triang3l): Logger.
   builder_ = std::make_unique<SpirvBuilder>(
-      features_.spirv_version, (kSpirvMagicToolId << 16) | 1, nullptr);
+      features_.spirv_version, (kSpirvMagicToolId << 16) | 1, nullptr,
+      instruction_arena_.get());
   builder_->SetAllowContraction(features_.allow_float_contraction);
   builder_->SetNoContractionAll(cvars::spirv_no_contraction_all);
 
