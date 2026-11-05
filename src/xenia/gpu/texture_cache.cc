@@ -681,12 +681,8 @@ TextureCache::Texture::Texture(TextureCache& texture_cache,
 }
 
 TextureCache::Texture::~Texture() {
-  if (mips_watch_handle_) {
-    texture_cache().shared_memory().UnwatchMemoryRange(mips_watch_handle_);
-  }
-  if (base_watch_handle_) {
-    texture_cache().shared_memory().UnwatchMemoryRange(base_watch_handle_);
-  }
+  texture_cache().shared_memory().UnwatchMemoryRanges(&mips_watch_handle_,
+                                                    &base_watch_handle_);
 
   // Only remove from usage list if we were added to it (track_usage=true).
   if (in_usage_list_) {

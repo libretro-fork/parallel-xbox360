@@ -1,0 +1,43 @@
+Texture-watch cancellation race, 2026-11-05
+
+Reported Tomb Raider:Legend startup crash: installed core 0436cf7, title 534307D4,
+SharedMemory::WatchMemoryRange+0x58. The faulting store assigns range->callback.
+The range pointer instead equals TextureCache::WatchCallback's code address.
+This is consistent with a recycled range handed out twice: the first reuse
+overwrites its union free-list link with that callback pointer, which is then
+popped as the next free record. The installed DLL's disassembly confirms the
+faulting instruction and callback address; build/version and logs were checked.
+
+Texture destruction previously read each handle before UnwatchMemoryRange took
+the global region. CPU invalidation can take the region in that window, clear
+the owner's slot, unlink/recycle the range, then release it. Cancelling the old
+value subsequently unlinks that already-free range, corrupting the pool. The
+same unsafe cancellation is present in upstream 8dc77b0's texture destructor;
+this is not attributed to recent shader-string optimization. No standalone
+game-runtime comparison has been performed.
+
+UnwatchMemoryRanges now takes owner-slot addresses. It acquires the existing
+global region before reading either value, clears both slots, then unlinks
+distinct non-null ranges. Texture destruction calls it once, without any
+unprotected handle reads. No new mutex or watch-record metadata is introduced;
+the active base/mip pair uses one region acquisition instead of two. Unwatched
+textures also take that region, because reading these mutable slots outside it
+would preserve the race. SharedMemory and TextureCache serve Vulkan and D3D12.
+
+The offline test links actual Make core objects and uses real SharedMemory,
+Memory callback registration and the global region, without initializing guest
+memory mappings, a GPU or frontend. Rthreads and retro_atomic publication force
+invalidation between the old handle capture and cancellation's lock acquisition.
+Old headers/objects with XE_TEST_STALE_WATCH_VALUES deterministically report
+duplicate live watch allocation and exit 76 before dereferencing the corrupted
+callback link. The fixed code passes 256 forced races, ranges spanning multiple
+buckets, four fresh simultaneous watches, repeated empty cancellation and an
+aliased owner-slot argument. Callback counts and cleared slots are verified.
+
+Run sh tools/tests/run_shared_memory_watch_tests.sh after building the core.
+The old-code negative requires its matching source headers and Make link inputs;
+do not link an old SharedMemory layout against arbitrary current headers.
+Windows Make-j5 and MSVC /Zs /WX production-source/test checks pass. No claim
+that Tomb Raider gameplay/startup has been retested is made from this offline
+regression. It establishes the race and allocator corruption fix; additional
+runtime faults would require their own trace.

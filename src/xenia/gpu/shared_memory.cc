@@ -272,9 +272,14 @@ SharedMemory::WatchHandle SharedMemory::WatchMemoryRange(
   return reinterpret_cast<WatchHandle>(range);
 }
 
-void SharedMemory::UnwatchMemoryRange(WatchHandle handle) {
+void SharedMemory::UnwatchMemoryRanges(WatchHandle* first, WatchHandle* second) {
   auto global_lock = global_critical_region_.Acquire();
-  UnlinkWatchRange(reinterpret_cast<WatchRange*>(handle));
+  WatchRange* first_range = static_cast<WatchRange*>(*first);
+  WatchRange* second_range = static_cast<WatchRange*>(*second);
+  *first = nullptr;
+  *second = nullptr;
+  if (first_range) UnlinkWatchRange(first_range);
+  if (second_range && second_range != first_range) UnlinkWatchRange(second_range);
 }
 
 void SharedMemory::FireWatches(uint32_t page_first, uint32_t page_last,

@@ -67,8 +67,9 @@ class SharedMemory {
   WatchHandle WatchMemoryRange(uint32_t start, uint32_t length,
                                WatchCallback callback, void* callback_context,
                                void* callback_data, uint64_t callback_argument);
-  // Unregisters previously registered watched memory range.
-  void UnwatchMemoryRange(WatchHandle handle);
+  // Read and clear both owner's slots inside the critical region. Passing a
+  // handle value captured before acquiring it races with invalidation/reuse.
+  void UnwatchMemoryRanges(WatchHandle* first, WatchHandle* second);
 
   // Checks if the range has been updated, uploads new data if needed and
   // ensures the host GPU memory backing the range are resident. Returns true if
