@@ -6,6 +6,11 @@ its classes does not satisfy this requirement. This migration is incomplete.
 
 ## Current cuts
 
+- Every production instruction now uses a C89 encoded packet. Its type/result
+  prefix and operands share a wire-word span; output borrows that span rather
+  than encoding fields again. ID flags and operand patches remain available.
+  Typed ownership/CFG wrappers still remain, and final module assembly still
+  copies packets into Vulkan's required contiguous module.
 - The Vulkan version probe emits its final 39 words in C89 caller storage. It
   constructs no builder, types, functions, blocks, instructions or output vector.
 - Capability membership uses retained sorted C89 values. Capability and memory
@@ -31,9 +36,10 @@ The replacement must retain required opcode information without a language parse
 
 ## Replacement work still required
 
-1. Add an owned C89 module emitter with stable encoded-word spans and ID/type
-   indexes. Write headers/operands into their final span at construction; queries
-   borrow encoded data rather than rebuilding argument vectors or IR objects.
+1. Extend the C89 encoded packets into an owned module emitter with stable
+   encoded-word spans and ID/type indexes. Packets already write their wire
+   prefix/operands during construction; replace the remaining typed graph/index
+   interfaces with C handles and queries over those words.
 2. Replace block/function objects with stable C89 handles and encoded block
    spans. Preserve outer-loop references or migrate all their callers before
    changing that interface. Forward labels, Phi inputs and Switch operands need

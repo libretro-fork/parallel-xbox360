@@ -49,6 +49,7 @@
 
 #include "spirv.hpp11"
 #include "libretro/core_spv_operands.h"
+#include "libretro/core_spv_packet.h"
 #include "libretro/core_spv_words.h"
 #include "libretro/core_spv_binary.h"
 #include "libretro/core_spv_size.h"
@@ -109,37 +110,37 @@ struct IdImmediate {
 
 class Instruction final {
 public:
-    Instruction(Id resultId, Id typeId, Op opCode) : resultId(resultId), typeId(typeId), opCode(opCode), arenaOffset(0), ownerOrNext(nullptr) { xe_spv_operands_init(&operands); }
-    explicit Instruction(Op opCode) : resultId(NoResult), typeId(NoType), opCode(opCode), arenaOffset(0), ownerOrNext(nullptr) { xe_spv_operands_init(&operands); }
-    ~Instruction() { if (operands.heap) xe_spv_operands_free(&operands); }
+    Instruction(Id resultId, Id typeId, Op opCode) : ownerOrNext(nullptr) { xe_spv_packet_init(&packet, (uint32_t)opCode, typeId, resultId); }
+    explicit Instruction(Op opCode) : Instruction(NoResult, NoType, opCode) {}
+    ~Instruction() { if (packet.heap) xe_spv_packet_free(&packet); }
     // All heap records come from their module arena. Stack temporaries remain valid.
     static void* operator new(size_t) = delete;
     static void* operator new[](size_t) = delete;
     static void operator delete(void* record) noexcept { xe_spv_arena_retire(record); }
     void reserveOperands(size_t count) {
-        if (count <= operands.capacity) return;
-        if (!xe_spv_operands_reserve_with(&operands, count,
-                arenaOffset ? xe_spv_arena_payload_realloc : nullptr,
-                arenaOffset ? xe_spv_arena_record_owner(this, arenaOffset) : nullptr))
+        if (count <= packet.capacity) return;
+        if (!xe_spv_packet_reserve_with(&packet, count,
+                packet.arena_offset ? xe_spv_arena_payload_realloc : nullptr,
+                packet.arena_offset ? xe_spv_arena_record_owner(this, packet.arena_offset) : nullptr))
             throw std::bad_alloc();
     }
     void addIdOperand(Id id) {
         // ids can't be 0
         assert(id);
-        if (operands.count == operands.capacity) growOperands();
-        xe_spv_operands_append_reserved(&operands, id, 1);
+        if (packet.count == packet.capacity) growOperands();
+        xe_spv_packet_append_reserved(&packet, id, 1);
     }
     // This method is potentially dangerous as it can break assumptions
     // about SSA and lack of forward references.
     void setIdOperand(unsigned idx, Id id) {
         assert(id);
-        assert(xe_spv_operands_is_id(&operands, idx));
-        xe_spv_operands_words(&operands)[idx] = id;
+        assert(xe_spv_packet_is_id(&packet, idx));
+        xe_spv_packet_operands(&packet)[idx] = id;
     }
 
     void addImmediateOperand(unsigned int immediate) {
-        if (operands.count == operands.capacity) growOperands();
-        xe_spv_operands_append_reserved(&operands, immediate, 0);
+        if (packet.count == packet.capacity) growOperands();
+        xe_spv_packet_append_reserved(&packet, immediate, 0);
     }
 
     void addImmediateOperand(spv::StorageClass immediate) {
@@ -203,8 +204,8 @@ public:
     }
 
     void setImmediateOperand(unsigned idx, unsigned int immediate) {
-        assert(!xe_spv_operands_is_id(&operands, idx));
-        xe_spv_operands_words(&operands)[idx] = immediate;
+        assert(!xe_spv_packet_is_id(&packet, idx));
+        xe_spv_packet_operands(&packet)[idx] = immediate;
     }
 
     void addStringOperand(const char* str)
@@ -214,102 +215,87 @@ public:
     }
     void addStringOperand(const char* str, size_t bytes)
     {
-        size_t capacity = xe_spv_operands_string_capacity(&operands, bytes);
+        size_t capacity = xe_spv_packet_string_capacity(&packet, bytes);
         if (!capacity || (bytes && !str)) throw std::bad_alloc();
         reserveOperands(capacity);
-        if (!xe_spv_operands_string(&operands, str, bytes)) throw std::bad_alloc();
+        if (!xe_spv_packet_string_reserved(&packet, str, bytes)) throw std::bad_alloc();
     }
-    bool isIdOperand(int op) const { return xe_spv_operands_is_id(&operands, op); }
+    bool isIdOperand(int op) const { return xe_spv_packet_is_id(&packet, op); }
     // Only labels carry block ownership. Other records use this slot as their
     // intrusive ownership link, preserving record size and arena tag offset.
-    void setBlock(Block* b) { assert(opCode == Op::OpLabel); ownerOrNext = b; }
-    Block* getBlock() const { return opCode == Op::OpLabel ? static_cast<Block*>(ownerOrNext) : nullptr; }
-    Instruction* getNextInstruction() const { assert(opCode != Op::OpLabel && opCode != Op::OpFunction); return static_cast<Instruction*>(ownerOrNext); }
+    void setBlock(Block* b) { assert(getOpCode() == Op::OpLabel); ownerOrNext = b; }
+    Block* getBlock() const { return getOpCode() == Op::OpLabel ? static_cast<Block*>(ownerOrNext) : nullptr; }
+    Instruction* getNextInstruction() const { assert(getOpCode() != Op::OpLabel && getOpCode() != Op::OpFunction); return static_cast<Instruction*>(ownerOrNext); }
     static void** nextSlot(void* record) noexcept {
         auto* instruction = static_cast<Instruction*>(record);
-        assert(instruction->opCode != Op::OpLabel && instruction->opCode != Op::OpFunction);
+        assert(instruction->getOpCode() != Op::OpLabel && instruction->getOpCode() != Op::OpFunction);
         return &instruction->ownerOrNext;
     }
     static void destroyLinked(void* record) noexcept { delete static_cast<Instruction*>(record); }
-    Op getOpCode() const { return opCode; }
+    Op getOpCode() const { return static_cast<Op>(xe_spv_packet_opcode(&packet)); }
     int getNumOperands() const
     {
-        return (int)operands.count;
+        return (int)packet.count;
     }
-    Id getResultId() const { return resultId; }
+    Id getResultId() const { return xe_spv_packet_result(&packet); }
+    Id getTypedResultId() const { return xe_spv_packet_typed_result(&packet); }
+    bool matchesConstant(uint32_t opcode, Id type, xe_spv_word_view words) const {
+        return xe_spv_packet_constant_equal(&packet, opcode, type, words.words, words.count) != 0;
+    }
     xe_spv_word_view getOperandsView() const {
-        return xe_spv_words_view(xe_spv_operands_const_words(&operands), operands.count);
+        return xe_spv_words_view(xe_spv_packet_const_operands(&packet), packet.count);
     }
-    Id getTypeId() const { return typeId; }
+    Id getTypeId() const { return xe_spv_packet_type(&packet); }
     Id getIdOperand(int op) const {
-        assert(xe_spv_operands_is_id(&operands, op));
-        return xe_spv_operands_const_words(&operands)[op];
+        assert(xe_spv_packet_is_id(&packet, op));
+        return xe_spv_packet_const_operands(&packet)[op];
     }
     unsigned int getImmediateOperand(int op) const {
-        assert(!xe_spv_operands_is_id(&operands, op));
-        return xe_spv_operands_const_words(&operands)[op];
+        assert(!xe_spv_packet_is_id(&packet, op));
+        return xe_spv_packet_const_operands(&packet)[op];
     }
 
     // Write out the binary form.
     void dump(std::vector<unsigned int>& out) const
     {
-        // Compute the wordCount
-        unsigned int wordCount = 1;
-        if (typeId)
-            ++wordCount;
-        if (resultId)
-            ++wordCount;
-        wordCount += (unsigned int)operands.count;
-
-        // Write out the beginning of the instruction
-        out.push_back(((wordCount) << WordCountShift) | (unsigned)opCode);
-        if (typeId)
-            out.push_back(typeId);
-        if (resultId)
-            out.push_back(resultId);
-
-        // Write out the operands
-        for (int op = 0; op < (int)operands.count; ++op)
-            out.push_back(xe_spv_operands_const_words(&operands)[op]);
+        if (!xe_spv_packet_valid(&packet)) throw std::bad_alloc();
+        const xe_spv_word_view words = xe_spv_packet_view(&packet);
+        out.insert(out.end(), words.words, words.words + words.count);
     }
 
     void dump(xe_spv_binary& out) const
     {
-        xe_spv_binary_instruction(&out, (uint32_t)opCode, typeId, resultId,
-            xe_spv_operands_const_words(&operands), operands.count);
+        if (!xe_spv_packet_valid(&packet)) { out.failed = 1; return; }
+        const xe_spv_word_view words = xe_spv_packet_view(&packet);
+        xe_spv_binary_append(&out, words.words, words.count);
     }
 
-void dump(xe_spv_count& out) const
+    void dump(xe_spv_count& out) const
     {
-        xe_spv_count_instruction(&out, (uint32_t)opCode, typeId, resultId,
-            operands.count);
+        if (!xe_spv_packet_valid(&packet)) { out.failed = 1; return; }
+        xe_spv_count_words(&out, xe_spv_packet_prefix(&packet) + packet.count);
     }
 
     const char *getNameString() const {
-        if (opCode == Op::OpString) {
-            return (const char *)&xe_spv_operands_const_words(&operands)[0];
+        if (getOpCode() == Op::OpString) {
+            return (const char *)&xe_spv_packet_const_operands(&packet)[0];
         } else {
-            assert(opCode == Op::OpName);
-            return (const char *)&xe_spv_operands_const_words(&operands)[1];
+            assert(getOpCode() == Op::OpName);
+            return (const char *)&xe_spv_packet_const_operands(&packet)[1];
         }
     }
 
 protected:
     void growOperands() {
-        size_t capacity = xe_spv_operands_growth_capacity(&operands);
+        size_t capacity = xe_spv_packet_growth(&packet);
         if (!capacity) throw std::bad_alloc();
         reserveOperands(capacity);
     }
     Instruction(const Instruction&) = delete;
     Instruction& operator=(const Instruction&) = delete;
-    Id resultId;
-    Id typeId;
-    Op opCode;
-    // Relative allocation-header offset occupies former alignment padding.
-    uint32_t arenaOffset;
+    xe_spv_packet packet;
     friend class Module;
     friend class Function;
-    xe_spv_operands operands;
     void* ownerOrNext;
 };
 
@@ -627,7 +613,7 @@ public:
         : arena(externalArena ? externalArena : &localArena), borrowed(externalArena != nullptr)
     {
         static_assert(sizeof(Instruction) <= XE_SPV_RECORD_BYTES);
-        static_assert(offsetof(Instruction, arenaOffset) == XE_SPV_RECORD_ARENA_OFFSET);
+        static_assert(offsetof(Instruction, packet) + offsetof(xe_spv_packet, arena_offset) == XE_SPV_RECORD_ARENA_OFFSET);
         if (!xe_spv_arena_begin(arena)) throw std::bad_alloc();
     }
     // Builder fields are destroyed first. Global instruction lists only borrow
@@ -659,7 +645,7 @@ public:
         void* memory = xe_spv_arena_alloc(arena, &offset);
         if (!memory) throw std::bad_alloc();
         Instruction* instruction = ::new (memory) Instruction(result, type, code);
-        instruction->arenaOffset = offset;
+        instruction->packet.arena_offset = offset;
         return instruction;
     }
     Instruction* createInstruction(Op code) { return createInstruction(NoResult, NoType, code); }

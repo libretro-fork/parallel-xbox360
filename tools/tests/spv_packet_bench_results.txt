@@ -1,0 +1,130 @@
+C89 encoded instruction packets, 2026-11-06
+Parent: complete 66a09e024643ef15502e513e2e8c3619694d19b8 sources.
+
+Production guest/helper instructions now contain a C89 encoded packet instead
+of separate opcode/type/result fields plus operand-only storage. The packet
+constructs its header, optional type/result prefix and operands in wire order.
+Appending an operand updates the encoded word count. Operand patches write
+directly to the wire span; ID/literal flags remain separate packed metadata.
+No GLSL source parser or new IR is introduced.
+
+Output validates the opcode/16-bit length and borrows the complete packet for
+one append into final module storage. It no longer encodes each instruction's
+prefix during output. Vulkan still requires a contiguous module in logical/CFG
+order, so final assembly copies packet spans. This is not zero-copy module
+submission and does not remove the existing control-flow/type ownership graph.
+
+The immutable opcode/type/result prefix already retained in the inline area is
+used for metadata queries after heap promotion. No separate query cache, new
+allocation or extra copy is added. Prefix size uses two metadata bits. Constants
+compare encoded scalar/pair integer representations directly; longer payloads
+use memcmp. NaNs, signed zero and specialization distinctions retain bit identity.
+
+Tested x64 sizes remain Instruction64/Block136/Function136/Module88/Builder1504.
+The C packet is 56 bytes with the arena tag still at byte12; the existing owner
+link completes the 64-byte instruction. Inline operand capacity is 7-prefix:
+four with type+result, five with one, six with neither (formerly four for all).
+Heap payloads now include their one-to-three-word prefix, adding 4..12 bytes
+at equal operand capacity, before pooled padding. Geometric capacities/growth
+can also differ because of the larger untyped inline capacity. No universal
+memory reduction or absence of growth is claimed. Heap promotion copies the
+live span and flags; pooled reset retains high-water pages. Free preserves the
+arena tag until typed operator delete retires the record. Borrowed views expire
+on growth/free. Opcode/type/result are immutable after initialization.
+
+Measurement method: Windows x64 GCC16.2 -O2, own-revision C/IR sources, same
+existing fixtures. All C++ new and C arena/operand/index/plan/output hooks are
+counted; allocator headers/free-block retention and driver memory are excluded.
+Construction includes cleanup, excludes dump/file I/O; warmed untimed outputs
+match. Tracked live storage returns to the initial value after workspace close.
+
+The first packet implementation regressed constant construction by about 20%
+in quiet paired tests. Cached prefix size, direct scalar/pair comparisons and
+queries using the retained immutable prefix removed the larger regression.
+No such initial version was pushed. A low-contention seven-pair run of the
+frozen runtime sources before final validation measured these median ms:
+workload                    parent  current
+1000 modules, 1 function      .123     .127
+1000 modules, 71 functions   4.001    4.023
+1000 modules,257 functions  14.506   14.530
+1000 modules,40 constants    1.893    1.968
+1000 modules,640 constants  33.325   32.187
+100 modules,5120 constants  29.679   28.270
+The smallest constant case is slower; larger constants improve in this run,
+and function ranges overlap. This is not a universal construction speedup.
+
+Final seven alternating pairs ran after this task's compilers stopped, but an
+unrelated Dolphin build was subsequently observed using many host compiler
+processes. These final wall times are CONTENDED and cannot establish precise
+speedups; retain them as reproducible fixture scope/cost evidence, not FPS data.
+The following reports median ms (range), parent -> current:
+construction, 1 function: .243(.226...253) -> .228(.220...247)
+construction,71 functions:7.436(7.313..8.057) ->7.681(7.627..9.592)
+construction,257 functions:27.676(27.042..28.295) ->27.906(27.453..29.354)
+40 constants:3.623(3.585..14.827) ->3.648(3.528..4.105)
+640 constants:60.391(58.509..64.494) ->63.366(55.636..70.779)
+5120 constants:54.516(51.585..106.017) ->50.536(47.669..52.299)
+71 functions/9 parameters:11.578(11.170..12.883) ->11.749(11.519..13.105)
+257 functions/70 parameters:163.964(156.320..194.474) ->174.466(166.634..273.222)
+
+Allocation/requested/retained/peak counts are identical between revisions in
+these construction fixtures. No-parameter function and constant cases have zero
+tracked warm allocations. The parameter fixture still allocates its caller's
+input vector: 5000 calls/124000 requested bytes per1000 nine-parameter modules,
+8000/1020000 per1000 seventy-parameter modules. Retained/peak bytes:
+functions1 51957/51957; functions71 100728/103032;
+functions257 263656/272872; constants40 52673/52673;
+constants640 156825/156825; constants5120 926433/926433;
+9params 140632/143000;70params 1835735/1845463.
+These fixtures do not prove all shaders allocate nothing or retain equal space.
+
+Final CONTENDED serialization,10000 direct-owned modules/sample, median ms/range:
+328-byte module:3.336(3.041..6.371) ->2.591(2.505..2.671)
+5432-byte module:28.503(28.320..31.164) ->20.223(19.016..22.235)
+13624-byte/513-block module:178.522(173.061..207.211) ->162.719(156.496..175.229)
+3968-byte/71-function module:48.488(46.194..49.741) ->48.985(46.419..56.459)
+Output allocations/requested bytes/peak output payload are unchanged:
+10000/3280000/328;10000/54320000/5432;
+10001/136249216/13624;10002/39683456/3968.
+The legacy word-vector-then-byte-copy adapter also borrows encoded spans, but
+its vector growth/peak costs can increase (e.g.71-function case). That adapter
+is not the core's direct-owned output path; no universal adapter benefit is claimed.
+
+Validation of final sources:
+- Strict C89 packet unit and native MSVC /TC /W4 /WX: all four prefix layouts,
+  inline/heap transitions, preserved arena tag, forced allocation failure and
+  recovery, rejected SIZE_MAX reserve, patched words/ID flags, 11627 counted
+  string layouts, wire length overflow, invalid opcode, zero/scalar/pair/long
+  constant keys, changed opcode/type/count/payload and immutable prefix queries.
+- Full native MSVC output/ownership suite passes, including type identities,
+  specialization keys, linkage names, source chunking, structured control flow,
+  failed construction and cross-block sampled-image cloning.
+- Full final WSL ASan/UBSan suite passes (C -O2, C++ -O1 for sanitizer compile
+  cost), including5248 helper modules, allocation faults and expected retired
+  C/typed/stack/payload use-after-poison failures. Earlier versions before the
+  immutable-prefix query cut also passed the full C++ -O2 sanitizer suite.
+- Native MSVC geometry18432 variants/109668864 bytes retains golden SHA256
+  427b071c7e7868566596ff55270bbca9aab31f54c714ca552e928dfe349e69e0.
+- Final actual GCC -O3 Make objects:1410 cached Tekken translations/two with CFG,
+  210 cached Tomb Raider translations/96 with CFG match existing references.
+  Private cache inputs are not shipped. This is not all-game validation.
+- Windows static Make -j5 passes. No game/frontend/GPU launched, installed core
+  untouched. Audio, pacing, resource retirement and shutdown are unchanged.
+  No hardware counter, RSS, GPU latency, actual FPS or platform-wide claim.
+
+Reproduce C/native/sanitizer checks with run_spv_output_tests.cmd/.sh. For full
+WSL instrumentation use SANITIZER='-fsanitize=address,undefined
+-fno-omit-frame-pointer -fno-pie -no-pie' and SPIRV_VALIDATOR=spirv-val; the final
+run's CXX wrapper appended -O1 to the compiler arguments. Construction uses
+run_spv_binary_bench.sh, BASELINE_ROOT=<complete66a09e0 sources>,
+CAPTURE_OPERANDS=1, TEST_SOURCE=tools/tests/core_spv_constant_bench.cc or
+core_spv_function_bench.cc. Functions use EXTRA_CXXFLAGS=
+'-DXE_SPV_LONG_NAME_BENCH -DXE_SPV_BLOCK_CHAIN_BENCH'; parameters use
+'-DXE_SPV_PARAMETER_BENCH -DXE_SPV_BLOCK_CHAIN_BENCH'. Serialization uses the
+default fixture. After compilation alternate parent/current variants0/4/5
+(also6 for serialization) seven times, compare all output bytes, and record
+host contention. Further idle-host/gameplay measurements remain necessary.
+
+Next: remove obsolete operand-only compatibility and move module/type/CFG duties
+to C handles over encoded packets. The legacy spirv directory remains until
+those real dependencies are replaced; see libretro/SPIRV_EMITTER_MIGRATION.md.

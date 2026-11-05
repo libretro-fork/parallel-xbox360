@@ -1755,10 +1755,8 @@ bool Builder::containsPhysicalStorageBufferOrArray(Id typeId) const
 int Builder::equalConstant(const void* record, const xe_spv_constant_key* key)
 {
     const Instruction* instruction = static_cast<const Instruction*>(record);
-    xe_spv_word_view words = instruction->getOperandsView();
-    return enumCast(instruction->getOpCode()) == key->opcode &&
-        instruction->getTypeId() == key->type && words.count == key->count &&
-        (!words.count || !memcmp(words.words, key->words, words.count * sizeof(uint32_t)));
+    return instruction->matchesConstant(key->opcode, key->type,
+        xe_spv_words_view(key->words, key->count));
 }
 
 Id Builder::findConstant(Op opcode, Id typeId, xe_spv_word_view words)
@@ -1766,7 +1764,7 @@ Id Builder::findConstant(Op opcode, Id typeId, xe_spv_word_view words)
     xe_spv_constant_key key = {enumCast(opcode), typeId, words.words, words.count};
     const Instruction* found = static_cast<const Instruction*>(xe_spv_constant_cache_find(
         module.constantCache(), xe_spv_constant_hash(&key), &key, equalConstant));
-    return found ? found->getResultId() : NoResult;
+    return found ? found->getTypedResultId() : NoResult;
 }
 
 void Builder::publishConstant(Instruction* constant, bool cache)

@@ -12,6 +12,8 @@ git -C "$root" archive "$baseline" src/xenia/gpu/spirv src/xenia/gpu/spirv_shade
 fi
 tar -xf "$out/base.tar" -C "$out/base"
 san=${SANITIZER-}
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_packet_test.c" -o "$out/packet-unit"
+"$out/packet-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -c "$root/libretro/core_spv_probe.c" -o "$out/probe.o"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_metadata_test.c" "$out/probe.o" -o "$out/metadata-unit"
 "$out/metadata-unit"

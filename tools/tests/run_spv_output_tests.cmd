@@ -5,6 +5,10 @@ for %%R in ("%~dp0..\..") do set ROOT=%%~fR
 pushd "%ROOT%"
 set OUT=build\tests\spv-output-msvc
 if not exist %OUT% mkdir %OUT%
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_packet_test.c /Fo%OUT%\packet-unit.obj /Fe%OUT%\packet-unit.exe
+if errorlevel 1 goto fail
+%OUT%\packet-unit.exe
+if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /c libretro/core_spv_probe.c /Fo%OUT%\probe.obj
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_metadata_test.c /Fo%OUT%\metadata-unit.obj /Fe%OUT%\metadata-unit.exe /link %OUT%\probe.obj
