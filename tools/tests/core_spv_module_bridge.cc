@@ -54,6 +54,30 @@ int main(int argc, char **argv) {
     if (!recovered.makeVoidType()) return 34;
   }
 #endif
+#if defined(XE_SPV_BINARY_CHECK) && !defined(XE_SPV_BYTE_BENCH)
+  {
+    unsigned rejected = 0;
+    for (int fail = 0; fail < 32; ++fail) {
+      spv::Builder candidate(spv::Spv_1_3, 0, nullptr);
+      candidate.makeEntryPoint("first");
+      spv::Block* previous = candidate.getBuildPoint();
+      spv::Block* output = previous;
+      auto type = candidate.makeVoidType();
+      bool failed = false;
+      fail_new_after = fail;
+      try {
+        candidate.makeFunctionEntry(spv::NoPrecision, type, "candidate",
+            spv::LinkageType::Max, {}, {}, &output);
+      } catch (const std::bad_alloc&) { failed = true; ++rejected; }
+      fail_new_after = -1;
+      if (failed) {
+        if (output != previous || candidate.getBuildPoint() != previous) return 35;
+      } else if (output == previous || candidate.getBuildPoint() != output) return 36;
+    }
+    if (rejected < 3) return 37;
+    std::printf("PASS: %u function construction failures preserve unpublished entry/build point\n", rejected);
+  }
+#endif
   const unsigned counts[] = {1, 4, 8, 33, 129, 129, 1};
   const unsigned variant = unsigned(std::strtoul(argv[2], nullptr, 10));
   if (variant >= 7) return 2;

@@ -2576,15 +2576,17 @@ Function* Builder::makeFunctionEntry(Decoration precision, Id returnType, const 
     // CFG
     assert(entry != nullptr);
     auto entryOwner = std::make_unique<Block>(getUniqueId(), *function);
-    *entry = entryOwner.get();
-    function->addBlock(*entry);
+    Block* entryBlock = entryOwner.get();
+    function->addBlock(entryBlock);
     entryOwner.release();
-    setBuildPoint(*entry);
 
     if (name)
         addName(function->getId(), name);
 
     functions.push_back(std::move(functionOwner));
+    // Publish borrowed state only after every throwing ownership step succeeds.
+    *entry = entryBlock;
+    setBuildPoint(entryBlock);
 
     return function;
 }
@@ -4620,7 +4622,8 @@ template <class Output> void Builder::dumpInternal(Output& out, xe_spv_plan* pla
     dumpInstructions(out, externals);
 
     // The functions
-    module.dump(out, plan, record);
+    for (const auto& function : functions)
+        function->dump(out, plan, record);
 }
 
 //

@@ -349,8 +349,8 @@ void Builder::postProcessCFG()
     // Collect IDs defined in unreachable blocks. For each function, label the
     // reachable blocks first. Then for each unreachable block, collect the
     // result IDs of the instructions in it.
-    for (auto fi = module.getFunctions().cbegin(); fi != module.getFunctions().cend(); fi++) {
-        Function* f = *fi;
+    for (const auto& functionOwner : functions) {
+        Function* f = functionOwner.get();
         Block* entry = f->getEntryBlock();
         inReadableOrder(entry,
             [&reachableBlocks, &unreachableMerges, &headerForUnreachableContinue]
@@ -421,8 +421,8 @@ void Builder::postProcessFeatures() {
     }
 
     // process all block-contained instructions
-    for (auto fi = module.getFunctions().cbegin(); fi != module.getFunctions().cend(); fi++) {
-        Function* f = *fi;
+    for (const auto& functionOwner : functions) {
+        Function* f = functionOwner.get();
         for (auto bi = f->getBlocks().cbegin(); bi != f->getBlocks().cend(); bi++) {
             Block* b = *bi;
             for (auto ii = b->getInstructions().cbegin(); ii != b->getInstructions().cend(); ii++)
@@ -495,7 +495,8 @@ void Builder::postProcessSamplers()
 {
     // first, find all OpSampledImage instructions and store them in a map.
     std::map<Id, Instruction*> sampledImageInstrs;
-    for (auto f: module.getFunctions()) {
+    for (const auto& functionOwner : functions) {
+        Function* f = functionOwner.get();
 	for (auto b: f->getBlocks()) {
 	    for (auto &i: b->getInstructions()) {
         if (i->getOpCode() == spv::Op::OpSampledImage) {
@@ -505,7 +506,8 @@ void Builder::postProcessSamplers()
 	}
     }
     // next find all uses of the given ids and rewrite them if needed.
-    for (auto f: module.getFunctions()) {
+    for (const auto& functionOwner : functions) {
+        Function* f = functionOwner.get();
 	for (auto b: f->getBlocks()) {
             auto &instrs = b->getInstructions();
             for (size_t idx = 0; idx < instrs.size(); idx++) {

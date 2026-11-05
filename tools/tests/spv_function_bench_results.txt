@@ -1,0 +1,20 @@
+Direct owning-function emission benchmark, Windows x86-64, 2026-11-05
+Parent: complete 9adf32378 source archive. Current: duplicate Module function registry removed.
+GCC16.2 -O2 C++20; sequential builds/runs, five samples of 1000 constructed/destroyed modules.
+Production Builder and Function factories; 1, 71 and 257 simple functions per module.
+One untimed module warms workspace record/ID capacity; timed modules do not serialize.
+Counts capture C++ new, arena/index/output/plan allocation hooks. Operand malloc is excluded.
+Retained heap includes workspace pages, lookup and the untimed golden output; allocator headers/OS RSS excluded.
+All tracked live bytes return to the initial value after workspace/output shutdown.
+Parent/current SPIR-V outputs compare byte-for-byte for every function count.
+Module metadata falls from 104 to 80 bytes on x64; the owning function list remains.
+Other IR owners still allocate. These are construction measurements, not gameplay FPS or driver compilation.
+Reproduce: BASELINE_ROOT=<complete 9adf32378 source archive> TEST_SOURCE=<absolute tools/tests/core_spv_function_bench.cc> sh tools/tests/run_spv_binary_bench.sh
+
+revision functions module_bytes calls requested_bytes retained_heap_bytes median_ms range_ms
+current 1 80 23000 2416000 9475 0.887 0.884..0.915
+current 257 80 1321000 119120000 103483 62.626 62.126..63.211
+current 71 80 387000 33920000 32497 12.128 11.845..13.442
+parent 1 104 24000 2424000 9475 1.157 1.152..1.175
+parent 257 104 1331000 127304000 103483 63.173 62.915..64.597
+parent 71 104 395000 35960000 32497 12.423 12.313..13.692

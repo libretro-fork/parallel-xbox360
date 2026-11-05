@@ -631,7 +631,6 @@ public:
     }
     Instruction* createInstruction(Op code) { return createInstruction(NoResult, NoType, code); }
 
-    void addFunction(Function *fun) { functions.push_back(fun); }
 
     void mapInstruction(Instruction *instruction)
     {
@@ -642,7 +641,6 @@ public:
     Instruction* getInstruction(Id id) const {
         return static_cast<Instruction*>(xe_spv_index_get(&arena->index, id));
     }
-    const std::vector<Function*>& getFunctions() const { return functions; }
     spv::Id getTypeId(Id resultId) const {
         const Instruction* instruction = getInstruction(resultId);
         return instruction ? instruction->getTypeId() : NoType;
@@ -654,12 +652,6 @@ public:
         return (StorageClass)instruction->getImmediateOperand(0);
     }
 
-    template <class Output> void dump(Output& out, xe_spv_plan* plan = nullptr, bool record = false) const
-    {
-        for (int f = 0; f < (int)functions.size(); ++f)
-            functions[f]->dump(out, plan, record);
-    }
-
 protected:
     static void destroyRecord(void* record) { delete static_cast<Instruction*>(record); }
     xe_spv_arena localArena = {};
@@ -667,7 +659,6 @@ protected:
     bool borrowed;
     Module(const Module&) = delete;
     Module& operator=(const Module&) = delete;
-    std::vector<Function*> functions;
     // Instruction lookup storage belongs to the exclusive arena workspace.
 };
 
@@ -698,7 +689,6 @@ __inline Function::Function(Id id, Id resultType, Id functionType, Id firstParam
     functionInstruction.addImmediateOperand(FunctionControlMask::MaskNone);
     functionInstruction.addIdOperand(functionType);
     parent.mapInstruction(&functionInstruction);
-    parent.addFunction(this);
 
     // OpFunctionParameter
     Instruction* typeInst = parent.getInstruction(functionType);
