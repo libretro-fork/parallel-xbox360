@@ -251,3 +251,4 @@ third_party/VulkanMemoryAllocator
 src/xenia/ui/vulkan/vulkan_mem_alloc.cc
 src/xenia/ui/vulkan/vulkan_mem_alloc.h
 src/xenia/base/delegate.h
+src/xenia/base/atomic.h

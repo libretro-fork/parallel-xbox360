@@ -10,12 +10,11 @@
 #ifndef XENIA_CPU_PPC_PPC_CONTEXT_H_
 #define XENIA_CPU_PPC_PPC_CONTEXT_H_
 
+#include <cstddef>
 #include <cstdint>
-#include <mutex>
 #include <string>
 
 #include "xenia/base/memory.h"
-#include "xenia/base/mutex.h"
 #include "xenia/base/vec128.h"
 #include "xenia/guest_pointers.h"
 namespace xe {
@@ -413,9 +412,8 @@ typedef struct alignas(64) PPCContext_s {
   // Thread ID assigned to this context.
   uint32_t thread_id;
 
-  // Global interrupt lock, held while interrupts are disabled or interrupts are
-  // executing. This is shared among all threads and comes from the processor.
-  global_mutex_type* global_mutex;
+  // Preserve the generated-context layout when retiring obsolete fields.
+  uint64_t reserved_interrupt_lock;
 
   // Used to shuttle data into externs. Contents volatile.
   uint64_t scratch;
@@ -514,6 +512,9 @@ typedef struct alignas(64) PPCContext_s {
 } PPCContext;
 #pragma pack(pop)
 constexpr size_t ppcctx_size = sizeof(PPCContext);
+static_assert(sizeof(void*) == sizeof(uint64_t));
+static_assert(offsetof(PPCContext, scratch) ==
+              offsetof(PPCContext, reserved_interrupt_lock) + sizeof(void*));
 static_assert(sizeof(PPCContext) % 64 == 0, "64b padded");
 
 }  // namespace ppc

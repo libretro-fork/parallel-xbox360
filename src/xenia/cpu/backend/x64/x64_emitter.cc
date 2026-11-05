@@ -17,7 +17,7 @@
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
-#include "xenia/base/atomic.h"
+#include <retro_atomic.h>
 #include "xenia/base/debugging.h"
 #include "xenia/base/literals.h"
 #include "xenia/base/logging.h"
@@ -892,7 +892,7 @@ static uint64_t ResolveDynamicFunction(void* raw_context,
   // A sweep since the resolve began may have dropped the function before the
   // entry was there for it to clear. The fence pairs with the sweep's count
   // bump before it clears entries.
-  std::atomic_thread_fence(std::memory_order_seq_cst);
+  retro_atomic_thread_fence_seq_cst();
   if (guest_context->processor->code_sweep_count() != sweep_count) {
     entry.host_address = 0;
     entry.guest_address = UINT32_MAX;

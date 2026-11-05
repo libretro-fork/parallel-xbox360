@@ -10,7 +10,7 @@
 #ifndef XENIA_CPU_BACKEND_X64_X64_BACKEND_H_
 #define XENIA_CPU_BACKEND_X64_X64_BACKEND_H_
 
-#include <atomic>
+#include <retro_atomic.h>
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -70,16 +70,16 @@ static constexpr uint32_t RESERVE_NUM_ENTRIES = 1u << 20;
 static constexpr uint32_t RESERVE_ENTRY_MASK = RESERVE_NUM_ENTRIES - 1;
 
 struct ReserveHelper {
-  std::atomic<uint32_t> generations[RESERVE_NUM_ENTRIES];
+  retro_atomic_int_t generations[RESERVE_NUM_ENTRIES];
 
   ReserveHelper() {
     for (auto& generation : generations) {
-      generation.store(0, std::memory_order_relaxed);
+      retro_atomic_int_init(&generation, 0);
     }
   }
 };
 // emitted code indexes the table with a hardcoded 4 byte stride
-static_assert(sizeof(std::atomic<uint32_t>) == sizeof(uint32_t));
+static_assert(sizeof(retro_atomic_int_t) == sizeof(uint32_t));
 
 struct X64BackendStackpoint {
   uint64_t host_stack_;

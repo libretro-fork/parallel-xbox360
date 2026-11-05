@@ -11,7 +11,7 @@
 
 #include "xenia/kernel/xboxkrnl/xboxkrnl_rtl.h"
 
-#include "xenia/base/atomic.h"
+#include <retro_atomic.h>
 #include "xenia/base/pe_image.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
@@ -599,19 +599,21 @@ void RtlEnterCriticalSection_entry(pointer_t<X_RTL_CRITICAL_SECTION> cs) {
     return;
   }
   CriticalSectionPrefetchW(&cs->lock_count);
+  retro_atomic_int_t* lock_count =
+      reinterpret_cast<retro_atomic_int_t*>(&cs->lock_count);
   uint32_t cur_thread = XThread::GetCurrentThread()->guest_object();
   uint32_t spin_count = cs->header.absolute * 256;
 
   if (cs->owning_thread == cur_thread) {
     // We already own the lock.
-    xe::atomic_inc(&cs->lock_count);
+    retro_atomic_inc_int(lock_count);
     cs->recursion_count++;
     return;
   }
 
   // Spin loop
   while (spin_count--) {
-    if (xe::atomic_cas(-1, 0, &cs->lock_count)) {
+    if (retro_atomic_cas_int(lock_count, -1, 0)) {
       // Acquired.
       cs->owning_thread = cur_thread;
       cs->recursion_count = 1;
@@ -619,7 +621,7 @@ void RtlEnterCriticalSection_entry(pointer_t<X_RTL_CRITICAL_SECTION> cs) {
     }
   }
 
-  if (xe::atomic_inc(&cs->lock_count) != 0) {
+  if (retro_atomic_fetch_add_int(lock_count, 1) != -1) {
     // Create a full waiter.
     xeKeWaitForSingleObject(reinterpret_cast<void*>(cs.host_address()), 8, 0, 0,
                             nullptr);
@@ -639,16 +641,18 @@ dword_result_t RtlTryEnterCriticalSection_entry(
     return 1;  // pretend we got the critical section.
   }
   CriticalSectionPrefetchW(&cs->lock_count);
+  retro_atomic_int_t* lock_count =
+      reinterpret_cast<retro_atomic_int_t*>(&cs->lock_count);
   uint32_t thread = XThread::GetCurrentThread()->guest_object();
 
-  if (xe::atomic_cas(-1, 0, &cs->lock_count)) {
+  if (retro_atomic_cas_int(lock_count, -1, 0)) {
     // Able to steal the lock right away.
     cs->owning_thread = thread;
     cs->recursion_count = 1;
     return 1;
   } else if (cs->owning_thread == thread) {
     // Already own the lock.
-    xe::atomic_inc(&cs->lock_count);
+    retro_atomic_inc_int(lock_count);
     ++cs->recursion_count;
     return 1;
   }
@@ -667,6 +671,8 @@ void RtlLeaveCriticalSection_entry(pointer_t<X_RTL_CRITICAL_SECTION> cs) {
   // Retail RtlLeaveCriticalSection does not check ownership, it just
   // decrements. A non-owner leave is a caller error but titles rely on it, so
   // log not assert.
+  retro_atomic_int_t* lock_count =
+      reinterpret_cast<retro_atomic_int_t*>(&cs->lock_count);
   uint32_t leaving_thread = XThread::GetCurrentThread()->guest_object();
   if (cs->owning_thread != leaving_thread) {
     XELOGD(
@@ -681,13 +687,13 @@ void RtlLeaveCriticalSection_entry(pointer_t<X_RTL_CRITICAL_SECTION> cs) {
   if (--cs->recursion_count != 0) {
     assert_true(cs->recursion_count >= 0);
 
-    xe::atomic_dec(&cs->lock_count);
+    retro_atomic_dec_int(lock_count);
     return;
   }
 
   // Not owned - unlock!
   cs->owning_thread = 0;
-  if (xe::atomic_dec(&cs->lock_count) != -1) {
+  if (retro_atomic_fetch_sub_int(lock_count, 1) != 0) {
     // There were waiters - wake one of them.
     xeKeSetEvent(reinterpret_cast<X_KEVENT*>(cs.host_address()), 1, 0);
   }

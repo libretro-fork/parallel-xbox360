@@ -17,7 +17,6 @@
 #include <vector>
 
 #include "xenia/base/assert.h"
-#include "xenia/base/atomic.h"
 #include "xenia/base/byte_order.h"
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/cvar.h"

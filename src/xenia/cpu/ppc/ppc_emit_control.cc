@@ -821,17 +821,13 @@ int InstrEmit_mtspr(PPCHIRBuilder& f, const InstrData& i) {
   return 0;
 }
 
-// MSR is used for toggling interrupts (among other things).
-// We track it here for taking a global processor lock, as lots of lockfree
-// code requires it. Sequences of mtmsr/lwar/stcw/mtmsr come up a lot, and
-// without the lock here threads can livelock.
+// MSR, including interrupt-enable state, belongs to this guest context.
 
 // 0x400 = debug singlestep i think
 // ive seen 0x8000 used in kernel code
 int InstrEmit_mfmsr(PPCHIRBuilder& f, const InstrData& i) {
   // bit 48 = EE; interrupt enabled
   // bit 62 = RI; recoverable interrupt
-  // return 8000h if unlocked (interrupts enabled), else 0
   f.StoreGPR(i.X.RT, f.LoadContext(offsetof(PPCContext, msr), INT64_TYPE));
   return 0;
 }

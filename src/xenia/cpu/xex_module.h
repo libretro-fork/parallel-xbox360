@@ -10,7 +10,7 @@
 #ifndef XENIA_CPU_XEX_MODULE_H_
 #define XENIA_CPU_XEX_MODULE_H_
 
-#include "xenia/base/atomic.h"
+#include <retro_atomic.h>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -54,7 +54,8 @@ static_assert(sizeof(InfoCacheFlags) == 4,
 inline void AtomicSetInfoCacheFlags(InfoCacheFlags* slot, InfoCacheFlags bits) {
   uint32_t mask;
   std::memcpy(&mask, &bits, sizeof(mask));
-  xe::atomic_or((volatile int32_t*)slot, (int32_t)mask);
+  retro_atomic_fetch_or_int(reinterpret_cast<retro_atomic_int_t*>(slot),
+                            static_cast<int32_t>(mask));
 }
 
 struct XexInfoCache {

@@ -16,7 +16,7 @@
 #include "third_party/capstone/include/capstone/capstone.h"
 #include "third_party/capstone/include/capstone/x86.h"
 
-#include "xenia/base/atomic.h"
+#include <retro_atomic.h>
 #include "xenia/base/byte_order.h"
 #include "xenia/base/exception_handler.h"
 #include "xenia/base/logging.h"
@@ -1688,7 +1688,7 @@ void* X64HelperEmitter::EmitReservedStoreHelper(bool bit64) {
 // Host counterpart of the two helpers above, on the same state and table.
 namespace {
 
-std::atomic<uint32_t>& ReserveGranule(ReserveHelper* reserve_helper,
+retro_atomic_int_t& ReserveGranule(ReserveHelper* reserve_helper,
                                       uint32_t address) {
   const uint32_t granule = address >> RESERVE_GRANULE_SHIFT;
   return reserve_helper->generations[granule & RESERVE_ENTRY_MASK];
@@ -1701,12 +1701,19 @@ T ReservedLoadImpl(X64BackendContext* bctx, ppc::PPCContext* context,
   swcache::PrefetchW(host_address);
   auto& granule = ReserveGranule(bctx->reserve_helper_, address);
   // snapshot the generation first, the acquire pins the value read below
-  bctx->reserve_generation = granule.load(std::memory_order_acquire);
+  bctx->reserve_generation = uint32_t(retro_atomic_load_acquire_int(&granule));
   bctx->reserve_address = address;
   // lwarx replaces any reservation this thread already held
   bctx->flags |= 1U << kX64BackendHasReserveBit;
 
-  const T raw = *host_address;
+  T raw;
+  if constexpr (sizeof(T) == sizeof(uint64_t)) {
+    raw = static_cast<T>(retro_atomic_load_relaxed_64(
+        reinterpret_cast<retro_atomic_64_t*>(host_address)));
+  } else {
+    raw = static_cast<T>(retro_atomic_load_relaxed_int(
+        reinterpret_cast<retro_atomic_int_t*>(host_address)));
+  }
   bctx->cached_reserve_value_ = static_cast<uint64_t>(raw);
   return xe::byte_swap(raw);
 }
@@ -1725,18 +1732,28 @@ bool ReservedStoreImpl(X64BackendContext* bctx, ppc::PPCContext* context,
 
   auto& granule = ReserveGranule(bctx->reserve_helper_, address);
   // a store to this granule since our load kills the reservation
-  if (granule.load(std::memory_order_acquire) != bctx->reserve_generation) {
+  if (uint32_t(retro_atomic_load_acquire_int(&granule)) != bctx->reserve_generation) {
     return false;
   }
 
-  if (!xe::atomic_cas(static_cast<T>(bctx->cached_reserve_value_),
-                      xe::byte_swap(value),
-                      context->TranslateVirtual<T*>(address))) {
+  bool exchanged;
+  if constexpr (sizeof(T) == sizeof(uint64_t)) {
+    exchanged = retro_atomic_cas_64(
+        context->TranslateVirtual<retro_atomic_64_t*>(address),
+        static_cast<int64_t>(bctx->cached_reserve_value_),
+        static_cast<int64_t>(xe::byte_swap(value)));
+  } else {
+    exchanged = retro_atomic_cas_int(
+        context->TranslateVirtual<retro_atomic_int_t*>(address),
+        static_cast<int32_t>(bctx->cached_reserve_value_),
+        static_cast<int32_t>(xe::byte_swap(value)));
+  }
+  if (!exchanged) {
     return false;
   }
 
   // the store landed, so kill other reservations on this granule
-  granule.fetch_add(1, std::memory_order_release);
+  retro_atomic_fetch_add_int(&granule, 1);
   return true;
 }
 

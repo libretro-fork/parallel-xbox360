@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-#include "xenia/base/atomic.h"
+#include <retro_atomic.h>
 #include "xenia/base/clock.h"
 #include "xenia/base/math.h"
 #include "xenia/base/platform.h"
@@ -1237,17 +1237,21 @@ uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
   uint32_t our_pcr = static_cast<uint32_t>(ctx->r[13]);
   uint8_t our_cpu =
       ctx->TranslateVirtualGPR<X_KPCR*>(our_pcr)->prcb_data.current_cpu;
+  auto* owner_word =
+      reinterpret_cast<retro_atomic_int_t*>(&lock->prcb_of_owner.value);
 
   // Lock.
   while (
-      !xe::atomic_cas(0, xe::byte_swap(our_pcr), &lock->prcb_of_owner.value)) {
+      !retro_atomic_cas_int(owner_word,
+          0, static_cast<int32_t>(xe::byte_swap(our_pcr)))) {
     // Under the cooperative scheduler the holder may be a fiber queued behind
     // us on this dispatch thread, so it can only run if we yield the fiber. A
     // holder on another dispatch thread runs there. Like the console at
     // DISPATCH_LEVEL, this spins until it releases and yields only the host
     // thread.
     if (XThread::GetCurrentFiberThread()) {
-      uint32_t owner_pcr_be = lock->prcb_of_owner.value;
+      uint32_t owner_pcr_be =
+          uint32_t(retro_atomic_load_acquire_int(owner_word));
       if (!owner_pcr_be) {
         continue;  // freed between the CAS and the read
       }
@@ -1259,11 +1263,11 @@ uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
       if (scheduler->DispatchCpuOf(owner_kpcr->prcb_data.current_cpu) !=
               scheduler->DispatchCpuOf(our_cpu) &&
           !scheduler->shutting_down()) {
-        volatile uint32_t* owner_raw = &lock->prcb_of_owner.value;
-        for (int i = 0; i < kRemoteHolderSpinTries && *owner_raw; ++i) {
+        for (int i = 0; i < kRemoteHolderSpinTries &&
+             retro_atomic_load_relaxed_int(owner_word); ++i) {
           SpinPause();
         }
-        if (*owner_raw) {
+        if (retro_atomic_load_relaxed_int(owner_word)) {
           xe::threading::MaybeYield();
         }
         continue;
@@ -1282,7 +1286,8 @@ uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
     // context switch and give the holder a chance to run and release.
     // The relationship is stable — affinity doesn't change while a thread
     // holds a spinlock — so one check per contention episode is sufficient.
-    uint32_t owner_pcr_be = lock->prcb_of_owner.value;
+    uint32_t owner_pcr_be =
+        uint32_t(retro_atomic_load_acquire_int(owner_word));
     if (owner_pcr_be) {
       uint32_t owner_pcr = xe::byte_swap(owner_pcr_be);
       auto* owner_kpcr = ctx->TranslateVirtual<X_KPCR*>(owner_pcr);
@@ -1308,7 +1313,8 @@ void xeKeKfReleaseSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
                            uint32_t old_irql, bool change_irql) {
   assert_true(lock->prcb_of_owner == static_cast<uint32_t>(ctx->r[13]));
   // Unlock with release semantics to ensure all prior writes are visible.
-  xe::atomic_store_release(0u, &lock->prcb_of_owner.value);
+  retro_atomic_store_release_int(
+      reinterpret_cast<retro_atomic_int_t*>(&lock->prcb_of_owner.value), 0);
 
   if (change_irql) {
     // Unlock.
@@ -2071,21 +2077,29 @@ pointer_result_t InterlockedPushEntrySList_entry(
   assert_not_null(plist_ptr);
   assert_not_null(entry);
 
-  alignas(8) X_SLIST_HEADER old_hdr = *plist_ptr;
+  auto* atomic_header =
+      reinterpret_cast<retro_atomic_64_t*>(plist_ptr.host_address());
+  int64_t old_bits, new_bits;
+  alignas(8) X_SLIST_HEADER old_hdr;
   alignas(8) X_SLIST_HEADER new_hdr = {{0}, 0, 0};
   uint32_t old_head = 0;
   do {
-    old_hdr = *plist_ptr;
+    old_bits = retro_atomic_load_acquire_64(atomic_header);
+    std::memcpy(&old_hdr, &old_bits, sizeof(old_hdr));
     new_hdr.depth = old_hdr.depth + 1;
     new_hdr.sequence = old_hdr.sequence + 1;
 
     old_head = old_hdr.next.next;
     entry->next = old_hdr.next.next;
     new_hdr.next.next = entry.guest_address();
+    std::memcpy(&new_bits, &new_hdr, sizeof(new_bits));
   } while (
-      !xe::atomic_cas(*(uint64_t*)(&old_hdr), *(uint64_t*)(&new_hdr),
-                      reinterpret_cast<uint64_t*>(plist_ptr.host_address())));
+      !retro_atomic_cas_64(atomic_header, old_bits, new_bits));
 
+#if XE_ARCH_ARM64 && !defined(RETRO_ATOMIC_BACKEND_MSVC)
+  // Interlocked list APIs require a full barrier, beyond the CAS's acq_rel.
+  retro_atomic_thread_fence_seq_cst();
+#endif
   return old_head;
 }
 DECLARE_XBOXKRNL_EXPORT2(InterlockedPushEntrySList, kThreading, kImplemented,
@@ -2096,10 +2110,14 @@ pointer_result_t InterlockedPopEntrySList_entry(
   assert_not_null(plist_ptr);
 
   uint32_t popped = 0;
+  auto* atomic_header =
+      reinterpret_cast<retro_atomic_64_t*>(plist_ptr.host_address());
+  int64_t old_bits, new_bits;
   alignas(8) X_SLIST_HEADER old_hdr = {{0}, 0, 0};
   alignas(8) X_SLIST_HEADER new_hdr = {{0}, 0, 0};
   do {
-    old_hdr = *plist_ptr;
+    old_bits = retro_atomic_load_acquire_64(atomic_header);
+    std::memcpy(&old_hdr, &old_bits, sizeof(old_hdr));
     auto next = kernel_memory()->TranslateVirtual<X_SINGLE_LIST_ENTRY*>(
         old_hdr.next.next);
     if (!old_hdr.next.next) {
@@ -2110,10 +2128,13 @@ pointer_result_t InterlockedPopEntrySList_entry(
     new_hdr.depth = old_hdr.depth - 1;
     new_hdr.next.next = next->next;
     new_hdr.sequence = old_hdr.sequence;
+    std::memcpy(&new_bits, &new_hdr, sizeof(new_bits));
   } while (
-      !xe::atomic_cas(*(uint64_t*)(&old_hdr), *(uint64_t*)(&new_hdr),
-                      reinterpret_cast<uint64_t*>(plist_ptr.host_address())));
+      !retro_atomic_cas_64(atomic_header, old_bits, new_bits));
 
+#if XE_ARCH_ARM64 && !defined(RETRO_ATOMIC_BACKEND_MSVC)
+  retro_atomic_thread_fence_seq_cst();
+#endif
   return popped;
 }
 DECLARE_XBOXKRNL_EXPORT2(InterlockedPopEntrySList, kThreading, kImplemented,
@@ -2123,19 +2144,26 @@ pointer_result_t InterlockedFlushSList_entry(
     pointer_t<X_SLIST_HEADER> plist_ptr) {
   assert_not_null(plist_ptr);
 
-  alignas(8) X_SLIST_HEADER old_hdr = *plist_ptr;
+  auto* atomic_header =
+      reinterpret_cast<retro_atomic_64_t*>(plist_ptr.host_address());
+  int64_t old_bits, new_bits;
+  alignas(8) X_SLIST_HEADER old_hdr;
   alignas(8) X_SLIST_HEADER new_hdr = {{0}, 0, 0};
   uint32_t first = 0;
   do {
-    old_hdr = *plist_ptr;
+    old_bits = retro_atomic_load_acquire_64(atomic_header);
+    std::memcpy(&old_hdr, &old_bits, sizeof(old_hdr));
     first = old_hdr.next.next;
     new_hdr.next.next = 0;
     new_hdr.depth = 0;
     new_hdr.sequence = 0;
+    std::memcpy(&new_bits, &new_hdr, sizeof(new_bits));
   } while (
-      !xe::atomic_cas(*(uint64_t*)(&old_hdr), *(uint64_t*)(&new_hdr),
-                      reinterpret_cast<uint64_t*>(plist_ptr.host_address())));
+      !retro_atomic_cas_64(atomic_header, old_bits, new_bits));
 
+#if XE_ARCH_ARM64 && !defined(RETRO_ATOMIC_BACKEND_MSVC)
+  retro_atomic_thread_fence_seq_cst();
+#endif
   return first;
 }
 DECLARE_XBOXKRNL_EXPORT1(InterlockedFlushSList, kThreading, kImplemented);

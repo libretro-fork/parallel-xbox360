@@ -19,7 +19,6 @@
 #include "third_party/disruptorplus/include/disruptorplus/sequence_barrier.hpp"
 #include "third_party/disruptorplus/include/disruptorplus/spin_wait_strategy.hpp"
 #include "xenia/base/assert.h"
-#include "xenia/base/atomic.h"
 #include "xenia/base/console.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/debugging.h"

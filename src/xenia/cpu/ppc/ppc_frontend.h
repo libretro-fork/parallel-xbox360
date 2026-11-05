@@ -29,10 +29,6 @@ namespace ppc {
 class PPCTranslator;
 
 struct PPCBuiltins {
-  int32_t global_lock_count;
-  Function* check_global_lock;
-  Function* enter_global_lock;
-  Function* leave_global_lock;
   Function* syscall_handler;
   Function* log_lr_handler;
 };
@@ -55,9 +51,6 @@ class PPCFrontend {
   PPCBuiltins builtins_ = {0};
   TypePool<PPCTranslator, PPCFrontend*> translator_pool_;
 };
-// Checks the state of the global lock and sets scratch to the current MSR
-// value.
-void CheckGlobalLock(PPCContext* ppc_context, void* arg0, void* arg1);
 }  // namespace ppc
 }  // namespace cpu
 }  // namespace xe

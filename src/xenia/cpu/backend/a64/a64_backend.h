@@ -10,7 +10,7 @@
 #ifndef XENIA_CPU_BACKEND_A64_A64_BACKEND_H_
 #define XENIA_CPU_BACKEND_A64_A64_BACKEND_H_
 
-#include <atomic>
+#include <retro_atomic.h>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -51,14 +51,16 @@ static constexpr uint32_t A64_RESERVE_ENTRY_MASK =
 static constexpr uint32_t A64_RESERVE_NUM_ENTRIES = A64_RESERVE_ENTRY_MASK + 1;
 
 struct ReserveHelper {
-  std::atomic<uint32_t> generations[A64_RESERVE_NUM_ENTRIES];
+  retro_atomic_int_t generations[A64_RESERVE_NUM_ENTRIES];
 
   ReserveHelper() {
     for (auto& generation : generations) {
-      generation.store(0, std::memory_order_relaxed);
+      retro_atomic_int_init(&generation, 0);
     }
   }
 };
+
+static_assert(sizeof(retro_atomic_int_t) == sizeof(uint32_t));
 
 struct A64BackendStackpoint {
   uint64_t host_stack_;

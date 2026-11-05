@@ -12,7 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
+#include "libretro/core_bitmap.h"
 
 namespace xe {
 
@@ -20,14 +20,9 @@ namespace xe {
 class BitMap {
  public:
   BitMap();
-
-  // Size is the number of entries, must be a multiple of 64.
-  BitMap(size_t size_bits);
-
-  // Data does not have to be aligned to a 4-byte boundary, but it is
-  // preferable.
-  // Size is the number of entries, must be a multiple of 64.
-  BitMap(uint64_t* data, size_t size_bits);
+  ~BitMap();
+  BitMap(const BitMap&) = delete;
+  BitMap& operator=(const BitMap&) = delete;
 
   // (threadsafe) Acquires an entry and returns its index. Returns -1 if there
   // are no more free entries.
@@ -42,14 +37,8 @@ class BitMap {
   // Sets all entries to free.
   void Reset();
 
-  const std::vector<uint64_t> data() const { return data_; }
-  std::vector<uint64_t>& data() { return data_; }
-
  private:
-  constexpr static size_t kDataSize = 8;
-  constexpr static size_t kDataSizeBits = kDataSize * 8;
-  std::vector<uint64_t> data_;
-  inline size_t TryAcquireAt(size_t i);
+  xe_bitmap data_ = {};
 };
 
 }  // namespace xe

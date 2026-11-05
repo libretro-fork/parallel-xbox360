@@ -14,7 +14,7 @@
 #include <utility>
 
 #include "xenia/base/assert.h"
-#include "xenia/base/atomic.h"
+#include <retro_atomic.h>
 #include "xenia/base/byte_order.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/exception_handler.h"
@@ -890,7 +890,7 @@ A64BackendContext* BackendContextFromRawContext(void* raw_context) {
       reinterpret_cast<uint8_t*>(raw_context) - sizeof(A64BackendContext));
 }
 
-std::atomic<uint32_t>& ReserveGranule(ReserveHelper* reserve_helper,
+retro_atomic_int_t& ReserveGranule(ReserveHelper* reserve_helper,
                                       uint32_t guest_address) {
   const uint32_t granule = guest_address >> A64_RESERVE_GRANULE_SHIFT;
   return reserve_helper->generations[granule & A64_RESERVE_ENTRY_MASK];
@@ -902,7 +902,7 @@ uint64_t TryAcquireReservationHelper(void* raw_context,
   auto& granule =
       ReserveGranule(bctx->reserve_helper_, uint32_t(guest_address));
   // snapshot the generation first, the acquire pins the value read after
-  bctx->reserve_generation = granule.load(std::memory_order_acquire);
+  bctx->reserve_generation = uint32_t(retro_atomic_load_acquire_int(&granule));
   bctx->reserve_address = uint32_t(guest_address);
   // lwarx replaces any reservation this thread already held
   bctx->flags |= 1u << kA64BackendHasReserveBit;
@@ -914,7 +914,14 @@ T ReservedLoadImpl(ppc::PPCContext* context, uint32_t address) {
   T* host_address = context->TranslateVirtual<T*>(address);
   TryAcquireReservationHelper(context, address);
   auto* bctx = BackendContextFromRawContext(context);
-  const T raw = *host_address;
+  T raw;
+  if constexpr (sizeof(T) == sizeof(uint64_t)) {
+    raw = static_cast<T>(retro_atomic_load_relaxed_64(
+        reinterpret_cast<retro_atomic_64_t*>(host_address)));
+  } else {
+    raw = static_cast<T>(retro_atomic_load_relaxed_int(
+        reinterpret_cast<retro_atomic_int_t*>(host_address)));
+  }
   bctx->cached_reserve_value_ = static_cast<uint64_t>(raw);
   return xe::byte_swap(raw);
 }
@@ -935,24 +942,26 @@ uint64_t ReservedStoreImpl(void* raw_context, uint64_t guest_address,
   auto& granule =
       ReserveGranule(bctx->reserve_helper_, uint32_t(guest_address));
   // a store to this granule since our lwarx kills the reservation
-  if (granule.load(std::memory_order_acquire) != bctx->reserve_generation) {
+  if (uint32_t(retro_atomic_load_acquire_int(&granule)) != bctx->reserve_generation) {
     return 0;
   }
 
   bool exchange_ok;
   if constexpr (sizeof(T) == sizeof(uint64_t)) {
-    exchange_ok = xe::atomic_cas(
-        bctx->cached_reserve_value_, uint64_t(value),
-        reinterpret_cast<volatile uint64_t*>(uintptr_t(host_address)));
+    exchange_ok = retro_atomic_cas_64(
+        reinterpret_cast<retro_atomic_64_t*>(uintptr_t(host_address)),
+        static_cast<int64_t>(bctx->cached_reserve_value_),
+        static_cast<int64_t>(value));
   } else {
-    exchange_ok = xe::atomic_cas(
-        uint32_t(bctx->cached_reserve_value_), uint32_t(value),
-        reinterpret_cast<volatile uint32_t*>(uintptr_t(host_address)));
+    exchange_ok = retro_atomic_cas_int(
+        reinterpret_cast<retro_atomic_int_t*>(uintptr_t(host_address)),
+        static_cast<int32_t>(bctx->cached_reserve_value_),
+        static_cast<int32_t>(value));
   }
 
   if (exchange_ok) {
     // the store landed, so kill other reservations on this granule
-    granule.fetch_add(1, std::memory_order_release);
+    retro_atomic_fetch_add_int(&granule, 1);
   }
   return exchange_ok ? 1 : 0;
 }
