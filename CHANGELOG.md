@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Both shader type-group maps of vectors now use retained C89 pointer storage and borrowed lookup views, including debug types and post-processing. Layout-sensitive arrays, distinct structs and forward-pointer patching keep their existing identity rules. Common groups reserve capacity at compiler startup; larger groups grow safely and retain storage until close. This reduces recurring allocations and builder metadata while increasing retained workspace storage; measured tradeoffs and shader byte comparisons are documented separately.
+
 - Shader constant lookup now uses a retained C89 exact-key table, removing two maps of vectors, the null-constant vector, and repeated linear scans. Keys borrow existing operand words; module resets invalidate them by epoch. Compiler workspaces prefault 4 KiB and retain larger checked capacity, so retained metadata can increase. Regular struct constants no longer accidentally reuse specialization IDs. Cached game shader bytes and performance/memory tradeoffs are tested separately; audio and presentation scheduling are unchanged.
 
 - Shader linkage spelling now borrows the existing module-owned name instruction instead of allocating and copying a second prefix string. Counted output preserves import/export/ODR names and padding even after caller text is overwritten. Function records shrink from 152 to 136 bytes on measured GCC x64 builds; no audio or presentation scheduling changes.

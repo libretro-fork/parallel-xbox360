@@ -48,6 +48,35 @@ int main(int argc, char** argv) {
       size_t warmed = 0;
       for (unsigned round = 0; round < 20; ++round) {
         spv::Builder builder(spv::Spv_1_3, 0, nullptr, workspace.get());
+        spv::Id member = builder.makeUintType(32), previous = 0;
+        for (unsigned i = 0; i < 192; ++i) {
+          if (!round && i == 4) {
+            xe_spv_test_page_fail_after(xe_spv_test_page_calls());
+            bool failed = false;
+            try { builder.makeStructTypeView(xe_spv_words_view(&member, 1), "failed"); }
+            catch (const std::bad_alloc&) { failed = true; }
+            xe_spv_test_page_fail_after(size_t(-1));
+            xe_spv_record_view records = xe_spv_arena_group_view(workspace.get(), xe_spv_group_key(30, 0));
+            CHECK(failed && records.count == 4);
+          }
+          spv::Id structure = builder.makeStructTypeView(xe_spv_words_view(&member, 1), "retained_group");
+          CHECK(structure != previous && builder.getTypeClass(structure) == spv::Op::OpTypeStruct);
+          previous = structure;
+        }
+        if (round == 1) warmed = xe_spv_test_page_calls();
+        if (round > 1) CHECK(warmed == xe_spv_test_page_calls());
+      }
+    }
+    CHECK(xe_spv_test_pages() == before);
+    std::puts("PASS: retained type groups across 20 leases, distinct struct identities and failed-growth retry");
+  }
+  {
+    const size_t before = xe_spv_test_pages();
+    {
+      spv::InstructionArena workspace(2048);
+      size_t warmed = 0;
+      for (unsigned round = 0; round < 20; ++round) {
+        spv::Builder builder(spv::Spv_1_3, 0, nullptr, workspace.get());
         auto type = builder.makeUintType(32);
         for (unsigned i = 0; i < 192; ++i) {
           auto constant = builder.makeUintConstant(i);

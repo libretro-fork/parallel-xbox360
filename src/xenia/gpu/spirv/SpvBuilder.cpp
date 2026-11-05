@@ -90,31 +90,33 @@ Id Builder::import(const char* name)
     return import->getResultId();
 }
 
-// For creating new groupedTypes (will return old type if the requested one was already made).
+// Type identity rules are unchanged; the registry only borrows stable records.
 Id Builder::makeVoidType()
 {
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeVoid));
     Instruction* type;
-    if (groupedTypes[enumCast(Op::OpTypeVoid)].size() == 0) {
+    if (!typeRecords.count) {
         Id typeId = getUniqueId();
         type = createInstruction(typeId, NoType, Op::OpTypeVoid);
-        groupedTypes[enumCast(Op::OpTypeVoid)].push_back(type);
+        module.appendTypeRecord(enumCast(Op::OpTypeVoid), type);
         appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
         // Core OpTypeVoid used for debug void type
         if (emitNonSemanticShaderDebugInfo)
             debugId[typeId] = typeId;
     } else
-        type = groupedTypes[enumCast(Op::OpTypeVoid)].back();
+        type = static_cast<Instruction*>(typeRecords.records[typeRecords.count - 1]);
 
     return type->getResultId();
 }
 
 Id Builder::makeBoolType()
 {
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeBool));
     Instruction* type;
-    if (groupedTypes[enumCast(Op::OpTypeBool)].size() == 0) {
+    if (!typeRecords.count) {
         type = createInstruction(getUniqueId(), NoType, Op::OpTypeBool);
-        groupedTypes[enumCast(Op::OpTypeBool)].push_back(type);
+        module.appendTypeRecord(enumCast(Op::OpTypeBool), type);
         appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
 
@@ -124,7 +126,7 @@ Id Builder::makeBoolType()
         }
 
     } else
-        type = groupedTypes[enumCast(Op::OpTypeBool)].back();
+        type = static_cast<Instruction*>(typeRecords.records[typeRecords.count - 1]);
 
 
     return type->getResultId();
@@ -132,14 +134,15 @@ Id Builder::makeBoolType()
 
 Id Builder::makeSamplerType()
 {
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeSampler));
     Instruction* type;
-    if (groupedTypes[enumCast(Op::OpTypeSampler)].size() == 0) {
+    if (!typeRecords.count) {
         type = createInstruction(getUniqueId(), NoType, Op::OpTypeSampler);
-        groupedTypes[enumCast(Op::OpTypeSampler)].push_back(type);
+        module.appendTypeRecord(enumCast(Op::OpTypeSampler), type);
         appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
     } else
-        type = groupedTypes[enumCast(Op::OpTypeSampler)].back();
+        type = static_cast<Instruction*>(typeRecords.records[typeRecords.count - 1]);
 
     if (emitNonSemanticShaderDebugInfo)
     {
@@ -154,8 +157,9 @@ Id Builder::makePointer(StorageClass storageClass, Id pointee)
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypePointer)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypePointer)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypePointer));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getImmediateOperand(0) == (unsigned)storageClass &&
             type->getIdOperand(1) == pointee)
             return type->getResultId();
@@ -166,7 +170,7 @@ Id Builder::makePointer(StorageClass storageClass, Id pointee)
     type->reserveOperands(2);
     type->addImmediateOperand(storageClass);
     type->addIdOperand(pointee);
-    groupedTypes[enumCast(Op::OpTypePointer)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypePointer), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -199,8 +203,9 @@ Id Builder::makePointerFromForwardPointer(StorageClass storageClass, Id forwardP
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypePointer)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypePointer)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypePointer));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getImmediateOperand(0) == (unsigned)storageClass &&
             type->getIdOperand(1) == pointee)
             return type->getResultId();
@@ -210,7 +215,7 @@ Id Builder::makePointerFromForwardPointer(StorageClass storageClass, Id forwardP
     type->reserveOperands(2);
     type->addImmediateOperand(storageClass);
     type->addIdOperand(pointee);
-    groupedTypes[enumCast(Op::OpTypePointer)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypePointer), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -230,8 +235,9 @@ Id Builder::makeIntegerType(int width, bool hasSign)
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeInt)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeInt)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeInt));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getImmediateOperand(0) == (unsigned)width &&
             type->getImmediateOperand(1) == (hasSign ? 1u : 0u))
             return type->getResultId();
@@ -242,7 +248,7 @@ Id Builder::makeIntegerType(int width, bool hasSign)
     type->reserveOperands(2);
     type->addImmediateOperand(width);
     type->addImmediateOperand(hasSign ? 1 : 0);
-    groupedTypes[enumCast(Op::OpTypeInt)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeInt), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -272,8 +278,9 @@ Id Builder::makeFloatType(int width)
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeFloat)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeFloat)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeFloat));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getNumOperands() != 1) {
             continue;
         }
@@ -284,7 +291,7 @@ Id Builder::makeFloatType(int width)
     // not found, make it
     type = createInstruction(getUniqueId(), NoType, Op::OpTypeFloat);
     type->addImmediateOperand(width);
-    groupedTypes[enumCast(Op::OpTypeFloat)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeFloat), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -313,8 +320,9 @@ Id Builder::makeBFloat16Type()
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeFloat)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeFloat)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeFloat));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getNumOperands() != 2) {
             continue;
         }
@@ -327,7 +335,7 @@ Id Builder::makeBFloat16Type()
     type = createInstruction(getUniqueId(), NoType, Op::OpTypeFloat);
     type->addImmediateOperand(16);
     type->addImmediateOperand(FPEncoding::BFloat16KHR);
-    groupedTypes[enumCast(Op::OpTypeFloat)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeFloat), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -350,8 +358,9 @@ Id Builder::makeFloatE5M2Type()
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeFloat)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeFloat)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeFloat));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getNumOperands() != 2) {
             continue;
         }
@@ -364,7 +373,7 @@ Id Builder::makeFloatE5M2Type()
     type = createInstruction(getUniqueId(), NoType, Op::OpTypeFloat);
     type->addImmediateOperand(8);
     type->addImmediateOperand(FPEncoding::Float8E5M2EXT);
-    groupedTypes[enumCast(Op::OpTypeFloat)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeFloat), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -387,8 +396,9 @@ Id Builder::makeFloatE4M3Type()
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeFloat)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeFloat)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeFloat));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getNumOperands() != 2) {
             continue;
         }
@@ -401,7 +411,7 @@ Id Builder::makeFloatE4M3Type()
     type = createInstruction(getUniqueId(), NoType, Op::OpTypeFloat);
     type->addImmediateOperand(8);
     type->addImmediateOperand(FPEncoding::Float8E4M3EXT);
-    groupedTypes[enumCast(Op::OpTypeFloat)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeFloat), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -440,7 +450,7 @@ Id Builder::makeStructTypeView(xe_spv_word_view view, const char* name, bool com
     Instruction* type = createInstruction(getUniqueId(), NoType, Op::OpTypeStruct);
     for (int op = 0; op < (int)members.size(); ++op)
         type->addIdOperand(members[op]);
-    groupedTypes[enumCast(Op::OpTypeStruct)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeStruct), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
     addName(type->getResultId(), name);
@@ -460,8 +470,9 @@ Id Builder::makeStructResultType(Id type0, Id type1)
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeStruct)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeStruct)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeStruct));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getNumOperands() != 2)
             continue;
         if (type->getIdOperand(0) != type0 ||
@@ -479,8 +490,9 @@ Id Builder::makeVectorType(Id component, int size)
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeVector)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeVector)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeVector));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == component &&
             type->getImmediateOperand(1) == (unsigned)size)
             return type->getResultId();
@@ -491,7 +503,7 @@ Id Builder::makeVectorType(Id component, int size)
     type->reserveOperands(2);
     type->addIdOperand(component);
     type->addImmediateOperand(size);
-    groupedTypes[enumCast(Op::OpTypeVector)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeVector), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -512,8 +524,9 @@ Id Builder::makeMatrixType(Id component, int cols, int rows)
 
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeMatrix)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeMatrix)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeMatrix));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == column &&
             type->getImmediateOperand(1) == (unsigned)cols)
             return type->getResultId();
@@ -524,7 +537,7 @@ Id Builder::makeMatrixType(Id component, int cols, int rows)
     type->reserveOperands(2);
     type->addIdOperand(column);
     type->addImmediateOperand(cols);
-    groupedTypes[enumCast(Op::OpTypeMatrix)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeMatrix), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -541,8 +554,9 @@ Id Builder::makeCooperativeMatrixTypeKHR(Id component, Id scope, Id rows, Id col
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeCooperativeMatrixKHR)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeCooperativeMatrixKHR)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeCooperativeMatrixKHR));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == component &&
             type->getIdOperand(1) == scope &&
             type->getIdOperand(2) == rows &&
@@ -559,7 +573,7 @@ Id Builder::makeCooperativeMatrixTypeKHR(Id component, Id scope, Id rows, Id col
     type->addIdOperand(rows);
     type->addIdOperand(cols);
     type->addIdOperand(use);
-    groupedTypes[enumCast(Op::OpTypeCooperativeMatrixKHR)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeCooperativeMatrixKHR), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -569,7 +583,9 @@ Id Builder::makeCooperativeMatrixTypeKHR(Id component, Id scope, Id rows, Id col
         // type, or an OpName from a constant.
         auto const findName = [&](Id id) {
             Id id2 = debugId[id];
-            for (auto &t : groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic]) {
+            const xe_spv_record_view debugRecords = module.typeRecords(NonSemanticShaderDebugInfo100DebugTypeBasic, true);
+            for (size_t debugIndex = 0; debugIndex < debugRecords.count; ++debugIndex) {
+                Instruction* t = static_cast<Instruction*>(debugRecords.records[debugIndex]);
                 if (t->getResultId() == id2) {
                     for (Instruction* s = firstInstruction(strings); s; s = s->getNextInstruction()) {
                         if (s->getResultId() == t->getIdOperand(2)) {
@@ -607,8 +623,9 @@ Id Builder::makeCooperativeMatrixTypeNV(Id component, Id scope, Id rows, Id cols
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeCooperativeMatrixNV)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeCooperativeMatrixNV)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeCooperativeMatrixNV));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == component && type->getIdOperand(1) == scope && type->getIdOperand(2) == rows &&
             type->getIdOperand(3) == cols)
             return type->getResultId();
@@ -621,7 +638,7 @@ Id Builder::makeCooperativeMatrixTypeNV(Id component, Id scope, Id rows, Id cols
     type->addIdOperand(scope);
     type->addIdOperand(rows);
     type->addIdOperand(cols);
-    groupedTypes[enumCast(Op::OpTypeCooperativeMatrixNV)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeCooperativeMatrixNV), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -643,8 +660,9 @@ Id Builder::makeCooperativeVectorTypeNV(Id componentType, Id components)
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeCooperativeVectorNV)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeCooperativeVectorNV)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeCooperativeVectorNV));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == componentType &&
             type->getIdOperand(1) == components)
             return type->getResultId();
@@ -654,7 +672,7 @@ Id Builder::makeCooperativeVectorTypeNV(Id componentType, Id components)
     type = createInstruction(getUniqueId(), NoType, Op::OpTypeCooperativeVectorNV);
     type->addIdOperand(componentType);
     type->addIdOperand(components);
-    groupedTypes[enumCast(Op::OpTypeCooperativeVectorNV)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeCooperativeVectorNV), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -664,8 +682,9 @@ Id Builder::makeCooperativeVectorTypeNV(Id componentType, Id components)
 Id Builder::makeTensorTypeARM(Id elementType, Id rank)
 {
     // See if an OpTypeTensorARM with same element type and rank already exists.
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeTensorARM)].size(); ++t) {
-        const Instruction *type = groupedTypes[enumCast(Op::OpTypeTensorARM)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeTensorARM));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        const Instruction *type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == elementType && type->getIdOperand(1) == rank)
             return type->getResultId();
     }
@@ -674,7 +693,7 @@ Id Builder::makeTensorTypeARM(Id elementType, Id rank)
     std::unique_ptr<Instruction> type(createInstruction(getUniqueId(), NoType, Op::OpTypeTensorARM));
     type->addIdOperand(elementType);
     type->addIdOperand(rank);
-    groupedTypes[enumCast(Op::OpTypeTensorARM)].push_back(type.get());
+    module.appendTypeRecord(enumCast(Op::OpTypeTensorARM), type.get());
     module.mapInstruction(type.get());
     Id resultID = type->getResultId();
     appendInstruction(constantsTypesGlobals, std::move(type));
@@ -685,8 +704,9 @@ Id Builder::makeGenericType(spv::Op opcode, std::vector<spv::IdImmediate>& opera
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(opcode)].size(); ++t) {
-        type = groupedTypes[enumCast(opcode)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(opcode));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (static_cast<size_t>(type->getNumOperands()) != operands.size())
             continue; // Number mismatch, find next
 
@@ -707,7 +727,7 @@ Id Builder::makeGenericType(spv::Op opcode, std::vector<spv::IdImmediate>& opera
         else
             type->addImmediateOperand(operands[op].word);
     }
-    groupedTypes[enumCast(opcode)].push_back(type);
+    module.appendTypeRecord(enumCast(opcode), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -723,8 +743,9 @@ Id Builder::makeArrayType(Id element, Id sizeId, int stride)
     Instruction* type;
     if (stride == 0) {
         // try to find existing type
-        for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeArray)].size(); ++t) {
-            type = groupedTypes[enumCast(Op::OpTypeArray)][t];
+        const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeArray));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+            type = static_cast<Instruction*>(typeRecords.records[t]);
             if (type->getIdOperand(0) == element &&
                 type->getIdOperand(1) == sizeId &&
                 explicitlyLaidOut.find(type->getResultId()) == explicitlyLaidOut.end())
@@ -737,7 +758,7 @@ Id Builder::makeArrayType(Id element, Id sizeId, int stride)
     type->reserveOperands(2);
     type->addIdOperand(element);
     type->addIdOperand(sizeId);
-    groupedTypes[enumCast(Op::OpTypeArray)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeArray), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -774,8 +795,9 @@ Id Builder::makeFunctionType(Id returnType, const std::vector<Id>& paramTypes)
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeFunction)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeFunction)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeFunction));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) != returnType || (int)paramTypes.size() != type->getNumOperands() - 1)
             continue;
         bool mismatch = false;
@@ -809,7 +831,7 @@ Id Builder::makeFunctionType(Id returnType, const std::vector<Id>& paramTypes)
     type->addIdOperand(returnType);
     for (int p = 0; p < (int)paramTypes.size(); ++p)
         type->addIdOperand(paramTypes[p]);
-    groupedTypes[enumCast(Op::OpTypeFunction)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeFunction), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -853,8 +875,9 @@ Id Builder::makeImageType(Id sampledType, Dim dim, bool depth, bool arrayed, boo
 
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeImage)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeImage)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeImage));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == sampledType &&
             type->getImmediateOperand(1) == (unsigned int)dim &&
             type->getImmediateOperand(2) == (  depth ? 1u : 0u) &&
@@ -876,7 +899,7 @@ Id Builder::makeImageType(Id sampledType, Dim dim, bool depth, bool arrayed, boo
     type->addImmediateOperand(sampled);
     type->addImmediateOperand((unsigned int)format);
 
-    groupedTypes[enumCast(Op::OpTypeImage)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeImage), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -949,8 +972,9 @@ Id Builder::makeSampledImageType(Id imageType)
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedTypes[enumCast(Op::OpTypeSampledImage)].size(); ++t) {
-        type = groupedTypes[enumCast(Op::OpTypeSampledImage)][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeSampledImage));
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == imageType)
             return type->getResultId();
     }
@@ -959,7 +983,7 @@ Id Builder::makeSampledImageType(Id imageType)
     type = createInstruction(getUniqueId(), NoType, Op::OpTypeSampledImage);
     type->addIdOperand(imageType);
 
-    groupedTypes[enumCast(Op::OpTypeSampledImage)].push_back(type);
+    module.appendTypeRecord(enumCast(Op::OpTypeSampledImage), type);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -994,8 +1018,9 @@ Id Builder::makeBoolDebugType(int const size)
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic].size(); ++t) {
-        type = groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(NonSemanticShaderDebugInfo100DebugTypeBasic, true);
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == getStringId("bool") &&
             type->getIdOperand(1) == static_cast<unsigned int>(size) &&
             type->getIdOperand(2) == NonSemanticShaderDebugInfo100Boolean)
@@ -1012,7 +1037,7 @@ Id Builder::makeBoolDebugType(int const size)
     type->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100Boolean)); // encoding id
     type->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100None)); // flags id
 
-    groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic].push_back(type);
+    module.appendTypeRecord(NonSemanticShaderDebugInfo100DebugTypeBasic, type, true);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -1031,8 +1056,9 @@ Id Builder::makeIntegerDebugType(int const width, bool const hasSign)
     auto nameId = getStringId(typeName);
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic].size(); ++t) {
-        type = groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(NonSemanticShaderDebugInfo100DebugTypeBasic, true);
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == nameId &&
             type->getIdOperand(1) == static_cast<unsigned int>(width) &&
             type->getIdOperand(2) == (hasSign ? NonSemanticShaderDebugInfo100Signed : NonSemanticShaderDebugInfo100Unsigned))
@@ -1053,7 +1079,7 @@ Id Builder::makeIntegerDebugType(int const width, bool const hasSign)
     }
     type->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100None)); // flags id
 
-    groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic].push_back(type);
+    module.appendTypeRecord(NonSemanticShaderDebugInfo100DebugTypeBasic, type, true);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -1071,8 +1097,9 @@ Id Builder::makeFloatDebugType(int const width)
     auto nameId = getStringId(typeName);
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic].size(); ++t) {
-        type = groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(NonSemanticShaderDebugInfo100DebugTypeBasic, true);
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == nameId &&
             type->getIdOperand(1) == static_cast<unsigned int>(width) &&
             type->getIdOperand(2) == NonSemanticShaderDebugInfo100Float)
@@ -1089,7 +1116,7 @@ Id Builder::makeFloatDebugType(int const width)
     type->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100Float)); // encoding id
     type->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100None)); // flags id
 
-    groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeBasic].push_back(type);
+    module.appendTypeRecord(NonSemanticShaderDebugInfo100DebugTypeBasic, type, true);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -1103,8 +1130,9 @@ Id Builder::makeSequentialDebugType(Id const baseType, Id const componentCount, 
 
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedDebugTypes[sequenceType].size(); ++t) {
-        type = groupedDebugTypes[sequenceType][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(sequenceType, true);
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == baseType &&
             type->getIdOperand(1) == makeUintConstant(componentCount))
             return type->getResultId();
@@ -1118,7 +1146,7 @@ Id Builder::makeSequentialDebugType(Id const baseType, Id const componentCount, 
     type->addIdOperand(debugId[baseType]); // base type
     type->addIdOperand(componentCount); // component count
 
-    groupedDebugTypes[sequenceType].push_back(type);
+    module.appendTypeRecord(sequenceType, type, true);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -1139,8 +1167,9 @@ Id Builder::makeMatrixDebugType(Id const vectorType, int const vectorCount, bool
 {
     // try to find it
     Instruction* type;
-    for (int t = 0; t < (int)groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeMatrix].size(); ++t) {
-        type = groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeMatrix][t];
+    const xe_spv_record_view typeRecords = module.typeRecords(NonSemanticShaderDebugInfo100DebugTypeMatrix, true);
+    for (size_t t = 0; t < typeRecords.count; ++t) {
+        type = static_cast<Instruction*>(typeRecords.records[t]);
         if (type->getIdOperand(0) == vectorType &&
             type->getIdOperand(1) == makeUintConstant(vectorCount))
             return type->getResultId();
@@ -1155,7 +1184,7 @@ Id Builder::makeMatrixDebugType(Id const vectorType, int const vectorCount, bool
     type->addIdOperand(makeUintConstant(vectorCount)); // component count id
     type->addIdOperand(makeBoolConstant(columnMajor)); // column-major id
 
-    groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeMatrix].push_back(type);
+    module.appendTypeRecord(NonSemanticShaderDebugInfo100DebugTypeMatrix, type, true);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -1179,7 +1208,7 @@ Id Builder::makeMemberDebugType(Id const memberType, DebugTypeLoc const& debugTy
     type->addIdOperand(makeUintConstant(0)); // TODO: size id
     type->addIdOperand(makeUintConstant(NonSemanticShaderDebugInfo100FlagIsPublic)); // flags id
 
-    groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeMember].push_back(type);
+    module.appendTypeRecord(NonSemanticShaderDebugInfo100DebugTypeMember, type, true);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -1230,7 +1259,7 @@ Id Builder::makeCompositeDebugType(std::span<const Id> memberTypes, char const*c
         type->addIdOperand(memberDebugType);
     }
 
-    groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypeComposite].push_back(type);
+    module.appendTypeRecord(NonSemanticShaderDebugInfo100DebugTypeComposite, type, true);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -1244,7 +1273,9 @@ Id Builder::makePointerDebugType(StorageClass storageClass, Id const baseType)
         return makeDebugInfoNone();
     }
     const Id scID = makeUintConstant(storageClass);
-    for (Instruction* otherType : groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypePointer]) {
+    const xe_spv_record_view debugRecords = module.typeRecords(NonSemanticShaderDebugInfo100DebugTypePointer, true);
+    for (size_t debugIndex = 0; debugIndex < debugRecords.count; ++debugIndex) {
+        Instruction* otherType = static_cast<Instruction*>(debugRecords.records[debugIndex]);
         if (otherType->getIdOperand(2) == debugBaseType &&
             otherType->getIdOperand(3) == scID) {
             return otherType->getResultId();
@@ -1259,7 +1290,7 @@ Id Builder::makePointerDebugType(StorageClass storageClass, Id const baseType)
     type->addIdOperand(scID);
     type->addIdOperand(makeUintConstant(0));
 
-    groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypePointer].push_back(type);
+    module.appendTypeRecord(NonSemanticShaderDebugInfo100DebugTypePointer, type, true);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -1282,7 +1313,7 @@ Id Builder::makeForwardPointerDebugType(StorageClass storageClass)
     type->addIdOperand(scID);
     type->addIdOperand(makeUintConstant(0));
 
-    groupedDebugTypes[NonSemanticShaderDebugInfo100DebugTypePointer].push_back(type);
+    module.appendTypeRecord(NonSemanticShaderDebugInfo100DebugTypePointer, type, true);
     appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
     module.mapInstruction(type);
 
@@ -1467,10 +1498,11 @@ Id Builder::makeDebugValue(Id const debugLocalVariable, Id const value)
 
 Id Builder::makeAccelerationStructureType()
 {
-    Instruction *type;
-    if (groupedTypes[enumCast(Op::OpTypeAccelerationStructureKHR)].size() == 0) {
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeAccelerationStructureKHR));
+    Instruction* type;
+    if (!typeRecords.count) {
         type = createInstruction(getUniqueId(), NoType, Op::OpTypeAccelerationStructureKHR);
-        groupedTypes[enumCast(Op::OpTypeAccelerationStructureKHR)].push_back(type);
+        module.appendTypeRecord(enumCast(Op::OpTypeAccelerationStructureKHR), type);
         appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
         if (emitNonSemanticShaderDebugInfo) {
@@ -1478,7 +1510,7 @@ Id Builder::makeAccelerationStructureType()
             debugId[type->getResultId()] = debugType;
         }
     } else {
-        type = groupedTypes[enumCast(Op::OpTypeAccelerationStructureKHR)].back();
+        type = static_cast<Instruction*>(typeRecords.records[typeRecords.count - 1]);
     }
 
     return type->getResultId();
@@ -1486,10 +1518,11 @@ Id Builder::makeAccelerationStructureType()
 
 Id Builder::makeRayQueryType()
 {
-    Instruction *type;
-    if (groupedTypes[enumCast(Op::OpTypeRayQueryKHR)].size() == 0) {
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeRayQueryKHR));
+    Instruction* type;
+    if (!typeRecords.count) {
         type = createInstruction(getUniqueId(), NoType, Op::OpTypeRayQueryKHR);
-        groupedTypes[enumCast(Op::OpTypeRayQueryKHR)].push_back(type);
+        module.appendTypeRecord(enumCast(Op::OpTypeRayQueryKHR), type);
         appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
         if (emitNonSemanticShaderDebugInfo) {
@@ -1497,7 +1530,7 @@ Id Builder::makeRayQueryType()
             debugId[type->getResultId()] = debugType;
         }
     } else {
-        type = groupedTypes[enumCast(Op::OpTypeRayQueryKHR)].back();
+        type = static_cast<Instruction*>(typeRecords.records[typeRecords.count - 1]);
     }
 
     return type->getResultId();
@@ -1505,14 +1538,15 @@ Id Builder::makeRayQueryType()
 
 Id Builder::makeHitObjectNVType()
 {
-    Instruction *type;
-    if (groupedTypes[enumCast(Op::OpTypeHitObjectNV)].size() == 0) {
+    const xe_spv_record_view typeRecords = module.typeRecords(enumCast(Op::OpTypeHitObjectNV));
+    Instruction* type;
+    if (!typeRecords.count) {
         type = createInstruction(getUniqueId(), NoType, Op::OpTypeHitObjectNV);
-        groupedTypes[enumCast(Op::OpTypeHitObjectNV)].push_back(type);
+        module.appendTypeRecord(enumCast(Op::OpTypeHitObjectNV), type);
         appendInstruction(constantsTypesGlobals, std::unique_ptr<Instruction>(type));
         module.mapInstruction(type);
     } else {
-        type = groupedTypes[enumCast(Op::OpTypeHitObjectNV)].back();
+        type = static_cast<Instruction*>(typeRecords.records[typeRecords.count - 1]);
     }
 
     return type->getResultId();

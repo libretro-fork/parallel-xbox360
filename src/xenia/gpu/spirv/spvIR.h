@@ -668,6 +668,13 @@ public:
         return xe_spv_arena_owns_record(arena, instruction) != 0;
     }
     void forgetInstruction(Id id) { xe_spv_index_unmap(&arena->index, id); }
+    xe_spv_record_view typeRecords(uint32_t opcode, bool debug = false) const {
+        return xe_spv_arena_group_view(arena, xe_spv_group_key(opcode, debug));
+    }
+    void appendTypeRecord(uint32_t opcode, Instruction* record, bool debug = false) {
+        if (!xe_spv_arena_group_append(arena, xe_spv_group_key(opcode, debug), record))
+            throw std::bad_alloc();
+    }
     xe_spv_constant_cache* constantCache(size_t extra = 0) {
         xe_spv_constant_cache* cache = xe_spv_arena_constants(arena, extra);
         if (!cache) throw std::bad_alloc();

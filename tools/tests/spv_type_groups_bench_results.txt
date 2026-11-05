@@ -1,0 +1,117 @@
+Retained C89 shader type/debug groups, 2026-11-05
+Parent: complete 3a5d2b18155b62e6741362d297a840933c65b022 sources.
+Windows x64 GCC 16.2 -O2; native MSVC and WSL ASan/UBSan separately checked.
+
+Both groupedTypes and groupedDebugTypes maps of vectors are removed. An exclusive
+C89 registry retains per-key contiguous pointer arrays across compiler module
+leases. The registry is metadata only: all existing type equality predicates,
+layout exclusions, deliberately distinct structs, debug lookups and forward
+pointer patching remain unchanged. It does not hash mutable type payloads or
+reinterpret identical operands as identical decorated types. The existing
+explicitlyLaidOut set remains. Keys separate core and nonsemantic opcodes.
+
+Twenty-four indexed searches, two debug range walks and six singleton lookups
+now borrow group views once, rather than repeatedly probing a map. The pointer
+type feature pass in post-processing uses the same borrowed view. Array elements
+are void* values converted individually at the typed boundary; there is no
+Instruction**/void** type-punning. Instruction addresses and operand storage do
+not move. Other metadata containers and driver allocations remain.
+
+Group descriptors are a checked open-addressed key registry. Each group owns a
+retained C89 pointer buffer; append growth copies only live pointer metadata,
+never instruction payloads. Growing the descriptor table does not move another
+group's pointer array. A view expires on its own group's mutation or module end.
+Epoch reset invalidates old views without dereferencing retired records; wrap
+preserves occupied keys and buffers while marking their logical contents stale.
+Groups/buffers have no fixed-count restriction. Failed growth keeps prior live
+records accessible. Arena close frees every buffer and descriptor allocation
+using the same C allocator hooks as growth. Group insertion/publication follows
+the previous builder's ordering; no stronger rollback guarantee is claimed for
+later unrelated type debug/ID-map failures.
+
+Cold compiler setup reserves 64 descriptors and four pointers for each of 14
+common core type opcodes. On measured x64 builds this is 2048 + 448 bytes, plus
+32 bytes of registry owner state. Extended/debug groups and larger groups grow
+on demand and retain their high-water capacity. There can still be allocations
+for new larger workloads; this is not complete runtime-allocation elimination.
+GCC x64 Builder 1864 -> 1752 bytes. Instruction64/Block136/Function136/Module88
+stay unchanged. The retained-workspace increase below is intentional, not a leak.
+
+Seven alternating quiet parent/current pairs after all compilers stopped. Both
+revisions build their own complete C/IR sources and use unchanged typed fixtures.
+Function construction uses 1/71/257 functions, long helper names, no parameters
+or linkage. Constant construction uses 40/640/5120 regular scalar/pair-composite
+constants followed by three full repeated-lookup passes. Timing includes builder
+cleanup, excludes serialization/file I/O. Warm untimed module outputs match.
+All C++ new and C operand/arena/index/plan/output allocation hooks are counted;
+allocator headers/free-block retention and driver memory are excluded. Tracked
+live bytes return to the initial value at workspace close; warm capacity stays
+constant across all repeated modules. Earlier build-time samples are excluded.
+
+workload/revision / modules / calls / requested bytes / retained / peak / ms
+constants, 40, current  modules=1000 calls=7000 requested=1768000 retained=48916 peak=50684 ms=2.341 (2.323..2.364)
+constants, 40, parent   modules=1000 calls=18000 requested=2112000 retained=46388 peak=48500 ms=2.866 (2.849..2.892)
+constants, 640, current modules=1000 calls=7000 requested=1768000 retained=153068 peak=154836 ms=34.124 (33.935..34.318)
+constants, 640, parent  modules=1000 calls=18000 requested=2112000 retained=150540 peak=152652 ms=39.784 (39.606..40.397)
+constants, 5120, current modules=100 calls=700 requested=176800 retained=922676 peak=924444 ms=30.158 (29.989..31.582)
+constants, 5120, parent modules=100 calls=1800 requested=211200 retained=920148 peak=922260 ms=34.288 (34.175..34.398)
+functions, 1, current   modules=1000 calls=7000 requested=1768000 retained=48200 peak=49968 ms=0.497 (0.490..0.515)
+functions, 1, parent    modules=1000 calls=12000 requested=1968000 retained=45672 peak=47640 ms=0.673 (0.670..0.695)
+functions, 71, current  modules=1000 calls=7000 requested=1768000 retained=96971 peak=101043 ms=4.376 (4.336..4.491)
+functions, 71, parent   modules=1000 calls=12000 requested=1968000 retained=94443 peak=98715 ms=4.775 (4.721..4.903)
+functions, 257, current modules=1000 calls=7000 requested=1768000 retained=259899 peak=270883 ms=14.767 (14.608..15.121)
+functions, 257, parent  modules=1000 calls=12000 requested=1968000 retained=257371 peak=268555 ms=16.127 (15.934..16.318)
+
+Function construction medians fall about 26.15%/8.36%/8.43%; constant construction
+medians fall about 18.32%/14.23%/12.04% across these fixtures. Function requests
+fall 12000 -> 7000 per 1000 modules (41.67% fewer); constant requests fall 18 -> 7
+per module (61.11% fewer). Other allocations remain. Retained storage increases
+2528 bytes in every listed case, matching the startup reservation and owner
+state. Peak bytes rise 2328 for functions and 2184 for constants. These are
+construction/lookup measurements, not overall compilation, driver, gameplay or
+FPS claims. Serialization throughput, hardware cache misses/register spills and
+RSS were not separately measured.
+
+Validation:
+- Full Windows Make -j5 and native MSVC /TC C89 registry/storage + typed suite.
+- Strict/pedantic C89 group unit: 128 keys, 409600 warm appends, insertion order,
+  stable cross-group views, failed initial/buffer growth, overflow requests,
+  epoch wrap and balanced cleanup. No new allocation during the 100 warm leases.
+- Real typed arena: 192 deliberately distinct structs per module over 20 leases,
+  failure/retry at the first common group's growth boundary, no later page
+  allocation and no retained live allocations after close.
+- Ordinary/debug type fixtures preserve bool/signed/unsigned/vector/sampler
+  identity, layout-sensitive arrays, intentionally distinct structs, result
+  struct lookup, forward pointer/debug patching and extension type singletons.
+  Parent/current ordinary308B and debug1340B files match. Native MSVC and GCC
+  output hashes match too: ordinary SHA256
+  00DB02673BB36916DCB8CD3E966EA02CF0E0AE2A55A37D2FD7563328096758F2;
+  debug SHA256 6E21F4B2752FAA07324681960E044AD9B85F6214688AE5978B069FCB82B9BA60.
+  These are wire-equivalence/lifetime fixtures, not driver validation of those
+  standalone type-only modules.
+- Full WSL ASan/UBSan suite: 5248 standard/wide helper modules, source/views,
+  constant specialization and linkage cases, typed failures/ownership/reset
+  tests, and expected failures on retired C/typed/object/payload access.
+- 18432 native MSVC geometry variants, 109668864B retain golden SHA256
+  427B071C7E7868566596FF55270BBCA9AAB31F54C714CA552E928DFE349E69E0.
+- Actual rebuilt Make objects: 1410 Tekken translations/2 control-flow cases,
+  81581628B; 210 Tomb Raider translations/96 control-flow cases, 93646888B.
+  Both match earlier reference output exactly. User-local cache inputs are not
+  shipped with tests or patches.
+- No frontend/game/driver launched; installed DLL untouched. Audio cadence,
+  presentation, guest timing, texture-watch and shutdown behavior unchanged.
+  ARM/device-runtime behavior and total game performance remain unmeasured.
+
+Reproduce identities/output: sh tools/tests/run_spv_types_compare.sh. Optionally
+set BASELINE_ROOT to a complete parent archive and SANITIZER as desired. Native
+suite: tools/tests/run_spv_output_tests.cmd in an x64 VS developer prompt. Full
+sanitizer suite: tools/tests/run_spv_output_tests.sh with the documented baseline
+archive, TEST_BUILD_DIR, SANITIZER and SPIRV_VALIDATOR settings.
+Construction: tools/tests/run_spv_binary_bench.sh with CAPTURE_OPERANDS=1 and
+BASELINE_ROOT=<complete 3a5d2b181 archive>. For functions use
+ TEST_SOURCE=tools/tests/core_spv_function_bench.cc
+ EXTRA_CXXFLAGS='-DXE_SPV_LONG_NAME_BENCH -DXE_SPV_BLOCK_CHAIN_BENCH'
+For constants use TEST_SOURCE=tools/tests/core_spv_constant_bench.cc and unset
+EXTRA_CXXFLAGS. After compilation, alternate parent/current variants 0/4/5 in
+seven quiet pairs. The largest constant case uses 100 modules/sample, all other
+cases use 1000. Compare emitted modules to verify unchanged construction order.

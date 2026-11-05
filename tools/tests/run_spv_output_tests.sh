@@ -12,6 +12,8 @@ git -C "$root" archive "$baseline" src/xenia/gpu/spirv src/xenia/gpu/spirv_shade
 fi
 tar -xf "$out/base.tar" -C "$out/base"
 san=${SANITIZER-}
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_groups_test.c" -o "$out/groups-unit"
+"$out/groups-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_constant_cache_test.c" -o "$out/constant-unit"
 "$out/constant-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_words_test.c" -o "$out/words-unit"
@@ -139,6 +141,10 @@ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src/xenia/gpu/spirv"
  "$root/tools/tests/core_spv_constant_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-debug.o" "$out/size.o" "$out/operands.o" "$out/fault.o" -o "$out/constant-bridge"
 "$out/constant-bridge" "$out/constant.bin" 1
+${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" \
+ "$root/tools/tests/core_spv_types_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
+ "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-debug.o" "$out/size.o" "$out/operands.o" "$out/fault.o" -o "$out/types-bridge"
+for variant in 0 1; do "$out/types-bridge" "$out/types-$variant.bin" "$variant"; done
 
 # Fault-injected operand ownership is isolated from profiling adapters.
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_payload_test.c" -o "$out/payload-unit"

@@ -44,6 +44,7 @@ typedef struct xe_spv_object_state {
    object_pool pool[2];
    payload_pool payloads;
    xe_spv_constant_cache constants;
+   xe_spv_groups groups;
 } xe_spv_object_state;
 
 enum { PAYLOAD_PAGE_BYTES = 16384 };
@@ -81,6 +82,33 @@ int xe_spv_arena_reserve_constants(xe_spv_arena *arena, size_t count)
    if (!state->constants.epoch) xe_spv_constant_cache_reset(&state->constants);
    return xe_spv_constant_cache_reserve(&state->constants, count,
          XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
+}
+xe_spv_record_view xe_spv_arena_group_view(const xe_spv_arena *arena, uint32_t key)
+{
+   xe_spv_record_view empty = {NULL, 0};
+   if (!arena->in_use || !arena->objects) return empty;
+   return xe_spv_groups_view(&arena->objects->groups, key);
+}
+int xe_spv_arena_group_append(xe_spv_arena *arena, uint32_t key, void *record)
+{
+   xe_spv_object_state *state;
+   if (!arena->in_use || !(state = object_state(arena))) return 0;
+   return xe_spv_groups_append(&state->groups, key, record, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
+}
+int xe_spv_arena_reserve_type_groups(xe_spv_arena *arena)
+{
+   /* Stable core SPIR-V type opcodes: Void through Struct, Pointer, Function.
+    * Extended/debug groups grow on demand; no fixed group-count restriction. */
+   static const uint32_t opcodes[] = {19,20,21,22,23,24,25,26,27,28,29,30,32,33};
+   xe_spv_object_state *state = object_state(arena);
+   size_t i;
+   if (!state || !xe_spv_groups_reserve(&state->groups, 32, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE)) return 0;
+   for (i = 0; i < sizeof(opcodes) / sizeof(opcodes[0]); ++i) {
+      xe_spv_group *group = xe_spv_groups_get(&state->groups, xe_spv_group_key(opcodes[i], 0),
+            XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
+      if (!group || !xe_spv_group_reserve(group, 4, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE)) return 0;
+   }
+   return 1;
 }
 static payload_page *payload_grow(payload_pool *pool, size_t minimum)
 {
@@ -325,6 +353,7 @@ static void objects_close(xe_spv_arena *arena)
       XE_SPV_ARENA_FREE(payload);
    }
    XE_SPV_ARENA_FREE(arena->objects->constants.slots);
+   xe_spv_groups_close(&arena->objects->groups, XE_SPV_ARENA_FREE);
    XE_SPV_ARENA_FREE(arena->objects);
    arena->objects = NULL;
 }
@@ -435,6 +464,7 @@ static int arena_end(xe_spv_arena *arena, void (*destroy)(void *record), int pay
    xe_spv_index_reset(&arena->index);
    payloads_end(arena);
    if (arena->objects) xe_spv_constant_cache_reset(&arena->objects->constants);
+   if (arena->objects) xe_spv_groups_reset(&arena->objects->groups);
    arena->in_use = 0;
    arena->cursor = NULL;
    return 1;

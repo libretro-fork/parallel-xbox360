@@ -15,6 +15,7 @@ class InstructionArena final {
     if (!xe_spv_arena_reserve(&arena_, reserve_records) ||
         !xe_spv_arena_reserve_payloads(&arena_, 16384) ||
         !xe_spv_arena_reserve_constants(&arena_, 128) ||
+        !xe_spv_arena_reserve_type_groups(&arena_) ||
         ((block_bytes || function_bytes) &&
          !xe_spv_arena_reserve_objects(&arena_, block_bytes, 64, function_bytes, 32))) {
       xe_spv_arena_close(&arena_);

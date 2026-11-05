@@ -331,7 +331,10 @@ public:
     bool isTensorView(Id resultId)const { return isTensorViewType(getTypeId(resultId)); }
 
     bool isBoolType(Id typeId)
-        { return groupedTypes[enumCast(Op::OpTypeBool)].size() > 0 && typeId == groupedTypes[enumCast(Op::OpTypeBool)].back()->getResultId(); }
+        {
+            xe_spv_record_view records = module.typeRecords(enumCast(Op::OpTypeBool));
+            return records.count && typeId == static_cast<Instruction*>(records.records[records.count - 1])->getResultId();
+        }
     bool isIntType(Id typeId)          const
         { return getTypeClass(typeId) == Op::OpTypeInt && module.getInstruction(typeId)->getImmediateOperand(1) != 0; }
     bool isUintType(Id typeId)         const
@@ -1061,10 +1064,6 @@ public:
 
     // not output, internally used for quick & dirty canonical (unique) creation
 
-    // map type opcodes to type instructions
-    std::unordered_map<unsigned int, std::vector<Instruction*>> groupedTypes;
-    // map type opcodes to debug type instructions
-    std::unordered_map<unsigned int, std::vector<Instruction*>> groupedDebugTypes;
 
     // Track which types have explicit layouts, to avoid reusing in storage classes without layout.
     // Currently only tracks array types.
