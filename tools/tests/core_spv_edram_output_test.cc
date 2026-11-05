@@ -7,6 +7,7 @@
 #include <vector>
 #ifdef XE_SPV_OUTPUT_ALLOCATIONS
 #include "core_pipeline_bench_profile.h"
+#include "xenia/gpu/spirv/spvIR.h"
 #include <new>
 void* operator new(std::size_t n) { void* p = xe_bench_malloc(n); if (!p) throw std::bad_alloc(); return p; }
 void* operator new[](std::size_t n) { return ::operator new(n); }
@@ -33,6 +34,9 @@ static void record(const uint32_t* words, size_t count) {
 int main(int argc, char** argv) {
 #ifdef XE_SPV_OUTPUT_ALLOCATIONS
   size_t before = xe_bench_allocations();
+  size_t bytes_before = xe_bench_requested();
+  printf("IR record bytes: Instruction=%zu Block=%zu Function=%zu Module=%zu\n",
+         sizeof(spv::Instruction), sizeof(spv::Block), sizeof(spv::Function), sizeof(spv::Module));
 #endif
   const unsigned formats[] = {0, 1, 2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 0, 1};
   unsigned pass, f, msaa, bits, mode;
@@ -108,6 +112,8 @@ int main(int argc, char** argv) {
 #ifdef XE_SPV_OUTPUT_ALLOCATIONS
   printf("C++ new calls across %u modules: %zu; tracked live bytes: %zu\n",
          modules, xe_bench_allocations() - before, xe_bench_live());
+  printf("C++ requested bytes: %zu; peak tracked live bytes: %zu\n",
+         xe_bench_requested() - bytes_before, xe_bench_peak());
 #endif
   return 0;
 }

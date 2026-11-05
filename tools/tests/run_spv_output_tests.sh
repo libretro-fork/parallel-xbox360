@@ -7,7 +7,7 @@ out=$(CDPATH= cd -- "$out" && pwd)
 if test -n "${BASELINE_ARCHIVE:-}"; then
  cp "$BASELINE_ARCHIVE" "$out/base.tar"
 else
- baseline=$(git -C "$root" rev-parse --verify "${BASELINE_COMMIT:-65e648b61}^{commit}")
+ baseline=$(git -C "$root" rev-parse --verify "${BASELINE_COMMIT:-ded97e261}^{commit}")
 git -C "$root" archive "$baseline" src/xenia/gpu/spirv src/xenia/gpu/spirv_shader_translator.cc src/xenia/gpu/spirv_shader_translator_rb.cc src/xenia/gpu/spirv_builder.h src/xenia/gpu/spirv_builder.cc src/xenia/gpu/edram_dump_shader.h src/xenia/gpu/edram_dump_shader.cc src/xenia/gpu/edram_transfer_shader.h src/xenia/gpu/edram_transfer_shader.cc > "$out/base.tar"
 fi
 tar -xf "$out/base.tar" -C "$out/base"

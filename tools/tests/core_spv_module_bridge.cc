@@ -3,6 +3,18 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef XE_SPV_BINARY_CHECK
+#include <type_traits>
+static_assert(sizeof(void*) != 8 || sizeof(spv::Instruction) == 64);
+static_assert(std::is_final_v<spv::Instruction> && std::is_final_v<spv::Block> &&
+              std::is_final_v<spv::Function> && std::is_final_v<spv::Module>);
+static_assert(!std::is_polymorphic_v<spv::Instruction> && !std::is_polymorphic_v<spv::Block> &&
+              !std::is_polymorphic_v<spv::Function> && !std::is_polymorphic_v<spv::Module>);
+static_assert(!std::is_copy_assignable_v<spv::Instruction> &&
+              !std::is_copy_assignable_v<spv::Block> &&
+              !std::is_copy_assignable_v<spv::Function> &&
+              !std::is_copy_assignable_v<spv::Module>);
+#endif
 int main(int argc, char **argv) {
   if (argc != 3) return 1;
   const unsigned counts[] = {1, 4, 8, 33, 129};

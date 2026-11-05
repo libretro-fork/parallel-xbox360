@@ -99,11 +99,11 @@ struct IdImmediate {
 // SPIR-V IR instruction.
 //
 
-class Instruction {
+class Instruction final {
 public:
     Instruction(Id resultId, Id typeId, Op opCode) : resultId(resultId), typeId(typeId), opCode(opCode), block(nullptr) { xe_spv_operands_init(&operands); }
     explicit Instruction(Op opCode) : resultId(NoResult), typeId(NoType), opCode(opCode), block(nullptr) { xe_spv_operands_init(&operands); }
-    virtual ~Instruction() { if (operands.heap) xe_spv_operands_free(&operands); }
+    ~Instruction() { if (operands.heap) xe_spv_operands_free(&operands); }
     void reserveOperands(size_t count) {
         if (!xe_spv_operands_reserve(&operands, count)) throw std::bad_alloc();
     }
@@ -269,7 +269,8 @@ public:
     }
 
 protected:
-    Instruction(const Instruction&);
+    Instruction(const Instruction&) = delete;
+    Instruction& operator=(const Instruction&) = delete;
     Id resultId;
     Id typeId;
     Op opCode;
@@ -287,12 +288,10 @@ struct DebugSourceLocation {
     spv::Id fileId;
 };
 
-class Block {
+class Block final {
 public:
     Block(Id id, Function& parent);
-    virtual ~Block()
-    {
-    }
+    ~Block() = default;
 
     Id getId() { return instructions.front()->getResultId(); }
 
@@ -400,8 +399,8 @@ public:
     }
 
 protected:
-    Block(const Block&);
-    Block& operator=(Block&);
+    Block(const Block&) = delete;
+    Block& operator=(Block&) = delete;
 
     // To enforce keeping parent and ownership in sync:
     friend Function;
@@ -446,10 +445,10 @@ void inReadableOrder(Block* root, std::function<void(Block*, ReachReason, Block*
 // SPIR-V IR Function.
 //
 
-class Function {
+class Function final {
 public:
     Function(Id id, Id resultType, Id functionType, Id firstParam, LinkageType linkage, const std::string& name, Module& parent);
-    virtual ~Function()
+    ~Function()
     {
         for (int i = 0; i < (int)parameterInstructions.size(); ++i)
             delete parameterInstructions[i];
@@ -533,7 +532,8 @@ public:
     const char* getExportName() const { return exportName.c_str(); }
 
 protected:
-    Function(const Function&);
+    Function(const Function&) = delete;
+    Function& operator=(const Function&) = delete;
     Function& operator=(Function&);
 
     Module& parent;
@@ -552,13 +552,11 @@ protected:
 // SPIR-V IR Module.
 //
 
-class Module {
+class Module final {
 public:
     Module() {}
-    virtual ~Module()
-    {
-        // TODO delete things
-    }
+    // Functions are owned by Builder; the module only indexes them.
+    ~Module() = default;
 
     void addFunction(Function *fun) { functions.push_back(fun); }
 
@@ -589,7 +587,8 @@ public:
     }
 
 protected:
-    Module(const Module&);
+    Module(const Module&) = delete;
+    Module& operator=(const Module&) = delete;
     std::vector<Function*> functions;
 
     // map from result id to instruction having that result id

@@ -10,12 +10,15 @@
 #endif
 typedef union bench_header { size_t bytes; unsigned char alignment[16]; } bench_header;
 static size_t live_bytes, allocations;
+static size_t requested_bytes, peak_live_bytes;
 void *xe_bench_malloc(size_t size) {
    bench_header *header;
    if (size > (size_t)-1 - sizeof(*header)) return NULL;
    header = (bench_header *)malloc(sizeof(*header) + size);
    if (!header) return NULL;
    header->bytes = size; live_bytes += size; ++allocations;
+   requested_bytes += size;
+   if (live_bytes > peak_live_bytes) peak_live_bytes = live_bytes;
    return header + 1;
 }
 void xe_bench_free(void *ptr) {
@@ -43,6 +46,8 @@ void *xe_bench_realloc(void *ptr, size_t size) {
 }
 size_t xe_bench_live(void) { return live_bytes; }
 size_t xe_bench_allocations(void) { return allocations; }
+size_t xe_bench_requested(void) { return requested_bytes; }
+size_t xe_bench_peak(void) { return peak_live_bytes; }
 uint64_t xe_bench_time(void) {
 #ifdef _WIN32
    LARGE_INTEGER counter, frequency;
