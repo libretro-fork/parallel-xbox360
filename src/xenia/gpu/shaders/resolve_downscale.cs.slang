@@ -82,6 +82,7 @@ push_const_begin_xe(b0, space0)
   // When non-zero, sample from (scale/2, scale/2) within each scaled block
   // instead of (0, 0).
   uint xe_downscale_half_pixel_offset;
+  uint xe_downscale_destination_offset_bytes;
 push_const_end_xe
 
 byte_buffer_align4_declare_xe(xe_resolve_source, 0, 0, t0, space0, 1)
@@ -129,7 +130,8 @@ entry_inputs_end_code_begin_compute_xe
 
   uint tile_src_base = push_const_xe(xe_downscale_source_offset_bytes) +
                        tile_index * tile_size_scaled;
-  uint tile_dst_base = tile_index * tile_size_1x;
+  uint tile_dst_base = push_const_xe(xe_downscale_destination_offset_bytes) +
+                       tile_index * tile_size_1x;
 
   // Stride over the tile's output dwords, 128 per pass.
   for (uint dword_index = in_local_thread_index_xe; dword_index < tile_dwords;

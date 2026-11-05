@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan and D3D12 scaled-resolve downscaling now writes directly into the final shared-memory range. Removes the intermediate GPU buffer, its mid-game growth allocation, the Vulkan global queue wait on growth, and the following GPU copy. Bounded C89 borrowed-view planning handles descriptor alignment, large source offsets and dispatch limits without allocating. Normal guest CPU readback and its required synchronization remain. Offline GPU comparisons pass; gameplay frame-time gains have not been measured.
+
 - Vulkan and D3D12 resolve/dump metadata now uses fixed C89 worklists, allocated and touched at renderer initialization. Replaces four growable vectors across the two backends. Sorted invocations borrow rectangles instead of copying their metadata. Disjoint EDRAM extents bound each list to 2,048 records, reserving about 80 KiB per active 64-bit renderer. Transfer lists and readback/upload buffer growth remain separate work; gameplay frame-time improvement has not been measured.
 
 - Native-scale and direct-resolve eligibility checks now visit borrowed ownership rectangles instead of allocating temporary vectors for each query. Stack-only C89 classification preserves ownership, layout and coverage checks and stops at the first disqualifying source. The pre-change implementation fails the allocation regression; 10,000 cases match the collected-rectangle results with zero query allocations. Gameplay frame-time gains have not been measured.

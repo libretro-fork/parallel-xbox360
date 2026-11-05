@@ -916,10 +916,6 @@ class VulkanCommandProcessor final : public CommandProcessor {
   // set). Uses pool chain to avoid mid-frame GPU stalls on pool exhaustion.
   std::unique_ptr<ui::vulkan::VulkanDescriptorPoolChain>
       resolve_downscale_descriptor_pool_chain_;
-  // Intermediate buffer for downscaled output (device local, for compute).
-  VkBuffer resolve_downscale_buffer_ = VK_NULL_HANDLE;
-  VkDeviceMemory resolve_downscale_buffer_memory_ = VK_NULL_HANDLE;
-  uint32_t resolve_downscale_buffer_size_ = 0;
 
   // FXAA source texture - R16G16B16A16_SFLOAT for luma in alpha.
   static constexpr VkFormat kFxaaSourceFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -1087,10 +1083,9 @@ class VulkanCommandProcessor final : public CommandProcessor {
   static void ResolveReadCallbackThunk(void* context, uint32_t physical_address,
                                        uint32_t length,
                                        Memory::PhysicalAccess access);
-  // Downscaling a scaled resolve's output into resolve_downscale_buffer_ for a
-  // copy out of it, and writing it into the shared memory buffer where a native
-  // resolve would have, for a fault to copy it from there. Declared after the
-  // .inc for ScaledResolveReadbackInfo.
+  // Direct downscale into the final shared-memory range. Guest read faults
+  // still use the normal coherent readback path. Declared after the .inc
+  // for ScaledResolveReadbackInfo.
   bool DownscaleScaledResolve(uint32_t written_address,
                               const ScaledResolveReadbackInfo& scaled_info);
   bool MirrorScaledResolveToSharedMemory(uint32_t written_address,

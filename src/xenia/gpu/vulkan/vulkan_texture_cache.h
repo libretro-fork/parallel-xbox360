@@ -184,6 +184,10 @@ class VulkanTextureCache final : public TextureCache {
                                      uint32_t length_scaled_alignment_log2 = 0);
 
   VkBuffer GetCurrentScaledResolveBuffer() const;
+  uint64_t GetCurrentScaledResolveBufferSize() const {
+    return sparse_scaled_resolve_supported_ ? kScaledResolveSparseBufferSize
+                                            : scaled_resolve_fallback_.size;
+  }
 
   // Returns the base scaled address that the current buffer starts at.
   // For sparse buffers: buffer N starts at N GB (N << 30)

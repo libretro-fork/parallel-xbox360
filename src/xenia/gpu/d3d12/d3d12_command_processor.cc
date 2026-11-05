@@ -8,6 +8,7 @@
  */
 
 #include "xenia/gpu/d3d12/d3d12_command_processor.h"
+#include "libretro/core_gpu_downscale.h"
 
 #include <cstdarg>
 #include <cstring>
@@ -1139,7 +1140,7 @@ bool D3D12CommandProcessor::SetupContext() {
   }
 
   // Resolve downscale compute shader for scaled resolution readback.
-  // Root parameter 0: Constants (scale_x, scale_y, pixel_size_log2, tile_count)
+  // Root parameter 0: ResolveDownscaleConstants (including view byte offsets).
   // Root parameter 1: Source SRV (ByteAddressBuffer)
   // Root parameter 2: Destination UAV (RWByteAddressBuffer)
   {
@@ -1448,8 +1449,6 @@ void D3D12CommandProcessor::ShutdownContext() {
   fxaa_pipeline_.Reset();
   fxaa_root_signature_.Reset();
 
-  resolve_downscale_buffer_.Reset();
-  resolve_downscale_buffer_size_ = 0;
   resolve_downscale_pipeline_.Reset();
   resolve_downscale_root_signature_.Reset();
 
@@ -3492,144 +3491,79 @@ bool D3D12CommandProcessor::IssueCopy() {
   return result;
 }
 
-// Downscales a scaled resolve's output into resolve_downscale_buffer_, leaving
-// it a copy source inside a debug marker scope, for the caller to copy out of
-// it and restore.
+// Downscale directly into the final shared-memory UAV. No temporary resource.
 bool D3D12CommandProcessor::DownscaleScaledResolve(
     uint32_t written_address, const ScaledResolveReadbackInfo& scaled_info) {
-  uint32_t pixel_size_log2 = scaled_info.pixel_size_log2;
-  uint32_t tile_count = scaled_info.tile_count;
-  uint32_t readback_length = scaled_info.readback_length;
-  uint32_t scale_x = scaled_info.scale_x;
-  uint32_t scale_y = scaled_info.scale_y;
-  uint64_t scaled_start = scaled_info.scaled_start;
-  uint64_t scaled_readback_length = scaled_info.scaled_readback_length;
-
-  // Ensure intermediate buffer for GPU downscaling is large enough
-  uint32_t downscale_buffer_size = AlignReadbackBufferSize(readback_length);
-  if (downscale_buffer_size > resolve_downscale_buffer_size_) {
-    const ui::d3d12::D3D12Provider& provider = GetD3D12Provider();
-    ID3D12Device* device = provider.GetDevice();
-    D3D12_RESOURCE_DESC buffer_desc;
-    ui::d3d12::util::FillBufferResourceDesc(
-        buffer_desc, downscale_buffer_size,
-        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    ID3D12Resource* buffer;
-    if (SUCCEEDED(device->CreateCommittedResource(
-            &ui::d3d12::util::kHeapPropertiesDefault,
-            provider.GetHeapFlagCreateNotZeroed(), &buffer_desc,
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-            IID_PPV_ARGS(&buffer)))) {
-      // Defer release of old buffer - it may still be referenced by pending
-      // deferred commands from previous resolves
-      if (resolve_downscale_buffer_) {
-        resources_for_deletion_.emplace_back(
-            GetCurrentSubmission(), resolve_downscale_buffer_.Detach());
-      }
-      resolve_downscale_buffer_.Attach(buffer);
-      resolve_downscale_buffer_->SetName(L"Resolve Downscale Buffer");
-      resolve_downscale_buffer_size_ = downscale_buffer_size;
-    } else {
-      XELOGE("Failed to create {} MB resolve downscale buffer",
-             downscale_buffer_size >> 20);
-      return false;
-    }
-  }
-
-  // Verify downscale buffer was created
-  if (!resolve_downscale_buffer_) {
-    XELOGE("Resolve downscale: downscale buffer is null");
-    return false;
-  }
-
-  // Get source buffer
-  size_t resolve_buffer_index =
-      texture_cache_->GetCurrentScaledResolveBufferIndexPublic();
-  ID3D12Resource* resolve_buffer =
-      texture_cache_->GetCurrentScaledResolveBufferResource();
-  if (!resolve_buffer) {
-    XELOGE("Resolve downscale: source buffer is null");
-    return false;
-  }
-
-  // Allocate descriptors for SRV (source) and UAV (destination)
-  ui::d3d12::util::DescriptorCpuGpuHandlePair downscale_descriptors[2];
-  if (!RequestOneUseSingleViewDescriptors(2, downscale_descriptors)) {
-    XELOGE("Failed to allocate descriptors for resolve downscale");
-    return false;
-  }
-
-  const ui::d3d12::D3D12Provider& provider = GetD3D12Provider();
-  ID3D12Device* device = provider.GetDevice();
-
-  // Create SRV for source (the written extent within the scaled resolve
-  // buffer). The shader reads from the start of the bound range, so
-  // source_offset_bytes stays 0.
-  uint64_t source_offset =
-      scaled_start - (uint64_t(resolve_buffer_index) << 30);
-  uint32_t aligned_source_length = (uint32_t(scaled_readback_length) +
-                                    (D3D12_RAW_UAV_SRV_BYTE_ALIGNMENT - 1)) &
-                                   ~(D3D12_RAW_UAV_SRV_BYTE_ALIGNMENT - 1);
-  ui::d3d12::util::CreateBufferRawSRV(device, downscale_descriptors[0].first,
-                                      resolve_buffer, aligned_source_length,
-                                      source_offset);
-
-  // Create UAV for destination (downscale buffer)
-  uint32_t aligned_readback_length =
-      (readback_length + (D3D12_RAW_UAV_SRV_BYTE_ALIGNMENT - 1)) &
-      ~(D3D12_RAW_UAV_SRV_BYTE_ALIGNMENT - 1);
-  ui::d3d12::util::CreateBufferRawUAV(device, downscale_descriptors[1].first,
-                                      resolve_downscale_buffer_.Get(),
-                                      aligned_readback_length, 0);
-
-  // Transition source to SRV state
-  PushUAVBarrier(resolve_buffer);
+  ID3D12Resource* source = texture_cache_->GetCurrentScaledResolveBufferResource();
+  if (!source) return false;
+  const uint64_t base =
+      uint64_t(texture_cache_->GetCurrentScaledResolveBufferIndexPublic()) << 30;
+  if (scaled_info.scaled_start < base) return false;
+  uint64_t source_offset = scaled_info.scaled_start - base;
+  uint64_t destination = written_address;
+  const uint64_t capacity = xe_d3d12_resource_desc(source).Width;
+  const uint32_t tile_bytes = (32u * 32u) << scaled_info.pixel_size_log2;
+  const uint32_t area = scaled_info.scale_x * scaled_info.scale_y;
+  uint32_t remaining = scaled_info.tile_count;
+  xe_gpu_downscale_view view;
+  if (!xe_gpu_downscale_plan(source_offset, destination, capacity,
+      SharedMemory::kBufferSize, tile_bytes, area, remaining,
+      D3D12_RAW_UAV_SRV_BYTE_ALIGNMENT, UINT32_MAX & ~uint32_t(15),
+      D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION, &view)) return false;
+  shared_memory_->UseForWriting();
+  PushUAVBarrier(source);
   texture_cache_->TransitionCurrentScaledResolveRange(
       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
   SubmitBarriers();
-
-  PushDebugMarker("Resolve Downscale: 0x%08X, %u bytes -> %u bytes",
-                  written_address, uint32_t(scaled_readback_length),
-                  readback_length);
-
-  // Set up compute shader
-  SetExternalPipeline(resolve_downscale_pipeline_.Get());
-  deferred_command_list_.D3DSetComputeRootSignature(
-      resolve_downscale_root_signature_.Get());
-
-  // Set constants
-  ResolveDownscaleConstants constants;
-  constants.scale_x = scale_x;
-  constants.scale_y = scale_y;
-  constants.pixel_size_log2 = pixel_size_log2;
-  constants.tile_count = tile_count;
-  // The source SRV is already created at source_offset, so the shader reads
-  // from the start of the bound range.
-  constants.source_offset_bytes = 0;
-  // Optionally sample from center of scaled block instead of top-left.
-  constants.half_pixel_offset = (cvars::readback_resolve_half_pixel_offset &&
-                                 (scale_x > 1 || scale_y > 1))
-                                    ? 1
-                                    : 0;
-  deferred_command_list_.D3DSetComputeRoot32BitConstants(
-      UINT(ResolveDownscaleRootParameter::kConstants),
-      sizeof(constants) / sizeof(uint32_t), &constants, 0);
-
-  // Set descriptor tables
-  deferred_command_list_.D3DSetComputeRootDescriptorTable(
-      UINT(ResolveDownscaleRootParameter::kSource),
-      downscale_descriptors[0].second);
-  deferred_command_list_.D3DSetComputeRootDescriptorTable(
-      UINT(ResolveDownscaleRootParameter::kDestination),
-      downscale_descriptors[1].second);
-
-  // Dispatch compute shader - one thread group per 32x32 tile
-  deferred_command_list_.D3DDispatch(tile_count, 1, 1);
-
-  PushUAVBarrier(resolve_downscale_buffer_.Get());
-  PushTransitionBarrier(resolve_downscale_buffer_.Get(),
-                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                        D3D12_RESOURCE_STATE_COPY_SOURCE);
+  PushDebugMarker("Direct resolve downscale: 0x%08X, %u bytes",
+      written_address, scaled_info.readback_length);
+  ID3D12Device* device = GetD3D12Provider().GetDevice();
+  do {
+    ui::d3d12::util::DescriptorCpuGpuHandlePair descriptors[2];
+    if (!RequestOneUseSingleViewDescriptors(2, descriptors)) {
+      PopDebugMarker();
+      return false;
+    }
+    SetExternalPipeline(resolve_downscale_pipeline_.Get());
+    deferred_command_list_.D3DSetComputeRootSignature(
+        resolve_downscale_root_signature_.Get());
+    // Group-aligned guest addresses and whole tiles are raw-view aligned.
+    // The checked-in DXIL needs no destination-offset instruction: the exact
+    // destination is baked into the raw UAV's FirstElement.
+    assert_zero(view.source_bias);
+    assert_zero(view.destination_bias);
+    ui::d3d12::util::CreateBufferRawSRV(device, descriptors[0].first,
+        source, view.source_size, view.source_offset);
+    ui::d3d12::util::CreateBufferRawUAV(device, descriptors[1].first,
+        shared_memory_->GetBuffer(), view.destination_size,
+        view.destination_offset);
+    ResolveDownscaleConstants constants = {};
+    constants.scale_x = scaled_info.scale_x;
+    constants.scale_y = scaled_info.scale_y;
+    constants.pixel_size_log2 = scaled_info.pixel_size_log2;
+    constants.tile_count = view.tiles;
+    constants.half_pixel_offset =
+        cvars::readback_resolve_half_pixel_offset && area > 1;
+    deferred_command_list_.D3DSetComputeRoot32BitConstants(
+        UINT(ResolveDownscaleRootParameter::kConstants),
+        sizeof(constants) / sizeof(uint32_t), &constants, 0);
+    deferred_command_list_.D3DSetComputeRootDescriptorTable(
+        UINT(ResolveDownscaleRootParameter::kSource), descriptors[0].second);
+    deferred_command_list_.D3DSetComputeRootDescriptorTable(
+        UINT(ResolveDownscaleRootParameter::kDestination), descriptors[1].second);
+    deferred_command_list_.D3DDispatch(view.tiles, 1, 1);
+    shared_memory_->MarkUAVWritesCommitNeeded();
+    source_offset += uint64_t(view.tiles) * tile_bytes * area;
+    destination += uint64_t(view.tiles) * tile_bytes;
+    remaining -= view.tiles;
+  } while (remaining && xe_gpu_downscale_plan(source_offset, destination,
+      capacity, SharedMemory::kBufferSize, tile_bytes, area, remaining,
+      D3D12_RAW_UAV_SRV_BYTE_ALIGNMENT, UINT32_MAX & ~uint32_t(15),
+      D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION, &view));
+  if (remaining) {
+    PopDebugMarker();
+    return false;
+  }
   return true;
 }
 
@@ -3653,16 +3587,11 @@ bool D3D12CommandProcessor::MirrorScaledResolveToSharedMemory(
     return false;
   }
   if (!DownscaleScaledResolve(written_address, scaled_info)) {
+    texture_cache_->TransitionCurrentScaledResolveRange(
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    SubmitBarriers();
     return false;
   }
-  shared_memory_->UseAsCopyDestination();
-  SubmitBarriers();
-  deferred_command_list_.D3DCopyBufferRegion(
-      shared_memory_->GetBuffer(), written_address,
-      resolve_downscale_buffer_.Get(), 0, scaled_info.readback_length);
-  PushTransitionBarrier(resolve_downscale_buffer_.Get(),
-                        D3D12_RESOURCE_STATE_COPY_SOURCE,
-                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
   texture_cache_->TransitionCurrentScaledResolveRange(
       D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
   SubmitBarriers();

@@ -286,6 +286,9 @@ class CommandProcessor {
     // When non-zero, apply half-pixel offset correction by sampling from
     // (scale/2, scale/2) within each scaled block instead of (0, 0).
     uint32_t half_pixel_offset;
+    // Vulkan: bias inside the aligned destination descriptor. D3D12 binds
+    // the exact UAV range and keeps this zero (its checked-in DXIL ignores it).
+    uint32_t destination_offset_bytes;
   };
 
   void WorkerThreadMain();
