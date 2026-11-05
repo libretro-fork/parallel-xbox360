@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Function block ownership uses an append-only C89 chain instead of a pointer vector. Blocks retain creation order without ownership-array growth or copies; duplicate and foreign adoption are rejected. CFG membership checks use the private owner and dense index directly. The unused block-removal API is removed. C89 values and shared validity bits replace two optional debug trackers, offsetting the new link so blocks remain 136 bytes on tested x64 builds. Teardown avoids writes to dead ownership metadata; function owner metadata stays three words. Construction and serialization costs are measured separately. Other IR containers still allocate, and audio scheduling is unchanged.
+
 - Function parameters use a checked eight-byte C89 ID range instead of a pointer vector. Emission and cleanup borrow the existing module index directly, avoiding another parameter array and its growth copies. Parameter IDs are computed without reading instruction records; type reads remain bounds checked. Parameter cleanup still precedes block cleanup, and partially constructed functions remain covered by arena unwind. Other IR containers still allocate; audio scheduling is unchanged.
 
 - Shader functions are emitted directly from their owning list. The duplicate module function registry and its pointer-vector allocations are removed, shrinking module metadata by 24 bytes on 64-bit hosts. Function creation publishes its entry block and active build point only after ownership succeeds, preserving the previous pointers if an allocation fails. Output order and instruction ownership remain unchanged; other IR containers still allocate. Audio scheduling is unchanged.

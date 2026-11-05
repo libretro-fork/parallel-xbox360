@@ -359,8 +359,7 @@ void Builder::postProcessCFG()
                if (why == ReachDeadContinue) headerForUnreachableContinue[b] = header;
                if (why == ReachDeadMerge) unreachableMerges.insert(b);
             });
-        for (auto bi = f->getBlocks().cbegin(); bi != f->getBlocks().cend(); bi++) {
-            Block* b = *bi;
+        for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
             if (unreachableMerges.count(b) != 0 || headerForUnreachableContinue.count(b) != 0) {
                 auto ii = b->getInstructions().cbegin();
                 ++ii; // Keep potential decorations on the label.
@@ -423,8 +422,7 @@ void Builder::postProcessFeatures() {
     // process all block-contained instructions
     for (const auto& functionOwner : functions) {
         Function* f = functionOwner.get();
-        for (auto bi = f->getBlocks().cbegin(); bi != f->getBlocks().cend(); bi++) {
-            Block* b = *bi;
+        for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
             for (auto ii = b->getInstructions().cbegin(); ii != b->getInstructions().cend(); ii++)
                 postProcess(*ii->get());
 
@@ -497,7 +495,7 @@ void Builder::postProcessSamplers()
     std::map<Id, Instruction*> sampledImageInstrs;
     for (const auto& functionOwner : functions) {
         Function* f = functionOwner.get();
-	for (auto b: f->getBlocks()) {
+        for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
 	    for (auto &i: b->getInstructions()) {
         if (i->getOpCode() == spv::Op::OpSampledImage) {
 		    sampledImageInstrs[i->getResultId()] = i.get();
@@ -508,7 +506,7 @@ void Builder::postProcessSamplers()
     // next find all uses of the given ids and rewrite them if needed.
     for (const auto& functionOwner : functions) {
         Function* f = functionOwner.get();
-	for (auto b: f->getBlocks()) {
+        for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
             auto &instrs = b->getInstructions();
             for (size_t idx = 0; idx < instrs.size(); idx++) {
                 Instruction *i = instrs[idx].get();

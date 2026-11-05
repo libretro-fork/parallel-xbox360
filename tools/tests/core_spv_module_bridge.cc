@@ -143,6 +143,11 @@ int main(int argc, char **argv) {
   }
   builder.postProcess(false);
 #ifdef XE_SPV_BINARY_CHECK
+  size_t chain_count = 0;
+  for (spv::Block* block = main->getEntryBlock(); block; block = block->getNextBlock()) {
+    if (block->getTraversalIndex() != chain_count++) return 39;
+  }
+  if (chain_count != main->getBlockCount() || chain_count != (variant == 5 ? 513u : 1u)) return 40;
   bool callback_failed = false;
   try {
     spv::inReadableOrder(main->getEntryBlock(),

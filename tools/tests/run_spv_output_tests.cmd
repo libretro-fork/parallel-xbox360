@@ -33,6 +33,14 @@ cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests
 if errorlevel 1 goto fail
 %OUT%\range-unit.exe
 if errorlevel 1 goto fail
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_block_chain_test.c /Fo%OUT%\chain-unit.obj /Fe%OUT%\chain-unit.exe
+if errorlevel 1 goto fail
+%OUT%\chain-unit.exe
+if errorlevel 1 goto fail
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_block_state_test.c /Fo%OUT%\block-state-unit.obj /Fe%OUT%\block-state-unit.exe
+if errorlevel 1 goto fail
+%OUT%\block-state-unit.exe
+if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /c libretro/core_spv_size.c /Fo%OUT%\size.obj
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_arena_test.c /Fo%OUT%\arena-unit.obj /Fe%OUT%\arena-unit.exe

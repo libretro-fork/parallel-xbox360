@@ -53,6 +53,8 @@
 #include "libretro/core_spv_size.h"
 #include "libretro/core_spv_plan.h"
 #include "libretro/core_spv_id_range.h"
+#include "libretro/core_spv_block_chain.h"
+#include "libretro/core_spv_block_state.h"
 #include "libretro/core_spv_arena.h"
 #include <cstddef>
 #include <new>
@@ -64,7 +66,6 @@
 #include <memory>
 #include <vector>
 #include <set>
-#include <optional>
 
 namespace spv {
 
@@ -300,13 +301,7 @@ protected:
 // SPIR-V IR block.
 //
 
-struct DebugSourceLocation {
-    int line;
-    int column;
-    spv::Id fileId;
-};
-
-class Block final {
+class Block final : private xe_spv_block_link {
 public:
     Instruction* createInstruction(Id result, Id type, Op code);
     Instruction* createInstruction(Op code);
@@ -320,24 +315,12 @@ public:
     // Returns true if the source location is actually updated.
     // Note we still need the builder to insert the line marker instruction. This is just a tracker.
     bool updateDebugSourceLocation(int line, int column, spv::Id fileId) {
-        if (currentSourceLoc && currentSourceLoc->line == line && currentSourceLoc->column == column &&
-            currentSourceLoc->fileId == fileId) {
-            return false;
-        }
-
-        currentSourceLoc = DebugSourceLocation{line, column, fileId};
-        return true;
+        return xe_spv_block_source(&debugState, &stateFlags, line, column, fileId) != 0;
     }
-    // Returns true if the scope is actually updated.
-    // Note we still need the builder to insert the debug scope instruction. This is just a tracker.
+    // Returns true when the debug scope changes.
     bool updateDebugScope(spv::Id scopeId) {
         assert(scopeId);
-        if (currentDebugScope && *currentDebugScope == scopeId) {
-            return false;
-        }
-
-        currentDebugScope = scopeId;
-        return true;
+        return xe_spv_block_scope(&debugState, &stateFlags, scopeId) != 0;
     }
     void addInstruction(std::unique_ptr<Instruction> inst);
     void addPredecessor(Block* pred) { predecessors.push_back(pred); pred->successors.push_back(this);}
@@ -348,9 +331,10 @@ public:
         return instructions;
     }
     const std::vector<std::unique_ptr<Instruction> >& getLocalVariables() const { return localVariables; }
-    void setUnreachable() { unreachable = true; }
-    bool isUnreachable() const { return unreachable; }
+    void setUnreachable() { stateFlags = (uint8_t)(stateFlags | XE_SPV_BLOCK_UNREACHABLE); }
+    bool isUnreachable() const { return (stateFlags & XE_SPV_BLOCK_UNREACHABLE) != 0; }
     uint32_t getTraversalIndex() const { return traversalIndex; }
+    Block* getNextBlock() const { return static_cast<Block*>(next); }
     // Returns the block's merge instruction, if one exists (otherwise null).
     const Instruction* getMergeInstruction() const {
         if (instructions.size() < 2) return nullptr;
@@ -427,23 +411,19 @@ protected:
     // To enforce keeping parent and ownership in sync:
     friend Function;
 
+    // Keep the traversal inputs together; predecessor/debug data is colder.
     std::vector<std::unique_ptr<Instruction> > instructions;
-    std::vector<Block*> predecessors, successors;
-    std::vector<std::unique_ptr<Instruction> > localVariables;
-    Function& parent;
-
-    // Track source location of the last source location marker instruction.
-    std::optional<DebugSourceLocation> currentSourceLoc;
-
-    // Track scope of the last debug scope instruction.
-    std::optional<spv::Id> currentDebugScope;
-
-    // track whether this block is known to be uncreachable (not necessarily
-    // true for all unreachable blocks, but should be set at least
-    // for the extraneous ones introduced by the builder).
-    bool unreachable;
-    // Dense owner index, occupying tail padding on 64-bit hosts.
+    std::vector<Block*> successors;
+    // Dense creation index and owner are read on every traversal visit.
     uint32_t traversalIndex = UINT32_MAX;
+    uint8_t stateFlags;
+    Function& parent;
+    std::vector<Block*> predecessors;
+    std::vector<std::unique_ptr<Instruction> > localVariables;
+
+    // Read only when the corresponding valid bit is present in stateFlags.
+    xe_spv_block_debug debugState;
+
     friend class Function;
 };
 
@@ -482,24 +462,16 @@ public:
     Id getParamType(int p) const;
 
     void addBlock(Block* block) {
-        if (blocks.size() > UINT32_MAX) throw std::bad_alloc();
-        blocks.push_back(block);
-        block->traversalIndex = (uint32_t)(blocks.size() - 1);
-    }
-    void removeBlock(Block* block)
-    {
-        const size_t index = block->traversalIndex;
-        if (index >= blocks.size() || blocks[index] != block) throw std::bad_alloc();
-        blocks.erase(blocks.begin() + (ptrdiff_t)index);
-        for (size_t i = index; i < blocks.size(); ++i)
-            blocks[i]->traversalIndex = (uint32_t)i;
-        delete block;
+        if (!block || &block->getParent() != this || block->traversalIndex != UINT32_MAX ||
+            blocks.count >= UINT32_MAX || !xe_spv_block_chain_append(&blocks, block))
+            throw std::bad_alloc();
+        block->traversalIndex = (uint32_t)(blocks.count - 1);
     }
 
     Module& getParent() const { return parent; }
-    Block* getEntryBlock() const { return blocks.front(); }
-    Block* getLastBlock() const { return blocks.back(); }
-    const std::vector<Block*>& getBlocks() const { return blocks; }
+    Block* getEntryBlock() const { return static_cast<Block*>(blocks.head); }
+    Block* getLastBlock() const { return static_cast<Block*>(blocks.tail); }
+    size_t getBlockCount() const { return blocks.count; }
     void addLocalVariable(std::unique_ptr<Instruction> inst);
     Id getReturnType() const { return functionInstruction.getTypeId(); }
     Id getFuncId() const { return functionInstruction.getResultId(); }
@@ -561,8 +533,8 @@ public:
                 static_cast<const Block*>(node)->dump(out);
             }
         } else {
-            if (plan && !xe_spv_plan_function(plan, blocks.size())) throw std::bad_alloc();
-            inReadableOrder(blocks[0], [&](const Block* b, ReachReason, Block*) {
+            if (plan && !xe_spv_plan_function(plan, blocks.count)) throw std::bad_alloc();
+            inReadableOrder(getEntryBlock(), [&](const Block* b, ReachReason, Block*) {
                 if (plan && !xe_spv_plan_push(plan, b)) throw std::bad_alloc();
                 b->dump(out);
             }, plan);
@@ -586,7 +558,8 @@ protected:
     Instruction* getParamInstruction(size_t index) const;
     void* const* getParamInstructions() const;
     xe_spv_id_range parameters = {};
-    std::vector<Block*> blocks;
+    static void destroyBlock(xe_spv_block_link* link) noexcept { delete static_cast<Block*>(link); }
+    xe_spv_block_chain blocks = {};
     bool implicitThis;  // true if this is a member function expecting to be passed a 'this' as the first argument
     bool reducedPrecisionReturn;
     std::set<int> reducedPrecisionParams;  // list of parameter indexes that need a relaxed precision arg
@@ -692,14 +665,12 @@ __inline void* const* Function::getParamInstructions() const
 __inline Function::~Function()
 {
     uint32_t p;
-    size_t b;
     if (parameters.count) {
         void* const* parameterRecords = getParamInstructions();
         for (p = 0; p < parameters.count; ++p)
             delete static_cast<Instruction*>(parameterRecords[p]);
     }
-    for (b = 0; b < blocks.size(); ++b)
-        delete blocks[b];
+    xe_spv_block_chain_destroy(&blocks, destroyBlock);
 }
 
 // Add both
@@ -736,11 +707,11 @@ __inline Function::Function(Id id, Id resultType, Id functionType, Id firstParam
 __inline void Function::addLocalVariable(std::unique_ptr<Instruction> inst)
 {
     Instruction* raw_instruction = inst.get();
-    blocks[0]->addLocalVariable(std::move(inst));
+    getEntryBlock()->addLocalVariable(std::move(inst));
     parent.mapInstruction(raw_instruction);
 }
 
-__inline Block::Block(Id id, Function& parent) : parent(parent), unreachable(false)
+__inline Block::Block(Id id, Function& parent) : xe_spv_block_link{}, stateFlags(0), parent(parent)
 {
     instructions.push_back(std::unique_ptr<Instruction>(createInstruction(id, NoType, Op::OpLabel)));
     instructions.back()->setBlock(this);

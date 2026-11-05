@@ -185,6 +185,34 @@ int main(int argc, char**) {
     xe_spv_test_page_fail_after(size_t(-1));
     CHECK(failed && xe_spv_test_pages() == before && xe_spv_test_live() == 0);
   }
+  {
+    spv::Builder builder(spv::Spv_1_3, 0, nullptr);
+    auto* first = builder.makeEntryPoint("first");
+    auto* state = first->getEntryBlock();
+    CHECK(state->updateDebugSourceLocation(-1, 2, 3));
+    CHECK(!state->updateDebugSourceLocation(-1, 2, 3));
+    CHECK(state->updateDebugScope(17) && !state->updateDebugScope(17));
+    state->setUnreachable();
+    CHECK(state->updateDebugSourceLocation(4, 2, 3));
+    CHECK(state->updateDebugScope(18) && state->isUnreachable());
+    spv::Block* secondEntry;
+    auto* second = builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(),
+        "second", spv::LinkageType::Max, {}, {}, &secondEntry);
+    bool duplicate = false, foreign = false;
+    try { first->addBlock(first->getEntryBlock()); }
+    catch (const std::bad_alloc&) { duplicate = true; }
+    auto pending = std::make_unique<spv::Block>(builder.getUniqueId(), *second);
+    try { first->addBlock(pending.get()); }
+    catch (const std::bad_alloc&) { foreign = true; }
+    CHECK(duplicate && foreign && first->getBlockCount() == 1 && second->getBlockCount() == 1);
+    CHECK(pending->getTraversalIndex() == UINT32_MAX && !pending->getNextBlock());
+    auto* last = pending.get();
+    second->addBlock(last);
+    pending.release();
+    CHECK(secondEntry->getNextBlock() == last && second->getLastBlock() == last);
+    CHECK(last->getTraversalIndex() == 1 && !last->getNextBlock());
+  }
+  std::puts("PASS: typed block-chain adoption, duplicate/foreign rejection and creation order");
   std::puts("PASS: 0/1/4/9/70 parameters and partial-parameter construction cleanup");
   std::puts("PASS: 50000 typed ID mappings across module resets without warm index growth");
   std::puts("PASS: 60200 arena records, orphan/exception cleanup, operand fault and pending-owner reset");

@@ -62,8 +62,8 @@ static size_t nodeIndex(void* opaque, const void* node) {
     const auto& context = *static_cast<WalkContext*>(opaque);
     const auto* block = static_cast<const spv::Block*>(node);
     size_t index = block->getTraversalIndex();
-    const auto& blocks = context.function->getBlocks();
-    return index < blocks.size() && blocks[index] == block ? index : SIZE_MAX;
+    return &block->getParent() == context.function && index < context.function->getBlockCount()
+        ? index : SIZE_MAX;
 }
 static size_t successorCount(const void* node) {
     return static_cast<const spv::Block*>(node)->getSuccessors().size();
@@ -108,7 +108,7 @@ void spv::inReadableOrder(Block* root, std::function<void(Block*, ReachReason, B
     if (!root) throw std::bad_alloc();
     WalkContext context = {&root->getParent(), &callback, {}};
     const xe_spv_walk_ops operations = {nodeIndex, successorCount, successor, targets, visit};
-    const size_t count = context.function->getBlocks().size();
+    const size_t count = context.function->getBlockCount();
     int success;
     if (workspace && count > XE_SPV_WALK_INLINE) {
         success = xe_spv_walk_graph_states(&operations, &context, root, count,

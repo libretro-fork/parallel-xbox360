@@ -1,0 +1,47 @@
+C89 block ownership benchmark, Windows x86-64, 2026-11-05
+Parent: complete 970e701bc source archive. Current: packed-state C89 block ownership chain.
+GCC16.2 -O2 C++20 microbenchmarks; five samples, sequential compiler/runs.
+Block size remains 136 bytes; Function remains 208 and Module 80 on tested x64.
+The link replaces the pointer array; C89 debug values/validity bits replace two optional trackers.
+Callbacks are nonthrowing; terminal cleanup reads next before deletion without mutating dead links.
+Construction uses 1000 warmed modules with 1/71/257 one-block functions.
+Tracked allocations include C++ new and C arena/index/output/plan hooks; operand malloc and allocator headers excluded.
+Tracked peak includes untimed golden serialization; retained heap covers workspace/output after warm module destruction.
+Parent/current golden SPIR-V files match for construction and serialization fixtures.
+Serialization still counts and writes instruction payloads separately. A small serializer slowdown is retained below.
+No gameplay FPS, GPU memory, hardware cache-miss counter or OS RSS claim.
+Reproduce microbenchmarks with BASELINE_ROOT=<complete 970e701bc archive> sh tools/tests/run_spv_binary_bench.sh.
+Select TEST_SOURCE=<absolute core_spv_block_chain_bench.cc> for the construction fixture.
+
+construction: revision functions block_bytes function_bytes calls requested_bytes retained_bytes peak_tracked_bytes median_ms range_ms
+current 1 136 208 22000 2392000 9475 11859 0.906 0.897..0.916
+current 257 136 208 1064000 112952000 103483 215411 58.501 58.292..58.935
+current 71 136 208 316000 32216000 32497 64409 10.184 10.115..10.316
+parent 1 136 208 23000 2400000 9475 11867 0.956 0.953..0.963
+parent 257 136 208 1321000 115008000 103483 217467 64.407 63.969..65.069
+parent 71 136 208 387000 32784000 32497 64977 12.140 12.022..12.277
+
+serialization: 10000 fresh outputs/sample; 328/5432-byte one-block and 13624-byte 513-block modules.
+revision mode module_bytes calls requested_bytes peak_output_bytes median_ms range_ms
+current direct-owned 328 10000 3280000 328 1.740 1.719..1.746
+current direct-owned 5432 10000 54320000 5432 13.923 13.793..14.438
+current direct-owned 13624 10001 136249216 13624 117.422 116.391..118.267
+current word-then-copy 328 90000 13480000 840 3.415 3.370..3.480
+current word-then-copy 5432 130000 218120000 13624 16.850 16.772..19.240
+current word-then-copy 13624 150000 469010000 30008 83.025 81.741..85.791
+parent direct-owned 328 10000 3280000 328 1.684 1.611..1.738
+parent direct-owned 5432 10000 54320000 5432 13.680 13.375..14.179
+parent direct-owned 13624 10001 136249216 13624 115.542 114.276..116.033
+parent word-then-copy 328 90000 13480000 840 3.413 3.407..3.496
+parent word-then-copy 5432 130000 218120000 13624 16.925 16.880..17.029
+parent word-then-copy 13624 150000 469010000 30008 81.204 79.290..81.404
+
+Representative offline guest input: existing read-only user cache, 2256 translations across host-RT/interlock profiles.
+Previously built parent/current full-Make-object cache fixtures, one warm run each, five alternating measured pairs.
+SPV_GUEST_OUTPUT=NUL removes disk output; input reads, initialization, analysis and translation remain included.
+Only two translations have control-flow labels, so this cache cannot establish behavior of all complex CFG workloads.
+Process CPU samples in this run have 15.625-ms accounting steps; CPU medians are identical and wall-time ranges overlap.
+No overall speedup claim. Use run_spv_guest_cache_bench.ps1 after independently validating byte output.
+revision cpu_median_ms cpu_range_ms wall_median_ms wall_range_ms
+current 578.125 562.500..578.125 582.082 580.542..585.974
+parent 578.125 562.500..593.750 586.483 585.066..595.502
