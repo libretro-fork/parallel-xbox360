@@ -44,3 +44,14 @@ void *xe_spv_test_binary_realloc(void *value, size_t size)
    return realloc(value, size);
 }
 void xe_spv_test_binary_fail_next(void) { binary_fail_next = 1; }
+
+static int index_fail_next;
+static size_t index_calls;
+void *xe_spv_test_index_realloc(void *value, size_t size)
+{
+   ++index_calls;
+   if (index_fail_next) { index_fail_next = 0; return NULL; }
+   return realloc(value, size);
+}
+void xe_spv_test_index_fail_next(void) { index_fail_next = 1; }
+size_t xe_spv_test_index_calls(void) { return index_calls; }

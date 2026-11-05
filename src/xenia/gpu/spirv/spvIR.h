@@ -635,22 +635,23 @@ public:
 
     void mapInstruction(Instruction *instruction)
     {
-        spv::Id resultId = instruction->getResultId();
-        // map the instruction's result id
-        if (resultId >= idToInstruction.size())
-            idToInstruction.resize(resultId + 16);
-        idToInstruction[resultId] = instruction;
+        if (!xe_spv_index_set(&arena->index, instruction->getResultId(), instruction))
+            throw std::bad_alloc();
     }
 
-    Instruction* getInstruction(Id id) const { return idToInstruction[id]; }
+    Instruction* getInstruction(Id id) const {
+        return static_cast<Instruction*>(xe_spv_index_get(&arena->index, id));
+    }
     const std::vector<Function*>& getFunctions() const { return functions; }
     spv::Id getTypeId(Id resultId) const {
-        return idToInstruction[resultId] == nullptr ? NoType : idToInstruction[resultId]->getTypeId();
+        const Instruction* instruction = getInstruction(resultId);
+        return instruction ? instruction->getTypeId() : NoType;
     }
     StorageClass getStorageClass(Id typeId) const
     {
-        assert(idToInstruction[typeId]->getOpCode() == spv::Op::OpTypePointer);
-        return (StorageClass)idToInstruction[typeId]->getImmediateOperand(0);
+        const Instruction* instruction = getInstruction(typeId);
+        assert(instruction && instruction->getOpCode() == spv::Op::OpTypePointer);
+        return (StorageClass)instruction->getImmediateOperand(0);
     }
 
     template <class Output> void dump(Output& out, xe_spv_plan* plan = nullptr, bool record = false) const
@@ -667,11 +668,7 @@ protected:
     Module(const Module&) = delete;
     Module& operator=(const Module&) = delete;
     std::vector<Function*> functions;
-
-    // map from result id to instruction having that result id
-    std::vector<Instruction*> idToInstruction;
-
-    // map from a result id to its type id
+    // Instruction lookup storage belongs to the exclusive arena workspace.
 };
 
 //

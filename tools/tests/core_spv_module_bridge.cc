@@ -1,4 +1,7 @@
 /* Full production builder control: deterministic compute modules, no GLSL. */
+#if defined(XE_SPV_BINARY_CHECK) && !defined(XE_SPV_BYTE_BENCH)
+#include "core_spv_arena_test_alloc.h"
+#endif
 #include "SpvBuilder.h"
 #include "src/xenia/gpu/shader_binary.h"
 #include <cstdio>
@@ -6,9 +9,6 @@
 #include <cstring>
 #ifdef XE_SPV_BYTE_BENCH
 #include "core_pipeline_bench_profile.h"
-#endif
-#if defined(XE_SPV_BINARY_CHECK) && !defined(XE_SPV_BYTE_BENCH)
-#include "core_spv_arena_test_alloc.h"
 #endif
 #ifdef XE_SPV_BINARY_CHECK
 #include <type_traits>
@@ -41,6 +41,19 @@ static_assert(!std::is_copy_assignable_v<spv::Instruction> &&
 #endif
 int main(int argc, char **argv) {
   if (argc != 3) return 1;
+#if defined(XE_SPV_BINARY_CHECK) && !defined(XE_SPV_BYTE_BENCH)
+  {
+    bool failed = false;
+    xe_spv_test_index_fail_next();
+    try {
+      spv::Builder rejected(spv::Spv_1_3, 0, nullptr);
+      rejected.makeVoidType();
+    } catch (const std::bad_alloc&) { failed = true; }
+    if (!failed) return 33;
+    spv::Builder recovered(spv::Spv_1_3, 0, nullptr);
+    if (!recovered.makeVoidType()) return 34;
+  }
+#endif
   const unsigned counts[] = {1, 4, 8, 33, 129, 129, 1};
   const unsigned variant = unsigned(std::strtoul(argv[2], nullptr, 10));
   if (variant >= 7) return 2;

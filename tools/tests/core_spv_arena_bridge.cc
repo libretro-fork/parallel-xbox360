@@ -1,7 +1,7 @@
 /* Typed lifetime interop over the production C89 allocator. */
+#include "core_spv_arena_test_alloc.h"
 #include "xenia/gpu/spirv/SpvBuilder.h"
 #include "xenia/gpu/spirv/InstructionArena.h"
-#include "core_spv_arena_test_alloc.h"
 #include <cstdio>
 #include <cstring>
 #include <type_traits>
@@ -139,6 +139,34 @@ int main(int argc, char**) {
     }
   }
   CHECK(xe_spv_test_pages() == 0 && xe_spv_test_live() == 0);
+  {
+    spv::InstructionArena workspace(256);
+    size_t warmed = 0;
+    for (unsigned round = 0; round < 100; ++round) {
+      {
+        spv::Module module(workspace.get());
+        CHECK(!module.getInstruction(1498));
+        for (unsigned i = 0; i < 500; ++i) {
+          auto* instruction = module.createInstruction(i * 3 + 1, spv::NoType, spv::Op::OpNop);
+          module.mapInstruction(instruction);
+          CHECK(module.getInstruction(i * 3 + 1) == instruction);
+          CHECK(!module.getInstruction(i * 3 + 2));
+        }
+        if (!round) warmed = xe_spv_test_index_calls();
+        CHECK(xe_spv_test_index_calls() == warmed);
+      }
+      CHECK(!workspace.get()->index.count);
+    }
+  }
+  CHECK(xe_spv_test_pages() == 0);
+  {
+    xe_spv_test_index_fail_next();
+    bool failed_reserve = false;
+    try { spv::InstructionArena rejected(512); }
+    catch (const std::bad_alloc&) { failed_reserve = true; }
+    CHECK(failed_reserve && xe_spv_test_pages() == 0);
+  }
+  std::puts("PASS: 50000 typed ID mappings across module resets without warm index growth");
   std::puts("PASS: 60200 arena records, orphan/exception cleanup, operand fault and pending-owner reset");
   std::puts("PASS: two retained worker arenas, 960000 records without page growth, partial-construction and active-owner unwind");
   std::puts("PASS: larger-than-reserve modules retain their checked high-water pages");

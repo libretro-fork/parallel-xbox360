@@ -23,6 +23,7 @@
 #include "xenia/gpu/shader_translator.h"
 #include "xenia/gpu/spirv/InstructionArena.h"
 #include "libretro/core_spv_scratch.h"
+#include "libretro/core_spv_plan.h"
 #include "xenia/gpu/spirv_builder.h"
 #include "xenia/gpu/xenos.h"
 

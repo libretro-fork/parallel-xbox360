@@ -1,0 +1,22 @@
+Reusable shader ID-index benchmark, Windows x86-64, 2026-11-05
+Parent: complete ddc453a91 source archive; current: C89 ID lookup in retained workspace.
+GCC16.2 -O2 C++20; one compiler/run at a time, five samples of 1000 warm modules per size.
+The fixture uses production Module construction, instruction factory, ID mapping, lookup and orphan cleanup.
+IDs are spaced by three; each lookup checks the record and one in-range sparse hole.
+No SPIR-V output or driver compilation is measured.
+Counts include overridden C++ new and C index realloc, with pre-reserved record pages.
+One untimed module warms each size; reported calls and requests exclude that initial growth.
+Retained bytes include workspace heap pages and (current) warmed ID lookup, not allocator headers or OS RSS.
+The typed Module remains 104 bytes. The workspace grows from 40 to 64 bytes on x64.
+Record/ID capacity remains per worker until shutdown; warm current growth requests are zero.
+For 16384 mapped IDs, the sparse fixture retains an additional 524288 index bytes between modules.
+No gameplay FPS, GPU memory or whole-core latency claim.
+Reproduce: BASELINE_ROOT=<complete ddc453a91 source archive> sh tools/tests/run_spv_index_bench.sh
+
+revision mapped_ids calls requested_bytes retained_heap_bytes median_ms range_ms
+current 128 0 0 12391 0.919 0.914..0.923
+current 16384 0 0 1586048 119.652 119.446..120.100
+current 2048 0 0 198256 15.044 14.896..15.060
+parent 128 7000 10704000 8295 1.078 1.040..1.311
+parent 16384 14000 1183040000 1061760 257.172 256.554..259.583
+parent 2048 11000 150032000 132720 20.442 15.721..40.612

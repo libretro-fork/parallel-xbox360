@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <retro_inline.h>
+#include "core_spv_index.h"
 #if defined(__SANITIZE_ADDRESS__)
 #define XE_SPV_ARENA_ASAN 1
 #elif defined(__has_feature)
@@ -21,6 +22,7 @@ struct xe_spv_arena_page;
 typedef struct xe_spv_arena {
    struct xe_spv_arena_page *head, *tail, *cursor;
    size_t reserved_records;
+   xe_spv_index index;
    int in_use;
 } xe_spv_arena;
 int xe_spv_arena_reserve(xe_spv_arena *arena, size_t records);

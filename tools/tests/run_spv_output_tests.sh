@@ -22,6 +22,8 @@ ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party
 "$out/walk-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_plan_test.c" -o "$out/plan-unit"
 "$out/plan-unit"
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_index_test.c" -o "$out/index-unit"
+"$out/index-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_size.c" -o "$out/size.o"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -c "$root/libretro/core_spv_binary.c" -o "$out/binary.o"
 ${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_operands.c" -o "$out/operands.o"
@@ -36,7 +38,7 @@ if test "${CAPTURE_ALLOCATIONS:-0}" = 1; then
 fi
 arena_flags=
 if test "${CAPTURE_ALLOCATIONS:-0}" = 1; then
- arena_flags="-include $root/tools/tests/core_pipeline_bench_profile.h -DXE_SPV_ARENA_ALLOC=xe_bench_malloc -DXE_SPV_ARENA_FREE=xe_bench_free"
+ arena_flags="-include $root/tools/tests/core_pipeline_bench_profile.h -DXE_SPV_ARENA_ALLOC=xe_bench_malloc -DXE_SPV_ARENA_FREE=xe_bench_free -DXE_SPV_INDEX_REALLOC=xe_bench_realloc -DXE_SPV_INDEX_FREE=xe_bench_free"
 fi
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" $arena_flags -c "$root/libretro/core_spv_arena.c" -o "$out/arena.o"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_arena_test.c" -o "$out/arena-unit"
@@ -64,7 +66,7 @@ for mode in baseline current; do
  awk '/^spv::Id SpirvShaderTranslator::(PreClampedDepthTo20e4|UnclampedFloat32To7e3|PreClampedFloat32To7e3|Float7e3To32|Depth20e4To32|PWLGammaToLinear|LinearToPWLGamma)\(/ { emit=1; count++ } emit { print } emit && /^}/ { emit=0 } END { if (count != 7) exit 1 }' "$src/xenia/gpu/spirv_shader_translator.cc" "$src/xenia/gpu/spirv_shader_translator_rb.cc"
  echo '} }'
 } > "$out/static_emitters-$mode.cc"
- ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DXENIA_LIBRETRO=1 -DVULKAN_HPP_NO_TO_STRING -Wno-attributes $san $legacy $profile $arena_test -I"$src" -I"$root/src" -I"$root" \
+ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DXENIA_LIBRETRO=1 -DVULKAN_HPP_NO_TO_STRING -Wno-attributes $san $legacy $profile $arena_flags $arena_test -I"$src" -I"$root/src" -I"$root" \
   -I"$root/third_party/libretro-common/include" -I"$root/third_party/fmt/include" \
   -I"$root/third_party" -I"$root/third_party/Vulkan-Headers/include" \
   "$root/tools/tests/core_spv_edram_output_test.cc" \
@@ -75,7 +77,7 @@ for mode in baseline current; do
   "$src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/operands.o" "$out/arena.o" "$out/size.o" $profile_object -o "$out/$mode"
  "$out/$mode" "$out/$mode.bin"
  "$out/$mode" "$out/$mode-wide.bin" wide
- ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san $legacy_views -I"$src" -I"$root/src" -I"$root" \
+ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san $legacy_views $arena_flags -I"$src" -I"$root/src" -I"$root" \
   -I"$root/third_party/libretro-common/include" \
   "$root/tools/tests/core_spv_views_bridge.cc" "$src/xenia/gpu/spirv_builder.cc" \
   "$src/xenia/gpu/spirv/SpvBuilder.cpp" "$src/xenia/gpu/spirv/SpvPostProcess.cpp" \
@@ -96,12 +98,13 @@ for variant in 0 1 2 3 4 5 6 7; do
 done
 ${CC:-cc} -std=c89 -O2 $san -include "$root/tools/tests/core_spv_arena_test_alloc.h" -c "$root/libretro/core_spv_binary.c" -o "$out/binary-fault.o"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -c "$root/tools/tests/core_spv_arena_test_alloc.c" -o "$out/fault.o"
-${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DXE_SPV_BINARY_CHECK $san \
+${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -include "$root/tools/tests/core_spv_arena_test_alloc.h" -c "$root/libretro/core_spv_arena.c" -o "$out/arena-debug.o"
+${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DXE_SPV_BINARY_CHECK $san -include "$root/tools/tests/core_spv_arena_test_alloc.h" \
  -I"$root/src/xenia/gpu/spirv" -I"$root" -I"$root/third_party/libretro-common/include" \
  "$root/tools/tests/core_spv_module_bridge.cc" \
  "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" \
- "$out/binary-fault.o" "$out/operands.o" "$out/arena.o" "$out/size.o" "$out/fault.o" $profile_object -o "$out/debug-bridge"
+ "$out/binary-fault.o" "$out/operands.o" "$out/arena-debug.o" "$out/size.o" "$out/fault.o" $profile_object -o "$out/debug-bridge"
 for variant in 0 1 2 3 4 5 6; do
  "$out/debug-bridge" "$out/debug-$variant.spv" "$variant"
  if test -n "${SPIRV_VALIDATOR:-}"; then "$SPIRV_VALIDATOR" "$out/debug-$variant.spv"; fi
@@ -112,7 +115,7 @@ echo "PASS: eight archived-vector/borrowed-view modules, overwritten inputs and 
 # Fault-injected operand ownership is isolated from profiling adapters.
 ${CC:-cc} -std=c89 -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" -include "$root/tools/tests/core_spv_arena_test_alloc.h" -c "$root/libretro/core_spv_arena.c" -o "$out/arena-plain.o"
 ${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -include "$root/tools/tests/core_spv_arena_test_alloc.h" -c "$root/libretro/core_spv_operands.c" -o "$out/operands-fault.o"
-${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src" -I"$root/third_party/libretro-common/include" \
+${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -include "$root/tools/tests/core_spv_arena_test_alloc.h" -I"$root" -I"$root/src" -I"$root/third_party/libretro-common/include" \
  "$root/tools/tests/core_spv_arena_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-plain.o" "$out/size.o" "$out/operands-fault.o" "$out/fault.o" -o "$out/arena-bridge"
 "$out/arena-bridge"

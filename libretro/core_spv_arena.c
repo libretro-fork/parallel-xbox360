@@ -51,7 +51,7 @@ int xe_spv_arena_reserve(xe_spv_arena *arena, size_t records)
    if (arena->in_use || records > (size_t)-1 / XE_SPV_RECORD_BYTES) return 0;
    while (arena->reserved_records < records)
       if (!grow(arena)) return 0;
-   return 1;
+   return xe_spv_index_reserve(&arena->index, records);
 }
 
 int xe_spv_arena_begin(xe_spv_arena *arena)
@@ -59,6 +59,7 @@ int xe_spv_arena_begin(xe_spv_arena *arena)
    xe_spv_arena_page *page;
    if (arena->in_use) return 0;
    for (page = arena->head; page; page = page->next) page->used = 0;
+   xe_spv_index_reset(&arena->index);
    arena->cursor = arena->head;
    arena->in_use = 1;
    return 1;
@@ -105,6 +106,7 @@ int xe_spv_arena_end(xe_spv_arena *arena, void (*destroy)(void *record))
       }
       POISON(page->records, PAGE_BYTES);
    }
+   xe_spv_index_reset(&arena->index);
    arena->in_use = 0;
    arena->cursor = NULL;
    return 1;
@@ -119,6 +121,7 @@ int xe_spv_arena_close(xe_spv_arena *arena)
       UNPOISON(page->records, PAGE_BYTES);
       XE_SPV_ARENA_FREE(page);
    }
+   xe_spv_index_close(&arena->index);
    memset(arena, 0, sizeof(*arena));
    return 1;
 }

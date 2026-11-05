@@ -131,9 +131,9 @@ int main(int argc, char** argv) {
   printf("PASS: %u helper modules (%s), largest %zu words\n",
          modules, wide_scale ? "wide scale" : "standard scale", largest);
 #ifdef XE_SPV_OUTPUT_ALLOCATIONS
-  printf("Tracked C++ new + arena-page allocations across %u modules: %zu; live bytes: %zu\n",
+  printf("Tracked C++ new + arena-page + ID-index allocations across %u modules: %zu; live bytes: %zu\n",
          modules, xe_bench_allocations() - before, xe_bench_live());
-  printf("Tracked C++ + arena requested bytes: %zu; peak tracked live bytes: %zu\n",
+  printf("Tracked C++ + arena + ID-index requested bytes: %zu; peak tracked live bytes: %zu\n",
          xe_bench_requested() - bytes_before, xe_bench_peak());
 #endif
   return 0;

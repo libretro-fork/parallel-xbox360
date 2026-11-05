@@ -15,6 +15,9 @@ size_t xe_spv_test_page_calls(void);
 void xe_spv_test_page_fail_after(size_t successful_calls);
 void *xe_spv_test_binary_realloc(void *value, size_t size);
 void xe_spv_test_binary_fail_next(void);
+void *xe_spv_test_index_realloc(void *value, size_t size);
+void xe_spv_test_index_fail_next(void);
+size_t xe_spv_test_index_calls(void);
 #ifdef __cplusplus
 }
 #endif
@@ -23,4 +26,6 @@ void xe_spv_test_binary_fail_next(void);
 #define XE_SPV_ARENA_ALLOC xe_spv_test_page_alloc
 #define XE_SPV_ARENA_FREE xe_spv_test_page_free
 #define XE_SPV_BINARY_REALLOC xe_spv_test_binary_realloc
+#define XE_SPV_INDEX_REALLOC xe_spv_test_index_realloc
+#define XE_SPV_INDEX_FREE free
 #endif
