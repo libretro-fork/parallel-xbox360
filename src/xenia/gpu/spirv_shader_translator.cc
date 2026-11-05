@@ -969,9 +969,9 @@ void SpirvShaderTranslator::StartTranslation() {
     main_rect_list_loop_header_ = &builder_->makeNewBlock();
     spv::Block& main_rect_list_loop_body = builder_->makeNewBlock();
     main_rect_list_loop_continue_ =
-        new spv::Block(builder_->getUniqueId(), *function_main_);
+        spv::Block::create(builder_->getUniqueId(), *function_main_);
     main_rect_list_loop_merge_ =
-        new spv::Block(builder_->getUniqueId(), *function_main_);
+        spv::Block::create(builder_->getUniqueId(), *function_main_);
     builder_->createBranch(main_rect_list_loop_header_);
 
     builder_->setBuildPoint(main_rect_list_loop_header_);
@@ -1015,8 +1015,8 @@ void SpirvShaderTranslator::StartTranslation() {
   // "The order of blocks in a function must satisfy the rule that blocks appear
   //  before all blocks they dominate."
   main_loop_continue_ =
-      new spv::Block(builder_->getUniqueId(), *function_main_);
-  main_loop_merge_ = new spv::Block(builder_->getUniqueId(), *function_main_);
+      spv::Block::create(builder_->getUniqueId(), *function_main_);
+  main_loop_merge_ = spv::Block::create(builder_->getUniqueId(), *function_main_);
   builder_->createBranch(main_loop_header_);
 
   // If no jumps, don't create a switch, but still create a loop so exece can
@@ -1050,7 +1050,7 @@ void SpirvShaderTranslator::StartTranslation() {
     // label 0.
     main_switch_header_ = builder_->getBuildPoint();
     main_switch_merge_ =
-        new spv::Block(builder_->getUniqueId(), *function_main_);
+        spv::Block::create(builder_->getUniqueId(), *function_main_);
     builder_->createSelectionMerge(main_switch_merge_,
                                    spv::SelectionControlDontFlattenMask);
     main_switch_op_ = builder_->makeInstruction(spv::OpSwitch);
@@ -1061,7 +1061,7 @@ void SpirvShaderTranslator::StartTranslation() {
     // The instruction will be inserted later, when all cases are filled.
     // Insert and enter case 0.
     spv::Block* main_switch_case_0_block =
-        new spv::Block(builder_->getUniqueId(), *function_main_);
+        spv::Block::create(builder_->getUniqueId(), *function_main_);
     main_switch_op_->addImmediateOperand(0);
     main_switch_op_->addIdOperand(main_switch_case_0_block->getId());
     // Every switch case must have the OpSelectionMerge/OpSwitch block as a
@@ -1415,7 +1415,7 @@ void SpirvShaderTranslator::ProcessLabel(uint32_t cf_index) {
 
   spv::Function& function = builder_->getBuildPoint()->getParent();
   // Create the next switch case and fallthrough to it.
-  spv::Block* new_case = new spv::Block(builder_->getUniqueId(), function);
+  spv::Block* new_case = spv::Block::create(builder_->getUniqueId(), function);
   main_switch_op_->addImmediateOperand(cf_index);
   main_switch_op_->addIdOperand(new_case->getId());
   // Every switch case must have the OpSelectionMerge/OpSwitch block as a
@@ -4091,7 +4091,7 @@ void SpirvShaderTranslator::UpdateExecConditionals(
     return;
   }
   cf_exec_condition_ = condition;
-  cf_exec_conditional_merge_ = new spv::Block(
+  cf_exec_conditional_merge_ = spv::Block::create(
       builder_->getUniqueId(), builder_->getBuildPoint()->getParent());
   builder_->createSelectionMerge(cf_exec_conditional_merge_,
                                  spv::SelectionControlDontFlattenMask);
@@ -4132,7 +4132,7 @@ void SpirvShaderTranslator::UpdateInstructionPredication(bool predicated,
   spv::Id predicate_id =
       builder_->createLoad(var_main_predicate_, spv::NoPrecision);
   spv::Block& predicated_block = builder_->makeNewBlock();
-  cf_instruction_predicate_merge_ = new spv::Block(
+  cf_instruction_predicate_merge_ = spv::Block::create(
       builder_->getUniqueId(), builder_->getBuildPoint()->getParent());
   builder_->createSelectionMerge(cf_instruction_predicate_merge_,
                                  spv::SelectionControlMaskNone);

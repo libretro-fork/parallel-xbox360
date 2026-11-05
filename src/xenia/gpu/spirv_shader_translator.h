@@ -1107,7 +1107,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
 
   // Destroyed after builder_ and main_switch_op_; Reset retains its pages.
   xe_spv_plan emission_plan_ = {};
-  spv::InstructionArena instruction_arena_;
+  spv::InstructionArena instruction_arena_{
+      2048, sizeof(spv::Block), sizeof(spv::Function)};
   std::unique_ptr<SpirvBuilder> builder_;
   std::unique_lock<std::mutex> resource_bindings_lock_;
   bool preloaded_resource_bindings_ = false;

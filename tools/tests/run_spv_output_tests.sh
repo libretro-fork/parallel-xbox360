@@ -49,6 +49,8 @@ if test "${CAPTURE_ALLOCATIONS:-0}" = 1; then
  arena_flags="-include $root/tools/tests/core_pipeline_bench_profile.h -DXE_SPV_ARENA_ALLOC=xe_bench_malloc -DXE_SPV_ARENA_FREE=xe_bench_free -DXE_SPV_INDEX_REALLOC=xe_bench_realloc -DXE_SPV_INDEX_FREE=xe_bench_free"
 fi
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" $arena_flags -c "$root/libretro/core_spv_arena.c" -o "$out/arena.o"
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_object_pool_test.c" -o "$out/object-unit"
+"$out/object-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_arena_test.c" -o "$out/arena-unit"
 "$out/arena-unit"
 for mode in baseline current; do
@@ -135,6 +137,8 @@ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -include "$root/tools/tests/core_spv_ar
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-plain.o" "$out/size.o" "$out/operands-fault.o" "$out/fault.o" -o "$out/arena-bridge"
 "$out/arena-bridge"
 case "$san" in *address*)
+ if "$out/object-unit" uaf > "$out/uaf-objects.log" 2>&1; then echo "missed pooled object UAF"; exit 1; fi
+ grep -q 'use-after-poison' "$out/uaf-objects.log"
  if "$out/arena-unit" uaf > "$out/uaf-c.log" 2>&1; then echo "missed C arena UAF"; exit 1; fi
  grep -q 'use-after-poison' "$out/uaf-c.log"
  if "$out/arena-unit" finish-uaf > "$out/uaf-finish.log" 2>&1; then echo "missed terminal arena UAF"; exit 1; fi

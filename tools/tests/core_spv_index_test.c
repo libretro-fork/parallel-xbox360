@@ -56,6 +56,11 @@ int main(void)
    CHECK(xe_spv_index_get(&index, 7) == &records[7]);
    CHECK(!xe_spv_index_set(&index, (size_t)-1, records));
    CHECK(!xe_spv_index_reserve(&index, (size_t)-1));
+   xe_spv_index_unmap(&index, 8);
+   CHECK(!xe_spv_index_get(&index, 8) && xe_spv_index_get(&index, 7) == &records[7]);
+   /* Unmapping a missing ID does not grow or reset the table. */
+   xe_spv_index_unmap(&index, (size_t)-1);
+   CHECK(allocations == 1 && xe_spv_index_get(&index, 7) == &records[7]);
    xe_spv_index_reset(&index);
    CHECK(!index.count && !xe_spv_index_get(&index, 7));
    CHECK(!xe_spv_index_borrow(&index, 7, 1));

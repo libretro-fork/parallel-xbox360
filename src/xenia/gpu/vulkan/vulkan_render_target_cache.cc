@@ -123,7 +123,9 @@ VulkanRenderTargetCache::~VulkanRenderTargetCache() { Shutdown(true); }
 bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
   // Cold reserve; unusually large modules may grow this retained high-water mark.
   if (!xe_spv_binary_reserve(&helper_shader_code_, 16384) ||
-      !xe_spv_arena_reserve(&helper_instruction_arena_, 2048)) {
+      !xe_spv_arena_reserve(&helper_instruction_arena_, 2048) ||
+      !xe_spv_arena_reserve_objects(&helper_instruction_arena_,
+          sizeof(spv::Block), 64, sizeof(spv::Function), 32)) {
     Shutdown();
     return false;
   }

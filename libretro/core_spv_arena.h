@@ -19,12 +19,26 @@ extern "C" {
 enum { XE_SPV_RECORD_BYTES = 64, XE_SPV_RECORDS_PER_PAGE = 128,
        XE_SPV_RECORD_ARENA_OFFSET = 12 };
 struct xe_spv_arena_page;
+struct xe_spv_object_state;
 typedef struct xe_spv_arena {
    struct xe_spv_arena_page *head, *tail, *cursor;
    size_t reserved_records;
    xe_spv_index index;
    int in_use;
+   struct xe_spv_object_state *objects;
 } xe_spv_arena;
+enum { XE_SPV_OBJECT_BLOCK = 0, XE_SPV_OBJECT_FUNCTION = 1 };
+/* Exclusive module lease; object addresses never move. Constructors must retire
+ * their allocation on failure. Typed deletion retires after payload destruction. */
+/* Cold minima only; larger valid modules grow retained pages without moving records. */
+int xe_spv_arena_reserve_objects(xe_spv_arena *arena, size_t block_bytes,
+      size_t blocks, size_t function_bytes, size_t functions);
+void *xe_spv_arena_object_alloc(xe_spv_arena *arena, unsigned kind, size_t bytes);
+void xe_spv_arena_object_retire(void *record);
+/* Destroy/retire remaining functions before blocks, before instruction cleanup.
+ * Callbacks may retire child objects; they must not throw or allocate new ones. */
+int xe_spv_arena_objects_end(xe_spv_arena *arena,
+      void (*destroy_function)(void *), void (*destroy_block)(void *));
 int xe_spv_arena_reserve(xe_spv_arena *arena, size_t records);
 int xe_spv_arena_begin(xe_spv_arena *arena);
 void *xe_spv_arena_alloc(xe_spv_arena *arena, uint32_t *arena_offset);

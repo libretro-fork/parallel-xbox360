@@ -150,9 +150,9 @@ SpirvBuilder::IfBuilder::IfBuilder(spv::Id condition,
   // Make the blocks, but only put the then-block into the function, the
   // else-block and merge-block will be added later, in order, after earlier
   // code is emitted.
-  thenBlock = new spv::Block(builder.getUniqueId(), function);
+  thenBlock = spv::Block::create(builder.getUniqueId(), function);
   elseBlock = nullptr;
-  mergeBlock = new spv::Block(builder.getUniqueId(), function);
+  mergeBlock = spv::Block::create(builder.getUniqueId(), function);
 
   // Save the current block, so that we can add in the flow control split when
   // makeEndIf is called.
@@ -178,7 +178,7 @@ void SpirvBuilder::IfBuilder::makeBeginElse(bool branchToMerge) {
   }
 
   // Make the first else block and add it to the function.
-  elseBlock = new spv::Block(builder.getUniqueId(), function);
+  elseBlock = spv::Block::create(builder.getUniqueId(), function);
   function.addBlock(elseBlock);
 
   // Start building the else block.
@@ -246,7 +246,7 @@ SpirvBuilder::SwitchBuilder::SwitchBuilder(
       function_(builder.getBuildPoint()->getParent()),
       header_block_(builder.getBuildPoint()),
       default_phi_parent_(builder.getBuildPoint()->getId()) {
-  merge_block_ = new spv::Block(builder_.getUniqueId(), function_);
+  merge_block_ = spv::Block::create(builder_.getUniqueId(), function_);
 }
 
 void SpirvBuilder::SwitchBuilder::makeBeginDefault() {
@@ -254,7 +254,7 @@ void SpirvBuilder::SwitchBuilder::makeBeginDefault() {
 
   endSegment();
 
-  default_block_ = new spv::Block(builder_.getUniqueId(), function_);
+  default_block_ = spv::Block::create(builder_.getUniqueId(), function_);
   function_.addBlock(default_block_);
   default_block_->addPredecessor(header_block_);
   builder_.setBuildPoint(default_block_);
@@ -265,7 +265,7 @@ void SpirvBuilder::SwitchBuilder::makeBeginDefault() {
 void SpirvBuilder::SwitchBuilder::makeBeginCase(unsigned int literal) {
   endSegment();
 
-  auto case_block = new spv::Block(builder_.getUniqueId(), function_);
+  auto case_block = spv::Block::create(builder_.getUniqueId(), function_);
   function_.addBlock(case_block);
   cases_.emplace_back(literal, case_block->getId());
   case_block->addPredecessor(header_block_);

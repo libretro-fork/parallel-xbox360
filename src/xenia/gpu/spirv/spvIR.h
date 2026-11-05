@@ -58,6 +58,7 @@
 #include "libretro/core_spv_block_state.h"
 #include "libretro/core_spv_arena.h"
 #include <cstddef>
+#include <cstring>
 #include <new>
 
 #include <algorithm>
@@ -313,6 +314,10 @@ public:
     Instruction* createInstruction(Op code);
 
     Block(Id id, Function& parent);
+    static Block* create(Id id, Function& parent);
+    static void* operator new(size_t) = delete;
+    static void* operator new[](size_t) = delete;
+    static void operator delete(void* record) noexcept { xe_spv_arena_object_retire(record); }
     ~Block() {
         xe_spv_instruction_destroy(localVariables.head, Instruction::nextSlot, Instruction::destroyLinked);
         label.reset();
@@ -482,8 +487,12 @@ public:
     Instruction* createInstruction(Id result, Id type, Op code);
     Instruction* createInstruction(Op code);
 
-    Function(Id id, Id resultType, Id functionType, Id firstParam, LinkageType linkage, const std::string& name, Module& parent);
+    Function(Id id, Id resultType, Id functionType, Id firstParam, LinkageType linkage, const char* name, Module& parent);
     ~Function();
+    static Function* create(Id id, Id resultType, Id functionType, Id firstParam, LinkageType linkage, const char* name, Module& parent);
+    static void* operator new(size_t) = delete;
+    static void* operator new[](size_t) = delete;
+    static void operator delete(void* record) noexcept { xe_spv_arena_object_retire(record); }
     Id getId() const { return functionInstruction.getResultId(); }
     Id getParamId(int p) const { return xe_spv_id_range_get(&parameters, (size_t)p); }
     Id getParamType(int p) const;
@@ -612,13 +621,22 @@ public:
     // destructor only frees operand storage, so no cross-record order is needed.
     ~Module()
     {
-        const bool ended = xe_spv_arena_finish(arena, destroyRecord) != 0;
+        // Detached blocks only release their own payloads; their parent function
+        // may already be gone. Complete typed cleanup before sweeping instructions.
+        const bool objectsEnded = xe_spv_arena_objects_end(arena, destroyFunction, destroyBlock) != 0;
+        assert(objectsEnded);
+        const bool ended = objectsEnded && xe_spv_arena_finish(arena, destroyRecord) != 0;
         assert(ended);
         if (!borrowed && ended) {
             const bool closed = xe_spv_arena_close(arena) != 0;
             assert(closed);
             (void)closed;
         }
+    }
+    void* allocateObject(unsigned kind, size_t bytes) {
+        void* record = xe_spv_arena_object_alloc(arena, kind, bytes);
+        if (!record) throw std::bad_alloc();
+        return record;
     }
     Instruction* createInstruction(Id result, Id type, Op code)
     {
@@ -632,6 +650,7 @@ public:
     Instruction* createInstruction(Op code) { return createInstruction(NoResult, NoType, code); }
 
 
+    void forgetInstruction(Id id) { xe_spv_index_unmap(&arena->index, id); }
     void mapInstruction(Instruction *instruction)
     {
         if (!xe_spv_index_set(&arena->index, instruction->getResultId(), instruction))
@@ -656,6 +675,8 @@ public:
     }
 
 protected:
+    static void destroyFunction(void* record) { delete static_cast<Function*>(record); }
+    static void destroyBlock(void* record) { delete static_cast<Block*>(record); }
     static void destroyRecord(void* record) { static_cast<Instruction*>(record)->~Instruction(); }
     xe_spv_arena localArena = {};
     xe_spv_arena* arena;
@@ -690,8 +711,24 @@ __inline Id Function::getParamType(int index) const
 }
 __inline void* const* Function::getParamInstructions() const
 { return parent.borrowInstructions(parameters.first, parameters.count); }
+__inline Block* Block::create(Id id, Function& parent)
+{
+    static_assert(alignof(Block) <= 16);
+    void* record = parent.getParent().allocateObject(XE_SPV_OBJECT_BLOCK, sizeof(Block));
+    try { return ::new (record) Block(id, parent); }
+    catch (...) { xe_spv_arena_object_retire(record); throw; }
+}
+__inline Function* Function::create(Id id, Id resultType, Id functionType, Id firstParam,
+    LinkageType linkage, const char* name, Module& parent)
+{
+    static_assert(alignof(Function) <= 16);
+    void* record = parent.allocateObject(XE_SPV_OBJECT_FUNCTION, sizeof(Function));
+    try { return ::new (record) Function(id, resultType, functionType, firstParam, linkage, name, parent); }
+    catch (...) { parent.forgetInstruction(id); xe_spv_arena_object_retire(record); throw; }
+}
 __inline Function::~Function()
 {
+    parent.forgetInstruction(getId());
     uint32_t p;
     if (parameters.count) {
         void* const* parameterRecords = getParamInstructions();
@@ -704,7 +741,7 @@ __inline Function::~Function()
 // Add both
 // - the OpFunction instruction
 // - all the OpFunctionParameter instructions
-__inline Function::Function(Id id, Id resultType, Id functionType, Id firstParamId, LinkageType linkage, const std::string& name, Module& parent)
+__inline Function::Function(Id id, Id resultType, Id functionType, Id firstParamId, LinkageType linkage, const char* name, Module& parent)
     : parent(parent), lineInstruction(nullptr),
       functionInstruction(id, resultType, Op::OpFunction), implicitThis(false),
       reducedPrecisionReturn(false),
@@ -728,7 +765,8 @@ __inline Function::Function(Id id, Id resultType, Id functionType, Id firstParam
 
     // If importing/exporting, save the function name (without the mangled parameters) for the linkage decoration
     if (linkType != LinkageType::Max) {
-        exportName = name.substr(0, name.find_first_of('('));
+        const char* text = name ? name : "";
+        exportName.assign(text, std::strcspn(text, "("));
     }
 }
 

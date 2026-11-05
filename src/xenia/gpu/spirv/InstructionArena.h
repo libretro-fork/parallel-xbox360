@@ -10,8 +10,11 @@ namespace spv {
 // One compiler owns this workspace; it is never shared between workers.
 class InstructionArena final {
  public:
-  explicit InstructionArena(size_t reserve_records = 2048) {
-    if (!xe_spv_arena_reserve(&arena_, reserve_records)) {
+  explicit InstructionArena(size_t reserve_records = 2048,
+      size_t block_bytes = 0, size_t function_bytes = 0) {
+    if (!xe_spv_arena_reserve(&arena_, reserve_records) ||
+        ((block_bytes || function_bytes) &&
+         !xe_spv_arena_reserve_objects(&arena_, block_bytes, 64, function_bytes, 32))) {
       xe_spv_arena_close(&arena_);
       throw std::bad_alloc();
     }

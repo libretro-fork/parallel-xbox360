@@ -47,6 +47,10 @@ if errorlevel 1 goto fail
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /c libretro/core_spv_size.c /Fo%OUT%\size.obj
 if errorlevel 1 goto fail
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_object_pool_test.c /Fo%OUT%\object-unit.obj /Fe%OUT%\object-unit.exe
+if errorlevel 1 goto fail
+%OUT%\object-unit.exe
+if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_arena_test.c /Fo%OUT%\arena-unit.obj /Fe%OUT%\arena-unit.exe
 if errorlevel 1 goto fail
 %OUT%\arena-unit.exe

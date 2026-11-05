@@ -2555,7 +2555,7 @@ Function* Builder::makeFunctionEntry(Decoration precision, Id returnType, const 
     Id typeId = makeFunctionType(returnType, paramTypes);
     Id firstParamId = paramTypes.size() == 0 ? 0 : getUniqueIds((int)paramTypes.size());
     Id funcId = getUniqueId();
-    auto functionOwner = std::make_unique<Function>(funcId, returnType, typeId, firstParamId, linkType, name, module);
+    auto functionOwner = std::unique_ptr<Function>(Function::create(funcId, returnType, typeId, firstParamId, linkType, name, module));
     Function* function = functionOwner.get();
 
     // Set up the precisions
@@ -2575,7 +2575,7 @@ Function* Builder::makeFunctionEntry(Decoration precision, Id returnType, const 
 
     // CFG
     assert(entry != nullptr);
-    auto entryOwner = std::make_unique<Block>(getUniqueId(), *function);
+    auto entryOwner = std::unique_ptr<Block>(Block::create(getUniqueId(), *function));
     Block* entryBlock = entryOwner.get();
     function->addBlock(entryBlock);
     entryOwner.release();
@@ -4106,8 +4106,8 @@ Builder::If::If(Id cond, SelectionControlMask ctrl, Builder& gb) :
     // make the blocks, but only put the then-block into the function,
     // the else-block and merge-block will be added later, in order, after
     // earlier code is emitted
-    thenBlock = new Block(builder.getUniqueId(), *function);
-    mergeBlock = new Block(builder.getUniqueId(), *function);
+    thenBlock = Block::create(builder.getUniqueId(), *function);
+    mergeBlock = Block::create(builder.getUniqueId(), *function);
 
     // Save the current block, so that we can add in the flow control split when
     // makeEndIf is called.
@@ -4125,7 +4125,7 @@ void Builder::If::makeBeginElse()
     builder.createBranch(true, mergeBlock);
 
     // Make the first else block and add it to the function
-    elseBlock = new Block(builder.getUniqueId(), *function);
+    elseBlock = Block::create(builder.getUniqueId(), *function);
     function->addBlock(elseBlock);
 
     // Start building the else block
@@ -4159,9 +4159,9 @@ void Builder::makeSwitch(Id selector, SelectionControlMask control, int numSegme
 
     // make all the blocks
     for (int s = 0; s < numSegments; ++s)
-        segmentBlocks.push_back(new Block(getUniqueId(), function));
+        segmentBlocks.push_back(Block::create(getUniqueId(), function));
 
-    Block* mergeBlock = new Block(getUniqueId(), function);
+    Block* mergeBlock = Block::create(getUniqueId(), function);
 
     // make and insert the switch's selection-merge instruction
     createSelectionMerge(mergeBlock, control);
@@ -4222,7 +4222,7 @@ void Builder::endSwitch(std::vector<Block*>& /*segmentBlock*/)
 Block& Builder::makeNewBlock()
 {
     Function& function = buildPoint->getParent();
-    auto block = std::make_unique<Block>(getUniqueId(), function);
+    auto block = std::unique_ptr<Block>(Block::create(getUniqueId(), function));
     function.addBlock(block.get());
     return *block.release();
 }
@@ -4750,7 +4750,7 @@ void Builder::transferAccessChainSwizzle(bool dynamic)
 // block proceeding them (e.g. instructions after a discard, etc).
 void Builder::createAndSetNoPredecessorBlock(const char* /*name*/)
 {
-    Block* block = new Block(getUniqueId(), buildPoint->getParent());
+    Block* block = Block::create(getUniqueId(), buildPoint->getParent());
     block->setUnreachable();
     buildPoint->getParent().addBlock(block);
     setBuildPoint(block);

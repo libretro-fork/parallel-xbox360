@@ -74,7 +74,8 @@ int main(int argc, char **argv) {
         if (output != previous || candidate.getBuildPoint() != previous) return 35;
       } else if (output == previous || candidate.getBuildPoint() != output) return 36;
     }
-    if (rejected < 3) return 37;
+    // Only the function-owner vector still uses C++ new here; object pages are faulted separately.
+    if (rejected < 1) return 37;
     std::printf("PASS: %u function construction failures preserve unpublished entry/build point\n", rejected);
   }
 #endif

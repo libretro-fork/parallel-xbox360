@@ -28,7 +28,12 @@ static void build_functions(xe_spv_arena* arena, unsigned count, unsigned parame
     parameterTypes.push_back((p & 1) ? builder.makeUintType(32) : builder.makeFloatType(32));
   for (unsigned i = 1; i < count; ++i) {
     spv::Block* entry;
-    builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(), "f",
+#ifdef XE_SPV_LONG_NAME_BENCH
+    const char* name = "worker_generated_function_without_linkage_which_needs_no_temporary_string";
+#else
+    const char* name = "f";
+#endif
+    builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(), name,
         spv::LinkageType::Max, parameterTypes, {}, &entry);
     builder.makeReturn(true);
     builder.leaveFunction();

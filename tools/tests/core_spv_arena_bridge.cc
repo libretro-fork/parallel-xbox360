@@ -201,7 +201,7 @@ int main(int argc, char**) {
     bool duplicate = false, foreign = false;
     try { first->addBlock(first->getEntryBlock()); }
     catch (const std::bad_alloc&) { duplicate = true; }
-    auto pending = std::make_unique<spv::Block>(builder.getUniqueId(), *second);
+    auto pending = std::unique_ptr<spv::Block>(spv::Block::create(builder.getUniqueId(), *second));
     try { first->addBlock(pending.get()); }
     catch (const std::bad_alloc&) { foreign = true; }
     CHECK(duplicate && foreign && first->getBlockCount() == 1 && second->getBlockCount() == 1);
@@ -274,6 +274,94 @@ int main(int argc, char**) {
     } catch (const std::bad_alloc&) { CHECK(unwind); }
     CHECK(xe_spv_test_live() == initial);
   }
+  // Fault the two actual object-page growth paths, not unrelated C++ metadata.
+  for (unsigned kind = 0; kind < 2; ++kind) {
+    const size_t before = xe_spv_test_pages();
+    {
+      spv::Builder builder(spv::Spv_1_3, 0, nullptr);
+      builder.makeEntryPoint("first");
+      auto type = builder.makeVoidType();
+      if (kind == 0) {
+        for (unsigned i = 1; i < 32; ++i) {
+          spv::Block* entry;
+          builder.makeFunctionEntry(spv::NoPrecision, type, "f", spv::LinkageType::Max, {}, {}, &entry);
+        }
+      } else {
+        for (unsigned i = 1; i < 64; ++i) builder.makeNewBlock();
+      }
+      spv::Block* previous = builder.getBuildPoint();
+      spv::Block* output = previous;
+      bool failed = false;
+      xe_spv_test_page_fail_after(xe_spv_test_page_calls());
+      try {
+        builder.makeFunctionEntry(spv::NoPrecision, type, "failed", spv::LinkageType::Max, {}, {}, &output);
+      } catch (const std::bad_alloc&) { failed = true; }
+      xe_spv_test_page_fail_after(size_t(-1));
+      CHECK(failed && output == previous && builder.getBuildPoint() == previous);
+    }
+    CHECK(xe_spv_test_pages() == before && !xe_spv_test_live());
+  }
+  {
+    const size_t before = xe_spv_test_pages();
+    {
+      spv::InstructionArena small(128);
+      spv::Builder builder(spv::Spv_1_3, 0, nullptr, small.get());
+      auto* function = builder.makeEntryPoint("failed label");
+      while (xe_spv_arena_used(small.get()) < 128) builder.createInstruction(spv::Op::OpNop);
+      bool failed = false;
+      xe_spv_test_page_fail_after(xe_spv_test_page_calls());
+      try { spv::Block::create(builder.getUniqueId(), *function); }
+      catch (const std::bad_alloc&) { failed = true; }
+      xe_spv_test_page_fail_after(size_t(-1));
+      CHECK(failed);
+      // Object pages must be cleaned before instruction orphans, including
+      // fully constructed detached blocks not adopted by the function.
+      spv::Block* detached = spv::Block::create(builder.getUniqueId(), *function);
+      detached->addInstruction(builder.makeInstruction(spv::Op::OpNop));
+    }
+    CHECK(xe_spv_test_pages() == before && !xe_spv_test_live());
+  }
+  {
+    spv::Builder builder(spv::Spv_1_3, 0, nullptr);
+    spv::Block* entry;
+    auto* unnamed = builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(), nullptr,
+        spv::LinkageType::Max, {}, {}, &entry);
+    CHECK(!unnamed->getExportName()[0]);
+    char name[] = "long_borrowed_function_name_for_export(u32,f32)";
+    auto* exported = builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(), name,
+        spv::LinkageType::Export, {}, {}, &entry);
+    std::memset(name, 'x', sizeof(name) - 1);
+    CHECK(!std::strcmp(exported->getExportName(), "long_borrowed_function_name_for_export"));
+  }
+  {
+    const size_t before = xe_spv_test_pages();
+    {
+      spv::InstructionArena workspace(128);
+      spv::Module module(workspace.get());
+      module.mapInstruction(module.createInstruction(1, spv::NoType, spv::Op::OpTypeVoid));
+      auto* type = module.createInstruction(2, spv::NoType, spv::Op::OpTypeFunction);
+      type->addIdOperand(1);
+      module.mapInstruction(type);
+      {
+        std::unique_ptr<spv::Function> function(spv::Function::create(3, 1, 2, 0,
+            spv::LinkageType::Max, nullptr, module));
+        CHECK(module.getInstruction(3));
+      }
+      CHECK(!module.getInstruction(3));
+      // Make the next constructor run out of instruction pages mid-parameter list.
+      for (unsigned i = 0; i < 200; ++i) type->addIdOperand(1);
+      bool failed = false;
+      xe_spv_test_page_fail_after(xe_spv_test_page_calls());
+      try { spv::Function::create(3, 1, 2, 4, spv::LinkageType::Max, nullptr, module); }
+      catch (const std::bad_alloc&) { failed = true; }
+      xe_spv_test_page_fail_after(size_t(-1));
+      CHECK(failed && !module.getInstruction(3));
+      CHECK(module.getInstruction(4)); // still-live arena-owned partial parameters
+    }
+    CHECK(xe_spv_test_pages() == before && !xe_spv_test_live());
+  }
+  std::puts("PASS: borrowed/null function names, owned export spelling and failed/retired inline-ID unpublication");
+  std::puts("PASS: pooled function/block growth faults, unpublished state, failed constructor and detached-block cleanup");
   std::puts("PASS: separate borrowed global lists, stable order and arena-owned typed operand unwind");
   std::puts("PASS: typed instruction ownership, label identity, splice and canonical rewrites");
   std::puts("PASS: typed block-chain adoption, duplicate/foreign rejection and creation order");

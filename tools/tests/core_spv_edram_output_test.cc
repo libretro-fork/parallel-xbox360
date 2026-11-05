@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <vector>
 #ifdef XE_SPV_ARENA_TEST
+#include "xenia/gpu/spirv/SpvBuilder.h"
 static xe_spv_arena instruction_arena;
 static size_t cold_pages, largest_instruction_count;
 #define INSTRUCTION_ARENA_ARGUMENT , &instruction_arena
@@ -55,7 +56,9 @@ int main(int argc, char** argv) {
   if ((argc != 2 && argc != 3) || !(output = fopen(argv[1], "wb"))) return 1;
   const bool wide_scale = argc == 3;
 #ifdef XE_SPV_ARENA_TEST
-  if (!xe_spv_arena_reserve(&instruction_arena, 2048)) return 8;
+  if (!xe_spv_arena_reserve(&instruction_arena, 2048) ||
+      !xe_spv_arena_reserve_objects(&instruction_arena, sizeof(spv::Block), 64,
+          sizeof(spv::Function), 32)) return 8;
   cold_pages = (instruction_arena.reserved_records / XE_SPV_RECORDS_PER_PAGE);
 #endif
 #ifndef XE_SPV_OUTPUT_LEGACY
@@ -123,7 +126,7 @@ int main(int argc, char** argv) {
   xe_spv_binary_close(&storage);
 #endif
 #ifdef XE_SPV_ARENA_TEST
-  printf("Arena: %zu cold pages, %zu peak records, zero page allocations during generation\n",
+  printf("Arena: %zu cold pages, %zu peak records, zero instruction-page growth during generation\n",
          cold_pages, largest_instruction_count);
   if (!xe_spv_arena_close(&instruction_arena)) return 9;
 #endif

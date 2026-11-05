@@ -54,6 +54,11 @@ static INLINE void *const *xe_spv_index_borrow(const xe_spv_index *index,
    if (!count || first >= index->count || count > index->count - first) return NULL;
    return index->entries + first;
 }
+/* Unpublication never grows storage or changes the logical ID range. */
+static INLINE void xe_spv_index_unmap(xe_spv_index *index, size_t id)
+{
+   if (id < index->count) index->entries[id] = NULL;
+}
 static INLINE void xe_spv_index_reset(xe_spv_index *index)
 {
    index->count = 0;

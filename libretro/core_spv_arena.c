@@ -15,6 +15,183 @@
 #define XE_SPV_ARENA_ALLOC malloc
 #define XE_SPV_ARENA_FREE free
 #endif
+/* Object headers stay outside C++ payload lifetimes and ASan-poisoned ranges. */
+typedef struct object_page {
+   struct object_page *next;
+   unsigned char *records;
+   size_t used, bytes, stride, capacity;
+   uint32_t live[2];
+} object_page;
+typedef union object_tag {
+   struct { object_page *page; uint32_t mask, group; } value;
+   unsigned char alignment[16];
+} object_tag;
+typedef struct object_pool {
+   object_page *head, *tail, *cursor;
+   size_t bytes, reserved;
+} object_pool;
+typedef struct xe_spv_object_state { object_pool pool[2]; } xe_spv_object_state;
+typedef char object_tag_size_must_be_16[sizeof(object_tag) == 16 ? 1 : -1];
+
+static xe_spv_object_state *object_state(xe_spv_arena *arena)
+{
+   if (!arena->objects) {
+      arena->objects = (xe_spv_object_state *)XE_SPV_ARENA_ALLOC(sizeof(*arena->objects));
+      if (arena->objects) memset(arena->objects, 0, sizeof(*arena->objects));
+   }
+   return arena->objects;
+}
+static object_page *object_grow(object_pool *pool, unsigned kind)
+{
+   object_page *page;
+   size_t stride, capacity = kind == XE_SPV_OBJECT_BLOCK ? 64 : 32;
+   size_t i;
+   uintptr_t address;
+   if (!pool->bytes || pool->bytes > (size_t)-1 - sizeof(object_tag) - 15) return NULL;
+   stride = (pool->bytes + sizeof(object_tag) + 15) & ~(size_t)15;
+   if (stride > ((size_t)-1 - sizeof(*page) - 15) / capacity ||
+       pool->reserved > (size_t)-1 - capacity) return NULL;
+   page = (object_page *)XE_SPV_ARENA_ALLOC(sizeof(*page) + 15 + stride * capacity);
+   if (!page) return NULL;
+   address = ((uintptr_t)(page + 1) + 15) & ~(uintptr_t)15;
+   page->records = (unsigned char *)address + sizeof(object_tag);
+   page->bytes = pool->bytes;
+   page->stride = stride;
+   page->capacity = capacity;
+   page->used = 0;
+   page->next = NULL;
+   memset(page->live, 0, sizeof(page->live));
+   /* Cold prefault only; allocation/reset never copies or clears object payload. */
+   memset((void *)address, 0, stride * capacity);
+   for (i = 0; i < capacity; ++i) POISON(page->records + i * stride, page->bytes);
+   if (pool->tail) pool->tail->next = page;
+   else pool->head = page;
+   pool->tail = page;
+   pool->reserved += capacity;
+   return page;
+}
+int xe_spv_arena_reserve_objects(xe_spv_arena *arena, size_t block_bytes,
+      size_t blocks, size_t function_bytes, size_t functions)
+{
+   object_pool *pool;
+   size_t bytes, count;
+   unsigned kind;
+   if (arena->in_use || !block_bytes || !function_bytes || !object_state(arena)) return 0;
+   for (kind = 0; kind < 2; ++kind) {
+      pool = &arena->objects->pool[kind];
+      bytes = kind == XE_SPV_OBJECT_BLOCK ? block_bytes : function_bytes;
+      count = kind == XE_SPV_OBJECT_BLOCK ? blocks : functions;
+      if ((pool->bytes && pool->bytes != bytes) || count > (size_t)-1 / bytes) return 0;
+      pool->bytes = bytes;
+      while (pool->reserved < count) if (!object_grow(pool, kind)) return 0;
+   }
+   return 1;
+}
+static int objects_begin(xe_spv_arena *arena)
+{
+   unsigned kind;
+   object_pool *pool;
+   object_page *page;
+   if (!arena->objects) return 1;
+   for (kind = 0; kind < 2; ++kind) {
+      pool = &arena->objects->pool[kind];
+      for (page = pool->head; page; page = page->next)
+         if (page->live[0] || page->live[1]) return 0;
+   }
+   for (kind = 0; kind < 2; ++kind) {
+      pool = &arena->objects->pool[kind];
+      for (page = pool->head; page; page = page->next) page->used = 0;
+      pool->cursor = pool->head;
+   }
+   return 1;
+}
+void *xe_spv_arena_object_alloc(xe_spv_arena *arena, unsigned kind, size_t bytes)
+{
+   object_pool *pool;
+   object_page *page;
+   object_tag *tag;
+   void *record;
+   if (!arena->in_use || kind > XE_SPV_OBJECT_FUNCTION || !bytes || !object_state(arena)) return NULL;
+   pool = &arena->objects->pool[kind];
+   if (pool->bytes && pool->bytes != bytes) return NULL;
+   pool->bytes = bytes;
+   page = pool->cursor;
+   if (page && page->used == page->capacity) page = page->next;
+   if (!page) page = object_grow(pool, kind);
+   if (!page) return NULL;
+   pool->cursor = page;
+   record = page->records + page->used * page->stride;
+   UNPOISON(record, page->bytes);
+   tag = (object_tag *)((unsigned char *)record - sizeof(*tag));
+   tag->value.page = page;
+   tag->value.group = (uint32_t)(page->used / 32);
+   tag->value.mask = UINT32_C(1) << (page->used % 32);
+   page->live[tag->value.group] |= tag->value.mask;
+   ++page->used;
+   return record;
+}
+void xe_spv_arena_object_retire(void *record)
+{
+   object_tag *tag;
+   object_page *page;
+   if (!record) return;
+   tag = (object_tag *)((unsigned char *)record - sizeof(*tag));
+   page = tag->value.page;
+   assert(tag->value.group < 2 && (page->live[tag->value.group] & tag->value.mask));
+   page->live[tag->value.group] &= ~tag->value.mask;
+   POISON(record, page->bytes);
+}
+int xe_spv_arena_objects_end(xe_spv_arena *arena,
+      void (*destroy_function)(void *), void (*destroy_block)(void *))
+{
+   unsigned kind, group, slot;
+   object_page *page;
+   uint32_t mask;
+   void (*destroy)(void *);
+   if (!arena->in_use) return 0;
+   if (!arena->objects) return 1;
+   /* Orphan functions can own blocks. Block payloads can own instructions. */
+   for (kind = 2; kind-- > 0;) {
+      destroy = kind == XE_SPV_OBJECT_FUNCTION ? destroy_function : destroy_block;
+      for (page = arena->objects->pool[kind].head; page; page = page->next) {
+         for (group = 0; group < 2; ++group) {
+            while (page->live[group]) {
+               if (!destroy) return 0;
+               slot = 31 - compat_clz_u32(page->live[group]);
+               mask = UINT32_C(1) << slot;
+               destroy(page->records + (group * 32 + slot) * page->stride);
+               if (page->live[group] & mask) return 0;
+            }
+         }
+      }
+   }
+   return 1;
+}
+static int objects_empty(const xe_spv_arena *arena)
+{
+   unsigned kind;
+   const object_page *page;
+   if (!arena->objects) return 1;
+   for (kind = 0; kind < 2; ++kind)
+      for (page = arena->objects->pool[kind].head; page; page = page->next)
+         if (page->live[0] || page->live[1]) return 0;
+   return 1;
+}
+static void objects_close(xe_spv_arena *arena)
+{
+   unsigned kind;
+   object_page *page, *next;
+   if (!arena->objects) return;
+   for (kind = 0; kind < 2; ++kind) {
+      for (page = arena->objects->pool[kind].head; page; page = next) {
+         next = page->next;
+         UNPOISON(page->records - sizeof(object_tag), page->stride * page->capacity);
+         XE_SPV_ARENA_FREE(page);
+      }
+   }
+   XE_SPV_ARENA_FREE(arena->objects);
+   arena->objects = NULL;
+}
 enum { PAGE_BYTES = XE_SPV_RECORD_BYTES * XE_SPV_RECORDS_PER_PAGE };
 typedef struct xe_spv_arena_page {
    struct xe_spv_arena_page *next;
@@ -57,7 +234,7 @@ int xe_spv_arena_reserve(xe_spv_arena *arena, size_t records)
 int xe_spv_arena_begin(xe_spv_arena *arena)
 {
    xe_spv_arena_page *page;
-   if (arena->in_use) return 0;
+   if (arena->in_use || !objects_begin(arena)) return 0;
    for (page = arena->head; page; page = page->next) page->used = 0;
    xe_spv_index_reset(&arena->index);
    arena->cursor = arena->head;
@@ -91,7 +268,7 @@ static int arena_end(xe_spv_arena *arena, void (*destroy)(void *record), int pay
    xe_spv_arena_page *page;
    size_t i, slot;
    uint32_t mask;
-   if (!arena->in_use) return 0;
+   if (!arena->in_use || !objects_empty(arena)) return 0;
    for (page = arena->head; page; page = page->next) {
       /* Skip empty groups. Borrowed global lists need no separate ownership
        * walk: payload-only cleanup snapshots each live bitmap once. */
@@ -134,7 +311,8 @@ int xe_spv_arena_finish(xe_spv_arena *arena, void (*destroy_payload)(void *recor
 int xe_spv_arena_close(xe_spv_arena *arena)
 {
    xe_spv_arena_page *page, *next;
-   if (arena->in_use) return 0;
+   if (arena->in_use || !objects_empty(arena)) return 0;
+   objects_close(arena);
    for (page = arena->head; page; page = next) {
       next = page->next;
       UNPOISON(page->records, PAGE_BYTES);
