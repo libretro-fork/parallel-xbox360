@@ -5,6 +5,7 @@ add_library(xenia-spirv-writer STATIC
   spirv/SpvPostProcess.cpp
   spirv/InReadableOrder.cpp
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_operands.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_spv_binary.c"
 )
 target_include_directories(xenia-spirv-writer PUBLIC
   "${PROJECT_SOURCE_DIR}/third_party/libretro-common/include")

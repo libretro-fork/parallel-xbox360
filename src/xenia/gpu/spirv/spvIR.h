@@ -49,6 +49,7 @@
 
 #include "spirv.hpp11"
 #include "libretro/core_spv_operands.h"
+#include "libretro/core_spv_binary.h"
 #include <new>
 
 #include <algorithm>
@@ -252,6 +253,12 @@ public:
             out.push_back(xe_spv_operands_const_words(&operands)[op]);
     }
 
+    void dump(xe_spv_binary& out) const
+    {
+        xe_spv_binary_instruction(&out, (uint32_t)opCode, typeId, resultId,
+            xe_spv_operands_const_words(&operands), operands.count);
+    }
+
     const char *getNameString() const {
         if (opCode == Op::OpString) {
             return (const char *)&xe_spv_operands_const_words(&operands)[0];
@@ -383,7 +390,7 @@ public:
         }
     }
 
-    void dump(std::vector<unsigned int>& out) const
+    template <class Output> void dump(Output& out) const
     {
         instructions[0]->dump(out);
         for (int i = 0; i < (int)localVariables.size(); ++i)
@@ -502,7 +509,7 @@ public:
             Decoration::RelaxedPrecision : NoPrecision;
     }
 
-    void dump(std::vector<unsigned int>& out) const
+    template <class Output> void dump(Output& out) const
     {
         // OpLine
         if (lineInstruction != nullptr) {
@@ -575,7 +582,7 @@ public:
         return (StorageClass)idToInstruction[typeId]->getImmediateOperand(0);
     }
 
-    void dump(std::vector<unsigned int>& out) const
+    template <class Output> void dump(Output& out) const
     {
         for (int f = 0; f < (int)functions.size(); ++f)
             functions[f]->dump(out);

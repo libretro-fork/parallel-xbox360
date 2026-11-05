@@ -142,7 +142,11 @@ public:
 
     void setSourceText(const std::string& text) { sourceText = text; }
     void addSourceExtension(const char* ext) { sourceExtensions.push_back(ext); }
-    void addModuleProcessed(const std::string& p) { moduleProcesses.push_back(p.c_str()); }
+    void addModuleProcessed(const std::string& p)
+    {
+        xe_spv_binary_string(&moduleProcesses, (uint32_t)Op::OpModuleProcessed, p.c_str());
+        if (moduleProcesses.failed) throw std::bad_alloc();
+    }
     void setEmitSpirvDebugInfo()
     {
         trackDebugInfo = true;
@@ -907,6 +911,7 @@ public:
     void postProcessSamplers();
 
     void dump(std::vector<unsigned int>&) const;
+    bool dump(xe_spv_binary&) const;
 
     // Add a branch to the target block.
     // If set implicit, the branch instruction shouldn't have debug source location.
@@ -935,10 +940,11 @@ public:
     void simplifyAccessChainSwizzle();
     void createAndSetNoPredecessorBlock(const char*);
     void createSelectionMerge(Block* mergeBlock, SelectionControlMask control);
-    void dumpSourceInstructions(std::vector<unsigned int>&) const;
-    void dumpSourceInstructions(const spv::Id fileId, const std::string& text, std::vector<unsigned int>&) const;
-    template <class Range> void dumpInstructions(std::vector<unsigned int>& out, const Range& instructions) const;
-    void dumpModuleProcesses(std::vector<unsigned int>&) const;
+    template <class Output> void dumpInternal(Output&) const;
+    template <class Output> void dumpSourceInstructions(Output&) const;
+    template <class Output> void dumpSourceInstructions(const spv::Id fileId, const std::string& text, Output&) const;
+    template <class Output, class Range> void dumpInstructions(Output& out, const Range& instructions) const;
+    template <class Output> void dumpModuleProcesses(Output&) const;
     spv::MemoryAccessMask sanitizeMemoryAccessForStorageClass(spv::MemoryAccessMask memoryAccess, StorageClass sc)
         const;
     struct DecorationInstructionLessThan {
@@ -981,7 +987,8 @@ public:
 
     std::set<std::string> extensions;
     std::vector<const char*> sourceExtensions;
-    std::vector<const char*> moduleProcesses;
+    // Own encoded metadata, never a pointer into a caller's temporary string.
+    xe_spv_binary moduleProcesses = {};
     AddressingModel addressModel;
     MemoryModel memoryModel;
     std::set<spv::Capability> capabilities;

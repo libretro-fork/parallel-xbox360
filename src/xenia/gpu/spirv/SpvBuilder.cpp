@@ -73,6 +73,7 @@ Builder::Builder(unsigned int spvVersion, unsigned int magicNumber, SpvBuildLogg
 
 Builder::~Builder()
 {
+    xe_spv_binary_close(&moduleProcesses);
 }
 
 Id Builder::import(const char* name)
@@ -4432,14 +4433,36 @@ Id Builder::accessChainGetInferredType()
     return type;
 }
 
+static void appendBinaryWord(std::vector<unsigned int>& out, unsigned int word)
+{
+    out.push_back(word);
+}
+
+static void appendBinaryWord(xe_spv_binary& out, unsigned int word)
+{
+    xe_spv_binary_word(&out, word);
+}
+
 void Builder::dump(std::vector<unsigned int>& out) const
 {
+    dumpInternal(out);
+}
+
+bool Builder::dump(xe_spv_binary& out) const
+{
+    dumpInternal(out);
+    if (out.failed) { out.count = 0; return false; }
+    return true;
+}
+
+template <class Output> void Builder::dumpInternal(Output& out) const
+{
     // Header, before first instructions:
-    out.push_back(MagicNumber);
-    out.push_back(spvVersion);
-    out.push_back(builderNumber);
-    out.push_back(uniqueId + 1);
-    out.push_back(0);
+    appendBinaryWord(out, MagicNumber);
+    appendBinaryWord(out, spvVersion);
+    appendBinaryWord(out, builderNumber);
+    appendBinaryWord(out, uniqueId + 1);
+    appendBinaryWord(out, 0);
 
     // Capabilities
     for (auto it = capabilities.cbegin(); it != capabilities.cend(); ++it) {
@@ -4673,8 +4696,8 @@ void Builder::createConditionalBranch(Id condition, Block* thenBlock, Block* els
 // OpSource
 // [OpSourceContinued]
 // ...
-void Builder::dumpSourceInstructions(const spv::Id fileId, const std::string& text,
-                                     std::vector<unsigned int>& out) const
+template <class Output> void Builder::dumpSourceInstructions(const spv::Id fileId, const std::string& text,
+                                     Output& out) const
 {
     const int maxWordCount = 0xFFFF;
     const int opSourceWordCount = 4;
@@ -4715,7 +4738,7 @@ void Builder::dumpSourceInstructions(const spv::Id fileId, const std::string& te
 }
 
 // Dump an OpSource[Continued] sequence for the source and every include file
-void Builder::dumpSourceInstructions(std::vector<unsigned int>& out) const
+template <class Output> void Builder::dumpSourceInstructions(Output& out) const
 {
     if (emitNonSemanticShaderDebugInfo) return;
     dumpSourceInstructions(mainFileId, sourceText, out);
@@ -4723,20 +4746,26 @@ void Builder::dumpSourceInstructions(std::vector<unsigned int>& out) const
         dumpSourceInstructions(iItr->first, *iItr->second, out);
 }
 
-template <class Range> void Builder::dumpInstructions(std::vector<unsigned int>& out, const Range& instructions) const
+template <class Output, class Range> void Builder::dumpInstructions(Output& out, const Range& instructions) const
 {
     for (const auto& inst : instructions) {
         inst->dump(out);
     }
 }
 
-void Builder::dumpModuleProcesses(std::vector<unsigned int>& out) const
+static void appendBinaryWords(std::vector<unsigned int>& out, const xe_spv_binary& words)
 {
-    for (int i = 0; i < (int)moduleProcesses.size(); ++i) {
-        Instruction moduleProcessed(Op::OpModuleProcessed);
-        moduleProcessed.addStringOperand(moduleProcesses[i]);
-        moduleProcessed.dump(out);
-    }
+    if (words.count) out.insert(out.end(), words.words, words.words + words.count);
+}
+
+static void appendBinaryWords(xe_spv_binary& out, const xe_spv_binary& words)
+{
+    xe_spv_binary_append(&out, words.words, words.count);
+}
+
+template <class Output> void Builder::dumpModuleProcesses(Output& out) const
+{
+    appendBinaryWords(out, moduleProcesses);
 }
 
 bool Builder::DecorationInstructionLessThan::operator()(const std::unique_ptr<Instruction>& lhs,

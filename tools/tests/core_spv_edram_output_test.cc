@@ -1,0 +1,94 @@
+/* Interop fixture: compare production helper modules against a parent checkout.
+ * The legacy vector API is confined to the reference executable. */
+#include "xenia/gpu/edram_dump_shader.h"
+#include "xenia/gpu/edram_transfer_shader.h"
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+using namespace xe::gpu;
+static unsigned modules;
+static size_t largest;
+static FILE* output;
+#ifndef XE_SPV_OUTPUT_LEGACY
+static xe_spv_binary storage;
+#endif
+static void record(const uint32_t* words, size_t count) {
+  uint32_t length = uint32_t(count);
+  if (count < 5 || words[0] != 0x07230203 ||
+      fwrite(&length, sizeof(length), 1, output) != 1 ||
+      fwrite(words, sizeof(*words), count, output) != count) std::abort();
+  if (count > largest) largest = count;
+  ++modules;
+}
+int main(int argc, char** argv) {
+  const unsigned formats[] = {0, 1, 2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 0, 1};
+  unsigned pass, f, msaa, bits, mode;
+  if (argc != 2 || !(output = fopen(argv[1], "wb"))) return 1;
+#ifndef XE_SPV_OUTPUT_LEGACY
+  if (!xe_spv_binary_reserve(&storage, 16384)) return 2;
+  uint32_t* stable = nullptr;
+  size_t capacity = 0;
+#endif
+  for (pass = 0; pass < 2; ++pass) {
+    for (f = 0; f < 14; ++f) for (msaa = 0; msaa < 3; ++msaa) for (bits = 0; bits < 16; ++bits) {
+      EdramDumpShaderKey key;
+      EdramDumpShaderOptions options;
+      key.resource_format = formats[f]; key.is_depth = f >= 12;
+      key.msaa_samples = xe::gpu::xenos::MsaaSamples(msaa);
+      key.direct_resolve = bits & 1; key.native_layout = (bits >> 1) & 1;
+      key.source_scale_native = (bits >> 2) & 1;
+      options.resolution_scale_x = (bits & 8) ? 3 : 1;
+      options.resolution_scale_y = (bits & 8) ? 2 : 1;
+      options.msaa_2x_attachments_supported = (bits & 4) != 0;
+      options.source_is_uint = !key.is_depth && f < 4 && (bits & 2);
+      options.depth_float24_round = (bits & 2) != 0;
+      options.depth_float24_convert_in_pixel_shader = (bits & 4) != 0;
+#ifdef XE_SPV_OUTPUT_LEGACY
+      std::vector<uint32_t> words = BuildEdramDumpShaderSpirv(key, options);
+      record(words.data(), words.size());
+#else
+      if (!BuildEdramDumpShaderSpirv(key, options, storage)) return 3;
+      record(storage.words, storage.count);
+#endif
+    }
+    for (mode = 0; mode < unsigned(EdramTransferMode::kCount); ++mode)
+      for (f = 0; f < 8; ++f) for (bits = 0; bits < 8; ++bits) {
+      EdramTransferShaderKey key;
+      EdramTransferShaderOptions options;
+      key.mode = EdramTransferMode(mode);
+      key.source_resource_format = EdramTransferSourceIsColor(key.mode) ? formats[f] : (f & 1);
+      key.dest_resource_format = kEdramTransferModes[mode].output == EdramTransferOutput::kColor ? formats[7-f] : (f & 1);
+      key.source_msaa_samples = xe::gpu::xenos::MsaaSamples(f % 3);
+      key.dest_msaa_samples = xe::gpu::xenos::MsaaSamples(bits % 3);
+      key.host_depth_source_msaa_samples = EdramTransferHostDepthIsCopy(key.mode) ? xe::gpu::xenos::MsaaSamples::k1X : key.dest_msaa_samples;
+      key.source_scale_native = bits & 1; key.dest_scale_native = (bits >> 1) & 1;
+      options.resolution_scale_x = (bits & 4) ? 3 : 1;
+      options.resolution_scale_y = (bits & 4) ? 2 : 1;
+      options.msaa_2x_attachments_supported = (bits & 2) != 0;
+      options.source_color_is_uint = EdramTransferSourceIsColor(key.mode) && f < 4 && (bits & 1);
+      options.stencil_reference_output_supported = (bits & 1) != 0;
+      options.sample_rate_shading_supported = (bits & 2) != 0;
+      options.depth_float24_round = (bits & 1) != 0;
+      options.depth_float24_convert_in_pixel_shader = (bits & 2) != 0;
+      options.no_discard_stencil = (bits & 4) != 0;
+      options.fast_pitch_divmod = (bits & 4) != 0;
+#ifdef XE_SPV_OUTPUT_LEGACY
+      std::vector<uint32_t> words = BuildEdramTransferShaderSpirv(key, options);
+      record(words.data(), words.size());
+#else
+      if (!BuildEdramTransferShaderSpirv(key, options, storage)) return 4;
+      record(storage.words, storage.count);
+#endif
+    }
+#ifndef XE_SPV_OUTPUT_LEGACY
+    if (!pass) { stable = storage.words; capacity = storage.capacity; }
+    else if (storage.words != stable || storage.capacity != capacity) return 5;
+#endif
+  }
+#ifndef XE_SPV_OUTPUT_LEGACY
+  xe_spv_binary_close(&storage);
+#endif
+  if (fclose(output)) return 6;
+  printf("PASS: %u helper modules, largest %zu words\n", modules, largest);
+  return 0;
+}

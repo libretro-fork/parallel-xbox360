@@ -121,6 +121,11 @@ VulkanRenderTargetCache::VulkanRenderTargetCache(
 VulkanRenderTargetCache::~VulkanRenderTargetCache() { Shutdown(true); }
 
 bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
+  // Cold reserve; unusually large modules may grow this retained high-water mark.
+  if (!xe_spv_binary_reserve(&helper_shader_code_, 16384)) {
+    Shutdown();
+    return false;
+  }
   if (!xe_gpu_worklist_init(&dump_rectangles_, kResolveWorkCapacity,
           sizeof(ResolveCopyDumpRectangle)) ||
       !xe_gpu_worklist_init(&dump_invocations_, kResolveWorkCapacity,
@@ -897,6 +902,7 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
 }
 
 void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
+  xe_spv_binary_close(&helper_shader_code_);
   for (auto& transfers : clear_transfers_)
     xe_gpu_worklist_close(&transfers);
   xe_gpu_worklist_close(&current_transfer_invocations_);
@@ -2517,13 +2523,14 @@ VkShaderModule VulkanRenderTargetCache::GetTransferShader(
       depth_float24_convert_in_pixel_shader();
   options.no_discard_stencil = cvars::no_discard_stencil_in_transfer_pipelines;
 
-  std::vector<uint32_t> shader_code =
-      BuildEdramTransferShaderSpirv(key, options);
+  const bool generated =
+      BuildEdramTransferShaderSpirv(key, options, helper_shader_code_);
 
   // Create the shader module, and store the handle even if creation fails not
   // to try to create it again later.
-  VkShaderModule shader_module = ui::vulkan::util::CreateShaderModule(
-      vulkan_device, shader_code.data(), sizeof(uint32_t) * shader_code.size());
+  VkShaderModule shader_module = generated ? ui::vulkan::util::CreateShaderModule(
+      vulkan_device, helper_shader_code_.words,
+      sizeof(uint32_t) * helper_shader_code_.count) : VK_NULL_HANDLE;
   if (shader_module == VK_NULL_HANDLE) {
     XELOGE(
         "VulkanRenderTargetCache: Failed to create the render target ownership "
@@ -3874,15 +3881,16 @@ VkPipeline VulkanRenderTargetCache::GetDumpPipeline(EdramDumpShaderKey key) {
   shader_options.depth_float24_round = depth_float24_round();
   shader_options.depth_float24_convert_in_pixel_shader =
       depth_float24_convert_in_pixel_shader();
-  std::vector<uint32_t> shader_code =
-      BuildEdramDumpShaderSpirv(key, shader_options);
+  const bool generated =
+      BuildEdramDumpShaderSpirv(key, shader_options, helper_shader_code_);
 
   // Create the pipeline, and store the handle even if creation fails not to try
   // to create it again later.
-  VkPipeline pipeline = ui::vulkan::util::CreateComputePipeline(
+  VkPipeline pipeline = generated ? ui::vulkan::util::CreateComputePipeline(
       command_processor_.GetVulkanDevice(),
       key.is_depth ? dump_pipeline_layout_depth_ : dump_pipeline_layout_color_,
-      shader_code.data(), sizeof(uint32_t) * shader_code.size());
+      helper_shader_code_.words, sizeof(uint32_t) * helper_shader_code_.count)
+      : VK_NULL_HANDLE;
   if (pipeline == VK_NULL_HANDLE) {
     XELOGE(
         "VulkanRenderTargetCache: Failed to create a render target {} pipeline "

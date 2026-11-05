@@ -12,7 +12,7 @@
 
 #include <cstdint>
 #include <functional>
-#include <vector>
+#include "libretro/core_spv_binary.h"
 
 #include "xenia/base/assert.h"
 #include "xenia/gpu/xenos.h"
@@ -216,10 +216,10 @@ struct EdramDumpShaderOptions {
   bool depth_float24_convert_in_pixel_shader = false;
 };
 
-// Returns the SPIR-V words of the dump shader for one key, or an empty vector
-// if the key's format is not dumpable.
-std::vector<uint32_t> BuildEdramDumpShaderSpirv(
-    EdramDumpShaderKey key, const EdramDumpShaderOptions& options);
+// Serializes into caller-owned reusable storage; false leaves no output.
+bool BuildEdramDumpShaderSpirv(
+    EdramDumpShaderKey key, const EdramDumpShaderOptions& options,
+    xe_spv_binary& shader_code);
 
 }  // namespace gpu
 }  // namespace xe

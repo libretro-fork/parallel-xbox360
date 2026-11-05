@@ -371,8 +371,10 @@ void DecanonicalizeSample(SpirvBuilder& builder, spv::Id type_uint,
 
 }  // namespace
 
-std::vector<uint32_t> BuildEdramTransferShaderSpirv(
-    EdramTransferShaderKey key, const EdramTransferShaderOptions& options) {
+bool BuildEdramTransferShaderSpirv(
+    EdramTransferShaderKey key, const EdramTransferShaderOptions& options,
+    xe_spv_binary& shader_code) {
+  xe_spv_binary_reset(&shader_code);
   std::vector<spv::Id> id_vector_temp;
   std::vector<unsigned int> uint_vector_temp;
   SpirvBuilder builder(options.spirv_version,
@@ -2231,10 +2233,8 @@ std::vector<uint32_t> BuildEdramTransferShaderSpirv(
     entry_point->addIdOperand(interface_id);
   }
 
-  // Serialize the shader code.
-  std::vector<unsigned int> shader_code;
-  builder.dump(shader_code);
-  return shader_code;
+  // Serialize directly into the backend's reusable word allocation.
+  return builder.dump(shader_code);
 }
 
 }  // namespace gpu

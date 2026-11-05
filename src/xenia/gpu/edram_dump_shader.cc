@@ -97,8 +97,10 @@ constexpr uint32_t ResolutionScaledGroupBlocksYLog2(
 
 }  // namespace
 
-std::vector<uint32_t> BuildEdramDumpShaderSpirv(
-    EdramDumpShaderKey key, const EdramDumpShaderOptions& options) {
+bool BuildEdramDumpShaderSpirv(
+    EdramDumpShaderKey key, const EdramDumpShaderOptions& options,
+    xe_spv_binary& shader_code) {
+  xe_spv_binary_reset(&shader_code);
   bool draw_resolution_scaled =
       options.resolution_scale_x > 1 || options.resolution_scale_y > 1;
 
@@ -980,8 +982,11 @@ std::vector<uint32_t> BuildEdramDumpShaderSpirv(
     // Dense dwords - one per pixel at 32bpp, two at 64bpp - so that four of
     // them are exactly one 16-byte store either way.
     uint32_t dwords_per_pixel = uint32_t(format_is_64bpp) + 1;
-    std::vector<spv::Id> run_packed(size_t(pixels_per_thread) *
-                                    dwords_per_pixel);
+    // Two 16-byte stores: 8 pixels x 1 dword or 4 pixels x 2 dwords.
+    // Every word is assigned below before use, without a heap allocation.
+    spv::Id run_packed[kEdramDumpShaderResolvePixelsPerStore * 2];
+    assert_true(pixels_per_thread * dwords_per_pixel ==
+                kEdramDumpShaderResolvePixelsPerStore * 2);
     for (uint32_t i = 0; i < pixels_per_thread; ++i) {
       spv::Id pixel_packed[2] = {};
       spv::Id pixel_x =
@@ -1295,10 +1300,8 @@ std::vector<uint32_t> BuildEdramDumpShaderSpirv(
   // with SPIR-V 1.4 - emitting 1.0 here, so only inputs / outputs.
   entry_point->addIdOperand(input_global_invocation_id);
 
-  // Serialize the shader code.
-  std::vector<unsigned int> shader_code;
-  builder.dump(shader_code);
-  return std::vector<uint32_t>(shader_code.begin(), shader_code.end());
+  // Serialize directly into the backend's reusable word allocation.
+  return builder.dump(shader_code);
 }
 
 }  // namespace gpu

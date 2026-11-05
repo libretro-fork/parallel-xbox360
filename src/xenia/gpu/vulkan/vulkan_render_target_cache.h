@@ -771,6 +771,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   std::unordered_map<EdramDumpShaderKey, VkPipeline, EdramDumpShaderKey::Hasher>
       dump_pipelines_;
 
+  // GPU-command-thread owned. Vulkan consumes words synchronously; no borrowed
+  // word pointer survives shader/pipeline creation. Reused across both helpers.
+  xe_spv_binary helper_shader_code_ = {};
+
   // Temporary storage for Resolve.
   xe_gpu_worklist clear_transfers_[2] = {};
 

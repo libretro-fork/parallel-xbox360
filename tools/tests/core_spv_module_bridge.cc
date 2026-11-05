@@ -2,6 +2,7 @@
 #include "SpvBuilder.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 int main(int argc, char **argv) {
   if (argc != 3) return 1;
   const unsigned counts[] = {1, 4, 8, 33, 129};
@@ -9,6 +10,13 @@ int main(int argc, char **argv) {
   if (variant >= 5) return 2;
   spv::SpvBuildLogger logger;
   spv::Builder builder(spv::Spv_1_3, 0, &logger);
+#ifdef XE_SPV_BINARY_CHECK
+  // Exercise OpSourceContinued and module-process instructions as well as IR.
+  builder.setSource(spv::SourceLanguage::GLSL, 450);
+  builder.setDebugMainSourceFile("binary-output-test");
+  builder.setSourceText(std::string(300000, 'x'));
+  builder.addModuleProcessed("binary-output-regression");
+#endif
   builder.addCapability(spv::Capability::Shader);
   builder.setMemoryModel(spv::AddressingModel::Logical, spv::MemoryModel::GLSL450);
   auto main = builder.makeEntryPoint("main");
@@ -29,6 +37,19 @@ int main(int argc, char **argv) {
   builder.postProcess(false);
   std::vector<unsigned> words;
   builder.dump(words);
+#ifdef XE_SPV_BINARY_CHECK
+  xe_spv_binary binary = {};
+  for (unsigned repeat = 0; repeat < 8; ++repeat) {
+    xe_spv_binary_reset(&binary);
+    if (!builder.dump(binary) || binary.count != words.size() ||
+        std::memcmp(binary.words, words.data(), words.size() * sizeof(unsigned))) return 5;
+  }
+  if (xe_spv_binary_reserve(&binary, SIZE_MAX) || !binary.failed ||
+      builder.dump(binary) || binary.count) return 6;
+  xe_spv_binary_reset(&binary);
+  if (!builder.dump(binary) || binary.count != words.size()) return 7;
+  xe_spv_binary_close(&binary);
+#endif
   FILE *file = std::fopen(argv[1], "wb");
   if (!file) return 3;
   bool ok = std::fwrite(words.data(), sizeof(unsigned), words.size(), file) == words.size();

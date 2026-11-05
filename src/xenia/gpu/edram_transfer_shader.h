@@ -13,7 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <vector>
+#include "libretro/core_spv_binary.h"
 
 #include "xenia/base/assert.h"
 #include "xenia/gpu/xenos.h"
@@ -295,9 +295,10 @@ struct EdramTransferShaderOptions {
   bool fast_pitch_divmod = false;
 };
 
-// Returns the SPIR-V words of the transfer fragment shader for one key.
-std::vector<uint32_t> BuildEdramTransferShaderSpirv(
-    EdramTransferShaderKey key, const EdramTransferShaderOptions& options);
+// Serializes into caller-owned reusable storage; false leaves no output.
+bool BuildEdramTransferShaderSpirv(
+    EdramTransferShaderKey key, const EdramTransferShaderOptions& options,
+    xe_spv_binary& shader_code);
 
 }  // namespace gpu
 }  // namespace xe
