@@ -678,6 +678,11 @@ public:
     bool stackPop(unsigned kind) { return xe_spv_arena_stack_pop(arena, kind) != 0; }
     void stackClear(unsigned kind) noexcept { xe_spv_arena_stack_clear(arena, kind); }
     void clearStacks() noexcept { xe_spv_arena_clear_stacks(arena); }
+    void addCapability(uint32_t value) {
+        if (!xe_spv_arena_add_capability(arena, value)) throw std::bad_alloc();
+    }
+    bool hasCapability(uint32_t value) const { return xe_spv_arena_has_capability(arena, value) != 0; }
+    xe_spv_word_view capabilityWords() const { return xe_spv_arena_capabilities(arena); }
     xe_spv_record_view typeRecords(uint32_t opcode, bool debug = false) const {
         return xe_spv_arena_group_view(arena, xe_spv_group_key(opcode, debug));
     }

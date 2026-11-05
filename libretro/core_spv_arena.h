@@ -9,6 +9,7 @@
 #include "core_spv_constant_cache.h"
 #include "core_spv_groups.h"
 #include "core_spv_stack.h"
+#include "core_spv_u32_set.h"
 #if defined(__SANITIZE_ADDRESS__)
 #define XE_SPV_ARENA_ASAN 1
 #elif defined(__has_feature)
@@ -70,6 +71,10 @@ void *xe_spv_arena_stack_top(const xe_spv_arena *arena, unsigned kind);
 int xe_spv_arena_stack_pop(xe_spv_arena *arena, unsigned kind);
 void xe_spv_arena_stack_clear(xe_spv_arena *arena, unsigned kind);
 void xe_spv_arena_clear_stacks(xe_spv_arena *arena);
+int xe_spv_arena_reserve_capabilities(xe_spv_arena *arena, size_t count);
+int xe_spv_arena_add_capability(xe_spv_arena *arena, uint32_t value);
+int xe_spv_arena_has_capability(const xe_spv_arena *arena, uint32_t value);
+xe_spv_word_view xe_spv_arena_capabilities(const xe_spv_arena *arena);
 void *xe_spv_arena_record_owner(const void *record, uint32_t offset);
 void *xe_spv_arena_payload_realloc(void *context, void *old, size_t old_bytes, size_t bytes);
 /* Checks live instruction slots without reading candidate payload bytes. */

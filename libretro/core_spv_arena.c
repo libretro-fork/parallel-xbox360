@@ -46,6 +46,7 @@ typedef struct xe_spv_object_state {
    xe_spv_constant_cache constants;
    xe_spv_groups groups;
    xe_spv_stack stacks[XE_SPV_STACK_COUNT];
+   xe_spv_u32_set capabilities;
 } xe_spv_object_state;
 
 enum { PAYLOAD_PAGE_BYTES = 16384 };
@@ -144,6 +145,26 @@ void xe_spv_arena_clear_stacks(xe_spv_arena *arena)
    unsigned kind;
    if (!arena->objects) return;
    for (kind = 0; kind < XE_SPV_STACK_COUNT; ++kind) xe_spv_stack_reset(&arena->objects->stacks[kind]);
+}
+int xe_spv_arena_reserve_capabilities(xe_spv_arena *arena, size_t count)
+{
+   xe_spv_object_state *state = object_state(arena);
+   return state && xe_spv_u32_set_reserve(&state->capabilities, count, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
+}
+int xe_spv_arena_add_capability(xe_spv_arena *arena, uint32_t value)
+{
+   xe_spv_object_state *state;
+   if (!arena->in_use || !(state = object_state(arena))) return 0;
+   return xe_spv_u32_set_insert(&state->capabilities, value, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
+}
+int xe_spv_arena_has_capability(const xe_spv_arena *arena, uint32_t value)
+{
+   return arena->in_use && arena->objects && xe_spv_u32_set_contains(&arena->objects->capabilities, value);
+}
+xe_spv_word_view xe_spv_arena_capabilities(const xe_spv_arena *arena)
+{
+   if (!arena->in_use || !arena->objects) return xe_spv_words_view(NULL, 0);
+   return xe_spv_u32_set_view(&arena->objects->capabilities);
 }
 static payload_page *payload_grow(payload_pool *pool, size_t minimum)
 {
@@ -389,6 +410,7 @@ static void objects_close(xe_spv_arena *arena)
    }
    XE_SPV_ARENA_FREE(arena->objects->constants.slots);
    xe_spv_groups_close(&arena->objects->groups, XE_SPV_ARENA_FREE);
+   xe_spv_u32_set_close(&arena->objects->capabilities, XE_SPV_ARENA_FREE);
    for (kind = 0; kind < XE_SPV_STACK_COUNT; ++kind)
       xe_spv_stack_close(&arena->objects->stacks[kind], XE_SPV_ARENA_FREE);
    XE_SPV_ARENA_FREE(arena->objects);
@@ -503,6 +525,7 @@ static int arena_end(xe_spv_arena *arena, void (*destroy)(void *record), int pay
    payloads_end(arena);
    if (arena->objects) xe_spv_constant_cache_reset(&arena->objects->constants);
    if (arena->objects) xe_spv_groups_reset(&arena->objects->groups);
+   if (arena->objects) xe_spv_u32_set_reset(&arena->objects->capabilities);
    arena->in_use = 0;
    arena->cursor = NULL;
    return 1;

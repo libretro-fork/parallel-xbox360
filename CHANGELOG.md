@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan version probing emits its final shader directly into fixed C89 storage. Shader capability metadata now reuses contiguous C89 storage, and capability/memory-model output avoids temporary instruction objects. The quad specialization helper borrows four IDs instead of building a vector. These cuts preserve shader bytes; the guest translator still depends on the legacy SPIR-V builder pending its replacement.
+
 - Shader loop, switch and debug-scope stacks now use retained C89 pages, removing three deque owners and their recurring empty-stack allocations. Stable frame addresses preserve outer-loop references during nested growth, and loop frames construct directly in final storage. Startup reserves capacity; larger stacks grow without copying live frames. Retirement, failure/retry, deep nesting and sanitizer checks cover the new lifetime path. Audio, presentation and shader wire output remain unchanged.
 
 - Both shader type-group maps of vectors now use retained C89 pointer storage and borrowed lookup views, including debug types and post-processing. Layout-sensitive arrays, distinct structs and forward-pointer patching keep their existing identity rules. Common groups reserve capacity at compiler startup; larger groups grow safely and retain storage until close. This reduces recurring allocations and builder metadata while increasing retained workspace storage; measured tradeoffs and shader byte comparisons are documented separately.

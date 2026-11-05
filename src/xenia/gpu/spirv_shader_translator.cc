@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include "libretro/core_spv_probe.h"
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/gpu/spirv/GLSL.std.450.h"
@@ -119,47 +120,22 @@ namespace {
 // Features construction.
 static std::optional<spv::SpvVersion> g_cached_spirv_version;
 
-// Tests if a SPIR-V version is supported by generating a minimal shader using
-// the same SpirvBuilder used at runtime for game shaders
+// Test the driver with final SPIR-V words, without building a temporary IR.
 bool TestSpirvVersionSupport(const ui::vulkan::VulkanDevice* vulkan_device,
                              spv::SpvVersion spv_version) {
-  // Generate a minimal compute shader using SpirvBuilder, just like real
-  // shaders. This is a "void main() {}" compute shader.
-  SpirvBuilder builder(spv_version, SpirvShaderTranslator::kSpirvMagicToolId,
-                       nullptr);
-
-  builder.setSource(spv::SourceLanguage::Unknown, 0);
-  builder.setMemoryModel(spv::AddressingModel::Logical,
-                         spv::MemoryModel::GLSL450);
-  builder.addCapability(spv::Capability::Shader);
-
-  // Create void main() function
-  std::vector<spv::Id> param_types;
-  spv::Block* entry_block = nullptr;
-  spv::Function* main_function =
-      builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(),
-                                "main", param_types, {}, &entry_block);
-
-  // Add entry point
-  builder.addEntryPoint(spv::ExecutionModel::GLCompute, main_function, "main");
-  builder.addExecutionMode(main_function, spv::ExecutionMode::LocalSize, 1, 1,
-                           1);
-
-  // Return from main
-  builder.makeReturn(false);
-  builder.leaveFunction();
-
-  // Get the generated SPIR-V
-  std::vector<uint32_t> spirv_code;
-  builder.dump(spirv_code);
+  uint32_t spirv_code[XE_SPV_COMPUTE_PROBE_WORDS];
+  const size_t word_count = xe_spv_compute_probe(spirv_code,
+      XE_SPV_COMPUTE_PROBE_WORDS, static_cast<uint32_t>(spv_version),
+      SpirvShaderTranslator::kSpirvMagicToolId);
+  if (!word_count) return false;
 
   // Try to create a shader module with it
   VkShaderModuleCreateInfo create_info = {};
   create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
   create_info.pNext = nullptr;
   create_info.flags = 0;
-  create_info.codeSize = spirv_code.size() * sizeof(uint32_t);
-  create_info.pCode = spirv_code.data();
+  create_info.codeSize = word_count * sizeof(uint32_t);
+  create_info.pCode = spirv_code;
 
   VkShaderModule test_module = VK_NULL_HANDLE;
   VkResult result = vulkan_device->functions().vkCreateShaderModule(

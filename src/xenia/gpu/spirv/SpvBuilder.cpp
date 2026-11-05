@@ -4547,10 +4547,10 @@ template <class Output> void Builder::dumpInternal(Output& out, xe_spv_plan* pla
     appendBinaryWord(out, 0);
 
     // Capabilities
-    for (auto it = capabilities.cbegin(); it != capabilities.cend(); ++it) {
-        Instruction capInst(0, 0, Op::OpCapability);
-        capInst.addImmediateOperand(*it);
-        capInst.dump(out);
+    const xe_spv_word_view capabilityWords = module.capabilityWords();
+    for (size_t cap = 0; cap < capabilityWords.count; ++cap) {
+        appendBinaryWord(out, (2u << 16) | enumCast(Op::OpCapability));
+        appendBinaryWord(out, capabilityWords.words[cap]);
     }
 
     for (auto it = extensions.cbegin(); it != extensions.cend(); ++it) {
@@ -4558,10 +4558,9 @@ template <class Output> void Builder::dumpInternal(Output& out, xe_spv_plan* pla
     }
 
     dumpInstructions(out, imports);
-    Instruction memInst(0, 0, Op::OpMemoryModel);
-    memInst.addImmediateOperand(addressModel);
-    memInst.addImmediateOperand(memoryModel);
-    memInst.dump(out);
+    appendBinaryWord(out, (3u << 16) | enumCast(Op::OpMemoryModel));
+    appendBinaryWord(out, enumCast(addressModel));
+    appendBinaryWord(out, enumCast(memoryModel));
 
     // Instructions saved up while building:
     dumpInstructions(out, entryPoints);

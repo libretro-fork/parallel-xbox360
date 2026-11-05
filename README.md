@@ -4,6 +4,8 @@ A [libretro](https://www.libretro.com/) core of [Xenia Edge](https://github.com/
 
 This repository follows xenia-edge and adds the libretro frontend in `libretro/` plus owned shader and build paths. It holds the core only; upstream's standalone UI, packaging and CI are not part of it (the paths are listed in `.upstream-excluded`). The version the core reports is upstream's, with the upstream commit it is merged to (`upstream.version`). The core is currently on xenia-edge commit 8dc77b0 of 7 October 2026.
 
+The Vulkan version probe writes its final SPIR-V words directly in C89 caller storage, bypassing the instruction graph and output vector. Capability metadata uses retained sorted C89 storage; capability and memory-model serialization avoids temporary instruction objects. The guest translator still uses the legacy builder in `src/xenia/gpu/spirv`; its removal requires the backend migration described in [the emitter migration plan](libretro/SPIRV_EMITTER_MIGRATION.md).
+
 ## Savestate work in progress
 
 Audio/XMA pause requests use acknowledged common gates with bounded waits. Content teardown releases the decoder contexts and their retained packet buffers after joining the decoder worker.

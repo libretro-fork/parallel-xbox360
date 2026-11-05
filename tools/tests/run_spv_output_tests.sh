@@ -12,6 +12,9 @@ git -C "$root" archive "$baseline" src/xenia/gpu/spirv src/xenia/gpu/spirv_shade
 fi
 tar -xf "$out/base.tar" -C "$out/base"
 san=${SANITIZER-}
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -c "$root/libretro/core_spv_probe.c" -o "$out/probe.o"
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_metadata_test.c" "$out/probe.o" -o "$out/metadata-unit"
+"$out/metadata-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_stack_test.c" -o "$out/stack-unit"
 "$out/stack-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_groups_test.c" -o "$out/groups-unit"
@@ -151,6 +154,10 @@ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src/xenia/gpu/spirv"
  "$root/tools/tests/core_spv_stack_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-debug.o" "$out/size.o" "$out/operands.o" "$out/fault.o" -o "$out/stack-bridge"
 "$out/stack-bridge" "$out/stack.bin"
+${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" \
+ "$root/tools/tests/core_spv_metadata_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
+ "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-debug.o" "$out/size.o" "$out/operands.o" "$out/fault.o" "$out/probe.o" -o "$out/metadata-bridge"
+for variant in 0 1 2 3; do "$out/metadata-bridge" "$out/metadata-$variant.bin" "$variant"; done
 
 # Fault-injected operand ownership is isolated from profiling adapters.
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_payload_test.c" -o "$out/payload-unit"

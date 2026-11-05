@@ -1,0 +1,66 @@
+# Direct SPIR-V emitter migration
+
+The requested end state is removal of `src/xenia/gpu/spirv` and its legacy
+builder/IR dependency from the libretro core. Moving that directory or renaming
+its classes does not satisfy this requirement. This migration is incomplete.
+
+## Current cuts
+
+- The Vulkan version probe emits its final 39 words in C89 caller storage. It
+  constructs no builder, types, functions, blocks, instructions or output vector.
+- Capability membership uses retained sorted C89 values. Capability and memory
+  model output write final words directly, without temporary Instruction objects.
+- The quad specialization helper borrows a fixed four-ID array rather than
+  allocating a vector adapter.
+- Existing C89 caches, pointer groups, stable frame pages, CFG flags/plans and
+  final binary ownership are reusable components for the replacement backend.
+
+These cuts do not remove the guest translator's legacy instruction graph.
+
+## Remaining runtime dependency
+
+`SpirvBuilder` derives from the legacy builder; guest translation, EDRAM helpers
+and geometry generation still construct typed instruction/function/block IR.
+That graph supplies type/constant queries, branch targets, Phi/Switch fixups,
+reachable structured block order and late feature/sample-image processing.
+Deleting it before replacing these duties would break shader generation.
+
+The enum headers describe SPIR-V and its extended instructions. In particular,
+`GLSL.std.450` is a SPIR-V extended-instruction set, not a GLSL source compiler.
+The replacement must retain required opcode information without a language parser.
+
+## Replacement work still required
+
+1. Add an owned C89 module emitter with stable encoded-word spans and ID/type
+   indexes. Write headers/operands into their final span at construction; queries
+   borrow encoded data rather than rebuilding argument vectors or IR objects.
+2. Replace block/function objects with stable C89 handles and encoded block
+   spans. Preserve outer-loop references or migrate all their callers before
+   changing that interface. Forward labels, Phi inputs and Switch operands need
+   checked offset fixups whose backing storage cannot move underneath borrowers.
+3. Collect capabilities, decorations and required extensions during emission.
+   Replace full-instruction late scans with explicit fixup records where a
+   decision genuinely requires completed control flow. Sampled-image cloning
+   must preserve same-block use rules; it cannot simply be deleted.
+4. Finalize logical module sections and reachable structured block order with
+   one final ownership handoff. Vulkan requires contiguous module words: do not
+   claim zero copies by hiding a section-flattening buffer. Count and measure
+   any unavoidable final assembly, and avoid encoding the module twice.
+5. Migrate guest translation and all EDRAM/geometry helpers to those C APIs, then
+   remove the legacy sources, adapters, unneeded debug/language helpers and build
+   entries. Keep only the required protocol definitions as owned C data.
+
+## Evidence required at each backend cut
+
+- Native MSVC C89, strict C89 and ASan/UBSan ownership/failure checks.
+- Old/new shader bytes where identity is preserved; explicit validator and
+  semantic coverage for intentional representation/ID changes.
+- Existing helper/geometry matrices, structured-control-flow/sampled-image
+  cases and actual cached Tekken/Tomb Raider translations. These caches alone
+  do not establish all-game correctness or runtime GPU performance.
+- Construction/serialization allocation, requested/retained memory and timing
+  measurements, with cold reservations and remaining growth disclosed.
+- Working audio, renderer resource retirement and shutdown ordering preserved.
+
+The directory remains until these duties are replaced and verified. The broader
+optimization goal remains active throughout this migration.

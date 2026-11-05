@@ -19,13 +19,9 @@ spv::Id SpirvBuilder::createQuadOp(spv::Op op_code, spv::Id type_id,
                                    spv::Id operand1, spv::Id operand2,
                                    spv::Id operand3, spv::Id operand4) {
   if (generatingOpCodeForSpecConst) {
-    std::vector<spv::Id> operands(4);
-    operands[0] = operand1;
-    operands[1] = operand2;
-    operands[2] = operand3;
-    operands[3] = operand4;
-    return createSpecConstantOp(op_code, type_id, operands,
-                                std::vector<spv::Id>());
+    const spv::Id operands[4] = {operand1, operand2, operand3, operand4};
+    return createSpecConstantOpView(op_code, type_id,
+        xe_spv_words_view(operands, 4), xe_spv_words_view(nullptr, 0));
   }
   std::unique_ptr<spv::Instruction> op =
       makeInstruction(getUniqueId(), type_id, op_code);

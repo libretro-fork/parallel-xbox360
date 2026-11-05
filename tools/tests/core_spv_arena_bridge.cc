@@ -45,6 +45,34 @@ int main(int argc, char** argv) {
   {
     const size_t before = xe_spv_test_pages();
     {
+      spv::InstructionArena workspace(128);
+      size_t warmed = 0;
+      for (unsigned round = 0; round < 20; ++round) {
+        spv::Builder builder(spv::Spv_1_3, 0, nullptr, workspace.get());
+        CHECK(!xe_spv_arena_capabilities(workspace.get()).count);
+        for (unsigned i = 0; i < 64; ++i) builder.addCapability(static_cast<spv::Capability>(i));
+        if (!round) {
+          xe_spv_test_page_fail_after(xe_spv_test_page_calls());
+          builder.addCapability(spv::Capability::Matrix); // duplicate: no allocation
+          bool failed = false;
+          try { builder.addCapability(static_cast<spv::Capability>(64)); } catch (const std::bad_alloc&) { failed = true; }
+          xe_spv_test_page_fail_after(size_t(-1));
+          CHECK(failed && xe_spv_arena_capabilities(workspace.get()).count == 64);
+          CHECK(!xe_spv_arena_has_capability(workspace.get(), 64));
+        }
+        builder.addCapability(static_cast<spv::Capability>(64));
+        CHECK(xe_spv_arena_has_capability(workspace.get(), 0));
+        CHECK(xe_spv_arena_capabilities(workspace.get()).count == 65);
+        if (!round) warmed = xe_spv_test_page_calls();
+        else CHECK(warmed == xe_spv_test_page_calls());
+      }
+    }
+    CHECK(xe_spv_test_pages() == before);
+    std::puts("PASS: capability zero/dedup, failed growth/retry, module reset and retained storage cleanup");
+  }
+  {
+    const size_t before = xe_spv_test_pages();
+    {
       spv::InstructionArena workspace(8192, sizeof(spv::Block), sizeof(spv::Function));
       CHECK(xe_spv_arena_reserve_objects(workspace.get(), sizeof(spv::Block), 1024, sizeof(spv::Function), 32));
       spv::Builder::LoopBlocks* first = nullptr;

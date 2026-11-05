@@ -122,8 +122,9 @@ void Builder::postProcessType(const Instruction& inst, Id typeId)
         // the convert instruction requires the Float16/Int8/16 capability.
         if (containsType(typeId, Op::OpTypeFloat, 16) || containsType(typeId, Op::OpTypeInt, 16)) {
             bool foundStorage = false;
-            for (auto it = capabilities.begin(); it != capabilities.end(); ++it) {
-                spv::Capability cap = *it;
+            const xe_spv_word_view capabilityWords = module.capabilityWords();
+            for (size_t capIndex = 0; capIndex < capabilityWords.count; ++capIndex) {
+                spv::Capability cap = static_cast<spv::Capability>(capabilityWords.words[capIndex]);
                 if (cap == spv::Capability::StorageInputOutput16 ||
                     cap == spv::Capability::StoragePushConstant16 ||
                     cap == spv::Capability::StorageUniformBufferBlock16 ||
@@ -141,8 +142,9 @@ void Builder::postProcessType(const Instruction& inst, Id typeId)
         }
         if (containsType(typeId, Op::OpTypeInt, 8)) {
             bool foundStorage = false;
-            for (auto it = capabilities.begin(); it != capabilities.end(); ++it) {
-                spv::Capability cap = *it;
+            const xe_spv_word_view capabilityWords = module.capabilityWords();
+            for (size_t capIndex = 0; capIndex < capabilityWords.count; ++capIndex) {
+                spv::Capability cap = static_cast<spv::Capability>(capabilityWords.words[capIndex]);
                 if (cap == spv::Capability::StoragePushConstant8 ||
                     cap == spv::Capability::UniformAndStorageBuffer8BitAccess ||
                     cap == spv::Capability::StorageBuffer8BitAccess) {
@@ -451,13 +453,13 @@ void Builder::postProcessFeatures() {
 
     // If any Vulkan memory model-specific functionality is used, update the
     // OpMemoryModel to match.
-    if (capabilities.find(spv::Capability::VulkanMemoryModelKHR) != capabilities.end()) {
+    if (module.hasCapability(static_cast<uint32_t>(spv::Capability::VulkanMemoryModelKHR))) {
         memoryModel = spv::MemoryModel::VulkanKHR;
         addIncorporatedExtension(spv::E_SPV_KHR_vulkan_memory_model, spv::Spv_1_5);
     }
 
     // Add Aliased decoration if there's more than one Workgroup Block variable.
-    if (capabilities.find(spv::Capability::WorkgroupMemoryExplicitLayoutKHR) != capabilities.end()) {
+    if (module.hasCapability(static_cast<uint32_t>(spv::Capability::WorkgroupMemoryExplicitLayoutKHR))) {
         Instruction* ep = firstInstruction(entryPoints);
         assert(ep && !ep->getNextInstruction());
 

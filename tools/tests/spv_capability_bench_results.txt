@@ -1,0 +1,83 @@
+C89 capability metadata and raw Vulkan probe, 2026-11-05
+Parent: complete e8278d524aaeeec2a7089b54346918958111b6d0 sources.
+Windows x64 GCC 16.2 -O2 construction fixtures; native MSVC and WSL ASan/UBSan
+correctness checked separately. No game, frontend or GPU was launched.
+
+The capability tree becomes a retained sorted uint32 array. Cold startup reserves
+64 values (256 bytes); its owner adds 24 bytes. Larger sets grow with checked
+allocation, copying only live metadata; interior insertions move suffix metadata.
+This is not a claim of copy-free set insertion. Reset retains capacity, and close
+releases it through matching C hooks. Zero and UINT32_MAX remain ordinary keys.
+Postprocess scans borrow sorted values and membership uses binary search.
+Capability and memory-model serialization writes final words without temporary
+Instruction objects. The quad specialization helper borrows a four-ID array.
+
+The Vulkan version probe emits 39 words into final caller stack storage. It has
+no builder, instruction graph, output vector or heap allocation. Its bound of six
+preserves the legacy builder's discarded unreachable ID. Seven versions 1.0..1.6
+match legacy bytes exactly and pass spirv-val. This is a startup-path reduction,
+not a measured gameplay shader compilation speedup.
+
+Seven quiet alternating parent/current pairs after all compilers stopped. These
+are the unchanged construction fixtures used for the previous stack measurement:
+functions use long names, 1/71/257 functions, no parameters/linkage; constants use
+40/640/5120 regular scalar/pair-composite constants with three lookup passes.
+Timed construction includes cleanup, excludes dump/file I/O. Warm untimed outputs
+match byte-for-byte. All C++ new and C arena/operand/index/plan/output hooks are
+counted; allocator headers/free-block retention and driver memory are excluded.
+Tracked live storage returns to its initial value after workspace close.
+
+workload / revision / modules / calls / requested B / retained B / median ms (range)
+functions 1   parent  1000 1000 40000  51677  0.215 (0.210..0.217)
+functions 1   current 1000    0     0  51957  0.124 (0.123..0.125)
+functions 71  parent  1000 1000 40000 100448  4.084 (4.037..4.114)
+functions 71  current 1000    0     0 100728  4.023 (3.983..4.070)
+functions 257 parent  1000 1000 40000 263376 14.410 (14.355..14.758)
+functions 257 current 1000    0     0 263656 14.452 (14.375..14.741)
+constants 40   parent  1000 1000 40000  52393  2.065 (2.046..2.088)
+constants 40   current 1000    0     0  52673  1.900 (1.885..1.910)
+constants 640  parent  1000 1000 40000 156545 33.501 (33.137..33.733)
+constants 640  current 1000    0     0 156825 33.290 (33.138..34.514)
+constants 5120 parent   100  100  4000 926153 29.923 (29.609..30.260)
+constants 5120 current  100    0     0 926433 29.776 (29.676..30.142)
+
+The remaining recurring 40-byte capability node disappears in these fixtures.
+All six cases add 280 retained bytes and 240 peak tracked bytes. GCC x64 Builder
+shrinks 1552 ->1504 bytes; Instruction64/Block136/Function136/Module88 unchanged.
+The largest function median is slightly slower with overlapping ranges; larger
+cases are comparable. There is no universal speedup claim. Zero warm fixture
+allocations do not mean every real shader or MSVC STL path is allocation-free.
+Other metadata, strings, larger working sets and driver paths still allocate.
+
+Checks:
+- Strict C89 and native MSVC /TC /W4 /WX: uint32 extremes, sorted/dedup values,
+  duplicate under disabled allocator, checked growth failure/recovery, 102400
+  warm inserts, balanced release, probe capacity/version canaries.
+- Typed arena: twenty leases, zero-key membership, duplicate without growth,
+  failed 65th key preserving old state, retry and retained capacity.
+- Own-revision parent/current metadata fixture: sorted 133-capability output,
+  Float16/Int8 storage-capability inference, Vulkan memory model, seven probes.
+- Full native MSVC output/ownership suite and full WSL ASan/UBSan suite pass,
+  including 5248 helper modules, sampled-image cloning, source/views, allocation
+  faults, stacks, constants/types and negative retired-object access checks.
+- 18432 native MSVC geometry modules retain 109668864-byte golden SHA256
+  427b071c7e7868566596ff55270bbca9aab31f54c714ca552e928dfe349e69e0.
+- Actual rebuilt Make objects: 1410 Tekken cached translations (two with CFG)
+  and 210 Tomb Raider translations (96 with CFG) match prior reference bytes.
+  Private cache inputs are not shipped. These caches do not prove all-game
+  correctness. Full Windows static Make -j5 passes; CMake source registration
+  is updated but CMake/platform builds were not rerun.
+- No installed DLL write, audio scheduling, resource-retirement or shutdown
+  change. FPS, hardware cache misses, RSS and GPU runtime are not measured.
+
+Reproduce metadata comparison: sh tools/tests/run_spv_metadata_compare.sh,
+optionally BASELINE_ROOT=<complete parent source archive>, TEST_BUILD_DIR,
+SANITIZER and SPIRV_VALIDATOR. Native/full sanitizer suites use the existing
+run_spv_output_tests.cmd/.sh. Construction: run_spv_binary_bench.sh with
+CAPTURE_OPERANDS=1 and BASELINE_ROOT. Use core_spv_function_bench.cc with
+EXTRA_CXXFLAGS='-DXE_SPV_LONG_NAME_BENCH -DXE_SPV_BLOCK_CHAIN_BENCH'; use
+core_spv_constant_bench.cc without those flags. After compilation alternate
+parent/current variants 0/4/5 in seven quiet pairs and compare generated bytes.
+
+src/xenia/gpu/spirv remains: guest translation still requires its graph and
+late fixups. See libretro/SPIRV_EMITTER_MIGRATION.md for actual backend removal.

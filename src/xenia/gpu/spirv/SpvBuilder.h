@@ -211,7 +211,7 @@ public:
         memoryModel = mem;
     }
 
-    void addCapability(spv::Capability cap) { capabilities.insert(cap); }
+    void addCapability(spv::Capability cap) { module.addCapability(static_cast<uint32_t>(cap)); }
 
     // To get a new <id> for anything needing a new one.
     Id getUniqueId() { return ++uniqueId; }
@@ -1042,7 +1042,6 @@ public:
     xe_spv_binary moduleProcesses = {};
     AddressingModel addressModel;
     MemoryModel memoryModel;
-    std::set<spv::Capability> capabilities;
     int builderNumber;
     Module module;
     Block* buildPoint;
