@@ -422,6 +422,13 @@ Id Builder::makeFloatE4M3Type()
 // check for duplicates.
 Id Builder::makeStructType(const std::vector<Id>& members, const char* name, bool const compilerGenerated)
 {
+    return makeStructTypeView(xe_spv_words_view(members.data(), members.size()), name, compilerGenerated);
+}
+
+Id Builder::makeStructTypeView(xe_spv_word_view view, const char* name, bool compilerGenerated)
+{
+    const std::span<const Id> members(view.words, view.count);
+
     // Don't look for previous one, because in the general case,
     // structs can be duplicated except for decorations.
 
@@ -1180,7 +1187,7 @@ Id Builder::makeMemberDebugType(Id const memberType, DebugTypeLoc const& debugTy
 
 // Note: To represent a source language opaque type, this instruction must have no Members operands, Size operand must be
 // DebugInfoNone, and Name must start with @ to avoid clashes with user defined names.
-Id Builder::makeCompositeDebugType(std::vector<Id> const& memberTypes, char const*const name,
+Id Builder::makeCompositeDebugType(std::span<const Id> memberTypes, char const*const name,
     NonSemanticShaderDebugInfo100DebugCompositeType const tag, bool const isOpaqueType)
 {
     // Create the debug member types.
@@ -2082,7 +2089,7 @@ Id Builder::importNonSemanticShaderDebugInfoInstructions()
     return nonSemanticShaderDebugInfo;
 }
 
-Id Builder::findCompositeConstant(Op typeClass, Op opcode, Id typeId, const std::vector<Id>& comps, size_t numMembers)
+Id Builder::findCompositeConstant(Op typeClass, Op opcode, Id typeId, std::span<const Id> comps, size_t numMembers)
 {
     Instruction* constant = nullptr;
     bool found = false;
@@ -2116,7 +2123,7 @@ Id Builder::findCompositeConstant(Op typeClass, Op opcode, Id typeId, const std:
     return found ? constant->getResultId() : NoResult;
 }
 
-Id Builder::findStructConstant(Id typeId, const std::vector<Id>& comps)
+Id Builder::findStructConstant(Id typeId, std::span<const Id> comps)
 {
     Instruction* constant = nullptr;
     bool found = false;
@@ -2143,6 +2150,13 @@ Id Builder::findStructConstant(Id typeId, const std::vector<Id>& comps)
 // Comments in header
 Id Builder::makeCompositeConstant(Id typeId, const std::vector<Id>& members, bool specConstant)
 {
+    return makeCompositeConstantView(typeId, xe_spv_words_view(members.data(), members.size()), specConstant);
+}
+
+Id Builder::makeCompositeConstantView(Id typeId, xe_spv_word_view view, bool specConstant)
+{
+    const std::span<const Id> members(view.words, view.count);
+
     assert(typeId);
     Op typeClass = getTypeClass(typeId);
 
@@ -2910,8 +2924,27 @@ Id Builder::createLoad(Id lValue, spv::Decoration precision, spv::MemoryAccessMa
 // Comments in header
 Id Builder::createAccessChain(StorageClass storageClass, Id base, const std::vector<Id>& offsets)
 {
+    return createAccessChainView(storageClass, base, xe_spv_words_view(offsets.data(), offsets.size()));
+}
+
+Id Builder::createAccessChainView(StorageClass storageClass, Id base, xe_spv_word_view view)
+{
+    const std::span<const Id> offsets(view.words, view.count);
+
     // Figure out the final resulting type.
-    Id typeId = getResultingAccessChainType();
+    // Resolve directly from the supplied base/indices. A helper must not copy
+    // these words into the mutable access-chain frontend state just to read them.
+    Id typeId = getTypeId(base);
+    assert(isPointerType(typeId));
+    typeId = getContainedTypeId(typeId);
+    for (size_t i = 0; i < offsets.size(); ++i) {
+        if (isStructType(typeId)) {
+            assert(isConstantScalar(offsets[i]));
+            typeId = getContainedTypeId(typeId, getConstantScalar(offsets[i]));
+        } else {
+            typeId = getContainedTypeId(typeId, offsets[i]);
+        }
+    }
     typeId = makePointer(storageClass, typeId);
 
     // Make the instruction
@@ -3169,6 +3202,13 @@ Id Builder::createTriOp(Op opCode, Id typeId, Id op1, Id op2, Id op3)
 
 Id Builder::createOp(Op opCode, Id typeId, const std::vector<Id>& operands)
 {
+    return createOpView(opCode, typeId, xe_spv_words_view(operands.data(), operands.size()));
+}
+
+Id Builder::createOpView(Op opCode, Id typeId, xe_spv_word_view view)
+{
+    const std::span<const Id> operands(view.words, view.count);
+
     Instruction* op = new Instruction(getUniqueId(), typeId, opCode);
     op->reserveOperands(operands.size());
     for (auto id : operands)
@@ -3196,12 +3236,20 @@ Id Builder::createOp(Op opCode, Id typeId, const std::vector<IdImmediate>& opera
 Id Builder::createSpecConstantOp(Op opCode, Id typeId, const std::vector<Id>& operands,
     const std::vector<unsigned>& literals)
 {
+    return createSpecConstantOpView(opCode, typeId, xe_spv_words_view(operands.data(), operands.size()), xe_spv_words_view(literals.data(), literals.size()));
+}
+
+Id Builder::createSpecConstantOpView(Op opCode, Id typeId, xe_spv_word_view operandView, xe_spv_word_view literalView)
+{
+    const std::span<const Id> operands(operandView.words, operandView.count);
+    const std::span<const unsigned> literals(literalView.words, literalView.count);
+
     Instruction* op = new Instruction(getUniqueId(), typeId, Op::OpSpecConstantOp);
     op->reserveOperands(operands.size() + literals.size() + 1);
     op->addImmediateOperand((unsigned) opCode);
-    for (auto it = operands.cbegin(); it != operands.cend(); ++it)
+    for (auto it = operands.begin(); it != operands.end(); ++it)
         op->addIdOperand(*it);
-    for (auto it = literals.cbegin(); it != literals.cend(); ++it)
+    for (auto it = literals.begin(); it != literals.end(); ++it)
         op->addImmediateOperand(*it);
     module.mapInstruction(op);
     constantsTypesGlobals.push_back(std::unique_ptr<Instruction>(op));
@@ -3232,13 +3280,20 @@ Id Builder::createFunctionCall(spv::Function* function, const std::vector<spv::I
 // Comments in header
 Id Builder::createRvalueSwizzle(Decoration precision, Id typeId, Id source, const std::vector<unsigned>& channels)
 {
+    return createRvalueSwizzleView(precision, typeId, source, xe_spv_words_view(channels.data(), channels.size()));
+}
+
+Id Builder::createRvalueSwizzleView(Decoration precision, Id typeId, Id source, xe_spv_word_view view)
+{
+    const std::span<const unsigned> channels(view.words, view.count);
+
     if (channels.size() == 1)
         return setPrecision(createCompositeExtract(source, typeId, channels.front()), precision);
 
     if (generatingOpCodeForSpecConst) {
-        std::vector<Id> operands(2);
-        operands[0] = operands[1] = source;
-        return setPrecision(createSpecConstantOp(Op::OpVectorShuffle, typeId, operands, channels), precision);
+        const Id operands[2] = {source, source};
+        return setPrecision(createSpecConstantOpView(Op::OpVectorShuffle, typeId,
+            xe_spv_words_view(operands, 2), view), precision);
     }
     Instruction* swizzle = new Instruction(getUniqueId(), typeId, Op::OpVectorShuffle);
     assert(isVector(source));
@@ -3717,6 +3772,13 @@ Id Builder::createCompositeCompare(Decoration precision, Id value1, Id value2, b
 // OpCompositeConstruct
 Id Builder::createCompositeConstruct(Id typeId, const std::vector<Id>& constituents)
 {
+    return createCompositeConstructView(typeId, xe_spv_words_view(constituents.data(), constituents.size()));
+}
+
+Id Builder::createCompositeConstructView(Id typeId, xe_spv_word_view view)
+{
+    const std::span<const Id> constituents(view.words, view.count);
+
     assert(isAggregateType(typeId) || (getNumTypeConstituents(typeId) > 1 &&
            getNumTypeConstituents(typeId) == constituents.size()) ||
            (isCooperativeVectorType(typeId) && constituents.size() == 1));
@@ -3730,7 +3792,7 @@ Id Builder::createCompositeConstruct(Id typeId, const std::vector<Id>& constitue
         // The second column vector should NOT be spec constant, as it does not contain any spec constants.
         // To handle such cases, we check the constituents of the constant vector to determine whether this
         // vector should be created as a spec constant.
-        return makeCompositeConstant(typeId, constituents,
+        return makeCompositeConstantView(typeId, view,
                                      std::any_of(constituents.begin(), constituents.end(),
                                                  [&](spv::Id id) { return isSpecConstant(id); }));
     }

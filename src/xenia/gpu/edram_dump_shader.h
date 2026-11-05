@@ -182,7 +182,7 @@ union EdramDumpShaderOffsets {
 // What the emitter can't derive from the key: the binding model to declare the
 // resources in, and the host properties the guest layout is resolved against.
 struct EdramDumpShaderOptions {
-  // SPIR-V version to emit, as glslang's SpirvBuilder takes it.
+  // SPIR-V binary version consumed by the owned raw-word builder.
   uint32_t spirv_version = 0x00010000;
 
   // Descriptor sets of the destination buffer - the EDRAM buffer, or the

@@ -5,6 +5,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+#ifdef XE_SPV_OUTPUT_ALLOCATIONS
+#include "core_pipeline_bench_profile.h"
+#include <new>
+void* operator new(std::size_t n) { void* p = xe_bench_malloc(n); if (!p) throw std::bad_alloc(); return p; }
+void* operator new[](std::size_t n) { return ::operator new(n); }
+void operator delete(void* p) noexcept { xe_bench_free(p); }
+void operator delete[](void* p) noexcept { xe_bench_free(p); }
+void operator delete(void* p, std::size_t) noexcept { xe_bench_free(p); }
+void operator delete[](void* p, std::size_t) noexcept { xe_bench_free(p); }
+#endif
 using namespace xe::gpu;
 static unsigned modules;
 static size_t largest;
@@ -21,9 +31,13 @@ static void record(const uint32_t* words, size_t count) {
   ++modules;
 }
 int main(int argc, char** argv) {
+#ifdef XE_SPV_OUTPUT_ALLOCATIONS
+  size_t before = xe_bench_allocations();
+#endif
   const unsigned formats[] = {0, 1, 2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 0, 1};
   unsigned pass, f, msaa, bits, mode;
-  if (argc != 2 || !(output = fopen(argv[1], "wb"))) return 1;
+  if ((argc != 2 && argc != 3) || !(output = fopen(argv[1], "wb"))) return 1;
+  const bool wide_scale = argc == 3;
 #ifndef XE_SPV_OUTPUT_LEGACY
   if (!xe_spv_binary_reserve(&storage, 16384)) return 2;
   uint32_t* stable = nullptr;
@@ -37,8 +51,8 @@ int main(int argc, char** argv) {
       key.msaa_samples = xe::gpu::xenos::MsaaSamples(msaa);
       key.direct_resolve = bits & 1; key.native_layout = (bits >> 1) & 1;
       key.source_scale_native = (bits >> 2) & 1;
-      options.resolution_scale_x = (bits & 8) ? 3 : 1;
-      options.resolution_scale_y = (bits & 8) ? 2 : 1;
+      options.resolution_scale_x = (bits & 8) ? (wide_scale ? 32 : 3) : 1;
+      options.resolution_scale_y = (bits & 8) ? (wide_scale ? 16 : 2) : 1;
       options.msaa_2x_attachments_supported = (bits & 4) != 0;
       options.source_is_uint = !key.is_depth && f < 4 && (bits & 2);
       options.depth_float24_round = (bits & 2) != 0;
@@ -89,6 +103,11 @@ int main(int argc, char** argv) {
   xe_spv_binary_close(&storage);
 #endif
   if (fclose(output)) return 6;
-  printf("PASS: %u helper modules, largest %zu words\n", modules, largest);
+  printf("PASS: %u helper modules (%s), largest %zu words\n",
+         modules, wide_scale ? "wide scale" : "standard scale", largest);
+#ifdef XE_SPV_OUTPUT_ALLOCATIONS
+  printf("C++ new calls across %u modules: %zu; tracked live bytes: %zu\n",
+         modules, xe_bench_allocations() - before, xe_bench_live());
+#endif
   return 0;
 }

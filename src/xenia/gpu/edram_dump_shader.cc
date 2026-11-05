@@ -10,7 +10,7 @@
 #include "xenia/gpu/edram_dump_shader.h"
 
 #include <initializer_list>
-#include <vector>
+#include "libretro/core_spv_words.h"
 
 #include "xenia/gpu/spirv/GLSL.std.450.h"
 
@@ -24,6 +24,13 @@
 
 namespace xe {
 namespace gpu {
+
+// C89 storage reports capacity failures; this is the existing C++ builder's
+// allocation-failure boundary. No heap work is performed on the normal path.
+static void AppendShaderWord(xe_spv_word_list* words, uint32_t value) {
+  if (!xe_spv_word_list_push(words, value)) throw std::bad_alloc();
+}
+
 
 namespace {
 
@@ -104,7 +111,10 @@ bool BuildEdramDumpShaderSpirv(
   bool draw_resolution_scaled =
       options.resolution_scale_x > 1 || options.resolution_scale_y > 1;
 
-  std::vector<spv::Id> id_vector_temp;
+  // At most 11 dump push constants or four color/phi constituents.
+  static_assert(size_t(kEdramDumpShaderPushConstantCount) <= size_t(XE_SPV_HELPER_WORD_CAPACITY));
+  xe_spv_word_list id_scratch;
+  id_scratch.count = 0;
 
   SpirvBuilder builder(options.spirv_version,
                        (SpirvShaderTranslator::kSpirvMagicToolId << 16) | 1,
@@ -114,7 +124,7 @@ bool BuildEdramDumpShaderSpirv(
   builder.setMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
   builder.setSource(spv::SourceLanguageUnknown, 0);
 
-  spv::Id type_void = builder.makeVoidType();
+  builder.makeVoidType();
   spv::Id type_int = builder.makeIntType(32);
   spv::Id type_int2 = builder.makeVectorType(type_int, 2);
   spv::Id type_uint = builder.makeUintType(32);
@@ -129,17 +139,17 @@ bool BuildEdramDumpShaderSpirv(
   // in the 16-byte blocks a direct resolve's runs of pixels store as.
   bool format_is_64bpp = !key.is_depth && xenos::IsColorRenderTargetFormat64bpp(
                                               key.GetColorFormat());
-  id_vector_temp.clear();
-  id_vector_temp.push_back(builder.makeRuntimeArray(
+  id_scratch.count = 0;
+  AppendShaderWord(&id_scratch, builder.makeRuntimeArray(
       key.direct_resolve ? type_uint4
                          : (format_is_64bpp ? type_uint2 : type_uint)));
   // Storage buffers have std430 packing, no padding to 4-component vectors.
-  builder.addDecoration(id_vector_temp.back(), spv::DecorationArrayStride,
+  builder.addDecoration(id_scratch.words[id_scratch.count - 1], spv::DecorationArrayStride,
                         key.direct_resolve
                             ? sizeof(uint32_t) * 4
                             : (sizeof(uint32_t) << uint32_t(format_is_64bpp)));
-  spv::Id type_dest = builder.makeStructType(
-      id_vector_temp, key.direct_resolve ? "XeResolveDest" : "XeEdram");
+  spv::Id type_dest = builder.makeStructTypeView(
+      xe_spv_word_list_view(&id_scratch), key.direct_resolve ? "XeResolveDest" : "XeEdram");
   builder.addMemberName(type_dest, 0,
                         key.direct_resolve ? "resolve_dest" : "edram");
   builder.addMemberDecoration(type_dest, 0, spv::DecorationNonReadable);
@@ -201,13 +211,12 @@ bool BuildEdramDumpShaderSpirv(
   static_assert(
       xe::countof(kPushConstantNames) == kEdramDumpShaderPushConstantCount,
       "Every push constant needs a name in the shader");
-  id_vector_temp.clear();
-  id_vector_temp.reserve(kEdramDumpShaderPushConstantCount);
+  id_scratch.count = 0;
   for (uint32_t i = 0; i < kEdramDumpShaderPushConstantCount; ++i) {
-    id_vector_temp.push_back(type_uint);
+    AppendShaderWord(&id_scratch, type_uint);
   }
   spv::Id type_push_constants =
-      builder.makeStructType(id_vector_temp, "XeEdramDumpPushConstants");
+      builder.makeStructTypeView(xe_spv_word_list_view(&id_scratch), "XeEdramDumpPushConstants");
   for (uint32_t i = 0; i < kEdramDumpShaderPushConstantCount; ++i) {
     builder.addMemberName(type_push_constants, i, kPushConstantNames[i]);
     builder.addMemberDecoration(type_push_constants, i, spv::DecorationOffset,
@@ -226,19 +235,14 @@ bool BuildEdramDumpShaderSpirv(
                         static_cast<int>(spv::BuiltIn::GlobalInvocationId));
 
   // Begin the main function.
-  std::vector<spv::Id> main_param_types;
-  std::vector<std::vector<spv::Decoration>> main_precisions;
-  spv::Block* main_entry;
-  spv::Function* main_function =
-      builder.makeFunctionEntry(spv::NoPrecision, type_void, "main",
-                                main_param_types, main_precisions, &main_entry);
+  spv::Function* main_function = builder.makeEntryPoint("main");
 
   auto load_push_constant = [&](EdramDumpShaderPushConstant constant) {
-    id_vector_temp.clear();
-    id_vector_temp.push_back(builder.makeIntConstant(int(constant)));
+    id_scratch.count = 0;
+    AppendShaderWord(&id_scratch, builder.makeIntConstant(int(constant)));
     return builder.createLoad(
-        builder.createAccessChain(spv::StorageClassPushConstant, push_constants,
-                                  id_vector_temp),
+        builder.createAccessChainView(spv::StorageClassPushConstant, push_constants,
+                                  xe_spv_word_list_view(&id_scratch)),
         spv::NoPrecision);
   };
   auto extract = [&](spv::Id source, uint32_t offset, uint32_t count) {
@@ -306,13 +310,13 @@ bool BuildEdramDumpShaderSpirv(
     spv::Builder::TextureParameters source_texture_parameters = {};
     source_texture_parameters.sampler =
         builder.createLoad(source_texture, spv::NoPrecision);
-    id_vector_temp.clear();
-    id_vector_temp.push_back(
+    id_scratch.count = 0;
+    AppendShaderWord(&id_scratch,
         builder.createUnaryOp(spv::OpBitcast, type_int, source_pixel_x));
-    id_vector_temp.push_back(
+    AppendShaderWord(&id_scratch,
         builder.createUnaryOp(spv::OpBitcast, type_int, source_pixel_y));
     source_texture_parameters.coords =
-        builder.createCompositeConstruct(type_int2, id_vector_temp);
+        builder.createCompositeConstructView(type_int2, xe_spv_word_list_view(&id_scratch));
     if (source_is_multisampled) {
       source_texture_parameters.sample =
           builder.createUnaryOp(spv::OpBitcast, type_int, source_sample_id);
@@ -749,22 +753,22 @@ bool BuildEdramDumpShaderSpirv(
     // Write the packed value to the EDRAM buffer.
     spv::Id store_value = packed[0];
     if (format_is_64bpp) {
-      id_vector_temp.clear();
-      id_vector_temp.push_back(packed[0]);
-      id_vector_temp.push_back(packed[1]);
+      id_scratch.count = 0;
+      AppendShaderWord(&id_scratch, packed[0]);
+      AppendShaderWord(&id_scratch, packed[1]);
       store_value =
-          builder.createCompositeConstruct(type_uint2, id_vector_temp);
+          builder.createCompositeConstructView(type_uint2, xe_spv_word_list_view(&id_scratch));
     }
-    id_vector_temp.clear();
+    id_scratch.count = 0;
     // The only SSBO structure member.
-    id_vector_temp.push_back(builder.makeIntConstant(0));
-    id_vector_temp.push_back(
+    AppendShaderWord(&id_scratch, builder.makeIntConstant(0));
+    AppendShaderWord(&id_scratch,
         builder.createUnaryOp(spv::OpBitcast, type_int, edram_sample_address));
     // StorageBuffer since SPIR-V 1.3, but since SPIR-V 1.0 is generated, it's
     // Uniform.
     builder.createStore(store_value,
-                        builder.createAccessChain(spv::StorageClassUniform,
-                                                  dest_buffer, id_vector_temp));
+                        builder.createAccessChainView(spv::StorageClassUniform,
+                                                  dest_buffer, xe_spv_word_list_view(&id_scratch)));
   } else {
     // One thread writes a run of destination pixels, the run being what the
     // guest texture layout stores contiguously - so the loads land on
@@ -873,7 +877,7 @@ bool BuildEdramDumpShaderSpirv(
     uint32_t fill_extent_x = dest_scaled ? layout_scale_x >> 1 : 0;
     uint32_t fill_extent_y = dest_scaled ? layout_scale_y >> 1 : 0;
     spv::Id fill_bias_y = spv::NoResult;
-    std::vector<spv::Id> fill_bias_x(fill_extent_x);
+    spv::Id fill_bias_x[kEdramDumpShaderResolvePixelsPerStore * 2];
     if (fill_extent_x || fill_extent_y) {
       spv::Id fill_enabled = builder.createBinOp(
           spv::OpINotEqual, type_bool,
@@ -899,9 +903,11 @@ bool BuildEdramDumpShaderSpirv(
         fill_bias_y = fill_bias(dest_y, fill_extent_y);
       }
       for (uint32_t i = 0; i < fill_extent_x; ++i) {
-        fill_bias_x[i] =
-            fill_bias(i ? add(dest_x, builder.makeUintConstant(i)) : dest_x,
-                      fill_extent_x);
+        spv::Id bias = fill_bias(
+            i ? add(dest_x, builder.makeUintConstant(i)) : dest_x, fill_extent_x);
+        // Only the thread's first eight pixels can read these IDs. Keep emission
+        // order unchanged even for a scale whose fill band is wider than a run.
+        if (i < kEdramDumpShaderResolvePixelsPerStore * 2) fill_bias_x[i] = bias;
       }
     }
 
@@ -1267,20 +1273,20 @@ bool BuildEdramDumpShaderSpirv(
       spv::Id block_index = shift_right(block_address, 4);
       // Four dwords either way - four 32bpp pixels, or two 64bpp ones.
       uint32_t first_dword = block * pixels_per_store * dwords_per_pixel;
-      id_vector_temp.clear();
+      id_scratch.count = 0;
       for (uint32_t i = 0; i < 4; ++i) {
-        id_vector_temp.push_back(run_packed[first_dword + i]);
+        AppendShaderWord(&id_scratch, run_packed[first_dword + i]);
       }
       spv::Id block_value =
-          builder.createCompositeConstruct(type_uint4, id_vector_temp);
-      id_vector_temp.clear();
+          builder.createCompositeConstructView(type_uint4, xe_spv_word_list_view(&id_scratch));
+      id_scratch.count = 0;
       // The only SSBO structure member.
-      id_vector_temp.push_back(builder.makeIntConstant(0));
-      id_vector_temp.push_back(
+      AppendShaderWord(&id_scratch, builder.makeIntConstant(0));
+      AppendShaderWord(&id_scratch,
           builder.createUnaryOp(spv::OpBitcast, type_int, block_index));
       builder.createStore(
-          block_value, builder.createAccessChain(spv::StorageClassUniform,
-                                                 dest_buffer, id_vector_temp));
+          block_value, builder.createAccessChainView(spv::StorageClassUniform,
+                                                 dest_buffer, xe_spv_word_list_view(&id_scratch)));
     }
     if_write.makeEndIf();
   }

@@ -71,25 +71,19 @@ class SpirvBuilder : public spv::Builder {
                                            precisions, entry);
   }
 
-  // Hide base class createAccessChain to workaround the way
-  // glslang 11.6.0+ uses internal accessChain state instead of parameters.
+  // Preserve the adapter's clean-state contract without copying indices into
+  // the builder's mutable access-chain vector.
   spv::Id createAccessChain(spv::StorageClass storage_class, spv::Id base,
-                            const std::vector<spv::Id>& offsets) {
-    // glslang 11.6.0+ uses the accessChain member
-    // in getResultingAccessChainType() but doesn't populate it from the
-    // parameters. We need to set it up correctly before calling the parent.
+                           const std::vector<spv::Id>& offsets) {
+    return createAccessChainView(storage_class, base,
+        xe_spv_words_view(offsets.data(), offsets.size()));
+  }
+  spv::Id createAccessChainView(spv::StorageClass storage_class, spv::Id base,
+                               xe_spv_word_view offsets) {
     clearAccessChain();
-    setAccessChainLValue(base);
-    for (const auto& offset : offsets) {
-      accessChainPush(offset, {}, 0);
-    }
-
     spv::Id result =
-        spv::Builder::createAccessChain(storage_class, base, offsets);
-
-    // Clear the state again to avoid affecting subsequent operations
+        spv::Builder::createAccessChainView(storage_class, base, offsets);
     clearAccessChain();
-
     return result;
   }
 

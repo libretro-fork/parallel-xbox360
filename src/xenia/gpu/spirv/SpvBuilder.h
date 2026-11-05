@@ -59,6 +59,8 @@ namespace spv {
     #include "NonSemanticShaderDebugInfo100.h"
 }
 
+#include "libretro/core_spv_words.h"
+#include <span>
 #include <algorithm>
 #include <cstdint>
 #include <map>
@@ -216,6 +218,8 @@ public:
     Id makeFloatE5M2Type();
     Id makeFloatE4M3Type();
     Id makeStructType(const std::vector<Id>& members, const char* name, bool const compilerGenerated = true);
+    // Borrows words only until this call returns. No staging vector.
+    Id makeStructTypeView(xe_spv_word_view members, const char* name, bool compilerGenerated = true);
     Id makeStructResultType(Id type0, Id type1);
     Id makeVectorType(Id component, int size);
     Id makeMatrixType(Id component, int cols, int rows);
@@ -248,7 +252,7 @@ public:
     Id makeVectorDebugType(Id const baseType, int const componentCount);
     Id makeMatrixDebugType(Id const vectorType, int const vectorCount, bool columnMajor = true);
     Id makeMemberDebugType(Id const memberType, DebugTypeLoc const& debugTypeLoc);
-    Id makeCompositeDebugType(std::vector<Id> const& memberTypes, char const*const name,
+    Id makeCompositeDebugType(std::span<const Id> memberTypes, char const*const name,
         NonSemanticShaderDebugInfo100DebugCompositeType const tag, bool const isOpaqueType = false);
     Id makePointerDebugType(StorageClass storageClass, Id const baseType);
     Id makeForwardPointerDebugType(StorageClass storageClass);
@@ -430,6 +434,8 @@ public:
 
     // Turn the array of constants into a proper spv constant of the requested type.
     Id makeCompositeConstant(Id type, const std::vector<Id>& comps, bool specConst = false);
+    // Borrows words only until this call returns. No staging vector.
+    Id makeCompositeConstantView(Id type, xe_spv_word_view members, bool specConst = false);
 
     // Methods for adding information outside the CFG.
     Instruction* addEntryPoint(ExecutionModel, Function*, const char* name);
@@ -521,6 +527,8 @@ public:
 
     // Create an OpAccessChain instruction
     Id createAccessChain(StorageClass, Id base, const std::vector<Id>& offsets);
+    // Borrows words only until this call returns. No staging vector.
+    Id createAccessChainView(StorageClass, Id base, xe_spv_word_view offsets);
 
     // Create an OpArrayLength instruction
     Id createArrayLength(Id base, unsigned int member);
@@ -549,13 +557,19 @@ public:
     Id createBinOp(Op, Id typeId, Id operand1, Id operand2);
     Id createTriOp(Op, Id typeId, Id operand1, Id operand2, Id operand3);
     Id createOp(Op, Id typeId, const std::vector<Id>& operands);
+    // Borrows words only until this call returns. No staging vector.
+    Id createOpView(Op, Id typeId, xe_spv_word_view operands);
     Id createOp(Op, Id typeId, const std::vector<IdImmediate>& operands);
     Id createFunctionCall(spv::Function*, const std::vector<spv::Id>&);
     Id createSpecConstantOp(Op, Id typeId, const std::vector<spv::Id>& operands, const std::vector<unsigned>& literals);
+    // Borrows words only until this call returns. No staging vector.
+    Id createSpecConstantOpView(Op, Id typeId, xe_spv_word_view operands, xe_spv_word_view literals);
 
     // Take an rvalue (source) and a set of channels to extract from it to
     // make a new rvalue, which is returned.
     Id createRvalueSwizzle(Decoration precision, Id typeId, Id source, const std::vector<unsigned>& channels);
+    // Borrows words only until this call returns. No staging vector.
+    Id createRvalueSwizzleView(Decoration precision, Id typeId, Id source, xe_spv_word_view channels);
 
     // Take a copy of an lvalue (target) and a source of components, and set the
     // source components into the lvalue where the 'channels' say to put them.
@@ -636,6 +650,8 @@ public:
 
     // OpCompositeConstruct
     Id createCompositeConstruct(Id typeId, const std::vector<Id>& constituents);
+    // Borrows words only until this call returns. No staging vector.
+    Id createCompositeConstructView(Id typeId, xe_spv_word_view constituents);
 
     // vector or scalar constructor
     Id createConstructor(Decoration precision, const std::vector<Id>& sources, Id resultTypeId);
@@ -932,8 +948,8 @@ public:
  protected:
     Id findScalarConstant(Op typeClass, Op opcode, Id typeId, unsigned value);
     Id findScalarConstant(Op typeClass, Op opcode, Id typeId, unsigned v1, unsigned v2);
-    Id findCompositeConstant(Op typeClass, Op opcode, Id typeId, const std::vector<Id>& comps, size_t numMembers);
-    Id findStructConstant(Id typeId, const std::vector<Id>& comps);
+    Id findCompositeConstant(Op typeClass, Op opcode, Id typeId, std::span<const Id> comps, size_t numMembers);
+    Id findStructConstant(Id typeId, std::span<const Id> comps);
     Id collapseAccessChain();
     void remapDynamicSwizzle();
     void transferAccessChainSwizzle(bool dynamic);

@@ -5,6 +5,10 @@ for %%R in ("%~dp0..\..") do set ROOT=%%~fR
 pushd "%ROOT%"
 set OUT=build\tests\spv-output-msvc
 if not exist %OUT% mkdir %OUT%
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_words_test.c /Fo%OUT%\words-unit.obj /Fe%OUT%\words-unit.exe
+if errorlevel 1 goto fail
+%OUT%\words-unit.exe
+if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX tools/tests/core_spv_binary_test.c /Fo%OUT%\unit.obj /Fe%OUT%\unit.exe
 if errorlevel 1 goto fail
 %OUT%\unit.exe
@@ -20,6 +24,13 @@ for %%V in (0 1 2 3 4) do (
  if errorlevel 1 goto fail
 )
 echo PASS: native MSVC builder vector/C89 output, source chunks and failure recovery
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc /Ithird_party/libretro-common/include tools/tests/core_spv_views_bridge.cc src/xenia/gpu/spirv_builder.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\views.exe /link %OUT%\binary.obj %OUT%\operands.obj
+if errorlevel 1 goto fail
+for %%V in (0 1 2 3 4 5 6 7) do (
+ %OUT%\views.exe %OUT%\views-%%V.spv %%V
+ if errorlevel 1 goto fail
+)
+echo PASS: native MSVC borrowed inputs and unrelated access-chain state
 popd
 exit /b 0
 :fail

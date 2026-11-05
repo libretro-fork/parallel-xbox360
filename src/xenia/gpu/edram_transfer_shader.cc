@@ -12,7 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <vector>
+#include "libretro/core_spv_words.h"
 
 #include "xenia/gpu/spirv/GLSL.std.450.h"
 
@@ -26,6 +26,13 @@
 
 namespace xe {
 namespace gpu {
+
+// C89 storage reports capacity failures; this is the existing C++ builder's
+// allocation-failure boundary. No heap work is performed on the normal path.
+static void AppendShaderWord(xe_spv_word_list* words, uint32_t value) {
+  if (!xe_spv_word_list_push(words, value)) throw std::bad_alloc();
+}
+
 
 const EdramTransferPipelineLayoutInfo kEdramTransferPipelineLayoutInfos[size_t(
     EdramTransferPipelineLayoutIndex::kCount)] = {
@@ -375,8 +382,11 @@ bool BuildEdramTransferShaderSpirv(
     EdramTransferShaderKey key, const EdramTransferShaderOptions& options,
     xe_spv_binary& shader_code) {
   xe_spv_binary_reset(&shader_code);
-  std::vector<spv::Id> id_vector_temp;
-  std::vector<unsigned int> uint_vector_temp;
+  // At most four push constants or color/phi constituents.
+  static_assert(size_t(kEdramTransferUsedPushConstantDwordCount) <= size_t(XE_SPV_HELPER_WORD_CAPACITY));
+  xe_spv_word_list id_scratch;
+  id_scratch.count = 0;
+  const uint32_t coordinate_channels[2] = {0, 1};
   SpirvBuilder builder(options.spirv_version,
                        (SpirvShaderTranslator::kSpirvMagicToolId << 16) | 1,
                        nullptr);
@@ -385,7 +395,7 @@ bool BuildEdramTransferShaderSpirv(
   builder.setMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
   builder.setSource(spv::SourceLanguageUnknown, 0);
 
-  spv::Id type_void = builder.makeVoidType();
+  builder.makeVoidType();
   spv::Id type_bool = builder.makeBoolType();
   spv::Id type_int = builder.makeIntType(32);
   spv::Id type_int2 = builder.makeVectorType(type_int, 2);
@@ -454,7 +464,9 @@ bool BuildEdramTransferShaderSpirv(
     source_color_component_type = spv::NoType;
   }
 
-  std::vector<spv::Id> main_interface;
+  // At most depth + stencil + fragment coordinate + sample ID/mask.
+  xe_spv_word_list main_interface;
+  main_interface.count = 0;
 
   // Outputs.
   bool shader_uses_stencil_reference_output =
@@ -484,7 +496,7 @@ bool BuildEdramTransferShaderSpirv(
           "xe_transfer_fragment_data");
       builder.addDecoration(output_fragment_data, spv::DecorationLocation,
                             key.dest_color_rt_index);
-      main_interface.push_back(output_fragment_data);
+      AppendShaderWord(&main_interface, output_fragment_data);
       break;
     case EdramTransferOutput::kDepth:
       output_fragment_depth =
@@ -492,7 +504,7 @@ bool BuildEdramTransferShaderSpirv(
                                  type_float, "gl_FragDepth");
       builder.addDecoration(output_fragment_depth, spv::DecorationBuiltIn,
                             static_cast<int>(spv::BuiltIn::FragDepth));
-      main_interface.push_back(output_fragment_depth);
+      AppendShaderWord(&main_interface, output_fragment_depth);
       if (shader_uses_stencil_reference_output) {
         builder.addExtension("SPV_EXT_shader_stencil_export");
         builder.addCapability(spv::CapabilityStencilExportEXT);
@@ -502,7 +514,7 @@ bool BuildEdramTransferShaderSpirv(
         builder.addDecoration(
             output_fragment_stencil_ref, spv::DecorationBuiltIn,
             static_cast<int>(spv::BuiltIn::FragStencilRefEXT));
-        main_interface.push_back(output_fragment_stencil_ref);
+        AppendShaderWord(&main_interface, output_fragment_stencil_ref);
       }
       break;
     default:
@@ -570,13 +582,13 @@ bool BuildEdramTransferShaderSpirv(
   spv::Id host_depth_source_buffer = spv::NoResult;
   if (pipeline_layout_info.used_descriptor_sets &
       kEdramTransferUsedDescriptorSetHostDepthBufferBit) {
-    id_vector_temp.clear();
-    id_vector_temp.push_back(builder.makeRuntimeArray(type_uint));
+    id_scratch.count = 0;
+    AppendShaderWord(&id_scratch, builder.makeRuntimeArray(type_uint));
     // Storage buffers have std430 packing, no padding to 4-component vectors.
-    builder.addDecoration(id_vector_temp.back(), spv::DecorationArrayStride,
+    builder.addDecoration(id_scratch.words[id_scratch.count - 1], spv::DecorationArrayStride,
                           sizeof(uint32_t));
     spv::Id type_host_depth_source_buffer =
-        builder.makeStructType(id_vector_temp, "XeTransferHostDepthBuffer");
+        builder.makeStructTypeView(xe_spv_word_list_view(&id_scratch), "XeTransferHostDepthBuffer");
     builder.addMemberName(type_host_depth_source_buffer, 0, "host_depth");
     builder.addMemberDecoration(type_host_depth_source_buffer, 0,
                                 spv::DecorationNonWritable);
@@ -617,24 +629,24 @@ bool BuildEdramTransferShaderSpirv(
     builder.addDecoration(host_depth_source_texture, spv::DecorationBinding, 0);
   }
   // Push constants.
-  id_vector_temp.clear();
+  id_scratch.count = 0;
   uint32_t push_constants_member_host_depth_address = UINT32_MAX;
   if (pipeline_layout_info.used_push_constant_dwords &
       kEdramTransferUsedPushConstantDwordHostDepthAddressBit) {
-    push_constants_member_host_depth_address = uint32_t(id_vector_temp.size());
-    id_vector_temp.push_back(type_uint);
+    push_constants_member_host_depth_address = uint32_t(id_scratch.count);
+    AppendShaderWord(&id_scratch, type_uint);
   }
   uint32_t push_constants_member_address = UINT32_MAX;
   if (pipeline_layout_info.used_push_constant_dwords &
       kEdramTransferUsedPushConstantDwordAddressBit) {
-    push_constants_member_address = uint32_t(id_vector_temp.size());
-    id_vector_temp.push_back(type_uint);
+    push_constants_member_address = uint32_t(id_scratch.count);
+    AppendShaderWord(&id_scratch, type_uint);
   }
   uint32_t push_constants_member_stencil_mask = UINT32_MAX;
   if (pipeline_layout_info.used_push_constant_dwords &
       kEdramTransferUsedPushConstantDwordStencilMaskBit) {
-    push_constants_member_stencil_mask = uint32_t(id_vector_temp.size());
-    id_vector_temp.push_back(type_uint);
+    push_constants_member_stencil_mask = uint32_t(id_scratch.count);
+    AppendShaderWord(&id_scratch, type_uint);
   }
   // Rides after the layout's dwords so their offsets are untouched.
   const bool sample_index_in_push_constants =
@@ -643,13 +655,13 @@ bool BuildEdramTransferShaderSpirv(
       options.sample_index_push_constant;
   uint32_t push_constants_member_sample_index = UINT32_MAX;
   if (sample_index_in_push_constants) {
-    push_constants_member_sample_index = uint32_t(id_vector_temp.size());
-    id_vector_temp.push_back(type_uint);
+    push_constants_member_sample_index = uint32_t(id_scratch.count);
+    AppendShaderWord(&id_scratch, type_uint);
   }
   spv::Id push_constants = spv::NoResult;
-  if (!id_vector_temp.empty()) {
+  if (id_scratch.count != 0) {
     spv::Id type_push_constants =
-        builder.makeStructType(id_vector_temp, "XeTransferPushConstants");
+        builder.makeStructTypeView(xe_spv_word_list_view(&id_scratch), "XeTransferPushConstants");
     if (pipeline_layout_info.used_push_constant_dwords &
         kEdramTransferUsedPushConstantDwordHostDepthAddressBit) {
       assert_true(push_constants_member_host_depth_address != UINT32_MAX);
@@ -711,7 +723,7 @@ bool BuildEdramTransferShaderSpirv(
       spv::NoPrecision, spv::StorageClassInput, type_float4, "gl_FragCoord");
   builder.addDecoration(input_fragment_coord, spv::DecorationBuiltIn,
                         static_cast<int>(spv::BuiltIn::FragCoord));
-  main_interface.push_back(input_fragment_coord);
+  AppendShaderWord(&main_interface, input_fragment_coord);
   spv::Id input_sample_id = spv::NoResult;
   spv::Id spec_const_sample_id = spv::NoResult;
   spv::Id output_sample_mask = spv::NoResult;
@@ -724,7 +736,7 @@ bool BuildEdramTransferShaderSpirv(
       builder.addDecoration(input_sample_id, spv::DecorationFlat);
       builder.addDecoration(input_sample_id, spv::DecorationBuiltIn,
                             static_cast<int>(spv::BuiltIn::SampleId));
-      main_interface.push_back(input_sample_id);
+      AppendShaderWord(&main_interface, input_sample_id);
     } else {
       // One sample per draw, with different sample masks.
       if (!options.sample_index_push_constant) {
@@ -739,18 +751,13 @@ bool BuildEdramTransferShaderSpirv(
             "gl_SampleMask");
         builder.addDecoration(output_sample_mask, spv::DecorationBuiltIn,
                               static_cast<int>(spv::BuiltIn::SampleMask));
-        main_interface.push_back(output_sample_mask);
+        AppendShaderWord(&main_interface, output_sample_mask);
       }
     }
   }
 
   // Begin the main function.
-  std::vector<spv::Id> main_param_types;
-  std::vector<std::vector<spv::Decoration>> main_precisions;
-  spv::Block* main_entry;
-  spv::Function* main_function =
-      builder.makeFunctionEntry(spv::NoPrecision, type_void, "main",
-                                main_param_types, main_precisions, &main_entry);
+  spv::Function* main_function = builder.makeEntryPoint("main");
 
   // Working with unsigned numbers for simplicity now, bitcasting to signed will
   // be done at texture fetch.
@@ -783,15 +790,12 @@ bool BuildEdramTransferShaderSpirv(
   // case when the position has upper bits set, for some reason, the code for it
   // is not eliminated when compiling the shader for AMD via RenderDoc on
   // Windows, as of June 2022.
-  uint_vector_temp.clear();
-  uint_vector_temp.push_back(0);
-  uint_vector_temp.push_back(1);
   spv::Id dest_pixel_coord = builder.createUnaryOp(
       spv::OpConvertFToU, type_uint2,
-      builder.createRvalueSwizzle(
+      builder.createRvalueSwizzleView(
           spv::NoPrecision, type_float2,
           builder.createLoad(input_fragment_coord, spv::NoPrecision),
-          uint_vector_temp));
+          xe_spv_words_view(coordinate_channels, 2)));
   spv::Id dest_pixel_x =
       builder.createCompositeExtract(dest_pixel_coord, type_uint, 0);
   spv::Id const_dest_tile_width_pixels = builder.makeUintConstant(
@@ -813,12 +817,12 @@ bool BuildEdramTransferShaderSpirv(
       spv::OpUMod, type_uint, dest_pixel_y, const_dest_tile_height_pixels);
 
   assert_true(push_constants_member_address != UINT32_MAX);
-  id_vector_temp.clear();
-  id_vector_temp.push_back(
+  id_scratch.count = 0;
+  AppendShaderWord(&id_scratch,
       builder.makeIntConstant(int32_t(push_constants_member_address)));
   spv::Id address_constant = builder.createLoad(
-      builder.createAccessChain(spv::StorageClassPushConstant, push_constants,
-                                id_vector_temp),
+      builder.createAccessChainView(spv::StorageClassPushConstant, push_constants,
+                                xe_spv_word_list_view(&id_scratch)),
       spv::NoPrecision);
 
   // Calculate the 32bpp tile index from its X and Y parts.
@@ -843,12 +847,12 @@ bool BuildEdramTransferShaderSpirv(
           builder.createLoad(input_sample_id, spv::NoPrecision));
     } else {
       if (sample_index_in_push_constants) {
-        id_vector_temp.clear();
-        id_vector_temp.push_back(builder.makeIntConstant(
+        id_scratch.count = 0;
+        AppendShaderWord(&id_scratch, builder.makeIntConstant(
             int32_t(push_constants_member_sample_index)));
         dest_sample_id = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassPushConstant,
-                                      push_constants, id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassPushConstant,
+                                      push_constants, xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
       } else {
         assert_true(spec_const_sample_id != spv::NoResult);
@@ -856,16 +860,16 @@ bool BuildEdramTransferShaderSpirv(
         dest_sample_id = spec_const_sample_id;
       }
       if (output_sample_mask != spv::NoResult) {
-        id_vector_temp.clear();
-        id_vector_temp.push_back(builder.makeUintConstant(0));
+        id_scratch.count = 0;
+        AppendShaderWord(&id_scratch, builder.makeUintConstant(0));
         builder.createStore(
             builder.createUnaryOp(
                 spv::OpBitcast, type_int,
                 builder.createBinOp(spv::OpShiftLeftLogical, type_uint,
                                     builder.makeUintConstant(1),
                                     dest_sample_id)),
-            builder.createAccessChain(spv::StorageClassOutput,
-                                      output_sample_mask, id_vector_temp));
+            builder.createAccessChainView(spv::StorageClassOutput,
+                                      output_sample_mask, xe_spv_word_list_view(&id_scratch)));
       }
     }
   }
@@ -1047,11 +1051,11 @@ bool BuildEdramTransferShaderSpirv(
   // Load the source.
 
   spv::Builder::TextureParameters source_texture_parameters = {};
-  id_vector_temp.clear();
-  id_vector_temp.push_back(source_pixel_x_int);
-  id_vector_temp.push_back(source_pixel_y_int);
+  id_scratch.count = 0;
+  AppendShaderWord(&id_scratch, source_pixel_x_int);
+  AppendShaderWord(&id_scratch, source_pixel_y_int);
   spv::Id source_coordinates[2] = {
-      builder.createCompositeConstruct(type_int2, id_vector_temp),
+      builder.createCompositeConstructView(type_int2, xe_spv_word_list_view(&id_scratch)),
   };
   spv::Id source_sample_ids_int[2] = {};
   if (key.source_msaa_samples != xenos::MsaaSamples::k1X) {
@@ -1066,13 +1070,13 @@ bool BuildEdramTransferShaderSpirv(
   // horizontally adjacent pixels, regardless of sample count.
   bool source_load_is_two_32bpp_halves = !source_is_64bpp && dest_is_64bpp;
   if (source_load_is_two_32bpp_halves) {
-    id_vector_temp.clear();
-    id_vector_temp.push_back(
+    id_scratch.count = 0;
+    AppendShaderWord(&id_scratch,
         builder.createBinOp(spv::OpIAdd, type_int, source_pixel_x_int,
                             builder.makeIntConstant(int32_t(source_scale_x))));
-    id_vector_temp.push_back(source_pixel_y_int);
+    AppendShaderWord(&id_scratch, source_pixel_y_int);
     source_coordinates[1] =
-        builder.createCompositeConstruct(type_int2, id_vector_temp);
+        builder.createCompositeConstructView(type_int2, xe_spv_word_list_view(&id_scratch));
     source_sample_ids_int[1] = source_sample_ids_int[0];
   }
   spv::Id source_color[2][4] = {};
@@ -1304,19 +1308,19 @@ bool BuildEdramTransferShaderSpirv(
                   source_color[i][1], component_offset_width,
                   component_offset_width);
             }
-            id_vector_temp.clear();
-            id_vector_temp.push_back(color_16_in_32[0]);
-            id_vector_temp.push_back(color_16_in_32[1]);
-            builder.createStore(builder.createCompositeConstruct(
-                                    type_fragment_data, id_vector_temp),
+            id_scratch.count = 0;
+            AppendShaderWord(&id_scratch, color_16_in_32[0]);
+            AppendShaderWord(&id_scratch, color_16_in_32[1]);
+            builder.createStore(builder.createCompositeConstructView(
+                                    type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                 output_fragment_data);
           } else {
-            id_vector_temp.clear();
+            id_scratch.count = 0;
             for (uint32_t i = 0; i < 4; ++i) {
-              id_vector_temp.push_back(source_color[i >> 1][i & 1]);
+              AppendShaderWord(&id_scratch, source_color[i >> 1][i & 1]);
             }
-            builder.createStore(builder.createCompositeConstruct(
-                                    type_fragment_data, id_vector_temp),
+            builder.createStore(builder.createCompositeConstructView(
+                                    type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                 output_fragment_data);
           }
         } break;
@@ -1332,19 +1336,19 @@ bool BuildEdramTransferShaderSpirv(
                   source_color[0][(i << 1) + 1], component_offset_width,
                   component_offset_width);
             }
-            id_vector_temp.clear();
-            id_vector_temp.push_back(color_16_in_32[0]);
-            id_vector_temp.push_back(color_16_in_32[1]);
-            builder.createStore(builder.createCompositeConstruct(
-                                    type_fragment_data, id_vector_temp),
+            id_scratch.count = 0;
+            AppendShaderWord(&id_scratch, color_16_in_32[0]);
+            AppendShaderWord(&id_scratch, color_16_in_32[1]);
+            builder.createStore(builder.createCompositeConstructView(
+                                    type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                 output_fragment_data);
           } else {
-            id_vector_temp.clear();
+            id_scratch.count = 0;
             for (uint32_t i = 0; i < 4; ++i) {
-              id_vector_temp.push_back(source_color[0][i]);
+              AppendShaderWord(&id_scratch, source_color[0][i]);
             }
-            builder.createStore(builder.createCompositeConstruct(
-                                    type_fragment_data, id_vector_temp),
+            builder.createStore(builder.createCompositeConstructView(
+                                    type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                 output_fragment_data);
           }
         } break;
@@ -1408,29 +1412,30 @@ bool BuildEdramTransferShaderSpirv(
     if (packed[0] != spv::NoResult) {
       assert_true(packed[1] != spv::NoResult);
       if (dest_color_format == xenos::ColorRenderTargetFormat::k_32_32_FLOAT) {
-        id_vector_temp.clear();
-        id_vector_temp.push_back(packed[0]);
-        id_vector_temp.push_back(packed[1]);
+        id_scratch.count = 0;
+        AppendShaderWord(&id_scratch, packed[0]);
+        AppendShaderWord(&id_scratch, packed[1]);
         // Multisampled sampled images are optional in Vulkan, and image views
         // of different formats can't be created separately for sampled image
         // and color attachment usages, so no multisampled integer sampled image
         // support implies no multisampled integer framebuffer attachment
         // support in Xenia.
         if (!dest_color_is_uint) {
-          for (spv::Id& float32 : id_vector_temp) {
+          for (size_t word = 0; word < id_scratch.count; ++word) {
+            spv::Id& float32 = id_scratch.words[word];
             float32 =
                 builder.createUnaryOp(spv::OpBitcast, type_float, float32);
           }
         }
-        builder.createStore(builder.createCompositeConstruct(type_fragment_data,
-                                                             id_vector_temp),
+        builder.createStore(builder.createCompositeConstructView(type_fragment_data,
+                                                             xe_spv_word_list_view(&id_scratch)),
                             output_fragment_data);
       } else {
         spv::Id const_uint_0 = builder.makeUintConstant(0);
         spv::Id const_uint_16 = builder.makeUintConstant(16);
-        id_vector_temp.clear();
+        id_scratch.count = 0;
         for (uint32_t i = 0; i < 4; ++i) {
-          id_vector_temp.push_back(builder.createTriOp(
+          AppendShaderWord(&id_scratch, builder.createTriOp(
               spv::OpBitFieldUExtract, type_uint, packed[i >> 1],
               (i & 1) ? const_uint_16 : const_uint_0, const_uint_16));
         }
@@ -1438,8 +1443,8 @@ bool BuildEdramTransferShaderSpirv(
         // sampled images, no 16-bit UNORM, no cross-packing 32bpp aliasing on a
         // portability subset device or a 64bpp format where that wouldn't help
         // anyway).
-        builder.createStore(builder.createCompositeConstruct(type_fragment_data,
-                                                             id_vector_temp),
+        builder.createStore(builder.createCompositeConstructView(type_fragment_data,
+                                                             xe_spv_word_list_view(&id_scratch)),
                             output_fragment_data);
       }
     }
@@ -1465,7 +1470,7 @@ bool BuildEdramTransferShaderSpirv(
             // be needed. The gamma resource format is stored as linear in the
             // unorm16 host render target, so convert when exactly one side is
             // gamma (alpha is never gamma-encoded).
-            id_vector_temp.clear();
+            id_scratch.count = 0;
             for (uint32_t i = 0; i < 4; ++i) {
               spv::Id component = source_color[0][i];
               if (i < 3 && dest_color_format != source_color_format) {
@@ -1480,10 +1485,10 @@ bool BuildEdramTransferShaderSpirv(
                       &builder, component, true, ext_inst_glsl_std_450);
                 }
               }
-              id_vector_temp.push_back(component);
+              AppendShaderWord(&id_scratch, component);
             }
-            builder.createStore(builder.createCompositeConstruct(
-                                    type_fragment_data, id_vector_temp),
+            builder.createStore(builder.createCompositeConstructView(
+                                    type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                 output_fragment_data);
           } else {
             if (source_color_format ==
@@ -1557,12 +1562,12 @@ bool BuildEdramTransferShaderSpirv(
                    xenos::ColorRenderTargetFormat::k_2_10_10_10 ||
                dest_color_format == xenos::ColorRenderTargetFormat::
                                         k_2_10_10_10_AS_10_10_10_10)) {
-            id_vector_temp.clear();
+            id_scratch.count = 0;
             for (uint32_t i = 0; i < 4; ++i) {
-              id_vector_temp.push_back(source_color[0][i]);
+              AppendShaderWord(&id_scratch, source_color[0][i]);
             }
-            builder.createStore(builder.createCompositeConstruct(
-                                    type_fragment_data, id_vector_temp),
+            builder.createStore(builder.createCompositeConstructView(
+                                    type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                 output_fragment_data);
           } else {
             spv::Id unorm_round_offset = builder.makeFloatConstant(0.5f);
@@ -1603,12 +1608,12 @@ bool BuildEdramTransferShaderSpirv(
                    xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT ||
                dest_color_format == xenos::ColorRenderTargetFormat::
                                         k_2_10_10_10_FLOAT_AS_16_16_16_16)) {
-            id_vector_temp.clear();
+            id_scratch.count = 0;
             for (uint32_t i = 0; i < 4; ++i) {
-              id_vector_temp.push_back(source_color[0][i]);
+              AppendShaderWord(&id_scratch, source_color[0][i]);
             }
-            builder.createStore(builder.createCompositeConstruct(
-                                    type_fragment_data, id_vector_temp),
+            builder.createStore(builder.createCompositeConstructView(
+                                    type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                 output_fragment_data);
           } else {
             // Float16 has a wider range for both color and alpha, also NaNs -
@@ -1658,12 +1663,12 @@ bool BuildEdramTransferShaderSpirv(
               (dest_color_format == xenos::ColorRenderTargetFormat::k_16_16 ||
                dest_color_format ==
                    xenos::ColorRenderTargetFormat::k_16_16_FLOAT)) {
-            id_vector_temp.clear();
+            id_scratch.count = 0;
             for (uint32_t i = 0; i < 2; ++i) {
-              id_vector_temp.push_back(source_color[0][i]);
+              AppendShaderWord(&id_scratch, source_color[0][i]);
             }
-            builder.createStore(builder.createCompositeConstruct(
-                                    type_fragment_data, id_vector_temp),
+            builder.createStore(builder.createCompositeConstructView(
+                                    type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                 output_fragment_data);
           } else {
             packed = source_color[0][0];
@@ -1742,9 +1747,9 @@ bool BuildEdramTransferShaderSpirv(
                       xenos::ColorRenderTargetFormat::k_8_8_8_8 &&
                   xenos::GetStorageColorFormat(source_color_format) ==
                       xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT) {
-                id_vector_temp.clear();
+                id_scratch.count = 0;
                 for (uint32_t i = 0; i < 3; ++i) {
-                  id_vector_temp.push_back(builder.createTriBuiltinCall(
+                  AppendShaderWord(&id_scratch, builder.createTriBuiltinCall(
                       type_float, ext_inst_glsl_std_450, GLSLstd450NClamp,
                       SpirvShaderTranslator::Float7e3To32(
                           builder, packed, 10 * i, false,
@@ -1752,7 +1757,7 @@ bool BuildEdramTransferShaderSpirv(
                       builder.makeFloatConstant(0.0f),
                       builder.makeFloatConstant(1.0f)));
                 }
-                id_vector_temp.push_back(builder.createBinOp(
+                AppendShaderWord(&id_scratch, builder.createBinOp(
                     spv::OpFMul, type_float,
                     builder.createUnaryOp(
                         spv::OpConvertUToF, type_float,
@@ -1761,8 +1766,8 @@ bool BuildEdramTransferShaderSpirv(
                                             builder.makeUintConstant(30),
                                             builder.makeUintConstant(2))),
                     builder.makeFloatConstant(1.0f / 3.0f)));
-                builder.createStore(builder.createCompositeConstruct(
-                                        type_fragment_data, id_vector_temp),
+                builder.createStore(builder.createCompositeConstructView(
+                                        type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                     output_fragment_data);
                 break;
               }
@@ -1776,24 +1781,24 @@ bool BuildEdramTransferShaderSpirv(
                               xenos::ColorRenderTargetFormat::k_8_8_8_8_GAMMA;
               spv::Id component_width = builder.makeUintConstant(8);
               spv::Id unorm_scale = builder.makeFloatConstant(1.0f / 255.0f);
-              id_vector_temp.clear();
+              id_scratch.count = 0;
               for (uint32_t i = 0; i < 4; ++i) {
                 spv::Id byte_uint = builder.createTriOp(
                     spv::OpBitFieldUExtract, type_uint, packed,
                     builder.makeUintConstant(8 * i), component_width);
                 if (is_gamma && i < 3) {
-                  id_vector_temp.push_back(
+                  AppendShaderWord(&id_scratch,
                       GammaByteToLinearMidpoint(builder, byte_uint));
                 } else {
-                  id_vector_temp.push_back(builder.createBinOp(
+                  AppendShaderWord(&id_scratch, builder.createBinOp(
                       spv::OpFMul, type_float,
                       builder.createUnaryOp(spv::OpConvertUToF, type_float,
                                             byte_uint),
                       unorm_scale));
                 }
               }
-              builder.createStore(builder.createCompositeConstruct(
-                                      type_fragment_data, id_vector_temp),
+              builder.createStore(builder.createCompositeConstructView(
+                                      type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                   output_fragment_data);
             } break;
             case xenos::ColorRenderTargetFormat::k_2_10_10_10:
@@ -1803,9 +1808,9 @@ bool BuildEdramTransferShaderSpirv(
                   builder.makeFloatConstant(1.0f / 1023.0f);
               spv::Id width_a = builder.makeUintConstant(2);
               spv::Id unorm_scale_a = builder.makeFloatConstant(1.0f / 3.0f);
-              id_vector_temp.clear();
+              id_scratch.count = 0;
               for (uint32_t i = 0; i < 4; ++i) {
-                id_vector_temp.push_back(builder.createBinOp(
+                AppendShaderWord(&id_scratch, builder.createBinOp(
                     spv::OpFMul, type_float,
                     builder.createUnaryOp(
                         spv::OpConvertUToF, type_float,
@@ -1815,22 +1820,22 @@ bool BuildEdramTransferShaderSpirv(
                                             i == 3 ? width_a : width_rgb)),
                     i == 3 ? unorm_scale_a : unorm_scale_rgb));
               }
-              builder.createStore(builder.createCompositeConstruct(
-                                      type_fragment_data, id_vector_temp),
+              builder.createStore(builder.createCompositeConstructView(
+                                      type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                   output_fragment_data);
             } break;
             case xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT:
             case xenos::ColorRenderTargetFormat::
                 k_2_10_10_10_FLOAT_AS_16_16_16_16: {
-              id_vector_temp.clear();
+              id_scratch.count = 0;
               // Color.
               spv::Id width_rgb = builder.makeUintConstant(10);
               for (uint32_t i = 0; i < 3; ++i) {
-                id_vector_temp.push_back(SpirvShaderTranslator::Float7e3To32(
+                AppendShaderWord(&id_scratch, SpirvShaderTranslator::Float7e3To32(
                     builder, packed, 10 * i, false, ext_inst_glsl_std_450));
               }
               // Alpha.
-              id_vector_temp.push_back(builder.createBinOp(
+              AppendShaderWord(&id_scratch, builder.createBinOp(
                   spv::OpFMul, type_float,
                   builder.createUnaryOp(
                       spv::OpConvertUToF, type_float,
@@ -1838,8 +1843,8 @@ bool BuildEdramTransferShaderSpirv(
                                           packed, builder.makeUintConstant(30),
                                           builder.makeUintConstant(2))),
                   builder.makeFloatConstant(1.0f / 3.0f)));
-              builder.createStore(builder.createCompositeConstruct(
-                                      type_fragment_data, id_vector_temp),
+              builder.createStore(builder.createCompositeConstructView(
+                                      type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                   output_fragment_data);
             } break;
             case xenos::ColorRenderTargetFormat::k_16_16:
@@ -1852,15 +1857,15 @@ bool BuildEdramTransferShaderSpirv(
               // 32bpp aliasing on a portability subset device or a 64bpp format
               // where that wouldn't help anyway).
               spv::Id component_offset_width = builder.makeUintConstant(16);
-              id_vector_temp.clear();
+              id_scratch.count = 0;
               for (uint32_t i = 0; i < 2; ++i) {
-                id_vector_temp.push_back(builder.createTriOp(
+                AppendShaderWord(&id_scratch, builder.createTriOp(
                     spv::OpBitFieldUExtract, type_uint, packed,
                     i ? component_offset_width : builder.makeUintConstant(0),
                     component_offset_width));
               }
-              builder.createStore(builder.createCompositeConstruct(
-                                      type_fragment_data, id_vector_temp),
+              builder.createStore(builder.createCompositeConstructView(
+                                      type_fragment_data, xe_spv_word_list_view(&id_scratch)),
                                   output_fragment_data);
             } break;
             case xenos::ColorRenderTargetFormat::k_32_FLOAT: {
@@ -1923,12 +1928,12 @@ bool BuildEdramTransferShaderSpirv(
               }
             }
             assert_true(push_constants_member_host_depth_address != UINT32_MAX);
-            id_vector_temp.clear();
-            id_vector_temp.push_back(builder.makeIntConstant(
+            id_scratch.count = 0;
+            AppendShaderWord(&id_scratch, builder.makeIntConstant(
                 int32_t(push_constants_member_host_depth_address)));
             spv::Id host_depth_address_constant = builder.createLoad(
-                builder.createAccessChain(spv::StorageClassPushConstant,
-                                          push_constants, id_vector_temp),
+                builder.createAccessChainView(spv::StorageClassPushConstant,
+                                          push_constants, xe_spv_word_list_view(&id_scratch)),
                 spv::NoPrecision);
             // Transform the destination tile index into the host depth source.
             // After the addition, it may be negative - in which case, the
@@ -2002,11 +2007,11 @@ bool BuildEdramTransferShaderSpirv(
                 host_depth_source_texture_parameters = {};
             host_depth_source_texture_parameters.sampler =
                 builder.createLoad(host_depth_source_texture, spv::NoPrecision);
-            id_vector_temp.clear();
-            id_vector_temp.push_back(host_depth_source_pixel_x_int);
-            id_vector_temp.push_back(host_depth_source_pixel_y_int);
+            id_scratch.count = 0;
+            AppendShaderWord(&id_scratch, host_depth_source_pixel_x_int);
+            AppendShaderWord(&id_scratch, host_depth_source_pixel_y_int);
             host_depth_source_texture_parameters.coords =
-                builder.createCompositeConstruct(type_int2, id_vector_temp);
+                builder.createCompositeConstructView(type_int2, xe_spv_word_list_view(&id_scratch));
             if (key.host_depth_source_msaa_samples != xenos::MsaaSamples::k1X) {
               host_depth_source_texture_parameters.sample =
                   builder.createUnaryOp(spv::OpBitcast, type_int,
@@ -2070,19 +2075,19 @@ bool BuildEdramTransferShaderSpirv(
                         builder.makeUintConstant(dest_tile_width_samples),
                         dest_tile_sample_y),
                     dest_tile_sample_x));
-            id_vector_temp.clear();
+            id_scratch.count = 0;
             // The only SSBO structure member.
-            id_vector_temp.push_back(builder.makeIntConstant(0));
-            id_vector_temp.push_back(builder.createUnaryOp(
+            AppendShaderWord(&id_scratch, builder.makeIntConstant(0));
+            AppendShaderWord(&id_scratch, builder.createUnaryOp(
                 spv::OpBitcast, type_int, host_depth_offset));
             // StorageBuffer since SPIR-V 1.3, but since SPIR-V 1.0 is
             // generated, it's Uniform.
             host_depth32 = builder.createUnaryOp(
                 spv::OpBitcast, type_float,
                 builder.createLoad(
-                    builder.createAccessChain(spv::StorageClassUniform,
+                    builder.createAccessChainView(spv::StorageClassUniform,
                                               host_depth_source_buffer,
-                                              id_vector_temp),
+                                              xe_spv_word_list_view(&id_scratch)),
                     spv::NoPrecision));
           }
           spv::Block* depth24_to_depth32_header = builder.getBuildPoint();
@@ -2169,13 +2174,13 @@ bool BuildEdramTransferShaderSpirv(
                 builder.getBuildPoint()->getId();
             builder.createBranch(depth24_to_depth32_merge);
             builder.setBuildPoint(depth24_to_depth32_merge);
-            id_vector_temp.clear();
-            id_vector_temp.push_back(guest_depth32);
-            id_vector_temp.push_back(depth24_to_depth32_result_block_id);
-            id_vector_temp.push_back(host_depth32);
-            id_vector_temp.push_back(depth24_to_depth32_header->getId());
+            id_scratch.count = 0;
+            AppendShaderWord(&id_scratch, guest_depth32);
+            AppendShaderWord(&id_scratch, depth24_to_depth32_result_block_id);
+            AppendShaderWord(&id_scratch, host_depth32);
+            AppendShaderWord(&id_scratch, depth24_to_depth32_header->getId());
             fragment_depth32 =
-                builder.createOp(spv::OpPhi, type_float, id_vector_temp);
+                builder.createOpView(spv::OpPhi, type_float, xe_spv_word_list_view(&id_scratch));
           }
           builder.createStore(fragment_depth32, output_fragment_depth);
           // Unpack the stencil into the stencil reference output if needed and
@@ -2195,12 +2200,12 @@ bool BuildEdramTransferShaderSpirv(
         if (packed && !options.no_discard_stencil) {
           // Kill the sample if the needed stencil bit is not set.
           assert_true(push_constants_member_stencil_mask != UINT32_MAX);
-          id_vector_temp.clear();
-          id_vector_temp.push_back(builder.makeIntConstant(
+          id_scratch.count = 0;
+          AppendShaderWord(&id_scratch, builder.makeIntConstant(
               int32_t(push_constants_member_stencil_mask)));
           spv::Id stencil_mask_constant = builder.createLoad(
-              builder.createAccessChain(spv::StorageClassPushConstant,
-                                        push_constants, id_vector_temp),
+              builder.createAccessChainView(spv::StorageClassPushConstant,
+                                        push_constants, xe_spv_word_list_view(&id_scratch)),
               spv::NoPrecision);
           SpirvBuilder::IfBuilder stencil_kill_if(
               builder.createBinOp(
@@ -2229,8 +2234,8 @@ bool BuildEdramTransferShaderSpirv(
   }
   spv::Instruction* entry_point =
       builder.addEntryPoint(spv::ExecutionModelFragment, main_function, "main");
-  for (spv::Id interface_id : main_interface) {
-    entry_point->addIdOperand(interface_id);
+  for (size_t i = 0; i < main_interface.count; ++i) {
+    entry_point->addIdOperand(main_interface.words[i]);
   }
 
   // Serialize directly into the backend's reusable word allocation.
