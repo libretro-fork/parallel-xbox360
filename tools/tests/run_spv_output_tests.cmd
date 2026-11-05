@@ -21,6 +21,10 @@ cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests
 if errorlevel 1 goto fail
 %OUT%\walk-unit.exe
 if errorlevel 1 goto fail
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_plan_test.c /Fo%OUT%\plan-unit.obj /Fe%OUT%\plan-unit.exe
+if errorlevel 1 goto fail
+%OUT%\plan-unit.exe
+if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /c libretro/core_spv_size.c /Fo%OUT%\size.obj
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_arena_test.c /Fo%OUT%\arena-unit.obj /Fe%OUT%\arena-unit.exe
@@ -39,7 +43,7 @@ cl /nologo /TC /MD /O2 /W4 /WX /c tools/tests/core_spv_arena_test_alloc.c /Fo%OU
 if errorlevel 1 goto fail
 cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /DXE_SPV_BINARY_CHECK /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_module_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\bridge.exe /link %OUT%\fault.obj %OUT%\size.obj %OUT%\binary-fault.obj %OUT%\operands.obj %OUT%\arena.obj
 if errorlevel 1 goto fail
-for %%V in (0 1 2 3 4) do (
+for %%V in (0 1 2 3 4 5 6) do (
  %OUT%\bridge.exe %OUT%\debug-%%V.spv %%V
  if errorlevel 1 goto fail
 )

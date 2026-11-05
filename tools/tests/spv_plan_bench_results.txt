@@ -1,0 +1,26 @@
+Borrowed CFG emission-plan benchmark, Windows x86-64, 2026-11-05
+Parent: complete eeef038 source extracted with git archive. Current: retained C89 emission plan.
+GCC16.2 -O2 C++20, sequential warm builder benchmarks, five samples of 10000 fresh outputs.
+The first planned serialization grows retained plan storage if needed; measured allocation counts include it.
+Both use the C89 byte-state walker. Parent walks twice; current records borrowed order and replays.
+Counts include C++ new, binary realloc, CFG scratch, and current plan growth. Operand malloc excluded.
+Peak column includes output container payload only; retained plan capacity and graph scratch are excluded.
+Each plan has 64 inline pointers (512 bytes on 64-bit) plus metadata. A 513-block case retains 1024 pointers (8192 bytes).
+Builder owns a fallback plan; guest translator owns another plan retained across Builder resets.
+Instruction counting and emission remain separate passes. Current word-then-copy is still faster than direct-owned on the large graph.
+These are serializer measurements, not gameplay FPS, whole-process RSS or GPU memory.
+Reproduce current rows with sh tools/tests/run_spv_binary_bench.sh; parent with that script from an eeef038 source archive.
+
+revision mode bytes calls requested_bytes peak_output_bytes median_ms range_ms
+final direct-owned 328 10000 3280000 328 1.639 1.596..1.677
+final direct-owned 5432 10000 54320000 5432 14.629 14.317..14.750
+final direct-owned 13624 20004 141385360 13624 115.637 114.698..116.470
+final word-then-copy 328 90000 13480000 840 3.386 3.330..3.640
+final word-then-copy 5432 130000 218120000 13624 17.069 16.891..17.121
+final word-then-copy 13624 150000 469010000 30008 84.563 83.596..85.087
+parent direct-owned 328 10000 3280000 328 1.725 1.714..1.736
+parent direct-owned 5432 10000 54320000 5432 14.913 14.701..15.220
+parent direct-owned 13624 30000 146500000 13624 155.016 148.097..156.313
+parent word-then-copy 328 90000 13480000 840 3.421 3.370..3.523
+parent word-then-copy 5432 130000 218120000 13624 16.813 16.745..17.060
+parent word-then-copy 13624 150000 469010000 30008 79.412 78.566..80.871

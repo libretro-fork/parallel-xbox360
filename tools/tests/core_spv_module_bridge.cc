@@ -41,9 +41,9 @@ static_assert(!std::is_copy_assignable_v<spv::Instruction> &&
 #endif
 int main(int argc, char **argv) {
   if (argc != 3) return 1;
-  const unsigned counts[] = {1, 4, 8, 33, 129, 129};
+  const unsigned counts[] = {1, 4, 8, 33, 129, 129, 1};
   const unsigned variant = unsigned(std::strtoul(argv[2], nullptr, 10));
-  if (variant >= 6) return 2;
+  if (variant >= 7) return 2;
   spv::SpvBuildLogger logger;
   spv::Builder builder(spv::Spv_1_3, 0, &logger);
 #ifdef XE_SPV_BINARY_CHECK
@@ -80,6 +80,15 @@ int main(int argc, char **argv) {
   }
   builder.makeReturn(true);
   builder.leaveFunction();
+  if (variant == 6) {
+    for (unsigned function = 0; function < 70; ++function) {
+      spv::Block* entry;
+      builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(),
+          "unused", spv::LinkageType::Max, {}, {}, &entry);
+      builder.makeReturn(true);
+      builder.leaveFunction();
+    }
+  }
   builder.postProcess(false);
 #ifdef XE_SPV_BINARY_CHECK
   bool callback_failed = false;
@@ -138,16 +147,19 @@ int main(int argc, char **argv) {
         double(elapsed) / 1000.0);
   }
 #endif
+  xe_spv_plan borrowed_plan = {};
   xe::gpu::ShaderBinary bytes;
-  if (!builder.dumpSized(*bytes.storage()) || bytes.size() != words.size() * sizeof(unsigned) ||
+  if (!builder.dumpSized(*bytes.storage(), &borrowed_plan) || bytes.size() != words.size() * sizeof(unsigned) ||
       std::memcmp(bytes.data(), words.data(), bytes.size())) return 8;
+  if (borrowed_plan.count || borrowed_plan.cursor) return 30;
   const uint8_t* stable = bytes.data();
   size_t capacity = bytes.storage()->capacity;
   for (unsigned repeat = 0; repeat < 8; ++repeat) {
-    if (!builder.dumpSized(*bytes.storage()) || bytes.data() != stable || bytes.storage()->capacity != capacity ||
+    if (!builder.dumpSized(*bytes.storage(), &borrowed_plan) || bytes.data() != stable || bytes.storage()->capacity != capacity ||
         bytes.size() != words.size() * sizeof(unsigned) ||
         std::memcmp(bytes.data(), words.data(), bytes.size())) return 9;
   }
+  if (borrowed_plan.count || borrowed_plan.cursor) return 31;
   xe::gpu::ShaderBinary adopted(std::move(bytes));
   if (bytes.size() || adopted.data() != stable) return 15;
   bytes = std::move(adopted);
@@ -156,8 +168,8 @@ int main(int argc, char **argv) {
   {
     xe::gpu::ShaderBinary denied;
     xe_spv_test_binary_fail_next();
-    if (builder.dumpSized(*denied.storage()) || denied.size() || !denied.storage()->failed) return 12;
-    if (!builder.dumpSized(*denied.storage()) || denied.size() != words.size() * sizeof(unsigned) ||
+    if (builder.dumpSized(*denied.storage(), &borrowed_plan) || denied.size() || !denied.storage()->failed) return 12;
+    if (!builder.dumpSized(*denied.storage(), &borrowed_plan) || denied.size() != words.size() * sizeof(unsigned) ||
         std::memcmp(denied.data(), words.data(), denied.size())) return 19;
   }
 #endif
@@ -167,9 +179,10 @@ int main(int argc, char **argv) {
     bool success = false;
     fail_new_after = fail;
     try {
-      success = builder.dumpSized(*partial.storage());
+      success = builder.dumpSized(*partial.storage(), &borrowed_plan);
     } catch (const std::bad_alloc&) { ++thrown_failure; }
     fail_new_after = -1;
+    if (borrowed_plan.count || borrowed_plan.cursor) return 32;
     if (!success && partial.size() != 0) return 10;
     if (success && (partial.size() != words.size() * sizeof(unsigned) ||
         std::memcmp(partial.data(), words.data(), partial.size()))) return 11;
@@ -179,7 +192,9 @@ int main(int argc, char **argv) {
   std::printf("PASS: direct owner C allocation failure/recovery; observed %u C++ metadata exceptions\n", thrown_failure);
 #endif
   main->getEntryBlock()->addInstruction(builder.makeInstruction(static_cast<spv::Op>(65536)));
-  if (builder.dumpSized(*bytes.storage()) || bytes.size() != 0) return 13;
+  if (builder.dumpSized(*bytes.storage(), &borrowed_plan) || bytes.size() != 0 ||
+      borrowed_plan.count || borrowed_plan.cursor) return 13;
+  xe_spv_plan_close(&borrowed_plan);
 #endif
   FILE *file = std::fopen(argv[1], "wb");
   if (!file) return 3;

@@ -20,6 +20,8 @@ ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party
 "$out/size-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_walk_test.c" -o "$out/walk-unit"
 "$out/walk-unit"
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_plan_test.c" -o "$out/plan-unit"
+"$out/plan-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_size.c" -o "$out/size.o"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -c "$root/libretro/core_spv_binary.c" -o "$out/binary.o"
 ${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_operands.c" -o "$out/operands.o"
@@ -100,7 +102,7 @@ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DXE_SPV_BINARY_CHECK $san \
  "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" \
  "$out/binary-fault.o" "$out/operands.o" "$out/arena.o" "$out/size.o" "$out/fault.o" $profile_object -o "$out/debug-bridge"
-for variant in 0 1 2 3 4; do
+for variant in 0 1 2 3 4 5 6; do
  "$out/debug-bridge" "$out/debug-$variant.spv" "$variant"
  if test -n "${SPIRV_VALIDATOR:-}"; then "$SPIRV_VALIDATOR" "$out/debug-$variant.spv"; fi
 done

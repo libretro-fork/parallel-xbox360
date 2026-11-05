@@ -939,7 +939,7 @@ public:
     void dump(std::vector<unsigned int>&) const;
     bool dump(xe_spv_binary&) const;
     // One final allocation after an operand-length sizing walk.
-    bool dumpSized(xe_spv_binary&) const;
+    bool dumpSized(xe_spv_binary&, xe_spv_plan* = nullptr) const;
 
     // Add a branch to the target block.
     // If set implicit, the branch instruction shouldn't have debug source location.
@@ -970,7 +970,7 @@ public:
     void simplifyAccessChainSwizzle();
     void createAndSetNoPredecessorBlock(const char*);
     void createSelectionMerge(Block* mergeBlock, SelectionControlMask control);
-    template <class Output> void dumpInternal(Output&) const;
+    template <class Output> void dumpInternal(Output&, xe_spv_plan* = nullptr, bool record = false) const;
     template <class Output> void dumpSourceInstructions(Output&) const;
     template <class Output> void dumpSourceInstructions(const spv::Id fileId, const std::string& text, Output&) const;
     void dumpSourceInstructions(const spv::Id fileId, const std::string& text, xe_spv_count&) const;
@@ -1019,6 +1019,7 @@ public:
     std::set<std::string> extensions;
     std::vector<const char*> sourceExtensions;
     // Own encoded metadata, never a pointer into a caller's temporary string.
+    mutable xe_spv_plan emissionPlan = {};
     xe_spv_binary moduleProcesses = {};
     AddressingModel addressModel;
     MemoryModel memoryModel;

@@ -573,6 +573,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     xe_spv_scratch_close(&literal_scratch_);
     xe_spv_scratch_close(&literal_scratch_util_);
     xe_spv_scratch_close(&main_interface_);
+    xe_spv_plan_close(&emission_plan_);
   }
 
   uint64_t GetDefaultVertexShaderModification(
@@ -1104,6 +1105,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
   bool is_viz_survey_fragment_shader_ = false;
 
   // Destroyed after builder_ and main_switch_op_; Reset retains its pages.
+  xe_spv_plan emission_plan_ = {};
   spv::InstructionArena instruction_arena_;
   std::unique_ptr<SpirvBuilder> builder_;
   std::unique_lock<std::mutex> resource_bindings_lock_;

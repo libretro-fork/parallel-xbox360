@@ -21,6 +21,7 @@ for walker in parent current; do
  ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DXE_SPV_BINARY_CHECK -DXE_SPV_BYTE_BENCH \
   -include "$root/tools/tests/core_pipeline_bench_profile.h" \
   -DXE_SPV_WALK_ALLOC=xe_bench_malloc -DXE_SPV_WALK_FREE=xe_bench_free \
+  -DXE_SPV_PLAN_ALLOC=xe_bench_malloc -DXE_SPV_PLAN_FREE=xe_bench_free \
   -static-libstdc++ -static-libgcc -I"$root" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" \
   "$root/tools/tests/core_spv_module_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" \
   "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" "$readable" \

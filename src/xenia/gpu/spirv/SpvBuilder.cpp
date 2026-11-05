@@ -76,6 +76,7 @@ Builder::Builder(unsigned int spvVersion, unsigned int magicNumber, SpvBuildLogg
 Builder::~Builder()
 {
     xe_spv_binary_close(&moduleProcesses);
+    xe_spv_plan_close(&emissionPlan);
 }
 
 Id Builder::import(const char* name)
@@ -4520,18 +4521,24 @@ static void appendBinaryWord(xe_spv_count& out, unsigned int)
     xe_spv_count_words(&out, 1);
 }
 
-bool Builder::dumpSized(xe_spv_binary& out) const
+bool Builder::dumpSized(xe_spv_binary& out, xe_spv_plan* borrowedPlan) const
 {
     xe_spv_binary_reset(&out);
     xe_spv_count size = {0, 0};
+    xe_spv_plan* plan = borrowedPlan ? borrowedPlan : &emissionPlan;
+    xe_spv_plan_reset(plan);
     try {
-        dumpInternal(size);
+        dumpInternal(size, plan, true);
         if (size.failed || !xe_spv_binary_reserve_exact(&out, size.count)) {
             out.failed = 1;
+            xe_spv_plan_reset(plan);
             return false;
         }
-        dumpInternal(out);
+        dumpInternal(out, plan);
+        if (plan->cursor != plan->count) out.failed = 1;
+        xe_spv_plan_reset(plan);
     } catch (...) {
+        xe_spv_plan_reset(plan);
         out.count = 0;
         throw;
     }
@@ -4567,7 +4574,7 @@ static void appendStringInstruction(xe_spv_count& out, Op opcode, const char* te
     xe_spv_count_instruction(&out, (uint32_t)opcode, 0, 0, strlen(text) / 4 + 1);
 }
 
-template <class Output> void Builder::dumpInternal(Output& out) const
+template <class Output> void Builder::dumpInternal(Output& out, xe_spv_plan* plan, bool record) const
 {
     // Header, before first instructions:
     appendBinaryWord(out, MagicNumber);
@@ -4613,7 +4620,7 @@ template <class Output> void Builder::dumpInternal(Output& out) const
     dumpInstructions(out, externals);
 
     // The functions
-    module.dump(out);
+    module.dump(out, plan, record);
 }
 
 //

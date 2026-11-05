@@ -51,6 +51,7 @@
 #include "libretro/core_spv_operands.h"
 #include "libretro/core_spv_binary.h"
 #include "libretro/core_spv_size.h"
+#include "libretro/core_spv_plan.h"
 #include "libretro/core_spv_arena.h"
 #include <cstddef>
 #include <new>
@@ -540,7 +541,7 @@ public:
             Decoration::RelaxedPrecision : NoPrecision;
     }
 
-    template <class Output> void dump(Output& out) const
+    template <class Output> void dump(Output& out, xe_spv_plan* plan = nullptr, bool record = false) const
     {
         // OpLine
         if (lineInstruction != nullptr) {
@@ -555,7 +556,20 @@ public:
             parameterInstructions[p]->dump(out);
 
         // Blocks
-        inReadableOrder(blocks[0], [&out](const Block* b, ReachReason, Block*) { b->dump(out); });
+        if (plan && !record) {
+            const void* node;
+            for (;;) {
+                if (!xe_spv_plan_next(plan, &node)) throw std::bad_alloc();
+                if (!node) break;
+                static_cast<const Block*>(node)->dump(out);
+            }
+        } else {
+            inReadableOrder(blocks[0], [&](const Block* b, ReachReason, Block*) {
+                if (plan && !xe_spv_plan_push(plan, b)) throw std::bad_alloc();
+                b->dump(out);
+            });
+            if (plan && !xe_spv_plan_push(plan, nullptr)) throw std::bad_alloc();
+        }
         Instruction end(0, 0, Op::OpFunctionEnd);
         end.dump(out);
     }
@@ -638,10 +652,10 @@ public:
         return (StorageClass)idToInstruction[typeId]->getImmediateOperand(0);
     }
 
-    template <class Output> void dump(Output& out) const
+    template <class Output> void dump(Output& out, xe_spv_plan* plan = nullptr, bool record = false) const
     {
         for (int f = 0; f < (int)functions.size(); ++f)
-            functions[f]->dump(out);
+            functions[f]->dump(out, plan, record);
     }
 
 protected:

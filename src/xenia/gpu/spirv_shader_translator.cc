@@ -1346,7 +1346,7 @@ ShaderBinary SpirvShaderTranslator::CompleteTranslation() {
   }
 
   ShaderBinary module_bytes;
-  if (!builder_->dumpSized(*module_bytes.storage())) throw std::bad_alloc();
+  if (!builder_->dumpSized(*module_bytes.storage(), &emission_plan_)) throw std::bad_alloc();
   return module_bytes;
 }
 
