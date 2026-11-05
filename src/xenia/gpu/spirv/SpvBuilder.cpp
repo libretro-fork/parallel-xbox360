@@ -77,6 +77,7 @@ Builder::~Builder()
 {
     xe_spv_binary_close(&moduleProcesses);
     xe_spv_plan_close(&emissionPlan);
+    xe_spv_instruction_destroy(functions.head, Function::nextSlot, Function::destroyLinked);
 }
 
 Id Builder::import(const char* name)
@@ -2572,7 +2573,6 @@ Function* Builder::makeFunctionEntry(Decoration precision, Id returnType, const 
     for (unsigned p = 0; p < (unsigned)decorations.size(); ++p) {
         for (int d = 0; d < (int)decorations[p].size(); ++d) {
             addDecoration(firstParamId + p, decorations[p][d]);
-            function->addParamPrecision(p, decorations[p][d]);
         }
     }
 
@@ -2591,7 +2591,8 @@ Function* Builder::makeFunctionEntry(Decoration precision, Id returnType, const 
     if (name)
         addName(function->getId(), name);
 
-    functions.push_back(std::move(functionOwner));
+    xe_spv_instruction_append(&functions, function, Function::nextSlot);
+    functionOwner.release();
     // Publish borrowed state only after every throwing ownership step succeeds.
     *entry = entryBlock;
     setBuildPoint(entryBlock);
@@ -4633,8 +4634,16 @@ template <class Output> void Builder::dumpInternal(Output& out, xe_spv_plan* pla
     dumpInstructions(out, constantsTypesGlobals);
 
     // The functions
-    for (const auto& function : functions)
-        function->dump(out, plan, record);
+    Function* function = static_cast<Function*>(functions.head);
+    if (function) {
+        Function* last = static_cast<Function*>(functions.tail);
+        for (;;) {
+            function->dump(out, plan, record);
+            // The terminal header may be cold after emitting a large graph.
+            if (function == last) break;
+            function = function->getNextFunction();
+        }
+    }
 }
 
 //

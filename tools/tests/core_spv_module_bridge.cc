@@ -64,19 +64,21 @@ int main(int argc, char **argv) {
       spv::Block* output = previous;
       auto type = candidate.makeVoidType();
       bool failed = false;
+      const size_t function_calls = allocation_calls;
       fail_new_after = fail;
       try {
         candidate.makeFunctionEntry(spv::NoPrecision, type, "candidate",
             spv::LinkageType::Max, {}, {}, &output);
       } catch (const std::bad_alloc&) { failed = true; ++rejected; }
       fail_new_after = -1;
+      if (allocation_calls != function_calls) return 37;
       if (failed) {
         if (output != previous || candidate.getBuildPoint() != previous) return 35;
       } else if (output == previous || candidate.getBuildPoint() != output) return 36;
     }
-    // Only the function-owner vector still uses C++ new here; object pages are faulted separately.
-    if (rejected < 1) return 37;
-    std::printf("PASS: %u function construction failures preserve unpublished entry/build point\n", rejected);
+    // Real function/block page failures are injected by the typed arena suite.
+    if (rejected) return 37;
+    std::printf("PASS: function publication needs no C++ ownership allocation\n");
   }
 #endif
   const unsigned counts[] = {1, 4, 8, 33, 129, 129, 1, 1};

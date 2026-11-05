@@ -349,8 +349,7 @@ void Builder::postProcessCFG()
     // Collect IDs defined in unreachable blocks. For each function, label the
     // reachable blocks first. Then for each unreachable block, collect the
     // result IDs of the instructions in it.
-    for (const auto& functionOwner : functions) {
-        Function* f = functionOwner.get();
+    for (Function* f = static_cast<Function*>(functions.head); f; f = f->getNextFunction()) {
         Block* entry = f->getEntryBlock();
         inReadableOrder(entry,
             [&reachableBlocks, &unreachableMerges, &headerForUnreachableContinue]
@@ -419,8 +418,7 @@ void Builder::postProcessFeatures() {
     }
 
     // process all block-contained instructions
-    for (const auto& functionOwner : functions) {
-        Function* f = functionOwner.get();
+    for (Function* f = static_cast<Function*>(functions.head); f; f = f->getNextFunction()) {
         for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
             for (Instruction* i = b->getFirstInstruction(); i; i = b->getNextInstruction(i))
                 postProcess(*i);
@@ -493,8 +491,7 @@ void Builder::postProcessSamplers()
     // Borrow instruction and owner separately: only labels carry a block pointer.
     struct SampledImage { Instruction* instruction; Block* block; };
     std::map<Id, SampledImage> sampledImageInstrs;
-    for (const auto& functionOwner : functions) {
-        Function* f = functionOwner.get();
+    for (Function* f = static_cast<Function*>(functions.head); f; f = f->getNextFunction()) {
         for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
             for (Instruction* i = b->getFirstBodyInstruction(); i; i = i->getNextInstruction()) {
                 if (i->getOpCode() == spv::Op::OpSampledImage)
@@ -502,8 +499,7 @@ void Builder::postProcessSamplers()
             }
         }
     }
-    for (const auto& functionOwner : functions) {
-        Function* f = functionOwner.get();
+    for (Function* f = static_cast<Function*>(functions.head); f; f = f->getNextFunction()) {
         for (Block* b = f->getEntryBlock(); b; b = b->getNextBlock()) {
             Instruction* previous = nullptr;
             for (Instruction* i = b->getFirstBodyInstruction(); i; i = i->getNextInstruction()) {

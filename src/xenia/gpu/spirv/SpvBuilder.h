@@ -1055,7 +1055,7 @@ public:
     xe_spv_instruction_chain names = {};
     std::set<std::unique_ptr<Instruction>, DecorationInstructionLessThan> decorations;
     xe_spv_instruction_chain constantsTypesGlobals = {};
-    std::vector<std::unique_ptr<Function> > functions;
+    xe_spv_instruction_chain functions = {};
 
     // not output, internally used for quick & dirty canonical (unique) creation
 

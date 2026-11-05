@@ -1,0 +1,94 @@
+C89 function ownership and removal of dead precision metadata, 2026-11-05
+Parent: complete 34a3b48d5 archive. Windows x64, GCC 16.2 -O2.
+
+Builder function ownership uses the existing C89 head/tail primitive. A typed
+Function link occupies the inline OpFunction header's previously unused void*
+slot, with no new per-record field or pointer-to-pointer type punning. Generic
+instruction-list access explicitly excludes OpFunction headers. Typed cleanup
+borrows next before deleting the current function; its ID unpublication, child
+blocks and operand owners still retire before module arena cleanup. The builder
+cleans functions before its remaining lookup maps, whose destructors do not
+dereference borrowed function records. Constructor/publication keeps unique_ptr
+ownership until the nonthrowing append; entry/build-point state publishes last.
+
+Four post-processing walks and final emission use the same creation-order chain.
+Emission compares the borrowed terminal function pointer after its block graph,
+avoiding a final reload of that header's null link. There is no ownership-array growth or
+pointer-array copy. Other maps/vectors and checked arena growth remain.
+
+The per-function reducedPrecisionParams set and its unread setter/query are
+removed. Repository callers never read it; makeFunctionEntry's actual global
+parameter decorations remain. This also removes the empty tree-node allocation
+observed with MSVC. Tests deny C++ allocation during warmed undecorated function publication
+and require success without allocation; actual C page failures still prove
+unpublished state and cleanup. Duplicate RelaxedPrecision decorations are parsed
+from encoded output at 0/1/4/9/70 parameter counts, verifying their continued
+presence and deduplication without a second per-function registry.
+
+Measured GCC x64 layouts: Instruction 64 and Block 136 unchanged; Function 208->152,
+Builder 2008->2000, Module 88 unchanged. Allocated function pool stride 224->176
+because slots remain 16-byte aligned. Native MSVC checks also pass; these GCC
+layout deltas are not assertions about every standard-library implementation.
+
+Tests include 257 stable function links across multiple pool pages and ordered
+emission, plus normal/exception destruction. Existing C89 operand/arena faults,
+orphan cleanup, typed/payload negative use-after-poison, sampled-image rewrites,
+eight source/view modules and 5248 helper modules remain covered. All 18432 final
+MSVC geometry variants match pre-change GCC bytes. Actual Tekken cache 1410 and
+Tomb Raider cache 210 translations remain byte-identical, including 96 Tomb Raider
+control-flow cases. The 256-race texture-watch regression also passes. No game,
+frontend or GPU is launched; the installed confirmed-working core is preserved.
+
+Paired construction and serialization results follow below; these are not
+gameplay FPS/frame-pacing, process RSS or hardware cache/spill-counter results.
+
+Seven alternating parent/current pairs, after all compiler jobs finished.
+Construction fixture uses 73-byte names, 1000 constructions/sample and an untimed
+warm module/output. Both revisions compile their own headers, IR and C storage.
+Allocation totals include C++new and C operand/arena/index/plan/output hooks;
+exclude allocator headers and driver work. All three serialized goldens match,
+and tracked live storage returns to its initial value after workspace close.
+
+revision functions calls requested_bytes retained_bytes peak_bytes median_ms range_ms
+parent 1 13000 1976000 43592 45568 .749 .743..780
+current 1 12000 1968000 42056 44024 .729 .723..740
+parent 71 20000 4008000 96459 101755 5.320 5.254..5.375
+current 71 12000 1968000 91851 96123 4.811 4.754..4.856
+parent 257 22000 10152000 271675 286955 16.632 16.496..16.680
+current 257 12000 1968000 257851 269035 15.598 15.522..15.661
+
+Largest fixture: 45.45% fewer requests, 80.61% fewer requested bytes, 6.22% less
+construction time. Retained payload drops 13824 bytes and tracked peak 17920 bytes.
+The 71-function fixture is 9.57% faster in this run. GCC's empty set already had no
+separate node allocation; its gains here are primarily the removed owner array
+and smaller function pool records. MSVC's sentinel removal is verified by its
+allocation-denial test, not a claim of identical cross-platform percentages.
+
+Separate final serializer measurements: 10000 direct-owned outputs per sample,
+seven alternating pairs, byte-identical files. This excludes IR construction;
+it does not compare the old vector/copy adapter against the new direct path.
+
+case bytes parent_ms range_ms current_ms range_ms
+one-function 328 1.536 1.509..1.552 1.535 1.493..1.572
+array-function 5432 13.108 12.851..13.314 13.350 13.311..13.421
+513-block-function 13624 100.756 100.635..103.507 102.589 101.665..104.496
+71-functions 3968 23.352 23.202..23.400 23.137 22.921..23.290
+
+Output allocation counts/bytes are unchanged. Serialization is comparable for
+the tiny/71-function cases, while the other medians are about 1.8% slower. Linked
+ownership and denser metadata do not guarantee a faster emitter. This tradeoff
+is retained explicitly alongside construction and storage improvements. No
+unmeasured total shader-compilation or gameplay speedup is claimed.
+
+Reproduce construction with CAPTURE_OPERANDS=1,
+EXTRA_CXXFLAGS='-DXE_SPV_LONG_NAME_BENCH -DXE_SPV_BLOCK_CHAIN_BENCH',
+TEST_SOURCE="$PWD/tools/tests/core_spv_function_bench.cc", and BASELINE_ROOT set
+to the complete parent archive in tools/tests/run_spv_binary_bench.sh. Unset
+TEST_SOURCE for the serializer fixture, then alternate variants 0/4/5/6 of the
+already-built executables. Use matching source revisions, not mixed IR headers.
+
+Validation: full Make-j5, native MSVC C89/typed checks, ASan/UBSan ownership and
+negative retired-record/payload checks, byte matrices and the cache comparisons
+above. The final terminal-function emission change also passes the current
+typed ASan bridge, native suite and actual cached shader byte checks. ARM/GPU
+runtime behavior and hardware memory/cache measurements are not established.

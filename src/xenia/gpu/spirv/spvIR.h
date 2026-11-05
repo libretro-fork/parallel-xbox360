@@ -67,7 +67,6 @@
 #include <iostream>
 #include <memory>
 #include <vector>
-#include <set>
 
 namespace spv {
 
@@ -224,8 +223,12 @@ public:
     // intrusive ownership link, preserving record size and arena tag offset.
     void setBlock(Block* b) { assert(opCode == Op::OpLabel); ownerOrNext = b; }
     Block* getBlock() const { return opCode == Op::OpLabel ? static_cast<Block*>(ownerOrNext) : nullptr; }
-    Instruction* getNextInstruction() const { assert(opCode != Op::OpLabel); return static_cast<Instruction*>(ownerOrNext); }
-    static void** nextSlot(void* record) noexcept { return &static_cast<Instruction*>(record)->ownerOrNext; }
+    Instruction* getNextInstruction() const { assert(opCode != Op::OpLabel && opCode != Op::OpFunction); return static_cast<Instruction*>(ownerOrNext); }
+    static void** nextSlot(void* record) noexcept {
+        auto* instruction = static_cast<Instruction*>(record);
+        assert(instruction->opCode != Op::OpLabel && instruction->opCode != Op::OpFunction);
+        return &instruction->ownerOrNext;
+    }
     static void destroyLinked(void* record) noexcept { delete static_cast<Instruction*>(record); }
     Op getOpCode() const { return opCode; }
     int getNumOperands() const
@@ -301,6 +304,7 @@ protected:
     // Relative allocation-header offset occupies former alignment padding.
     uint32_t arenaOffset;
     friend class Module;
+    friend class Function;
     xe_spv_operands operands;
     void* ownerOrNext;
 };
@@ -495,6 +499,15 @@ public:
     static void* operator new[](size_t) = delete;
     static void operator delete(void* record) noexcept { xe_spv_arena_object_retire(record); }
     Id getId() const { return functionInstruction.getResultId(); }
+    // OpFunction's inline header never belongs to an instruction body/list.
+    // Reuse its link slot with the actual Function type, without a new field.
+    Function* getNextFunction() const {
+        return static_cast<Function*>(functionInstruction.ownerOrNext);
+    }
+    static void** nextSlot(void* record) noexcept {
+        return &static_cast<Function*>(record)->functionInstruction.ownerOrNext;
+    }
+    static void destroyLinked(void* record) noexcept { delete static_cast<Function*>(record); }
     Id getParamId(int p) const { return xe_spv_id_range_get(&parameters, (size_t)p); }
     Id getParamType(int p) const;
 
@@ -532,17 +545,6 @@ public:
 
     void setImplicitThis() { implicitThis = true; }
     bool hasImplicitThis() const { return implicitThis; }
-
-    void addParamPrecision(unsigned param, Decoration precision)
-    {
-        if (precision == Decoration::RelaxedPrecision)
-            reducedPrecisionParams.insert(param);
-    }
-    Decoration getParamPrecision(unsigned param) const
-    {
-        return reducedPrecisionParams.find(param) != reducedPrecisionParams.end() ?
-            Decoration::RelaxedPrecision : NoPrecision;
-    }
 
     template <class Output> void dump(Output& out, xe_spv_plan* plan = nullptr, bool record = false) const
     {
@@ -599,7 +601,6 @@ protected:
     xe_spv_block_chain blocks = {};
     bool implicitThis;  // true if this is a member function expecting to be passed a 'this' as the first argument
     bool reducedPrecisionReturn;
-    std::set<int> reducedPrecisionParams;  // list of parameter indexes that need a relaxed precision arg
     LinkageType linkType;
     std::string exportName;
 };

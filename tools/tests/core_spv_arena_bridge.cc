@@ -8,6 +8,12 @@
 static_assert(sizeof(spv::Instruction) == 64);
 static_assert(std::is_standard_layout_v<spv::Instruction>);
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "line %d: %s\n", __LINE__, #x); return 1; } } while (0)
+class FunctionOwnerProbe : public spv::Builder {
+ public:
+  using spv::Builder::Builder;
+  spv::Function* first() const { return static_cast<spv::Function*>(functions.head); }
+  spv::Function* last() const { return static_cast<spv::Function*>(functions.tail); }
+};
 // Match the production translator's declaration and reverse destruction order.
 struct Worker {
   spv::InstructionArena arena;
@@ -75,15 +81,38 @@ int main(int argc, char** argv) {
     spv::Builder builder(spv::Spv_1_3, 0, nullptr, &arena);
     spv::Id type = builder.makeUintType(32);
     std::vector<spv::Id> params(count, type);
+    std::vector<std::vector<spv::Decoration>> parameterDecorations(count);
+    for (unsigned p = 0; p < count; ++p) {
+      if (p % 3 == 1) {
+        parameterDecorations[p].push_back(spv::Decoration::RelaxedPrecision);
+        parameterDecorations[p].push_back(spv::Decoration::RelaxedPrecision);
+      }
+    }
     spv::Block* entry;
     auto function = builder.makeFunctionEntry(spv::NoPrecision, type, "parameters",
-        spv::LinkageType::Max, params, {}, &entry);
+        spv::LinkageType::Max, params, parameterDecorations, &entry);
     for (unsigned i = 0; i < count; ++i) {
       CHECK(function->getParamType(i) == type);
       CHECK(function->getParamId(i) == function->getParamId(0) + i);
     }
     builder.makeReturn(true, count ? function->getParamId(0) : builder.makeUintConstant(0));
     builder.leaveFunction();
+    xe_spv_binary encoded = {};
+    CHECK(builder.dumpSized(encoded));
+    unsigned precisionSeen[70] = {};
+    for (size_t word = 5; word < encoded.count;) {
+      unsigned length = encoded.words[word] >> 16;
+      CHECK(length && length <= encoded.count - word);
+      if ((encoded.words[word] & 65535) == unsigned(spv::Op::OpDecorate) && length == 3 &&
+          encoded.words[word + 2] == unsigned(spv::Decoration::RelaxedPrecision)) {
+        unsigned p = encoded.words[word + 1] - function->getParamId(0);
+        CHECK(p < count && p % 3 == 1);
+        ++precisionSeen[p];
+      }
+      word += length;
+    }
+    for (unsigned p = 0; p < count; ++p) CHECK(precisionSeen[p] == (p % 3 == 1 ? 1u : 0u));
+    xe_spv_binary_close(&encoded);
   }
   CHECK(!arena.in_use && xe_spv_test_live() == 0);
   {
@@ -390,6 +419,36 @@ int main(int argc, char** argv) {
     auto* entry = first.addEntryPoint(function, std::move(pending));
     CHECK(entry->getIdOperand(1) == function->getId());
   }
+  for (unsigned unwind = 0; unwind < 2; ++unwind) {
+    const size_t before = xe_spv_test_pages();
+    try {
+      spv::InstructionArena workspace(2048, sizeof(spv::Block), sizeof(spv::Function));
+      FunctionOwnerProbe builder(spv::Spv_1_3, 0, nullptr, workspace.get());
+      spv::Function* expected[257];
+      spv::Block* entry;
+      spv::Id type = builder.makeVoidType();
+      unsigned i;
+      CHECK(!builder.first() && !builder.last());
+      for (i = 0; i < 257; ++i) {
+        expected[i] = builder.makeFunctionEntry(spv::NoPrecision, type, "chain",
+            spv::LinkageType::Max, {}, {}, &entry);
+        CHECK(builder.first() == expected[0] && builder.last() == expected[i]);
+        CHECK(!expected[i]->getNextFunction());
+        if (i) CHECK(expected[i - 1]->getNextFunction() == expected[i]);
+        CHECK(expected[i]->getEntryBlock() == entry);
+        builder.makeReturn(true); builder.leaveFunction();
+        if (unwind && i == 128) throw std::bad_alloc();
+      }
+      spv::Function* current = builder.first();
+      for (i = 0; i < 257; ++i) {
+        CHECK(current == expected[i]);
+        current = current->getNextFunction();
+      }
+      CHECK(!current);
+    } catch (const std::bad_alloc&) { CHECK(unwind); }
+    CHECK(xe_spv_test_pages() == before && !xe_spv_test_live());
+  }
+  std::puts("PASS: 257 function-owner links, stable creation order, normal/exception cleanup without an owner vector");
   std::puts("PASS: deferred entry-point fixup, malformed prefixes and foreign function/instruction ownership rejection");
   std::puts("PASS: borrowed/null function names, owned export spelling and failed/retired inline-ID unpublication");
   std::puts("PASS: pooled function/block growth faults, unpublished state, failed constructor and detached-block cleanup");
