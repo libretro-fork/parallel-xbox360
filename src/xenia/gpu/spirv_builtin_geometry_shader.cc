@@ -9,11 +9,11 @@
 
 #include "xenia/gpu/spirv_builtin_geometry_shader.h"
 
-#include <array>
 #include <cstddef>
-#include <vector>
+#include <new>
+#include "libretro/core_spv_words.h"
+#include "libretro/core_spv_geometry.h"
 
-#include "third_party/fmt/include/fmt/format.h"
 #include "xenia/gpu/spirv/GLSL.std.450.h"
 #include "xenia/base/assert.h"
 #include "xenia/gpu/spirv_builder.h"
@@ -24,14 +24,26 @@
 namespace xe {
 namespace gpu {
 
-std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
+static void AppendGeometryWord(xe_spv_word_list* words, uint32_t word) {
+  if (!xe_spv_word_list_push(words, word)) throw std::bad_alloc();
+}
+static_assert(XE_SPV_GEOMETRY_INTERPOLATORS == xenos::kMaxInterpolators);
+static_assert(uint32_t(BuiltinGeometryShaderType::kPointList) == 1 &&
+              uint32_t(BuiltinGeometryShaderType::kLineList) == 4);
+bool BuildGuestPrimitiveGeometryShaderSpirv(
     BuiltinGeometryShaderType type, uint32_t interpolator_count,
     uint32_t user_clip_plane_count, bool user_clip_plane_cull,
     bool has_vertex_kill_and, bool has_point_size, bool has_point_coordinates,
     unsigned int spirv_version, bool denorm_flush_to_zero_float32,
-    bool signed_zero_inf_nan_preserve_float32, bool rounding_mode_rte_float32) {
-  std::vector<spv::Id> id_vector_temp;
-  std::vector<unsigned int> uint_vector_temp;
+    bool signed_zero_inf_nan_preserve_float32, bool rounding_mode_rte_float32,
+    xe_spv_binary& shader_code, xe_spv_arena* instruction_arena) {
+  xe_spv_binary_reset(&shader_code);
+  size_t interface_count;
+  if (!xe_spv_geometry_plan(uint32_t(type), interpolator_count,
+          user_clip_plane_count, has_point_size, has_point_coordinates,
+          spirv_version >= spv::Spv_1_4, &interface_count)) return false;
+  xe_spv_word_list id_scratch;
+  id_scratch.count = 0;
 
   spv::ExecutionMode input_primitive_execution_mode = spv::ExecutionMode(0);
   uint32_t input_primitive_vertex_count = 0;
@@ -82,7 +94,7 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
 
   SpirvBuilder builder(spirv_version,
                        (SpirvShaderTranslator::kSpirvMagicToolId << 16) | 1,
-                       nullptr);
+                       nullptr, instruction_arena);
   spv::Id ext_inst_glsl_std_450 = builder.import("GLSL.std.450");
   builder.addCapability(spv::CapabilityGeometry);
   if (clip_distance_count) {
@@ -113,7 +125,13 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
     builder.addCapability(spv::CapabilityRoundingModeRTE);
   }
 
-  std::vector<spv::Id> main_interface;
+  // Own the final interface words from the start. The function ID is patched
+  // before publication, preserving original ID assignment and declaration order.
+  auto pending_entry = builder.makeInstruction(spv::OpEntryPoint);
+  pending_entry->reserveOperands(4 + interface_count); // model, function, "main"
+  pending_entry->addImmediateOperand(spv::ExecutionModelGeometry);
+  pending_entry->addIdOperand(1); // private fixup slot, never emitted unchanged
+  pending_entry->addStringOperand("main");
 
   spv::Id type_void = builder.makeVoidType();
   spv::Id type_bool = builder.makeBoolType();
@@ -146,12 +164,12 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
   spv::Id type_system_constants = spv::NoType;
   if (type == BuiltinGeometryShaderType::kPointList ||
       type == BuiltinGeometryShaderType::kLineList) {
-    id_vector_temp.clear();
-    id_vector_temp.resize(kPointConstantCount);
-    id_vector_temp[kPointConstantConstantDiameter] = type_float2;
-    id_vector_temp[kPointConstantScreenDiameterToNdcRadius] = type_float2;
+    id_scratch.count = 0;
+    id_scratch.count = kPointConstantCount;
+    id_scratch.words[kPointConstantConstantDiameter] = type_float2;
+    id_scratch.words[kPointConstantScreenDiameterToNdcRadius] = type_float2;
     type_system_constants =
-        builder.makeStructType(id_vector_temp, "XeSystemConstants");
+        builder.makeStructTypeView(xe_spv_word_list_view(&id_scratch), "XeSystemConstants");
     builder.addMemberName(type_system_constants, kPointConstantConstantDiameter,
                           "point_constant_diameter");
     builder.addMemberDecoration(
@@ -182,11 +200,11 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
     // SPIR-V 1.4+ lists every global the entry point references in its
     // interface, not just inputs and outputs.
     if (spirv_version >= spv::Spv_1_4) {
-      main_interface.push_back(uniform_system_constants);
+      pending_entry->addIdOperand(uniform_system_constants);
     }
   }
 
-  // Inputs and outputs - matching glslang order, in gl_PerVertex gl_in[],
+  // Inputs and outputs in the established wire order: in gl_PerVertex gl_in[],
   // user-defined outputs, user-defined inputs, out gl_PerVertex.
   // TODO(Triang3l): Point parameters from the system uniform buffer.
 
@@ -195,29 +213,29 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
 
   // in gl_PerVertex gl_in[].
   // gl_Position.
-  id_vector_temp.clear();
-  uint32_t member_in_gl_per_vertex_position = uint32_t(id_vector_temp.size());
-  id_vector_temp.push_back(type_float4);
+  id_scratch.count = 0;
+  uint32_t member_in_gl_per_vertex_position = uint32_t(id_scratch.count);
+  AppendGeometryWord(&id_scratch, type_float4);
   spv::Id const_member_in_gl_per_vertex_position =
       builder.makeIntConstant(int32_t(member_in_gl_per_vertex_position));
   // gl_ClipDistance.
   uint32_t member_in_gl_per_vertex_clip_distance = UINT32_MAX;
   spv::Id const_member_in_gl_per_vertex_clip_distance = spv::NoResult;
   if (clip_distance_count) {
-    member_in_gl_per_vertex_clip_distance = uint32_t(id_vector_temp.size());
-    id_vector_temp.push_back(type_clip_distances);
+    member_in_gl_per_vertex_clip_distance = uint32_t(id_scratch.count);
+    AppendGeometryWord(&id_scratch, type_clip_distances);
     const_member_in_gl_per_vertex_clip_distance =
         builder.makeIntConstant(int32_t(member_in_gl_per_vertex_clip_distance));
   }
   // gl_CullDistance.
   uint32_t member_in_gl_per_vertex_cull_distance = UINT32_MAX;
   if (cull_distance_count) {
-    member_in_gl_per_vertex_cull_distance = uint32_t(id_vector_temp.size());
-    id_vector_temp.push_back(type_cull_distances);
+    member_in_gl_per_vertex_cull_distance = uint32_t(id_scratch.count);
+    AppendGeometryWord(&id_scratch, type_cull_distances);
   }
   // Structure and array.
   spv::Id type_struct_in_gl_per_vertex =
-      builder.makeStructType(id_vector_temp, "gl_PerVertex");
+      builder.makeStructTypeView(xe_spv_word_list_view(&id_scratch), "gl_PerVertex");
   builder.addMemberName(type_struct_in_gl_per_vertex,
                         member_in_gl_per_vertex_position, "gl_Position");
   builder.addMemberDecoration(
@@ -245,21 +263,23 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
   spv::Id in_gl_per_vertex =
       builder.createVariable(spv::NoPrecision, spv::StorageClassInput,
                              type_array_in_gl_per_vertex, "gl_in");
-  main_interface.push_back(in_gl_per_vertex);
+  pending_entry->addIdOperand(in_gl_per_vertex);
 
   uint32_t output_location = 0;
 
   // Interpolators outputs.
-  std::array<spv::Id, xenos::kMaxInterpolators> out_interpolators;
+  char interpolator_name[32];
+  spv::Id out_interpolators[xenos::kMaxInterpolators];
   for (uint32_t i = 0; i < interpolator_count; ++i) {
+    if (!xe_spv_geometry_name(interpolator_name, sizeof(interpolator_name), 1, i)) return false;
     spv::Id out_interpolator = builder.createVariable(
         spv::NoPrecision, spv::StorageClassOutput, type_float4,
-        fmt::format("xe_out_interpolator_{}", i).c_str());
+        interpolator_name);
     out_interpolators[i] = out_interpolator;
     builder.addDecoration(out_interpolator, spv::DecorationLocation,
                           int(output_location));
     builder.addDecoration(out_interpolator, spv::DecorationInvariant);
-    main_interface.push_back(out_interpolator);
+    pending_entry->addIdOperand(out_interpolator);
     ++output_location;
   }
 
@@ -272,24 +292,25 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
     builder.addDecoration(out_point_coordinates, spv::DecorationLocation,
                           int(output_location));
     builder.addDecoration(out_point_coordinates, spv::DecorationInvariant);
-    main_interface.push_back(out_point_coordinates);
+    pending_entry->addIdOperand(out_point_coordinates);
     ++output_location;
   }
 
   uint32_t input_location = 0;
 
   // Interpolator inputs.
-  std::array<spv::Id, xenos::kMaxInterpolators> in_interpolators;
+  spv::Id in_interpolators[xenos::kMaxInterpolators];
   for (uint32_t i = 0; i < interpolator_count; ++i) {
+    if (!xe_spv_geometry_name(interpolator_name, sizeof(interpolator_name), 0, i)) return false;
     spv::Id in_interpolator = builder.createVariable(
         spv::NoPrecision, spv::StorageClassInput,
         builder.makeArrayType(type_float4, const_input_primitive_vertex_count,
                               0),
-        fmt::format("xe_in_interpolator_{}", i).c_str());
+        interpolator_name);
     in_interpolators[i] = in_interpolator;
     builder.addDecoration(in_interpolator, spv::DecorationLocation,
                           int(input_location));
-    main_interface.push_back(in_interpolator);
+    pending_entry->addIdOperand(in_interpolator);
     ++input_location;
   }
 
@@ -303,29 +324,29 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
         "xe_in_point_size");
     builder.addDecoration(in_point_size, spv::DecorationLocation,
                           int(input_location));
-    main_interface.push_back(in_point_size);
+    pending_entry->addIdOperand(in_point_size);
     ++input_location;
   }
 
   // out gl_PerVertex.
   // gl_Position.
-  id_vector_temp.clear();
-  uint32_t member_out_gl_per_vertex_position = uint32_t(id_vector_temp.size());
-  id_vector_temp.push_back(type_float4);
+  id_scratch.count = 0;
+  uint32_t member_out_gl_per_vertex_position = uint32_t(id_scratch.count);
+  AppendGeometryWord(&id_scratch, type_float4);
   spv::Id const_member_out_gl_per_vertex_position =
       builder.makeIntConstant(int32_t(member_out_gl_per_vertex_position));
   // gl_ClipDistance.
   uint32_t member_out_gl_per_vertex_clip_distance = UINT32_MAX;
   spv::Id const_member_out_gl_per_vertex_clip_distance = spv::NoResult;
   if (clip_distance_count) {
-    member_out_gl_per_vertex_clip_distance = uint32_t(id_vector_temp.size());
-    id_vector_temp.push_back(type_clip_distances);
+    member_out_gl_per_vertex_clip_distance = uint32_t(id_scratch.count);
+    AppendGeometryWord(&id_scratch, type_clip_distances);
     const_member_out_gl_per_vertex_clip_distance = builder.makeIntConstant(
         int32_t(member_out_gl_per_vertex_clip_distance));
   }
   // Structure.
   spv::Id type_struct_out_gl_per_vertex =
-      builder.makeStructType(id_vector_temp, "gl_PerVertex");
+      builder.makeStructTypeView(xe_spv_word_list_view(&id_scratch), "gl_PerVertex");
   builder.addMemberName(type_struct_out_gl_per_vertex,
                         member_out_gl_per_vertex_position, "gl_Position");
   builder.addMemberDecoration(
@@ -344,20 +365,15 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
       builder.createVariable(spv::NoPrecision, spv::StorageClassOutput,
                              type_struct_out_gl_per_vertex, "");
   builder.addDecoration(out_gl_per_vertex, spv::DecorationInvariant);
-  main_interface.push_back(out_gl_per_vertex);
+  pending_entry->addIdOperand(out_gl_per_vertex);
 
   // Begin the main function.
-  std::vector<spv::Id> main_param_types;
-  std::vector<std::vector<spv::Decoration>> main_precisions;
   spv::Block* main_entry;
   spv::Function* main_function =
       builder.makeFunctionEntry(spv::NoPrecision, type_void, "main",
-                                main_param_types, main_precisions, &main_entry);
-  spv::Instruction* entry_point =
-      builder.addEntryPoint(spv::ExecutionModelGeometry, main_function, "main");
-  for (spv::Id interface_id : main_interface) {
-    entry_point->addIdOperand(interface_id);
-  }
+                                {}, {}, &main_entry);
+  if (size_t(pending_entry->getNumOperands()) != 4 + interface_count) return false;
+  builder.addEntryPoint(main_function, std::move(pending_entry));
   builder.addExecutionMode(main_function, input_primitive_execution_mode);
   builder.addExecutionMode(main_function, spv::ExecutionModeInvocations, 1);
   builder.addExecutionMode(main_function, output_primitive_execution_mode);
@@ -381,16 +397,16 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
   // Discard the whole primitive if any vertex has a NaN position (may also be
   // set to NaN for emulation of vertex killing with the OR operator).
   for (uint32_t i = 0; i < input_primitive_vertex_count; ++i) {
-    id_vector_temp.clear();
-    id_vector_temp.push_back(builder.makeIntConstant(int32_t(i)));
-    id_vector_temp.push_back(const_member_in_gl_per_vertex_position);
+    id_scratch.count = 0;
+    AppendGeometryWord(&id_scratch, builder.makeIntConstant(int32_t(i)));
+    AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_position);
     spv::Id position_is_nan = builder.createUnaryOp(
         spv::OpAny, type_bool,
         builder.createUnaryOp(
             spv::OpIsNan, type_bool4,
             builder.createLoad(
-                builder.createAccessChain(spv::StorageClassInput,
-                                          in_gl_per_vertex, id_vector_temp),
+                builder.createAccessChainView(spv::StorageClassInput,
+                                          in_gl_per_vertex, xe_spv_word_list_view(&id_scratch)),
                 spv::NoPrecision)));
     spv::Block& discard_predecessor = *builder.getBuildPoint();
     spv::Block& discard_then_block = builder.makeNewBlock();
@@ -427,15 +443,15 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
     spv::Id cull_condition = spv::NoResult;
     for (uint32_t i = 0; i < cull_distance_count; ++i) {
       for (uint32_t j = 0; j < input_primitive_vertex_count; ++j) {
-        id_vector_temp.clear();
-        id_vector_temp.push_back(builder.makeIntConstant(int32_t(j)));
-        id_vector_temp.push_back(const_member_in_gl_per_vertex_cull_distance);
-        id_vector_temp.push_back(builder.makeIntConstant(int32_t(i)));
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, builder.makeIntConstant(int32_t(j)));
+        AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_cull_distance);
+        AppendGeometryWord(&id_scratch, builder.makeIntConstant(int32_t(i)));
         spv::Id cull_distance_is_negative = builder.createBinOp(
             spv::OpFOrdLessThan, type_bool,
             builder.createLoad(
-                builder.createAccessChain(spv::StorageClassInput,
-                                          in_gl_per_vertex, id_vector_temp),
+                builder.createAccessChainView(spv::StorageClassInput,
+                                          in_gl_per_vertex, xe_spv_word_list_view(&id_scratch)),
                 spv::NoPrecision),
             const_float_0);
         if (cull_condition != spv::NoResult) {
@@ -479,18 +495,18 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
       spv::Id const_float_0 = builder.makeFloatConstant(0.0f);
 
       // Load the point diameter in guest pixels.
-      id_vector_temp.clear();
-      id_vector_temp.push_back(
+      id_scratch.count = 0;
+      AppendGeometryWord(&id_scratch,
           builder.makeIntConstant(int32_t(kPointConstantConstantDiameter)));
-      id_vector_temp.push_back(const_int_0);
+      AppendGeometryWord(&id_scratch, const_int_0);
       spv::Id point_guest_diameter_x = builder.createLoad(
-          builder.createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants, id_vector_temp),
+          builder.createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants, xe_spv_word_list_view(&id_scratch)),
           spv::NoPrecision);
-      id_vector_temp.back() = const_int_1;
+      id_scratch.words[id_scratch.count - 1] = const_int_1;
       spv::Id point_guest_diameter_y = builder.createLoad(
-          builder.createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants, id_vector_temp),
+          builder.createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants, xe_spv_word_list_view(&id_scratch)),
           spv::NoPrecision);
       if (has_point_size) {
         // The vertex shader's header writes -1.0 to point_size by default, so
@@ -498,12 +514,12 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
         // translated vertex shader, and needs to be used instead of the
         // constant size. The per-vertex diameter is already clamped in the
         // vertex shader (combined with making it non-negative).
-        id_vector_temp.clear();
+        id_scratch.count = 0;
         // 0 is the input primitive vertex index.
-        id_vector_temp.push_back(const_int_0);
+        AppendGeometryWord(&id_scratch, const_int_0);
         spv::Id point_vertex_diameter = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput, in_point_size,
-                                      id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput, in_point_size,
+                                      xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
         spv::Id point_vertex_diameter_written =
             builder.createBinOp(spv::OpFOrdGreaterThanEqual, type_bool,
@@ -551,30 +567,30 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
       // Transform the diameter in the guest screen coordinates to radius in the
       // normalized device coordinates, and then to the clip space by
       // multiplying by W.
-      id_vector_temp.clear();
-      id_vector_temp.push_back(builder.makeIntConstant(
+      id_scratch.count = 0;
+      AppendGeometryWord(&id_scratch, builder.makeIntConstant(
           int32_t(kPointConstantScreenDiameterToNdcRadius)));
-      id_vector_temp.push_back(const_int_0);
+      AppendGeometryWord(&id_scratch, const_int_0);
       spv::Id point_radius_x = builder.createNoContractionBinOp(
           spv::OpFMul, type_float, point_guest_diameter_x,
-          builder.createLoad(builder.createAccessChain(spv::StorageClassUniform,
+          builder.createLoad(builder.createAccessChainView(spv::StorageClassUniform,
                                                        uniform_system_constants,
-                                                       id_vector_temp),
+                                                       xe_spv_word_list_view(&id_scratch)),
                              spv::NoPrecision));
-      id_vector_temp.back() = const_int_1;
+      id_scratch.words[id_scratch.count - 1] = const_int_1;
       spv::Id point_radius_y = builder.createNoContractionBinOp(
           spv::OpFMul, type_float, point_guest_diameter_y,
-          builder.createLoad(builder.createAccessChain(spv::StorageClassUniform,
+          builder.createLoad(builder.createAccessChainView(spv::StorageClassUniform,
                                                        uniform_system_constants,
-                                                       id_vector_temp),
+                                                       xe_spv_word_list_view(&id_scratch)),
                              spv::NoPrecision));
-      id_vector_temp.clear();
+      id_scratch.count = 0;
       // 0 is the input primitive vertex index.
-      id_vector_temp.push_back(const_int_0);
-      id_vector_temp.push_back(const_member_in_gl_per_vertex_position);
+      AppendGeometryWord(&id_scratch, const_int_0);
+      AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_position);
       spv::Id point_position = builder.createLoad(
-          builder.createAccessChain(spv::StorageClassInput, in_gl_per_vertex,
-                                    id_vector_temp),
+          builder.createAccessChainView(spv::StorageClassInput, in_gl_per_vertex,
+                                    xe_spv_word_list_view(&id_scratch)),
           spv::NoPrecision);
       spv::Id point_w =
           builder.createCompositeExtract(point_position, type_float, 3);
@@ -585,14 +601,14 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
 
       // Load the inputs for the guest point.
       // Interpolators.
-      std::array<spv::Id, xenos::kMaxInterpolators> point_interpolators;
-      id_vector_temp.clear();
+      spv::Id point_interpolators[xenos::kMaxInterpolators];
+      id_scratch.count = 0;
       // 0 is the input primitive vertex index.
-      id_vector_temp.push_back(const_int_0);
+      AppendGeometryWord(&id_scratch, const_int_0);
       for (uint32_t i = 0; i < interpolator_count; ++i) {
         point_interpolators[i] = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput,
-                                      in_interpolators[i], id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput,
+                                      in_interpolators[i], xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
       }
       // Positions.
@@ -600,7 +616,7 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
           builder.createCompositeExtract(point_position, type_float, 0);
       spv::Id point_y =
           builder.createCompositeExtract(point_position, type_float, 1);
-      std::array<spv::Id, 2> point_edge_x, point_edge_y;
+      spv::Id point_edge_x[2], point_edge_y[2];
       for (uint32_t i = 0; i < 2; ++i) {
         spv::Op point_radius_add_op = i ? spv::OpFAdd : spv::OpFSub;
         point_edge_x[i] = builder.createNoContractionBinOp(
@@ -613,13 +629,13 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
       // Clip distances.
       spv::Id point_clip_distances = spv::NoResult;
       if (clip_distance_count) {
-        id_vector_temp.clear();
+        id_scratch.count = 0;
         // 0 is the input primitive vertex index.
-        id_vector_temp.push_back(const_int_0);
-        id_vector_temp.push_back(const_member_in_gl_per_vertex_clip_distance);
+        AppendGeometryWord(&id_scratch, const_int_0);
+        AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_clip_distance);
         point_clip_distances = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput, in_gl_per_vertex,
-                                      id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput, in_gl_per_vertex,
+                                      xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
       }
 
@@ -636,40 +652,40 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
         uint32_t point_vertex_y = i & 1;
         // Point coordinates.
         if (has_point_coordinates) {
-          id_vector_temp.clear();
-          id_vector_temp.push_back(
+          id_scratch.count = 0;
+          AppendGeometryWord(&id_scratch,
               builder.makeFloatConstant(float(point_vertex_x)));
-          id_vector_temp.push_back(
+          AppendGeometryWord(&id_scratch,
               builder.makeFloatConstant(float(point_vertex_y)));
           builder.createStore(
-              builder.makeCompositeConstant(type_float2, id_vector_temp),
+              builder.makeCompositeConstantView(type_float2, xe_spv_word_list_view(&id_scratch)),
               out_point_coordinates);
         }
         // Position.
-        id_vector_temp.clear();
-        id_vector_temp.push_back(point_edge_x[point_vertex_x]);
-        id_vector_temp.push_back(point_edge_y[point_vertex_y]);
-        id_vector_temp.push_back(point_z);
-        id_vector_temp.push_back(point_w);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, point_edge_x[point_vertex_x]);
+        AppendGeometryWord(&id_scratch, point_edge_y[point_vertex_y]);
+        AppendGeometryWord(&id_scratch, point_z);
+        AppendGeometryWord(&id_scratch, point_w);
         spv::Id point_vertex_position =
-            builder.createCompositeConstruct(type_float4, id_vector_temp);
-        id_vector_temp.clear();
-        id_vector_temp.push_back(const_member_out_gl_per_vertex_position);
+            builder.createCompositeConstructView(type_float4, xe_spv_word_list_view(&id_scratch));
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, const_member_out_gl_per_vertex_position);
         builder.createStore(
             point_vertex_position,
-            builder.createAccessChain(spv::StorageClassOutput,
-                                      out_gl_per_vertex, id_vector_temp));
+            builder.createAccessChainView(spv::StorageClassOutput,
+                                      out_gl_per_vertex, xe_spv_word_list_view(&id_scratch)));
         // Clip distances.
         // TODO(Triang3l): Handle ps_ucp_mode properly, clip expanded points if
         // needed.
         if (clip_distance_count) {
-          id_vector_temp.clear();
-          id_vector_temp.push_back(
+          id_scratch.count = 0;
+          AppendGeometryWord(&id_scratch,
               const_member_out_gl_per_vertex_clip_distance);
           builder.createStore(
               point_clip_distances,
-              builder.createAccessChain(spv::StorageClassOutput,
-                                        out_gl_per_vertex, id_vector_temp));
+              builder.createAccessChainView(spv::StorageClassOutput,
+                                        out_gl_per_vertex, xe_spv_word_list_view(&id_scratch)));
         }
         // Emit the vertex.
         builder.createNoResultOp(spv::OpEmitVertex);
@@ -709,30 +725,30 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
       // Get squares of edge lengths to choose the longest edge.
       // [0] - 12, [1] - 20, [2] - 01.
       spv::Id edge_lengths[3];
-      id_vector_temp.resize(3);
-      id_vector_temp[1] = const_member_in_gl_per_vertex_position;
+      id_scratch.count = 3;
+      id_scratch.words[1] = const_member_in_gl_per_vertex_position;
       for (uint32_t i = 0; i < 3; ++i) {
-        id_vector_temp[0] = builder.makeIntConstant(int32_t((1 + i) % 3));
-        id_vector_temp[2] = const_int_0;
+        id_scratch.words[0] = builder.makeIntConstant(int32_t((1 + i) % 3));
+        id_scratch.words[2] = const_int_0;
         spv::Id edge_0_x = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput, in_gl_per_vertex,
-                                      id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput, in_gl_per_vertex,
+                                      xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
-        id_vector_temp[2] = const_int_1;
+        id_scratch.words[2] = const_int_1;
         spv::Id edge_0_y = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput, in_gl_per_vertex,
-                                      id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput, in_gl_per_vertex,
+                                      xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
-        id_vector_temp[0] = builder.makeIntConstant(int32_t((2 + i) % 3));
-        id_vector_temp[2] = const_int_0;
+        id_scratch.words[0] = builder.makeIntConstant(int32_t((2 + i) % 3));
+        id_scratch.words[2] = const_int_0;
         spv::Id edge_1_x = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput, in_gl_per_vertex,
-                                      id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput, in_gl_per_vertex,
+                                      xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
-        id_vector_temp[2] = const_int_1;
+        id_scratch.words[2] = const_int_1;
         spv::Id edge_1_y = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput, in_gl_per_vertex,
-                                      id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput, in_gl_per_vertex,
+                                      xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
         spv::Id edge_x =
             builder.createBinOp(spv::OpFSub, type_float, edge_1_x, edge_0_x);
@@ -783,24 +799,24 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
       spv::Id const_point_coordinates_zero = spv::NoResult;
       if (has_point_coordinates) {
         spv::Id const_float_0 = builder.makeFloatConstant(0.0f);
-        id_vector_temp.clear();
-        id_vector_temp.push_back(const_float_0);
-        id_vector_temp.push_back(const_float_0);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, const_float_0);
+        AppendGeometryWord(&id_scratch, const_float_0);
         const_point_coordinates_zero =
-            builder.makeCompositeConstant(type_float2, id_vector_temp);
+            builder.makeCompositeConstantView(type_float2, xe_spv_word_list_view(&id_scratch));
       }
 
       // Emit the triangle in the strip that consists of the original vertices.
       for (uint32_t i = 0; i < 3; ++i) {
         spv::Id vertex_index = vertex_indices[i];
         // Interpolators.
-        id_vector_temp.clear();
-        id_vector_temp.push_back(vertex_index);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, vertex_index);
         for (uint32_t j = 0; j < interpolator_count; ++j) {
           builder.createStore(
-              builder.createLoad(builder.createAccessChain(
+              builder.createLoad(builder.createAccessChainView(
                                      spv::StorageClassInput,
-                                     in_interpolators[j], id_vector_temp),
+                                     in_interpolators[j], xe_spv_word_list_view(&id_scratch)),
                                  spv::NoPrecision),
               out_interpolators[j]);
         }
@@ -810,35 +826,35 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
                               out_point_coordinates);
         }
         // Position.
-        id_vector_temp.clear();
-        id_vector_temp.push_back(vertex_index);
-        id_vector_temp.push_back(const_member_in_gl_per_vertex_position);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, vertex_index);
+        AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_position);
         spv::Id vertex_position = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput, in_gl_per_vertex,
-                                      id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput, in_gl_per_vertex,
+                                      xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
-        id_vector_temp.clear();
-        id_vector_temp.push_back(const_member_out_gl_per_vertex_position);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, const_member_out_gl_per_vertex_position);
         builder.createStore(
             vertex_position,
-            builder.createAccessChain(spv::StorageClassOutput,
-                                      out_gl_per_vertex, id_vector_temp));
+            builder.createAccessChainView(spv::StorageClassOutput,
+                                      out_gl_per_vertex, xe_spv_word_list_view(&id_scratch)));
         // Clip distances.
         if (clip_distance_count) {
-          id_vector_temp.clear();
-          id_vector_temp.push_back(vertex_index);
-          id_vector_temp.push_back(const_member_in_gl_per_vertex_clip_distance);
+          id_scratch.count = 0;
+          AppendGeometryWord(&id_scratch, vertex_index);
+          AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_clip_distance);
           spv::Id vertex_clip_distances = builder.createLoad(
-              builder.createAccessChain(spv::StorageClassInput,
-                                        in_gl_per_vertex, id_vector_temp),
+              builder.createAccessChainView(spv::StorageClassInput,
+                                        in_gl_per_vertex, xe_spv_word_list_view(&id_scratch)),
               spv::NoPrecision);
-          id_vector_temp.clear();
-          id_vector_temp.push_back(
+          id_scratch.count = 0;
+          AppendGeometryWord(&id_scratch,
               const_member_out_gl_per_vertex_clip_distance);
           builder.createStore(
               vertex_clip_distances,
-              builder.createAccessChain(spv::StorageClassOutput,
-                                        out_gl_per_vertex, id_vector_temp));
+              builder.createAccessChainView(spv::StorageClassOutput,
+                                        out_gl_per_vertex, xe_spv_word_list_view(&id_scratch)));
         }
         // Emit the vertex.
         builder.createNoResultOp(spv::OpEmitVertex);
@@ -848,26 +864,26 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
       // Interpolators.
       for (uint32_t i = 0; i < interpolator_count; ++i) {
         spv::Id in_interpolator = in_interpolators[i];
-        id_vector_temp.clear();
-        id_vector_temp.push_back(vertex_indices[0]);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, vertex_indices[0]);
         spv::Id vertex_interpolator_v0 = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput, in_interpolator,
-                                      id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput, in_interpolator,
+                                      xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
-        id_vector_temp[0] = vertex_indices[1];
+        id_scratch.words[0] = vertex_indices[1];
         spv::Id vertex_interpolator_v01 = builder.createNoContractionBinOp(
             spv::OpFSub, type_float4,
             builder.createLoad(
-                builder.createAccessChain(spv::StorageClassInput,
-                                          in_interpolator, id_vector_temp),
+                builder.createAccessChainView(spv::StorageClassInput,
+                                          in_interpolator, xe_spv_word_list_view(&id_scratch)),
                 spv::NoPrecision),
             vertex_interpolator_v0);
-        id_vector_temp[0] = vertex_indices[2];
+        id_scratch.words[0] = vertex_indices[2];
         spv::Id vertex_interpolator_v3 = builder.createNoContractionBinOp(
             spv::OpFAdd, type_float4, vertex_interpolator_v01,
             builder.createLoad(
-                builder.createAccessChain(spv::StorageClassInput,
-                                          in_interpolator, id_vector_temp),
+                builder.createAccessChainView(spv::StorageClassInput,
+                                          in_interpolator, xe_spv_word_list_view(&id_scratch)),
                 spv::NoPrecision));
         builder.createStore(vertex_interpolator_v3, out_interpolators[i]);
       }
@@ -877,67 +893,67 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
                             out_point_coordinates);
       }
       // Position.
-      id_vector_temp.clear();
-      id_vector_temp.push_back(vertex_indices[0]);
-      id_vector_temp.push_back(const_member_in_gl_per_vertex_position);
+      id_scratch.count = 0;
+      AppendGeometryWord(&id_scratch, vertex_indices[0]);
+      AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_position);
       spv::Id vertex_position_v0 = builder.createLoad(
-          builder.createAccessChain(spv::StorageClassInput, in_gl_per_vertex,
-                                    id_vector_temp),
+          builder.createAccessChainView(spv::StorageClassInput, in_gl_per_vertex,
+                                    xe_spv_word_list_view(&id_scratch)),
           spv::NoPrecision);
-      id_vector_temp[0] = vertex_indices[1];
+      id_scratch.words[0] = vertex_indices[1];
       spv::Id vertex_position_v01 = builder.createNoContractionBinOp(
           spv::OpFSub, type_float4,
           builder.createLoad(
-              builder.createAccessChain(spv::StorageClassInput,
-                                        in_gl_per_vertex, id_vector_temp),
+              builder.createAccessChainView(spv::StorageClassInput,
+                                        in_gl_per_vertex, xe_spv_word_list_view(&id_scratch)),
               spv::NoPrecision),
           vertex_position_v0);
-      id_vector_temp[0] = vertex_indices[2];
+      id_scratch.words[0] = vertex_indices[2];
       spv::Id vertex_position_v3 = builder.createNoContractionBinOp(
           spv::OpFAdd, type_float4, vertex_position_v01,
           builder.createLoad(
-              builder.createAccessChain(spv::StorageClassInput,
-                                        in_gl_per_vertex, id_vector_temp),
+              builder.createAccessChainView(spv::StorageClassInput,
+                                        in_gl_per_vertex, xe_spv_word_list_view(&id_scratch)),
               spv::NoPrecision));
-      id_vector_temp.clear();
-      id_vector_temp.push_back(const_member_out_gl_per_vertex_position);
+      id_scratch.count = 0;
+      AppendGeometryWord(&id_scratch, const_member_out_gl_per_vertex_position);
       builder.createStore(
           vertex_position_v3,
-          builder.createAccessChain(spv::StorageClassOutput, out_gl_per_vertex,
-                                    id_vector_temp));
+          builder.createAccessChainView(spv::StorageClassOutput, out_gl_per_vertex,
+                                    xe_spv_word_list_view(&id_scratch)));
       // Clip distances.
       for (uint32_t i = 0; i < clip_distance_count; ++i) {
         spv::Id const_int_i = builder.makeIntConstant(int32_t(i));
-        id_vector_temp.clear();
-        id_vector_temp.push_back(vertex_indices[0]);
-        id_vector_temp.push_back(const_member_in_gl_per_vertex_clip_distance);
-        id_vector_temp.push_back(const_int_i);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, vertex_indices[0]);
+        AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_clip_distance);
+        AppendGeometryWord(&id_scratch, const_int_i);
         spv::Id vertex_clip_distance_v0 = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput, in_gl_per_vertex,
-                                      id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput, in_gl_per_vertex,
+                                      xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
-        id_vector_temp[0] = vertex_indices[1];
+        id_scratch.words[0] = vertex_indices[1];
         spv::Id vertex_clip_distance_v01 = builder.createNoContractionBinOp(
             spv::OpFSub, type_float,
             builder.createLoad(
-                builder.createAccessChain(spv::StorageClassInput,
-                                          in_gl_per_vertex, id_vector_temp),
+                builder.createAccessChainView(spv::StorageClassInput,
+                                          in_gl_per_vertex, xe_spv_word_list_view(&id_scratch)),
                 spv::NoPrecision),
             vertex_clip_distance_v0);
-        id_vector_temp[0] = vertex_indices[2];
+        id_scratch.words[0] = vertex_indices[2];
         spv::Id vertex_clip_distance_v3 = builder.createNoContractionBinOp(
             spv::OpFAdd, type_float, vertex_clip_distance_v01,
             builder.createLoad(
-                builder.createAccessChain(spv::StorageClassInput,
-                                          in_gl_per_vertex, id_vector_temp),
+                builder.createAccessChainView(spv::StorageClassInput,
+                                          in_gl_per_vertex, xe_spv_word_list_view(&id_scratch)),
                 spv::NoPrecision));
-        id_vector_temp.clear();
-        id_vector_temp.push_back(const_member_in_gl_per_vertex_clip_distance);
-        id_vector_temp.push_back(const_int_i);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_clip_distance);
+        AppendGeometryWord(&id_scratch, const_int_i);
         builder.createStore(
             vertex_clip_distance_v3,
-            builder.createAccessChain(spv::StorageClassOutput,
-                                      out_gl_per_vertex, id_vector_temp));
+            builder.createAccessChainView(spv::StorageClassOutput,
+                                      out_gl_per_vertex, xe_spv_word_list_view(&id_scratch)));
       }
       // Emit the vertex.
       builder.createNoResultOp(spv::OpEmitVertex);
@@ -950,11 +966,11 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
       spv::Id const_point_coordinates_zero = spv::NoResult;
       if (has_point_coordinates) {
         spv::Id const_float_0 = builder.makeFloatConstant(0.0f);
-        id_vector_temp.clear();
-        id_vector_temp.push_back(const_float_0);
-        id_vector_temp.push_back(const_float_0);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, const_float_0);
+        AppendGeometryWord(&id_scratch, const_float_0);
         const_point_coordinates_zero =
-            builder.makeCompositeConstant(type_float2, id_vector_temp);
+            builder.makeCompositeConstantView(type_float2, xe_spv_word_list_view(&id_scratch));
       }
 
       // Build the triangle strip from the original quad vertices in the
@@ -965,13 +981,13 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
         spv::Id const_vertex_index =
             builder.makeIntConstant(int32_t(i ^ (i >> 1)));
         // Interpolators.
-        id_vector_temp.clear();
-        id_vector_temp.push_back(const_vertex_index);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, const_vertex_index);
         for (uint32_t j = 0; j < interpolator_count; ++j) {
           builder.createStore(
-              builder.createLoad(builder.createAccessChain(
+              builder.createLoad(builder.createAccessChainView(
                                      spv::StorageClassInput,
-                                     in_interpolators[j], id_vector_temp),
+                                     in_interpolators[j], xe_spv_word_list_view(&id_scratch)),
                                  spv::NoPrecision),
               out_interpolators[j]);
         }
@@ -981,35 +997,35 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
                               out_point_coordinates);
         }
         // Position.
-        id_vector_temp.clear();
-        id_vector_temp.push_back(const_vertex_index);
-        id_vector_temp.push_back(const_member_in_gl_per_vertex_position);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, const_vertex_index);
+        AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_position);
         spv::Id vertex_position = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput, in_gl_per_vertex,
-                                      id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput, in_gl_per_vertex,
+                                      xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
-        id_vector_temp.clear();
-        id_vector_temp.push_back(const_member_out_gl_per_vertex_position);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, const_member_out_gl_per_vertex_position);
         builder.createStore(
             vertex_position,
-            builder.createAccessChain(spv::StorageClassOutput,
-                                      out_gl_per_vertex, id_vector_temp));
+            builder.createAccessChainView(spv::StorageClassOutput,
+                                      out_gl_per_vertex, xe_spv_word_list_view(&id_scratch)));
         // Clip distances.
         if (clip_distance_count) {
-          id_vector_temp.clear();
-          id_vector_temp.push_back(const_vertex_index);
-          id_vector_temp.push_back(const_member_in_gl_per_vertex_clip_distance);
+          id_scratch.count = 0;
+          AppendGeometryWord(&id_scratch, const_vertex_index);
+          AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_clip_distance);
           spv::Id vertex_clip_distances = builder.createLoad(
-              builder.createAccessChain(spv::StorageClassInput,
-                                        in_gl_per_vertex, id_vector_temp),
+              builder.createAccessChainView(spv::StorageClassInput,
+                                        in_gl_per_vertex, xe_spv_word_list_view(&id_scratch)),
               spv::NoPrecision);
-          id_vector_temp.clear();
-          id_vector_temp.push_back(
+          id_scratch.count = 0;
+          AppendGeometryWord(&id_scratch,
               const_member_out_gl_per_vertex_clip_distance);
           builder.createStore(
               vertex_clip_distances,
-              builder.createAccessChain(spv::StorageClassOutput,
-                                        out_gl_per_vertex, id_vector_temp));
+              builder.createAccessChainView(spv::StorageClassOutput,
+                                        out_gl_per_vertex, xe_spv_word_list_view(&id_scratch)));
         }
         // Emit the vertex.
         builder.createNoResultOp(spv::OpEmitVertex);
@@ -1030,32 +1046,32 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
 
       // Half of a guest pixel in the NDC along each axis - the constant is the
       // NDC radius of a 1 guest pixel diameter.
-      id_vector_temp.clear();
-      id_vector_temp.push_back(builder.makeIntConstant(
+      id_scratch.count = 0;
+      AppendGeometryWord(&id_scratch, builder.makeIntConstant(
           int32_t(kPointConstantScreenDiameterToNdcRadius)));
-      id_vector_temp.push_back(const_int_0);
+      AppendGeometryWord(&id_scratch, const_int_0);
       spv::Id half_pixel_ndc_x = builder.createLoad(
-          builder.createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants, id_vector_temp),
+          builder.createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants, xe_spv_word_list_view(&id_scratch)),
           spv::NoPrecision);
-      id_vector_temp.back() = const_int_1;
+      id_scratch.words[id_scratch.count - 1] = const_int_1;
       spv::Id half_pixel_ndc_y = builder.createLoad(
-          builder.createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants, id_vector_temp),
+          builder.createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants, xe_spv_word_list_view(&id_scratch)),
           spv::NoPrecision);
 
       // Load the positions, and get the vertices in half guest pixel units
       // (NDC divided by the NDC size of half a guest pixel) so the direction
       // is measured in screen space regardless of the viewport aspect.
-      std::array<spv::Id, 2> line_vertex_x, line_vertex_y, line_vertex_z,
-          line_vertex_w, line_vertex_pixels_x, line_vertex_pixels_y;
+      spv::Id line_vertex_x[2], line_vertex_y[2], line_vertex_z[2],
+          line_vertex_w[2], line_vertex_pixels_x[2], line_vertex_pixels_y[2];
       for (uint32_t i = 0; i < 2; ++i) {
-        id_vector_temp.clear();
-        id_vector_temp.push_back(builder.makeIntConstant(int32_t(i)));
-        id_vector_temp.push_back(const_member_in_gl_per_vertex_position);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, builder.makeIntConstant(int32_t(i)));
+        AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_position);
         spv::Id line_vertex_position = builder.createLoad(
-            builder.createAccessChain(spv::StorageClassInput, in_gl_per_vertex,
-                                      id_vector_temp),
+            builder.createAccessChainView(spv::StorageClassInput, in_gl_per_vertex,
+                                      xe_spv_word_list_view(&id_scratch)),
             spv::NoPrecision);
         line_vertex_x[i] =
             builder.createCompositeExtract(line_vertex_position, type_float, 0);
@@ -1143,11 +1159,11 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
       // is used with has_point_coordinates for some reason.
       spv::Id const_point_coordinates_zero = spv::NoResult;
       if (has_point_coordinates) {
-        id_vector_temp.clear();
-        id_vector_temp.push_back(const_float_0);
-        id_vector_temp.push_back(const_float_0);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, const_float_0);
+        AppendGeometryWord(&id_scratch, const_float_0);
         const_point_coordinates_zero =
-            builder.makeCompositeConstant(type_float2, id_vector_temp);
+            builder.makeCompositeConstantView(type_float2, xe_spv_word_list_view(&id_scratch));
       }
 
       // Emit the strip: both sides of the first vertex, then of the second.
@@ -1157,13 +1173,13 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
             builder.makeIntConstant(int32_t(line_vertex_index));
         spv::Op line_offset_add_op = (i & 1) ? spv::OpFAdd : spv::OpFSub;
         // Interpolators.
-        id_vector_temp.clear();
-        id_vector_temp.push_back(const_line_vertex_index);
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, const_line_vertex_index);
         for (uint32_t j = 0; j < interpolator_count; ++j) {
           builder.createStore(
-              builder.createLoad(builder.createAccessChain(
+              builder.createLoad(builder.createAccessChainView(
                                      spv::StorageClassInput,
-                                     in_interpolators[j], id_vector_temp),
+                                     in_interpolators[j], xe_spv_word_list_view(&id_scratch)),
                                  spv::NoPrecision),
               out_interpolators[j]);
         }
@@ -1175,41 +1191,41 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
         // Position - the NDC offset is transformed to the clip space by
         // multiplying by W.
         spv::Id line_vertex_w_value = line_vertex_w[line_vertex_index];
-        id_vector_temp.clear();
-        id_vector_temp.push_back(builder.createNoContractionBinOp(
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, builder.createNoContractionBinOp(
             line_offset_add_op, type_float, line_vertex_x[line_vertex_index],
             builder.createBinOp(spv::OpFMul, type_float, line_offset_ndc_x,
                                 line_vertex_w_value)));
-        id_vector_temp.push_back(builder.createNoContractionBinOp(
+        AppendGeometryWord(&id_scratch, builder.createNoContractionBinOp(
             line_offset_add_op, type_float, line_vertex_y[line_vertex_index],
             builder.createBinOp(spv::OpFMul, type_float, line_offset_ndc_y,
                                 line_vertex_w_value)));
-        id_vector_temp.push_back(line_vertex_z[line_vertex_index]);
-        id_vector_temp.push_back(line_vertex_w_value);
+        AppendGeometryWord(&id_scratch, line_vertex_z[line_vertex_index]);
+        AppendGeometryWord(&id_scratch, line_vertex_w_value);
         spv::Id line_quad_vertex_position =
-            builder.createCompositeConstruct(type_float4, id_vector_temp);
-        id_vector_temp.clear();
-        id_vector_temp.push_back(const_member_out_gl_per_vertex_position);
+            builder.createCompositeConstructView(type_float4, xe_spv_word_list_view(&id_scratch));
+        id_scratch.count = 0;
+        AppendGeometryWord(&id_scratch, const_member_out_gl_per_vertex_position);
         builder.createStore(
             line_quad_vertex_position,
-            builder.createAccessChain(spv::StorageClassOutput,
-                                      out_gl_per_vertex, id_vector_temp));
+            builder.createAccessChainView(spv::StorageClassOutput,
+                                      out_gl_per_vertex, xe_spv_word_list_view(&id_scratch)));
         // Clip distances.
         if (clip_distance_count) {
-          id_vector_temp.clear();
-          id_vector_temp.push_back(const_line_vertex_index);
-          id_vector_temp.push_back(const_member_in_gl_per_vertex_clip_distance);
+          id_scratch.count = 0;
+          AppendGeometryWord(&id_scratch, const_line_vertex_index);
+          AppendGeometryWord(&id_scratch, const_member_in_gl_per_vertex_clip_distance);
           spv::Id line_vertex_clip_distances = builder.createLoad(
-              builder.createAccessChain(spv::StorageClassInput,
-                                        in_gl_per_vertex, id_vector_temp),
+              builder.createAccessChainView(spv::StorageClassInput,
+                                        in_gl_per_vertex, xe_spv_word_list_view(&id_scratch)),
               spv::NoPrecision);
-          id_vector_temp.clear();
-          id_vector_temp.push_back(
+          id_scratch.count = 0;
+          AppendGeometryWord(&id_scratch,
               const_member_out_gl_per_vertex_clip_distance);
           builder.createStore(
               line_vertex_clip_distances,
-              builder.createAccessChain(spv::StorageClassOutput,
-                                        out_gl_per_vertex, id_vector_temp));
+              builder.createAccessChainView(spv::StorageClassOutput,
+                                        out_gl_per_vertex, xe_spv_word_list_view(&id_scratch)));
         }
         // Emit the vertex.
         builder.createNoResultOp(spv::OpEmitVertex);
@@ -1225,10 +1241,7 @@ std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
   builder.leaveFunction();
 
   // Serialize the shader code.
-  std::vector<unsigned int> shader_code;
-  builder.dump(shader_code);
-
-  return shader_code;
+  return builder.dumpSized(shader_code);
 }
 
 }  // namespace gpu

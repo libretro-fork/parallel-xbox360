@@ -360,6 +360,27 @@ int main(int argc, char**) {
     }
     CHECK(xe_spv_test_pages() == before && !xe_spv_test_live());
   }
+  {
+    spv::Builder first(spv::Spv_1_3, 0, nullptr), second(spv::Spv_1_3, 0, nullptr);
+    auto* function = first.makeEntryPoint("first");
+    auto* foreign = second.makeEntryPoint("second");
+    for (unsigned bad = 0; bad < 3; ++bad) {
+      auto pending = (bad == 2 ? second : first).makeInstruction(spv::Op::OpEntryPoint);
+      pending->addImmediateOperand(spv::ExecutionModel::GLCompute);
+      pending->addIdOperand(1);
+      if (bad != 0) pending->addStringOperand("main");
+      bool rejected = false;
+      try { first.addEntryPoint(bad == 1 ? foreign : function, std::move(pending)); }
+      catch (const std::bad_alloc&) { rejected = true; }
+      CHECK(rejected);
+    }
+    auto pending = first.makeInstruction(spv::Op::OpEntryPoint);
+    pending->addImmediateOperand(spv::ExecutionModel::GLCompute);
+    pending->addIdOperand(1); pending->addStringOperand("main");
+    auto* entry = first.addEntryPoint(function, std::move(pending));
+    CHECK(entry->getIdOperand(1) == function->getId());
+  }
+  std::puts("PASS: deferred entry-point fixup, malformed prefixes and foreign function/instruction ownership rejection");
   std::puts("PASS: borrowed/null function names, owned export spelling and failed/retired inline-ID unpublication");
   std::puts("PASS: pooled function/block growth faults, unpublished state, failed constructor and detached-block cleanup");
   std::puts("PASS: separate borrowed global lists, stable order and arena-owned typed operand unwind");

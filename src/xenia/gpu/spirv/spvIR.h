@@ -650,6 +650,9 @@ public:
     Instruction* createInstruction(Op code) { return createInstruction(NoResult, NoType, code); }
 
 
+    bool ownsInstruction(const Instruction* instruction) const {
+        return xe_spv_arena_owns_record(arena, instruction) != 0;
+    }
     void forgetInstruction(Id id) { xe_spv_index_unmap(&arena->index, id); }
     void mapInstruction(Instruction *instruction)
     {

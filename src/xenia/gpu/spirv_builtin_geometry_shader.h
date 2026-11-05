@@ -11,7 +11,8 @@
 #define XENIA_GPU_SPIRV_BUILTIN_GEOMETRY_SHADER_H_
 
 #include <cstdint>
-#include <vector>
+#include "libretro/core_spv_binary.h"
+#include "libretro/core_spv_arena.h"
 
 namespace xe {
 namespace gpu {
@@ -33,13 +34,16 @@ enum class BuiltinGeometryShaderType : uint32_t {
 // by the Vulkan backend. D3D12 uses the C89 native DXIL generator. The shader
 // reads the shared vertex output
 // signature and SystemConstants layout, so it pairs with that translator's
-// vertex and pixel shaders on either backend. Returns the SPIR-V words.
-std::vector<unsigned int> BuildGuestPrimitiveGeometryShaderSpirv(
+// vertex and pixel shaders. Writes directly into caller-owned reusable words.
+// Output is reset on entry; no partial module is published. The arena, if
+// supplied, is exclusively borrowed until this call returns.
+bool BuildGuestPrimitiveGeometryShaderSpirv(
     BuiltinGeometryShaderType type, uint32_t interpolator_count,
     uint32_t user_clip_plane_count, bool user_clip_plane_cull,
     bool has_vertex_kill_and, bool has_point_size, bool has_point_coordinates,
     unsigned int spirv_version, bool denorm_flush_to_zero_float32,
-    bool signed_zero_inf_nan_preserve_float32, bool rounding_mode_rte_float32);
+    bool signed_zero_inf_nan_preserve_float32, bool rounding_mode_rte_float32,
+    xe_spv_binary& shader_code, xe_spv_arena* instruction_arena = nullptr);
 
 }  // namespace gpu
 }  // namespace xe

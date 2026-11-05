@@ -116,6 +116,14 @@ bool VulkanPipelineCache::Initialize() {
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
 
+  if (!xe_spv_binary_reserve(&geometry_shader_code_, 4096) ||
+      !xe_spv_arena_reserve(&geometry_instruction_arena_, 1024) ||
+      !xe_spv_arena_reserve_objects(&geometry_instruction_arena_,
+          sizeof(spv::Block), 64, sizeof(spv::Function), 32)) {
+    xe_spv_binary_close(&geometry_shader_code_);
+    xe_spv_arena_close(&geometry_instruction_arena_);
+    return false;
+  }
   // Cache device features for geometry shader creation.
   const SpirvShaderTranslator::Features features(vulkan_device);
   spirv_version_ = features.spirv_version;
@@ -495,6 +503,8 @@ void VulkanPipelineCache::Shutdown() {
 
   // Shut down shader translation.
   guest_shader_cache_.Shutdown();
+  xe_spv_binary_close(&geometry_shader_code_);
+  xe_spv_arena_close(&geometry_instruction_arena_);
 }
 
 VulkanShader* VulkanPipelineCache::LoadShader(xenos::ShaderType shader_type,
@@ -1564,34 +1574,27 @@ VkShaderModule VulkanPipelineCache::GetGeometryShader(GeometryShaderKey key) {
 
   // When user clip planes are present, the max count is used to reduce
   // variants.
-  std::vector<unsigned int> shader_code =
-      BuildGuestPrimitiveGeometryShaderSpirv(
-          BuiltinGeometryShaderType(uint32_t(key.type)), key.interpolator_count,
-          key.user_clip_plane_count > 0 ? 6u : 0u,
-          bool(key.user_clip_plane_cull), bool(key.has_vertex_kill_and),
-          bool(key.has_point_size), bool(key.has_point_coordinates),
-          spirv_version_, denorm_flush_to_zero_float32_,
-          signed_zero_inf_nan_preserve_float32_, rounding_mode_rte_float32_);
+  const bool generated = BuildGuestPrimitiveGeometryShaderSpirv(
+      BuiltinGeometryShaderType(uint32_t(key.type)), key.interpolator_count,
+      key.user_clip_plane_count > 0 ? 6u : 0u,
+      bool(key.user_clip_plane_cull), bool(key.has_vertex_kill_and),
+      bool(key.has_point_size), bool(key.has_point_coordinates),
+      spirv_version_, denorm_flush_to_zero_float32_,
+      signed_zero_inf_nan_preserve_float32_, rounding_mode_rte_float32_,
+      geometry_shader_code_, &geometry_instruction_arena_);
 
-  // With --dump_shaders, write the built-in GS SPIR-V for signature checks.
-  if (!cvars::dump_shaders.empty() && !shader_code.empty()) {
-    std::filesystem::path dir = std::filesystem::absolute(cvars::dump_shaders);
-    std::filesystem::create_directories(dir);
-    std::filesystem::path spirv_path =
-        dir / fmt::format("shader_geometry_{:08X}.spirv.bin.geom", key.key);
-    if (FILE* spirv_file = xe::filesystem::OpenFile(spirv_path, "wb")) {
-      fwrite(shader_code.data(), sizeof(uint32_t), shader_code.size(),
-             spirv_file);
-      fclose(spirv_file);
-    }
+  // Diagnostics borrow the same words; optional writes do not affect rendering.
+  if (generated && !cvars::dump_shaders.empty()) {
+    xe_cache_file_dump_keyed_words(xe::path_to_utf8(cvars::dump_shaders).c_str(), "shader_geometry_",
+        key.key, ".spirv.bin.geom", geometry_shader_code_.words,
+        geometry_shader_code_.count);
   }
 
-  // Create the shader module, and store the handle even if creation fails not
-  // to try to create it again later.
-  VkShaderModule shader_module = ui::vulkan::util::CreateShaderModule(
-      command_processor_.GetVulkanDevice(),
-      reinterpret_cast<const uint32_t*>(shader_code.data()),
-      sizeof(uint32_t) * shader_code.size());
+  VkShaderModule shader_module = generated
+      ? ui::vulkan::util::CreateShaderModule(
+            command_processor_.GetVulkanDevice(), geometry_shader_code_.words,
+            sizeof(uint32_t) * geometry_shader_code_.count)
+      : VK_NULL_HANDLE;
   if (shader_module == VK_NULL_HANDLE) {
     XELOGE(
         "VulkanPipelineCache: Failed to create the primitive type geometry "

@@ -49,6 +49,8 @@ int main(int argc, char **argv)
          CHECK(pointer && !((uintptr_t)pointer & 63));
          if (!round) records[i] = pointer;
          CHECK(pointer == records[i]);
+         CHECK(xe_spv_arena_owns_record(&arena, pointer));
+         CHECK(!xe_spv_arena_owns_record(&arena, (unsigned char *)pointer + 1));
          ((unsigned char *)pointer)[0] = (unsigned char)i;
          ((unsigned char *)pointer)[63] = (unsigned char)(i >> 8);
       }
@@ -56,7 +58,10 @@ int main(int argc, char **argv)
       for (i = 0; i < 2048; ++i) {
          CHECK(((unsigned char *)records[i])[0] == (unsigned char)i);
          CHECK(((unsigned char *)records[i])[63] == (unsigned char)(i >> 8));
-         if (i >= 5) xe_spv_arena_retire(records[i]);
+         if (i >= 5) {
+            xe_spv_arena_retire(records[i]);
+            CHECK(!xe_spv_arena_owns_record(&arena, records[i]));
+         }
       }
       if (argc > 1 && strcmp(argv[1], "finish-uaf")) return ((volatile unsigned char *)records[100])[0];
       CHECK(!xe_spv_arena_end(&arena, NULL));

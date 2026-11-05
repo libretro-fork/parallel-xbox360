@@ -495,6 +495,10 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
                      xe::hash::IdentityHasher<uint64_t>>
       shaders_;
 
+  // Exclusively used by command-thread geometry creation (preload runs on that
+  // thread or while it is paused). vkCreateShaderModule consumes the words inline.
+  xe_spv_arena geometry_instruction_arena_ = {};
+  xe_spv_binary geometry_shader_code_ = {};
   // Geometry shaders for Xenos primitive types not supported by Vulkan.
   // Stores VK_NULL_HANDLE if failed to create.
   std::unordered_map<GeometryShaderKey, VkShaderModule,

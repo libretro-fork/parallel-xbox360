@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <string.h>
 #include <encodings/xxh3.h>
+#include <file/file_path.h>
 
 RFILE *xe_cache_file_open(const char *path) {
    RFILE *file;
@@ -58,6 +59,45 @@ size_t xe_cache_file_write(const void *data, size_t size, size_t count, RFILE *f
       done += (size_t)got;
    }
    return done / size;
+}
+
+/* Keep optional filesystem work and its path buffer out of release hot frames,
+ * including builds enabling link-time optimization. */
+#if defined(_MSC_VER)
+__declspec(noinline)
+#elif defined(__GNUC__)
+__attribute__((noinline))
+#endif
+int xe_cache_file_dump_keyed_words(const char *directory, const char *prefix,
+      uint32_t key, const char *suffix, const uint32_t *words, size_t count)
+{
+   char path[4096];
+   static const char hex[] = "0123456789ABCDEF";
+   size_t length, prefix_length, suffix_length, at, i;
+   int ok;
+   RFILE *file;
+   if (!directory || !*directory || !prefix || !suffix || !words || !count ||
+       count > SIZE_MAX / sizeof(*words)) return 0;
+   length = strlen(directory);
+   prefix_length = strlen(prefix);
+   suffix_length = strlen(suffix);
+   /* Reserve a separator, eight key digits and the terminator before copying. */
+   if (length > sizeof(path) - 10 || prefix_length > sizeof(path) - 10 - length ||
+       suffix_length > sizeof(path) - 10 - length - prefix_length) return 0;
+   memcpy(path, directory, length);
+   path[length] = 0;
+   at = fill_pathname_slash(path, sizeof(path));
+   memcpy(path + at, prefix, prefix_length);
+   at += prefix_length;
+   for (i = 0; i < 8; ++i) path[at++] = hex[(key >> (28 - i * 4)) & 15];
+   memcpy(path + at, suffix, suffix_length);
+   path[at + suffix_length] = 0;
+   if (!path_mkdir(directory)) return 0;
+   file = filestream_open(path, RETRO_VFS_FILE_ACCESS_WRITE, 0);
+   if (!file) return 0;
+   ok = xe_cache_file_write(words, sizeof(*words), count, file) == count;
+   if (filestream_close(file) != 0) ok = 0;
+   return ok;
 }
 
 int xe_cache_file_write_be32(RFILE *file, const uint32_t *words, size_t count) {

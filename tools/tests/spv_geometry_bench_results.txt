@@ -1,0 +1,61 @@
+Reusable geometry generation and direct output, Windows x64, 2026-11-05
+Parent: complete 0cae52f6a archive. GCC16.2 -O2; production geometry builder/IR.
+
+Removed six geometry-helper vectors: ID scratch, unused integer scratch, entry
+interfaces, two empty parameter lists and serialized output. Sixteen-word C89
+scratch supplies synchronous borrowed builder views. Interfaces append directly
+to their final pending entry-point instruction, with exact reservation and a
+checked function-ID fixup before publication. Arena membership checks inspect
+page metadata without reading possibly poisoned foreign/retired payloads.
+Interpolator names use a bounded C89 stack encoder instead of fmt temporaries.
+Necessary owned SPIR-V name/operand encoding remains.
+
+The Vulkan cache reserves 4096 output words and 1024 instruction slots plus
+64 block / 32 function pools during cold initialization. Its exclusive workspace
+retains high-water growth. VkCreateShaderModule borrows those final words only
+for the synchronous call; no output-vector growth or conversion copy remains.
+GetGeometryShader callers execute on the command thread or during paused shader
+storage preload, before work is queued. No concurrent compiler borrows it.
+Shutdown joins pipeline workers before releasing modules and this CPU workspace.
+
+Full matrix: 18432 modules across four primitive types, SPIR-V1.0/1.3/1.4/1.6,
+0/8/16 interpolators, 0/1/6 clip planes, all16 boolean combinations and8 float
+controls. Parent/current complete streams match byte-for-byte (109668864 bytes);
+MSVC current output also matches GCC output. Entry-point function IDs and exact
+interface counts are parsed independently. Largest output3238 words, largest
+instruction lease721 slots. No output/index/instruction reserve growth for this
+matrix. 128 selected edge modules also pass spirv-val.
+
+Timing: seven alternating parent/current pairs after builds finished. Untimed
+64-key warm set; timed20 repetitions=1280 generated modules. No output file
+writes inside timing. Same64-key outputs match. Tracks C++new AND C operand,
+arena/page/state/index/output/plan allocation hooks; excludes allocator headers
+and GPU-driver work. Peak includes warm generation. All tracked live storage
+returns to initial after workspace close. Timing includes IR construction,
+serialization and cleanup, not just the removed copies.
+
+revision calls requested_bytes retained_bytes peak_tracked_bytes median_ms range_ms
+parent 229940 91868680 0 104961 29.631 28.777..31.108
+current 171240 7599040 108566 117076 17.842 17.534..18.962
+
+25.53% fewer allocation requests, 91.73% fewer requested bytes, 39.79% less
+generation time in this fixture (1.66x throughput). Current retains108566 bytes
+and has a higher tracked peak; this is NOT a lower-RSS claim. Metadata, operand
+and driver allocations remain. No gameplay FPS/framepacing, cache-miss/register
+spill, GPU performance or universal-platform speed claim.
+
+Diagnostics pass the same word pointer through common VFS short-write handling,
+with checked directory/path sizing and close failures; no payload staging.
+The filesystem-path cvar still needs UTF16-to-UTF8 conversion on Windows when
+diagnostics are enabled. A noinline sink keeps its4096-byte path buffer out of
+normal release hot frames. VFS3 initialization now enables frontend directory
+operations, with VFS2/native fallback. Tests check pointer identity on every
+short/EINTR write, exact paths including slash/backslash semantics, creation/
+open/write/close failures and oversized inputs, plus native cache reopen and
+asynchronous split-record persistence. Runtime algorithms and bounds tests are
+MSVC C89; typed generator/ownership fixtures necessarily use C++ API glue.
+
+Validation: full Make-j5 build; MSVC /TC /W4 /WX bounds and VFS tests, cache C
+syntax and typed shader suite; GCC parent/current byte oracle and spirv-val;
+ASan/UBSan geometry/IR ownership/fault/UAF and cache-I/O suites. No GPU/frontend
+launch, gameplay test or installed-core replacement. Audio scheduling unchanged.

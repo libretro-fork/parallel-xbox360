@@ -459,6 +459,8 @@ public:
 
     // Methods for adding information outside the CFG.
     Instruction* addEntryPoint(ExecutionModel, Function*, const char* name);
+    // Adopt final interface words, fixing the unpublished function operand.
+    Instruction* addEntryPoint(Function*, std::unique_ptr<Instruction> pending);
     void addExecutionMode(Function*, ExecutionMode mode, int value1 = -1, int value2 = -1, int value3 = -1);
     void addExecutionMode(Function*, ExecutionMode mode, const std::vector<unsigned>& literals);
     void addExecutionModeId(Function*, ExecutionMode mode, const std::vector<Id>& operandIds);

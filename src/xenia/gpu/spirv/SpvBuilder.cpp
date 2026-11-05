@@ -2233,6 +2233,17 @@ Instruction* Builder::addEntryPoint(ExecutionModel model, Function* function, co
     return entryPoint;
 }
 
+Instruction* Builder::addEntryPoint(Function* function, std::unique_ptr<Instruction> pending)
+{
+    if (!function || &function->getParent() != &module || !pending ||
+        !module.ownsInstruction(pending.get()) || pending->getOpCode() != Op::OpEntryPoint ||
+        pending->getNumOperands() < 4 || !pending->isIdOperand(1))
+        throw std::bad_alloc();
+    pending->setIdOperand(1, function->getId());
+    Instruction* result = pending.get();
+    appendInstruction(entryPoints, std::move(pending));
+    return result;
+}
 // Currently relying on the fact that all 'value' of interest are small non-negative values.
 void Builder::addExecutionMode(Function* entryPoint, ExecutionMode mode, int value1, int value2, int value3)
 {

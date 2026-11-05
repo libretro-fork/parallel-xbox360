@@ -337,6 +337,22 @@ void xe_spv_arena_retire(void *record)
    POISON(record, XE_SPV_RECORD_BYTES);
 }
 
+int xe_spv_arena_owns_record(const xe_spv_arena *arena, const void *record)
+{
+   const xe_spv_arena_page *page;
+   uintptr_t address = (uintptr_t)record, start;
+   size_t slot;
+   if (!arena->in_use || !record) return 0;
+   for (page = arena->head; page; page = page->next) {
+      start = (uintptr_t)page->records;
+      if (address >= start && address - start < page->used * XE_SPV_RECORD_BYTES &&
+          !((address - start) % XE_SPV_RECORD_BYTES)) {
+         slot = (size_t)(address - start) / XE_SPV_RECORD_BYTES;
+         return (page->live[slot / 32] & (UINT32_C(1) << (slot % 32))) != 0;
+      }
+   }
+   return 0;
+}
 size_t xe_spv_arena_used(const xe_spv_arena *arena)
 {
    const xe_spv_arena_page *page;

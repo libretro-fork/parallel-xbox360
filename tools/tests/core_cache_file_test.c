@@ -5,6 +5,7 @@
 #include "core_cache_file.h"
 #include "core_cache_writer.h"
 #include "core_file.h"
+#include <file/file_path.h>
 #include <encodings/xxh3.h>
 #ifdef XE_TEST_SHADER_STORAGE
 #include <encodings/xxh3.h>
@@ -15,8 +16,33 @@ static unsigned char storage[4096];
 static size_t length, position;
 static int exists, fault, interrupted;
 static unsigned truncates;
+static int dump_phase, dump_directory, dump_bad;
+static unsigned dump_opens;
+static const unsigned char *dump_source;
+static char dump_path[128];
+static int32_t RETRO_CALLCONV stat_path(const char *path, int32_t *size) {
+   if (size) *size = 0;
+   if (!strcmp(path, "cache://dumps") || !strcmp(path, "cache://dumps/") ||
+       !strcmp(path, "cache://dumps\\"))
+      return dump_directory ? RETRO_VFS_STAT_IS_VALID | RETRO_VFS_STAT_IS_DIRECTORY : 0;
+   return RETRO_VFS_STAT_IS_VALID | RETRO_VFS_STAT_IS_DIRECTORY;
+}
+static int RETRO_CALLCONV mkdir_path(const char *path) {
+   (void)path;
+   if (fault == 9) return -1;
+   dump_directory = 1;
+   return 0;
+}
 static struct retro_vfs_file_handle *RETRO_CALLCONV open_file(const char *path, unsigned mode, unsigned hints) {
    (void)hints;
+   if (dump_phase) {
+      ++dump_opens;
+      if (strlen(path) >= sizeof(dump_path)) return NULL;
+      strcpy(dump_path, path);
+      if (fault == 8) return NULL;
+      length = position = 0;
+      return (struct retro_vfs_file_handle *)storage;
+   }
    if (strcmp(path, "cache://pipeline")) return NULL;
    if (mode & RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING) {
       if (!exists || fault == 5) return NULL;
@@ -25,7 +51,7 @@ static struct retro_vfs_file_handle *RETRO_CALLCONV open_file(const char *path, 
    } else { exists = 1; length = 0; }
    position = 0; return (struct retro_vfs_file_handle *)storage;
 }
-static int RETRO_CALLCONV close_file(struct retro_vfs_file_handle *file) {(void)file; return 0;}
+static int RETRO_CALLCONV close_file(struct retro_vfs_file_handle *file) {(void)file; return fault == 10 ? -1 : 0;}
 static int64_t RETRO_CALLCONV size_file(struct retro_vfs_file_handle *file) {(void)file; return (int64_t)length;}
 static int64_t RETRO_CALLCONV tell_file(struct retro_vfs_file_handle *file) {(void)file; return (int64_t)position;}
 static int64_t RETRO_CALLCONV seek_file(struct retro_vfs_file_handle *file, int64_t offset, int origin) {
@@ -49,6 +75,7 @@ static int64_t RETRO_CALLCONV read_file(struct retro_vfs_file_handle *file, void
 static int64_t RETRO_CALLCONV write_file(struct retro_vfs_file_handle *file, const void *data, uint64_t size) {
    size_t n = size > 5 ? 5 : (size_t)size;
    (void)file;
+   if (dump_phase && data != dump_source + position) dump_bad = 1;
    if (fault == 1) { errno = ENOSPC; return -1; }
    if (fault == 6) return 0;
    if (interrupted) { interrupted = 0; errno = EINTR; return -1; }
@@ -158,6 +185,48 @@ static int validation_test(const char *path) {
    return 1;
 }
 
+static int dump_test(void) {
+   uint32_t words[17];
+   char oversized[4097];
+   unsigned i, opens;
+   static const int faults[] = {1, 6, 8, 9, 10};
+   for (i = 0; i < 17; ++i) words[i] = UINT32_C(0x12345678) + i;
+   dump_phase = 1; dump_bad = dump_directory = 0;
+   dump_source = (const unsigned char *)words;
+   interrupted = 1;
+   if (!xe_cache_file_dump_keyed_words("cache://dumps", "shader_geometry_", UINT32_C(0x89ABCDEF),
+         ".spirv.bin.geom", words, 17) || length != sizeof(words) ||
+         memcmp(storage, words, sizeof(words)) || dump_bad ||
+         strcmp(dump_path, "cache://dumps/shader_geometry_89ABCDEF.spirv.bin.geom")) return 0;
+   if (!xe_cache_file_dump_keyed_words("cache://dumps/", "shader_geometry_", 0,
+         ".spv", words, 17) || strcmp(dump_path, "cache://dumps/shader_geometry_00000000.spv")) return 0;
+   if (!xe_cache_file_dump_keyed_words("cache://dumps\\", "s", 0,
+         ".spv", words, 17) || strcmp(dump_path,
+#ifdef _WIN32
+         "cache://dumps\\s00000000.spv"
+#else
+         "cache://dumps\\/s00000000.spv"
+#endif
+         )) return 0;
+   for (i = 0; i < sizeof(faults) / sizeof(faults[0]); ++i) {
+      fault = faults[i];
+      if (fault == 9) dump_directory = 0;
+      if (xe_cache_file_dump_keyed_words("cache://dumps", "shader_geometry_", 1,
+            ".spv", words, 17)) return 0;
+      dump_directory = 1;
+   }
+   fault = 0;
+   opens = dump_opens;
+   memset(oversized, 'x', sizeof(oversized) - 1); oversized[sizeof(oversized) - 1] = 0;
+   if (xe_cache_file_dump_keyed_words(oversized, "s", 0, ".spv", words, 17) ||
+       xe_cache_file_dump_keyed_words("", "s", 0, ".spv", words, 17) ||
+       xe_cache_file_dump_keyed_words("cache://dumps", "s", 0, ".spv", NULL, 17) ||
+       xe_cache_file_dump_keyed_words("cache://dumps", "s", 0, ".spv", words, 0) ||
+       xe_cache_file_dump_keyed_words("cache://dumps", "s", 0, ".spv", words, SIZE_MAX) ||
+       dump_opens != opens) return 0;
+   dump_phase = 0;
+   return 1;
+}
 int main(int argc, char **argv) {
    struct retro_vfs_interface iface;
    struct retro_vfs_interface_info info;
@@ -248,7 +317,11 @@ int main(int argc, char **argv) {
    storage[8] ^= 1; length = 27;
    if (xe_test_shader_entries_path("cache://pipeline", &entries) != 8 || entries) return 40;
 #endif
-   info.iface = NULL; filestream_vfs_init(&info);
+   iface.stat = stat_path; iface.mkdir = mkdir_path;
+   info.required_interface_version = 3;
+   path_vfs_init(&info);
+   if (!dump_test()) return 52;
+   info.iface = NULL; path_vfs_init(&info); filestream_vfs_init(&info);
    file = xe_cache_file_open(argv[1]); if (!file || !xe_cache_file_repair(file, 0)) return 15;
    if (xe_cache_file_write(data, 1, 100, file) != 100) return 16;
    filestream_close(file); file = xe_cache_file_open(argv[1]);
