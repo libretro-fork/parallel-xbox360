@@ -64,15 +64,18 @@ int main(int argc, char**) {
     CHECK(!arena.in_use && xe_spv_test_live() == 0);
     CHECK((arena.reserved_records / XE_SPV_RECORDS_PER_PAGE) == allocations);
   }
-  {
+  for (unsigned count : {0u, 1u, 4u, 9u, 70u}) {
     spv::Builder builder(spv::Spv_1_3, 0, nullptr, &arena);
     spv::Id type = builder.makeUintType(32);
-    std::vector<spv::Id> params(9, type);
+    std::vector<spv::Id> params(count, type);
     spv::Block* entry;
     auto function = builder.makeFunctionEntry(spv::NoPrecision, type, "parameters",
         spv::LinkageType::Max, params, {}, &entry);
-    for (unsigned i = 0; i < 9; ++i) CHECK(function->getParamType(i) == type);
-    builder.makeReturn(true, function->getParamId(0));
+    for (unsigned i = 0; i < count; ++i) {
+      CHECK(function->getParamType(i) == type);
+      CHECK(function->getParamId(i) == function->getParamId(0) + i);
+    }
+    builder.makeReturn(true, count ? function->getParamId(0) : builder.makeUintConstant(0));
     builder.leaveFunction();
   }
   CHECK(!arena.in_use && xe_spv_test_live() == 0);
@@ -166,6 +169,23 @@ int main(int argc, char**) {
     catch (const std::bad_alloc&) { failed_reserve = true; }
     CHECK(failed_reserve && xe_spv_test_pages() == 0);
   }
+  {
+    const size_t before = xe_spv_test_pages();
+    bool failed = false;
+    try {
+      spv::InstructionArena small(128);
+      spv::Builder builder(spv::Spv_1_3, 0, nullptr, small.get());
+      spv::Id type = builder.makeUintType(32);
+      std::vector<spv::Id> parameters(200, type);
+      spv::Block* entry = nullptr;
+      xe_spv_test_page_fail_after(xe_spv_test_page_calls());
+      builder.makeFunctionEntry(spv::NoPrecision, type, "partial parameters",
+          spv::LinkageType::Max, parameters, {}, &entry);
+    } catch (const std::bad_alloc&) { failed = true; }
+    xe_spv_test_page_fail_after(size_t(-1));
+    CHECK(failed && xe_spv_test_pages() == before && xe_spv_test_live() == 0);
+  }
+  std::puts("PASS: 0/1/4/9/70 parameters and partial-parameter construction cleanup");
   std::puts("PASS: 50000 typed ID mappings across module resets without warm index growth");
   std::puts("PASS: 60200 arena records, orphan/exception cleanup, operand fault and pending-owner reset");
   std::puts("PASS: two retained worker arenas, 960000 records without page growth, partial-construction and active-owner unwind");

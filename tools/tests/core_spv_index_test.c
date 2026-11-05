@@ -21,6 +21,7 @@ int main(void)
    int records[2048];
    size_t i, round, warm, capacity;
    void **stable;
+   void *const *view;
    CHECK(!xe_spv_index_get(&index, 0));
    denied = 1;
    CHECK(!xe_spv_index_set(&index, 0, records) && !index.entries && !index.count);
@@ -37,6 +38,12 @@ int main(void)
          CHECK(xe_spv_index_set(&index, i, &records[i]));
          CHECK(xe_spv_index_get(&index, i) == &records[i]);
       }
+      view = xe_spv_index_borrow(&index, 7, 9);
+      CHECK(view && view[0] == &records[7] && view[8] == &records[15]);
+      CHECK(!xe_spv_index_borrow(&index, (size_t)-1, 9));
+      CHECK(!xe_spv_index_borrow(&index, 7, (size_t)-1));
+      CHECK(!xe_spv_index_borrow(&index, 2040, 9));
+      CHECK(!xe_spv_index_borrow(&index, 7, 0));
       CHECK(index.entries == stable && index.capacity == capacity && allocations == warm);
       CHECK(!xe_spv_index_get(&index, (size_t)-1));
    }
@@ -51,6 +58,7 @@ int main(void)
    CHECK(!xe_spv_index_reserve(&index, (size_t)-1));
    xe_spv_index_reset(&index);
    CHECK(!index.count && !xe_spv_index_get(&index, 7));
+   CHECK(!xe_spv_index_borrow(&index, 7, 1));
    /* Reset keeps backing bytes untouched, but no stale entry is visible. */
    CHECK(index.entries[7] == &records[7]);
    CHECK(xe_spv_index_set(&index, 11, NULL) && !xe_spv_index_get(&index, 7));

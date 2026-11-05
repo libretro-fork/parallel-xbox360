@@ -47,6 +47,13 @@ static INLINE void *xe_spv_index_get(const xe_spv_index *index, size_t id)
 {
    return id < index->count ? index->entries[id] : NULL;
 }
+/* Borrow until mapping mutation, reset or close. No slot/payload copy. */
+static INLINE void *const *xe_spv_index_borrow(const xe_spv_index *index,
+      size_t first, size_t count)
+{
+   if (!count || first >= index->count || count > index->count - first) return NULL;
+   return index->entries + first;
+}
 static INLINE void xe_spv_index_reset(xe_spv_index *index)
 {
    index->count = 0;

@@ -52,6 +52,7 @@
 #include "libretro/core_spv_binary.h"
 #include "libretro/core_spv_size.h"
 #include "libretro/core_spv_plan.h"
+#include "libretro/core_spv_id_range.h"
 #include "libretro/core_spv_arena.h"
 #include <cstddef>
 #include <new>
@@ -475,17 +476,10 @@ public:
     Instruction* createInstruction(Op code);
 
     Function(Id id, Id resultType, Id functionType, Id firstParam, LinkageType linkage, const std::string& name, Module& parent);
-    ~Function()
-    {
-        for (int i = 0; i < (int)parameterInstructions.size(); ++i)
-            delete parameterInstructions[i];
-
-        for (int i = 0; i < (int)blocks.size(); ++i)
-            delete blocks[i];
-    }
+    ~Function();
     Id getId() const { return functionInstruction.getResultId(); }
-    Id getParamId(int p) const { return parameterInstructions[p]->getResultId(); }
-    Id getParamType(int p) const { return parameterInstructions[p]->getTypeId(); }
+    Id getParamId(int p) const { return xe_spv_id_range_get(&parameters, (size_t)p); }
+    Id getParamType(int p) const;
 
     void addBlock(Block* block) {
         if (blocks.size() > UINT32_MAX) throw std::bad_alloc();
@@ -552,8 +546,11 @@ public:
         functionInstruction.dump(out);
 
         // OpFunctionParameter
-        for (int p = 0; p < (int)parameterInstructions.size(); ++p)
-            parameterInstructions[p]->dump(out);
+        if (parameters.count) {
+            void* const* parameterRecords = getParamInstructions();
+            for (uint32_t p = 0; p < parameters.count; ++p)
+                static_cast<Instruction*>(parameterRecords[p])->dump(out);
+        }
 
         // Blocks
         if (plan && !record) {
@@ -586,7 +583,9 @@ protected:
     Module& parent;
     std::unique_ptr<Instruction> lineInstruction;
     Instruction functionInstruction;
-    std::vector<Instruction*> parameterInstructions;
+    Instruction* getParamInstruction(size_t index) const;
+    void* const* getParamInstructions() const;
+    xe_spv_id_range parameters = {};
     std::vector<Block*> blocks;
     bool implicitThis;  // true if this is a member function expecting to be passed a 'this' as the first argument
     bool reducedPrecisionReturn;
@@ -638,6 +637,9 @@ public:
             throw std::bad_alloc();
     }
 
+    void* const* borrowInstructions(Id first, size_t count) const {
+        return xe_spv_index_borrow(&arena->index, first, count);
+    }
     Instruction* getInstruction(Id id) const {
         return static_cast<Instruction*>(xe_spv_index_get(&arena->index, id));
     }
@@ -675,6 +677,31 @@ __inline Instruction* Function::createInstruction(Id result, Id type, Op code)
 __inline Instruction* Function::createInstruction(Op code)
 { return parent.createInstruction(code); }
 
+__inline Instruction* Function::getParamInstruction(size_t index) const
+{
+    Id id = xe_spv_id_range_get(&parameters, index);
+    return id ? parent.getInstruction(id) : nullptr;
+}
+__inline Id Function::getParamType(int index) const
+{
+    const Instruction* instruction = getParamInstruction((size_t)index);
+    return instruction ? instruction->getTypeId() : NoType;
+}
+__inline void* const* Function::getParamInstructions() const
+{ return parent.borrowInstructions(parameters.first, parameters.count); }
+__inline Function::~Function()
+{
+    uint32_t p;
+    size_t b;
+    if (parameters.count) {
+        void* const* parameterRecords = getParamInstructions();
+        for (p = 0; p < parameters.count; ++p)
+            delete static_cast<Instruction*>(parameterRecords[p]);
+    }
+    for (b = 0; b < blocks.size(); ++b)
+        delete blocks[b];
+}
+
 // Add both
 // - the OpFunction instruction
 // - all the OpFunctionParameter instructions
@@ -693,10 +720,11 @@ __inline Function::Function(Id id, Id resultType, Id functionType, Id firstParam
     // OpFunctionParameter
     Instruction* typeInst = parent.getInstruction(functionType);
     int numParams = typeInst->getNumOperands() - 1;
+    if (numParams && !xe_spv_id_range_set(&parameters, firstParamId, (size_t)numParams))
+        throw std::bad_alloc();
     for (int p = 0; p < numParams; ++p) {
         Instruction* param = parent.createInstruction(firstParamId + p, typeInst->getIdOperand(p + 1), Op::OpFunctionParameter);
         parent.mapInstruction(param);
-        parameterInstructions.push_back(param);
     }
 
     // If importing/exporting, save the function name (without the mangled parameters) for the linkage decoration

@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Function parameters use a checked eight-byte C89 ID range instead of a pointer vector. Emission and cleanup borrow the existing module index directly, avoiding another parameter array and its growth copies. Parameter IDs are computed without reading instruction records; type reads remain bounds checked. Parameter cleanup still precedes block cleanup, and partially constructed functions remain covered by arena unwind. Other IR containers still allocate; audio scheduling is unchanged.
+
 - Shader functions are emitted directly from their owning list. The duplicate module function registry and its pointer-vector allocations are removed, shrinking module metadata by 24 bytes on 64-bit hosts. Function creation publishes its entry block and active build point only after ownership succeeds, preserving the previous pointers if an allocation fails. Output order and instruction ownership remain unchanged; other IR containers still allocate. Audio scheduling is unchanged.
 
 - The shader ID lookup vector is replaced by worker-owned reusable C89 storage. Guest and EDRAM workspaces reserve 2048 pointer entries at startup; larger shaders retain their checked high-water capacity. Reset invalidates every lookup without clearing the retained allocation, and sparse holes are initialized as IDs are mapped. Bounds checks prevent access to IDs from a previous shader. The lookup borrows instruction records; existing typed ownership and exception cleanup remain. This trades retained lookup capacity for fewer shader-time allocations and resize copies. Audio scheduling is unchanged.

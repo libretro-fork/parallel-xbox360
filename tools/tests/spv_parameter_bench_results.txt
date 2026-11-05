@@ -1,0 +1,23 @@
+C89 parameter ID-range benchmark, Windows x86-64, 2026-11-05
+Parent: complete 7a2666a89 source archive. Current: checked ID range with borrowed index views.
+GCC16.2 -O2 C++20; sequential builds/runs, five samples of 1000 constructed/destroyed modules.
+Production Builder/Function factories, 1/71/257 functions; helpers have 0/9/70 alternating float/uint parameters.
+The entry point has no parameters. One untimed module warms storage and emits golden SPIR-V.
+Timed modules do not serialize. Parent/current output files compare identically for all fixtures and pass spirv-val.
+Counts include C++ new and C arena/index/output/plan hooks. Operand malloc and allocator headers are excluded.
+Tracked peak includes the untimed warm-up/serialization, record pages, index and owned output; it is not OS RSS.
+Retained heap is identical; removing the parameter pointer array reduces transient allocations and metadata.
+Function metadata falls from 224 to 208 bytes on x64; range metadata is eight bytes.
+All tracked heap returns to initial state after workspace/output close. Other IR owners still allocate.
+No gameplay FPS, GPU memory or driver compilation claim.
+Reproduce: BASELINE_ROOT=<complete 7a2666a89 archive> TEST_SOURCE=<absolute tools/tests/core_spv_parameter_bench.cc> sh tools/tests/run_spv_binary_bench.sh
+
+revision helper_parameters functions function_bytes calls requested_bytes retained_bytes peak_tracked_bytes median_ms range_ms
+current 0 1 208 23000 2400000 9475 11867 0.927 0.899..0.944
+current 70 257 208 1336000 116236000 1709313 1823961 128.142 124.886..133.212
+current 9 71 208 399000 33116000 77409 110105 15.859 15.700..15.897
+parent 0 1 224 23000 2416000 9475 11883 0.924 0.916..0.945
+parent 70 257 224 3384000 642588000 1709313 2090217 224.173 222.554..226.754
+parent 9 71 224 749000 51612000 77409 120201 23.486 23.308..23.978
+
+Empty ranges skip both borrowing and redundant initialization. The first candidate showed a small empty-case regression; rows above are the final guarded implementation.

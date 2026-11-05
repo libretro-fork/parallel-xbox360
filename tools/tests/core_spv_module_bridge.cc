@@ -78,9 +78,9 @@ int main(int argc, char **argv) {
     std::printf("PASS: %u function construction failures preserve unpublished entry/build point\n", rejected);
   }
 #endif
-  const unsigned counts[] = {1, 4, 8, 33, 129, 129, 1};
+  const unsigned counts[] = {1, 4, 8, 33, 129, 129, 1, 1};
   const unsigned variant = unsigned(std::strtoul(argv[2], nullptr, 10));
-  if (variant >= 7) return 2;
+  if (variant >= 8) return 2;
   spv::SpvBuildLogger logger;
   spv::Builder builder(spv::Spv_1_3, 0, &logger);
 #ifdef XE_SPV_BINARY_CHECK
@@ -123,6 +123,21 @@ int main(int argc, char **argv) {
       builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(),
           "unused", spv::LinkageType::Max, {}, {}, &entry);
       builder.makeReturn(true);
+      builder.leaveFunction();
+    }
+  }
+  if (variant == 7) {
+    for (unsigned count : {0u, 1u, 4u, 9u, 70u}) {
+      std::vector<spv::Id> arguments;
+      for (unsigned p = 0; p < count; ++p)
+        arguments.push_back((p & 1) ? builder.makeUintType(32) : scalar);
+      spv::Block* entry;
+      auto* function = builder.makeFunctionEntry(spv::NoPrecision, scalar,
+          "mixed_parameters", spv::LinkageType::Max, arguments, {}, &entry);
+      for (unsigned p = 0; p < count; ++p)
+        if (function->getParamType(p) != arguments[p] ||
+            function->getParamId(p) != function->getParamId(0) + p) return 38;
+      builder.makeReturn(true, count ? function->getParamId(0) : builder.makeFloatConstant(0.0f));
       builder.leaveFunction();
     }
   }
