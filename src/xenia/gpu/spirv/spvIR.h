@@ -492,9 +492,9 @@ public:
     Instruction* createInstruction(Id result, Id type, Op code);
     Instruction* createInstruction(Op code);
 
-    Function(Id id, Id resultType, Id functionType, Id firstParam, LinkageType linkage, const char* name, Module& parent);
+    Function(Id id, Id resultType, Id functionType, Id firstParam, LinkageType linkage, Module& parent);
     ~Function();
-    static Function* create(Id id, Id resultType, Id functionType, Id firstParam, LinkageType linkage, const char* name, Module& parent);
+    static Function* create(Id id, Id resultType, Id functionType, Id firstParam, LinkageType linkage, Module& parent);
     static void* operator new(size_t) = delete;
     static void* operator new[](size_t) = delete;
     static void operator delete(void* record) noexcept { xe_spv_arena_object_retire(record); }
@@ -584,7 +584,14 @@ public:
     }
 
     LinkageType getLinkType() const { return linkType; }
-    const char* getExportName() const { return exportName.c_str(); }
+    // Borrow immutable OpName storage. Module instruction payloads outlive us;
+    // the counted prefix excludes mangled parameters without a second copy.
+    void setLinkageName(const Instruction* name) {
+        linkageName = name ? name->getNameString() : nullptr;
+        linkageNameBytes = linkageName ? std::strcspn(linkageName, "(") : 0;
+    }
+    const char* getLinkageNameData() const { return linkageName; }
+    size_t getLinkageNameBytes() const { return linkageNameBytes; }
 
 protected:
     Function(const Function&) = delete;
@@ -602,7 +609,8 @@ protected:
     bool implicitThis;  // true if this is a member function expecting to be passed a 'this' as the first argument
     bool reducedPrecisionReturn;
     LinkageType linkType;
-    std::string exportName;
+    const char* linkageName = nullptr;
+    size_t linkageNameBytes = 0;
 };
 
 //
@@ -724,11 +732,11 @@ __inline Block* Block::create(Id id, Function& parent)
     catch (...) { xe_spv_arena_object_retire(record); throw; }
 }
 __inline Function* Function::create(Id id, Id resultType, Id functionType, Id firstParam,
-    LinkageType linkage, const char* name, Module& parent)
+    LinkageType linkage, Module& parent)
 {
     static_assert(alignof(Function) <= 16);
     void* record = parent.allocateObject(XE_SPV_OBJECT_FUNCTION, sizeof(Function));
-    try { return ::new (record) Function(id, resultType, functionType, firstParam, linkage, name, parent); }
+    try { return ::new (record) Function(id, resultType, functionType, firstParam, linkage, parent); }
     catch (...) { parent.forgetInstruction(id); xe_spv_arena_object_retire(record); throw; }
 }
 __inline Function::~Function()
@@ -746,7 +754,7 @@ __inline Function::~Function()
 // Add both
 // - the OpFunction instruction
 // - all the OpFunctionParameter instructions
-__inline Function::Function(Id id, Id resultType, Id functionType, Id firstParamId, LinkageType linkage, const char* name, Module& parent)
+__inline Function::Function(Id id, Id resultType, Id functionType, Id firstParamId, LinkageType linkage, Module& parent)
     : parent(parent), lineInstruction(nullptr),
       functionInstruction(id, resultType, Op::OpFunction), implicitThis(false),
       reducedPrecisionReturn(false),
@@ -768,11 +776,6 @@ __inline Function::Function(Id id, Id resultType, Id functionType, Id firstParam
         parent.mapInstruction(param);
     }
 
-    // If importing/exporting, save the function name (without the mangled parameters) for the linkage decoration
-    if (linkType != LinkageType::Max) {
-        const char* text = name ? name : "";
-        exportName.assign(text, std::strcspn(text, "("));
-    }
 }
 
 __inline void Function::addLocalVariable(std::unique_ptr<Instruction> inst)

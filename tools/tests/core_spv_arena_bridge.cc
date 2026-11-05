@@ -365,12 +365,15 @@ int main(int argc, char** argv) {
     spv::Block* entry;
     auto* unnamed = builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(), nullptr,
         spv::LinkageType::Max, {}, {}, &entry);
-    CHECK(!unnamed->getExportName()[0]);
+    CHECK(!unnamed->getLinkageNameData() && !unnamed->getLinkageNameBytes());
     char name[] = "long_borrowed_function_name_for_export(u32,f32)";
     auto* exported = builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(), name,
         spv::LinkageType::Export, {}, {}, &entry);
     std::memset(name, 'x', sizeof(name) - 1);
-    CHECK(!std::strcmp(exported->getExportName(), "long_borrowed_function_name_for_export"));
+    const char* expected = "long_borrowed_function_name_for_export";
+    CHECK(exported->getLinkageNameBytes() == std::strlen(expected));
+    CHECK(!std::memcmp(exported->getLinkageNameData(), expected, std::strlen(expected)));
+    CHECK(exported->getLinkageNameData()[exported->getLinkageNameBytes()] == '(');
   }
   {
     const size_t before = xe_spv_test_pages();
@@ -383,7 +386,7 @@ int main(int argc, char** argv) {
       module.mapInstruction(type);
       {
         std::unique_ptr<spv::Function> function(spv::Function::create(3, 1, 2, 0,
-            spv::LinkageType::Max, nullptr, module));
+            spv::LinkageType::Max, module));
         CHECK(module.getInstruction(3));
       }
       CHECK(!module.getInstruction(3));
@@ -391,7 +394,7 @@ int main(int argc, char** argv) {
       for (unsigned i = 0; i < 200; ++i) type->addIdOperand(1);
       bool failed = false;
       xe_spv_test_page_fail_after(xe_spv_test_page_calls());
-      try { spv::Function::create(3, 1, 2, 4, spv::LinkageType::Max, nullptr, module); }
+      try { spv::Function::create(3, 1, 2, 4, spv::LinkageType::Max, module); }
       catch (const std::bad_alloc&) { failed = true; }
       xe_spv_test_page_fail_after(size_t(-1));
       CHECK(failed && !module.getInstruction(3));

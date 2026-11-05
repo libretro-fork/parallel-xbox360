@@ -2295,7 +2295,7 @@ void Builder::addExecutionModeId(Function* entryPoint, ExecutionMode mode, const
     appendInstruction(executionModes, std::unique_ptr<Instruction>(instr));
 }
 
-void Builder::addName(Id id, const char* string)
+const Instruction* Builder::addName(Id id, const char* string)
 {
     Instruction* name = createInstruction(Op::OpName);
     name->reserveOperands(2);
@@ -2303,6 +2303,7 @@ void Builder::addName(Id id, const char* string)
     name->addStringOperand(string);
 
     appendInstruction(names, std::unique_ptr<Instruction>(name));
+    return name;
 }
 
 void Builder::addMemberName(Id id, int memberNumber, const char* string)
@@ -2376,11 +2377,15 @@ void Builder::addDecoration(Id id, Decoration decoration, const std::vector<cons
 }
 
 void Builder::addLinkageDecoration(Id id, const char* name, spv::LinkageType linkType) {
+    addLinkageDecoration(id, name, name ? strlen(name) : 0, linkType);
+}
+
+void Builder::addLinkageDecoration(Id id, const char* name, size_t bytes, spv::LinkageType linkType) {
     Instruction* dec = createInstruction(Op::OpDecorate);
     dec->reserveOperands(4);
     dec->addIdOperand(id);
     dec->addImmediateOperand(spv::Decoration::LinkageAttributes);
-    dec->addStringOperand(name);
+    dec->addStringOperand(name, bytes);
     dec->addImmediateOperand(linkType);
 
     decorations.insert(std::unique_ptr<Instruction>(dec));
@@ -2564,7 +2569,7 @@ Function* Builder::makeFunctionEntry(Decoration precision, Id returnType, const 
     Id typeId = makeFunctionType(returnType, paramTypes);
     Id firstParamId = paramTypes.size() == 0 ? 0 : getUniqueIds((int)paramTypes.size());
     Id funcId = getUniqueId();
-    auto functionOwner = std::unique_ptr<Function>(Function::create(funcId, returnType, typeId, firstParamId, linkType, name, module));
+    auto functionOwner = std::unique_ptr<Function>(Function::create(funcId, returnType, typeId, firstParamId, linkType, module));
     Function* function = functionOwner.get();
 
     // Set up the precisions
@@ -2588,8 +2593,10 @@ Function* Builder::makeFunctionEntry(Decoration precision, Id returnType, const 
     function->addBlock(entryBlock);
     entryOwner.release();
 
-    if (name)
-        addName(function->getId(), name);
+    if (name) {
+        const Instruction* ownedName = addName(function->getId(), name);
+        if (linkType != LinkageType::Max) function->setLinkageName(ownedName);
+    }
 
     xe_spv_instruction_append(&functions, function, Function::nextSlot);
     functionOwner.release();
@@ -2773,7 +2780,7 @@ void Builder::enterFunction(Function const* function)
     if (auto linkType = function->getLinkType(); linkType != LinkageType::Max) {
         Id funcId = function->getFuncId();
         addCapability(Capability::Linkage);
-        addLinkageDecoration(funcId, function->getExportName(), linkType);
+        addLinkageDecoration(funcId, function->getLinkageNameData(), function->getLinkageNameBytes(), linkType);
     }
 }
 

@@ -129,6 +129,11 @@ done
 echo "PASS: parent/current EDRAM output byte-for-byte, stable high-water storage"
 echo "PASS: eight archived-vector/borrowed-view modules, overwritten inputs and nested access chains"
 
+${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" \
+ "$root/tools/tests/core_spv_linkage_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
+ "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-debug.o" "$out/size.o" "$out/operands.o" "$out/fault.o" -o "$out/linkage-bridge"
+"$out/linkage-bridge" "$out/linkage.bin"
+
 # Fault-injected operand ownership is isolated from profiling adapters.
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_payload_test.c" -o "$out/payload-unit"
 "$out/payload-unit"

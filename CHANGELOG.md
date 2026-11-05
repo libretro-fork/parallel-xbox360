@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Shader linkage spelling now borrows the existing module-owned name instruction instead of allocating and copying a second prefix string. Counted output preserves import/export/ODR names and padding even after caller text is overwritten. Function records shrink from 152 to 136 bytes on measured GCC x64 builds; no audio or presentation scheduling changes.
+
 - Shader function ownership now uses a C89 head/tail chain instead of a vector, removing ownership-array allocation and growth copies. Links reuse the inline function header's spare pointer slot; emission and post-processing keep creation order. Removed an unused per-function precision set, including its empty-tree allocation on MSVC; actual parameter decorations are still emitted. Function records shrink from 208 to 152 bytes on measured GCC x64 builds. Construction, serialization and retained-memory measurements are recorded separately; the working texture-watch fix and audio schedule are unchanged.
 
 - Arena-backed shader instructions reuse C89 operand-payload pages instead of allocating each larger operand buffer separately. The latest buffer can grow in place without copying its words; larger or non-tail growth remains checked. Compiler and geometry workspaces prefault 16 KiB and retain their high-water capacity until shutdown. Stack instructions keep ordinary heap ownership. Record sizes remain unchanged, and sanitizer checks cover retired payloads as well as instruction records. Other metadata and driver allocations remain; the confirmed texture-watch race fix and audio scheduling are preserved.

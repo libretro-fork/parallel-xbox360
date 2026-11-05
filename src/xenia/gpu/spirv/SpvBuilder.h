@@ -464,13 +464,14 @@ public:
     void addExecutionMode(Function*, ExecutionMode mode, int value1 = -1, int value2 = -1, int value3 = -1);
     void addExecutionMode(Function*, ExecutionMode mode, const std::vector<unsigned>& literals);
     void addExecutionModeId(Function*, ExecutionMode mode, const std::vector<Id>& operandIds);
-    void addName(Id, const char* name);
+    const Instruction* addName(Id, const char* name);
     void addMemberName(Id, int member, const char* name);
     void addDecoration(Id, Decoration, int num = -1);
     void addDecoration(Id, Decoration, const char*);
     void addDecoration(Id, Decoration, const std::vector<unsigned>& literals);
     void addDecoration(Id, Decoration, const std::vector<const char*>& strings);
     void addLinkageDecoration(Id id, const char* name, spv::LinkageType linkType);
+    void addLinkageDecoration(Id id, const char* name, size_t bytes, spv::LinkageType linkType);
     void addDecorationId(Id id, Decoration, Id idDecoration);
     void addDecorationId(Id id, Decoration, const std::vector<Id>& operandIds);
     void addMemberDecoration(Id, unsigned int member, Decoration, int num = -1);

@@ -1,0 +1,85 @@
+Borrowed SPIR-V linkage names, 2026-11-05
+Baseline: complete 3a3c03c8024e32de8f7721ec02edffeea6a63229 archive.
+Windows x64 GCC 16.2, -O2; native MSVC and WSL GCC sanitizer checks separately.
+
+Each function drops its std::string prefix owner. Builder.addName returns the
+immutable arena-owned OpName record; a linked function keeps a const byte view
+and the prefix length up to '('. enterFunction passes that counted view into the
+existing C89 string encoder. No temporary NUL-terminated prefix is constructed.
+Null names retain empty linkage spelling. Names live in stable instruction slots
+or nonmoving operand pages; later name allocations cannot relocate the view.
+Functions retire before the module releases name instructions/payloads. Function
+publication still follows all throwing name/block construction, with RAII only
+at the typed interface. Direct Function factories no longer take caller strings;
+repository direct callers are the detached-object tests, using LinkageType::Max.
+
+GCC x64 sizes: Function 152 -> 136 bytes. Instruction 64, Block 136, Module 88,
+and Builder 2000 are unchanged. The ordinary guest translator uses Max linkage,
+so linked-name allocation savings below are not universal guest-path savings.
+Ordinary functions still benefit from denser records and lower retained storage.
+Other maps, vectors, strings, arena growth and driver compilation remain.
+
+Construction: seven alternating quiet parent/current pairs, 1000 modules/sample,
+73-byte helper names, warmed reusable workspace and output. Main is unlinked;
+all remaining functions use either Max (plain) or Export (linked). Linked cases
+also call enterFunction to emit the actual decoration. All C++ new and C operand,
+arena, index, plan and output hooks are counted; allocator headers, allocator
+retention and GPU-driver memory are excluded. Every tracked lifetime returns to
+its initial state. Timing excludes dump; untimed output bytes match. Earlier
+build-time sample logs are excluded from the timing summary.
+
+mode/functions/revision   calls / requested bytes / retained bytes / peak bytes
+linked, 1, current   calls=12000 requested=1968000 retained=41544 peak=43512 ms=0.629 (0.624..0.654)
+linked, 1, parent    calls=12000 requested=1968000 retained=42056 peak=44024 ms=0.631 (0.619..0.766)
+linked, 71, current  calls=83000 requested=4808000 retained=113186 peak=120298 ms=14.100 (13.746..14.515)
+linked, 71, parent   calls=153000 requested=9988000 retained=114722 peak=127014 ms=16.324 (16.016..16.775)
+linked, 257, current calls=269000 requested=12248000 retained=326072 peak=347536 ms=50.959 (50.654..52.919)
+linked, 257, parent  calls=525000 requested=31192000 retained=330680 peak=371088 ms=61.492 (60.917..65.787)
+plain, 1, current    calls=12000 requested=1968000 retained=41544 peak=43512 ms=0.634 (0.615..0.640)
+plain, 1, parent     calls=12000 requested=1968000 retained=42056 peak=44024 ms=0.621 (0.612..0.648)
+plain, 71, current   calls=12000 requested=1968000 retained=90315 peak=94587 ms=4.956 (4.849..4.983)
+plain, 71, parent    calls=12000 requested=1968000 retained=91851 peak=96123 ms=4.945 (4.886..5.232)
+plain, 257, current  calls=12000 requested=1968000 retained=253243 peak=264427 ms=16.173 (15.974..16.977)
+plain, 257, parent   calls=12000 requested=1968000 retained=257851 peak=269035 ms=16.435 (16.196..16.738)
+
+The largest linked case removes 256000 requests per 1000 modules (one per helper
+function): 48.76% fewer calls, 60.73% fewer requested bytes, and 17.13% less median
+construction time. The 71-function linked case is 13.62% faster. These are linked
+synthetic fixtures, not gameplay or overall shader-compilation speedups. Plain
+construction times are comparable with overlapping ranges; no universal timing
+win is claimed. Plain largest retained storage falls 4608 bytes. Output allocation
+counts are unchanged. Serializer throughput was not separately remeasured here.
+
+Validation:
+- Make -j5 Windows core build; native MSVC C89 storage and typed builder suite.
+- Full WSL ASan/UBSan standard/wide 5248 helper modules, borrowed inputs/source,
+  allocation/publication failures, owner chains, and negative record/payload UAF.
+- 43 Export/Import/LinkOnceODR names, prefix lengths 0/1/3/4/7/8/15/16/31/32/63/
+  64/255/1024 plus a null name; caller input overwritten, later name allocations,
+  exact decoration lengths/linkage values and zero padding checked.
+- Linkage fixture 103796 bytes identical to owning-string parent; native MSVC and
+  GCC SHA256 FAE2827AE506B6692192122D3D24E573F3992582D6300540EE8FFC526A63D789.
+  This deliberately checks builder import decoration spelling, including bodies;
+  it is a wire-equivalence fixture, not a claim of valid imported-function bodies.
+- 18432 native MSVC geometry variants; 109668864 bytes retain golden SHA256
+  427B071C7E7868566596FF55270BBCA9AAB31F54C714CA552E928DFE349E69E0.
+- Actual rebuilt production-core objects: 1410 Tekken translations (2 control-flow
+  cases), 81581628 bytes; 210 Tomb Raider translations (96 control-flow cases),
+  93646888 bytes. Both match existing pre-change outputs exactly. Inputs are
+  user-local caches, not distributed with tests or patches.
+- No frontend/game/driver launched. Audio scheduling, texture watches, resource
+  retirement, shutdown and presentation are unchanged. No hardware cache/spill,
+  RSS, gameplay/FPS, ARM or driver-runtime improvement is asserted.
+
+Reproduce wire equivalence: sh tools/tests/run_spv_linkage_compare.sh. Optionally
+set BASELINE_ROOT to a complete parent archive, and SANITIZER as desired. This
+builds each revision's own complete C/IR sources; no mixed headers/objects.
+Reproduce construction with tools/tests/run_spv_binary_bench.sh and:
+ BASELINE_ROOT=<complete 3a3c03c archive>
+ CAPTURE_OPERANDS=1
+ TEST_SOURCE=tools/tests/core_spv_function_bench.cc
+ EXTRA_CXXFLAGS='-DXE_SPV_LONG_NAME_BENCH -DXE_SPV_BLOCK_CHAIN_BENCH'
+Add -DXE_SPV_LINKAGE_BENCH for linked helpers. After compilation stops, alternate
+variants 0/4/5 of parent/current test executables for seven quiet pairs. Each
+executable verifies stable retained capacity/liveness and writes its module for
+comparison. Native: tools/tests/run_spv_output_tests.cmd from an x64 VS prompt.

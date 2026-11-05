@@ -33,8 +33,18 @@ static void build_functions(xe_spv_arena* arena, unsigned count, unsigned parame
 #else
     const char* name = "f";
 #endif
-    builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(), name,
-        spv::LinkageType::Max, parameterTypes, {}, &entry);
+    spv::Function* function = builder.makeFunctionEntry(spv::NoPrecision, builder.makeVoidType(), name,
+#ifdef XE_SPV_LINKAGE_BENCH
+        spv::LinkageType::Export,
+#else
+        spv::LinkageType::Max,
+#endif
+        parameterTypes, {}, &entry);
+#ifdef XE_SPV_LINKAGE_BENCH
+    builder.enterFunction(function);
+#else
+    (void)function;
+#endif
     builder.makeReturn(true);
     builder.leaveFunction();
   }
