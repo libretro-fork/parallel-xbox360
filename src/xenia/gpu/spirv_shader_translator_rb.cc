@@ -532,20 +532,20 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
                                   uint32_t(xenos::CompareFunction::kAlways))),
         spv::SelectionControlDontFlattenMask, *builder_);
     {
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(builder_->makeIntConstant(3));
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, builder_->makeIntConstant(3));
       spv::Id alpha_test_alpha = builder_->createLoad(
-          builder_->createAccessChain(spv::StorageClassFunction,
+          builder_->createAccessChainView(spv::StorageClassFunction,
                                       output_or_var_fragment_data_[0],
-                                      id_vector_temp_),
+                                      xe_spv_scratch_view(&id_scratch_)),
           spv::NoPrecision);
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(kSystemConstantAlphaTestReference));
       spv::Id alpha_test_reference =
-          builder_->createLoad(builder_->createAccessChain(
+          builder_->createLoad(builder_->createAccessChainView(
                                    spv::StorageClassUniform,
-                                   uniform_system_constants_, id_vector_temp_),
+                                   uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
                                spv::NoPrecision);
       // The comparison function is not "always" - perform the alpha test.
       // Handle "not equal" specially (specifically as "not equal" so it's true
@@ -638,15 +638,15 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
           !features_.demote_to_helper_invocation) {
         // The tests might have modified the sample mask via
         // fsi_sample_mask_in_rt_0_alpha_tests.
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(fsi_sample_mask_in_rt_0_alpha_tests);
-        id_vector_temp_.push_back(
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_, fsi_sample_mask_in_rt_0_alpha_tests);
+        ScratchPush(&id_scratch_,
             block_rt_0_alpha_tests_rt_written_end.getId());
-        id_vector_temp_.push_back(main_fsi_sample_mask_);
-        id_vector_temp_.push_back(
+        ScratchPush(&id_scratch_, main_fsi_sample_mask_);
+        ScratchPush(&id_scratch_,
             block_rt_0_alpha_tests_rt_written_head->getId());
         main_fsi_sample_mask_ =
-            builder_->createOp(spv::OpPhi, type_uint_, id_vector_temp_);
+            builder_->createOpView(spv::OpPhi, type_uint_, xe_spv_scratch_view(&id_scratch_));
       } else if (edram_fragment_shader_interlock_) {
         // Demote path: the alpha test demotes instead of touching the mask, but
         // alpha to coverage still modified main_fsi_sample_mask_ inside the
@@ -654,15 +654,15 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
         // (fsi_sample_mask_in_rt_0_alpha_tests) on the not-written edge so the
         // value dominates the merge. Otherwise it is undefined there (invalid
         // SPIR-V dominance and garbage coverage).
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(main_fsi_sample_mask_);
-        id_vector_temp_.push_back(
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_, main_fsi_sample_mask_);
+        ScratchPush(&id_scratch_,
             block_rt_0_alpha_tests_rt_written_end.getId());
-        id_vector_temp_.push_back(fsi_sample_mask_in_rt_0_alpha_tests);
-        id_vector_temp_.push_back(
+        ScratchPush(&id_scratch_, fsi_sample_mask_in_rt_0_alpha_tests);
+        ScratchPush(&id_scratch_,
             block_rt_0_alpha_tests_rt_written_head->getId());
         main_fsi_sample_mask_ =
-            builder_->createOp(spv::OpPhi, type_uint_, id_vector_temp_);
+            builder_->createOpView(spv::OpPhi, type_uint_, xe_spv_scratch_view(&id_scratch_));
       }
     }
   }
@@ -682,12 +682,12 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
       if (features_.demote_to_helper_invocation) {
         // Don't do anything related to writing to the EDRAM if the pixel was
         // killed.
-        id_vector_temp_.clear();
+        id_scratch_.count = 0;
         // TODO(Triang3l): Use HelperInvocation volatile load on SPIR-V 1.6.
         main_fsi_sample_mask_ = builder_->createTriOp(
             spv::OpSelect, type_uint_,
-            builder_->createOp(spv::OpIsHelperInvocationEXT, type_bool_,
-                               id_vector_temp_),
+            builder_->createOpView(spv::OpIsHelperInvocationEXT, type_bool_,
+                               xe_spv_scratch_view(&id_scratch_)),
             const_uint_0_, main_fsi_sample_mask_);
       }
       // Check the condition before the OpSelectionMerge, which must be the
@@ -719,16 +719,16 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
             spv::SelectionControlDontFlattenMask, *builder_);
         spv::Id depth_stencil_sample_address =
             FSI_AddSampleOffset(main_fsi_address_depth_, i);
-        id_vector_temp_.clear();
+        id_scratch_.count = 0;
         // First SSBO structure element.
-        id_vector_temp_.push_back(const_int_0_);
-        id_vector_temp_.push_back(depth_stencil_sample_address);
+        ScratchPush(&id_scratch_, const_int_0_);
+        ScratchPush(&id_scratch_, depth_stencil_sample_address);
         builder_->createStore(
             main_fsi_late_write_depth_stencil_[i],
-            builder_->createAccessChain(features_.spirv_version >= spv::Spv_1_3
+            builder_->createAccessChainView(features_.spirv_version >= spv::Spv_1_3
                                             ? spv::StorageClassStorageBuffer
                                             : spv::StorageClassUniform,
-                                        buffer_edram_, id_vector_temp_));
+                                        buffer_edram_, xe_spv_scratch_view(&id_scratch_)));
         if_sample_late_depth_stencil_write_needed.makeEndIf();
       }
       if (color_targets_written) {
@@ -810,16 +810,16 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
 
       // Apply the exponent bias after the alpha test and alpha to coverage
       // because they need the unbiased alpha from the shader.
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(kSystemConstantColorExpBias));
-      id_vector_temp_.push_back(
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(int32_t(color_target_index)));
       color = builder_->createNoContractionBinOp(
           spv::OpVectorTimesScalar, type_float4_, color,
-          builder_->createLoad(builder_->createAccessChain(
+          builder_->createLoad(builder_->createAccessChainView(
                                    spv::StorageClassUniform,
-                                   uniform_system_constants_, id_vector_temp_),
+                                   uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
                                spv::NoPrecision));
 
       if (edram_fragment_shader_interlock_) {
@@ -850,22 +850,22 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
         // preserved (in 32-bit halves), which are 0, 0 if the color is fully
         // overwritten, or UINT32_MAX, UINT32_MAX if writing to the target is
         // disabled completely.
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_,
             builder_->makeIntConstant(kSystemConstantEdramRTKeepMask));
-        id_vector_temp_.push_back(rt_uint2_index_array);
-        id_vector_temp_.push_back(rt_uint2_index_element[0]);
+        ScratchPush(&id_scratch_, rt_uint2_index_array);
+        ScratchPush(&id_scratch_, rt_uint2_index_element[0]);
         spv::Id rt_keep_mask[2];
         rt_keep_mask[0] = builder_->createLoad(
-            builder_->createAccessChain(spv::StorageClassUniform,
+            builder_->createAccessChainView(spv::StorageClassUniform,
                                         uniform_system_constants_,
-                                        id_vector_temp_),
+                                        xe_spv_scratch_view(&id_scratch_)),
             spv::NoPrecision);
-        id_vector_temp_.back() = rt_uint2_index_element[1];
+        xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1] = rt_uint2_index_element[1];
         rt_keep_mask[1] = builder_->createLoad(
-            builder_->createAccessChain(spv::StorageClassUniform,
+            builder_->createAccessChainView(spv::StorageClassUniform,
                                         uniform_system_constants_,
-                                        id_vector_temp_),
+                                        xe_spv_scratch_view(&id_scratch_)),
             spv::NoPrecision);
 
         // Check if writing to the render target is not disabled completely.
@@ -895,10 +895,10 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
                             RenderTargetCache::kPSIColorFormatFlag_64bpp) != 0;
         spv::Id rt_is_64bpp_id = builder_->makeBoolConstant(rt_is_64bpp);
 
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_,
             builder_->makeIntConstant(kSystemConstantEdramRTBaseDwordsScaled));
-        id_vector_temp_.push_back(const_int_rt_index);
+        ScratchPush(&id_scratch_, const_int_rt_index);
         // EDRAM addresses are wrapped on the Xenos (modulo the EDRAM size).
         spv::Id rt_sample_0_address = builder_->createUnaryOp(
             spv::OpBitcast, type_int_,
@@ -907,9 +907,9 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
                 builder_->createBinOp(
                     spv::OpIAdd, type_uint_,
                     builder_->createLoad(
-                        builder_->createAccessChain(spv::StorageClassUniform,
+                        builder_->createAccessChainView(spv::StorageClassUniform,
                                                     uniform_system_constants_,
-                                                    id_vector_temp_),
+                                                    xe_spv_scratch_view(&id_scratch_)),
                         spv::NoPrecision),
                     builder_->createTriOp(
                         spv::OpSelect, type_uint_, rt_is_64bpp_id,
@@ -952,15 +952,15 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
                     spv::SelectionControlDontFlattenMask, *builder_);
                 spv::Id rt_sample_address =
                     FSI_AddSampleOffset(rt_sample_0_address, i, rt_is_64bpp_id);
-                id_vector_temp_.clear();
+                id_scratch_.count = 0;
                 // First SSBO structure element.
-                id_vector_temp_.push_back(const_int_0_);
-                id_vector_temp_.push_back(rt_sample_address);
-                spv::Id rt_access_chain_0 = builder_->createAccessChain(
+                ScratchPush(&id_scratch_, const_int_0_);
+                ScratchPush(&id_scratch_, rt_sample_address);
+                spv::Id rt_access_chain_0 = builder_->createAccessChainView(
                     features_.spirv_version >= spv::Spv_1_3
                         ? spv::StorageClassStorageBuffer
                         : spv::StorageClassUniform,
-                    buffer_edram_, id_vector_temp_);
+                    buffer_edram_, xe_spv_scratch_view(&id_scratch_));
                 builder_->createStore(
                     builder_->createBinOp(
                         spv::OpBitwiseOr, type_uint_,
@@ -972,14 +972,14 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
                         color_packed_masked[0]),
                     rt_access_chain_0);
                 if (rt_is_64bpp) {
-                  id_vector_temp_.back() =
+                  xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1] =
                       builder_->createBinOp(spv::OpIAdd, type_int_,
                                             rt_sample_address, fsi_const_int_1);
-                  spv::Id rt_access_chain_1 = builder_->createAccessChain(
+                  spv::Id rt_access_chain_1 = builder_->createAccessChainView(
                       features_.spirv_version >= spv::Spv_1_3
                           ? spv::StorageClassStorageBuffer
                           : spv::StorageClassUniform,
-                      buffer_edram_, id_vector_temp_);
+                      buffer_edram_, xe_spv_scratch_view(&id_scratch_));
                   builder_->createStore(
                       builder_->createBinOp(
                           spv::OpBitwiseOr, type_uint_,
@@ -1003,27 +1003,27 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
                     spv::SelectionControlDontFlattenMask, *builder_);
                 spv::Id rt_sample_address =
                     FSI_AddSampleOffset(rt_sample_0_address, i, rt_is_64bpp_id);
-                id_vector_temp_.clear();
+                id_scratch_.count = 0;
                 // First SSBO structure element.
-                id_vector_temp_.push_back(const_int_0_);
-                id_vector_temp_.push_back(rt_sample_address);
+                ScratchPush(&id_scratch_, const_int_0_);
+                ScratchPush(&id_scratch_, rt_sample_address);
                 builder_->createStore(
-                    color_packed[0], builder_->createAccessChain(
+                    color_packed[0], builder_->createAccessChainView(
                                          features_.spirv_version >= spv::Spv_1_3
                                              ? spv::StorageClassStorageBuffer
                                              : spv::StorageClassUniform,
-                                         buffer_edram_, id_vector_temp_));
+                                         buffer_edram_, xe_spv_scratch_view(&id_scratch_)));
                 if (rt_is_64bpp) {
-                  id_vector_temp_.back() = builder_->createBinOp(
-                      spv::OpIAdd, type_int_, id_vector_temp_.back(),
+                  xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1] = builder_->createBinOp(
+                      spv::OpIAdd, type_int_, xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1],
                       fsi_const_int_1);
                   builder_->createStore(
                       color_packed[1],
-                      builder_->createAccessChain(
+                      builder_->createAccessChainView(
                           features_.spirv_version >= spv::Spv_1_3
                               ? spv::StorageClassStorageBuffer
                               : spv::StorageClassUniform,
-                          buffer_edram_, id_vector_temp_));
+                          buffer_edram_, xe_spv_scratch_view(&id_scratch_)));
                 }
                 if_sample_covered.makeEndIf();
               }
@@ -1035,14 +1035,14 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
           emit_overwrite_path();
         } else {
           // Only this branch reads the blending parameters.
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_,
               builder_->makeIntConstant(kSystemConstantEdramRTBlendFactorsOps));
-          id_vector_temp_.push_back(const_int_rt_index);
+          ScratchPush(&id_scratch_, const_int_rt_index);
           spv::Id rt_blend_factors_equations = builder_->createLoad(
-              builder_->createAccessChain(spv::StorageClassUniform,
+              builder_->createAccessChainView(spv::StorageClassUniform,
                                           uniform_system_constants_,
-                                          id_vector_temp_),
+                                          xe_spv_scratch_view(&id_scratch_)),
               spv::NoPrecision);
 
           // Check if blending (the blending is not 1 * source + 0 *
@@ -1063,14 +1063,14 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
             spv::Id rt_alpha_is_fixed_point = builder_->makeBoolConstant(
                 (rt_format_flags &
                  RenderTargetCache::kPSIColorFormatFlag_FixedPointAlpha) != 0);
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_,
                 builder_->makeIntConstant(kSystemConstantEdramRTClamp));
-            id_vector_temp_.push_back(const_int_rt_index);
+            ScratchPush(&id_scratch_, const_int_rt_index);
             spv::Id rt_clamp = builder_->createLoad(
-                builder_->createAccessChain(spv::StorageClassUniform,
+                builder_->createAccessChainView(spv::StorageClassUniform,
                                             uniform_system_constants_,
-                                            id_vector_temp_),
+                                            xe_spv_scratch_view(&id_scratch_)),
                 spv::NoPrecision);
             spv::Id rt_clamp_color_min = builder_->smearScalar(
                 spv::NoPrecision,
@@ -1106,22 +1106,22 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
                 spv::OpBitFieldUExtract, type_uint_, rt_blend_factors_equations,
                 builder_->makeUintConstant(24), blend_factor_width);
 
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_,
                 builder_->makeIntConstant(kSystemConstantEdramBlendConstant));
             spv::Id blend_constant_unclamped = builder_->createLoad(
-                builder_->createAccessChain(spv::StorageClassUniform,
+                builder_->createAccessChainView(spv::StorageClassUniform,
                                             uniform_system_constants_,
-                                            id_vector_temp_),
+                                            xe_spv_scratch_view(&id_scratch_)),
                 spv::NoPrecision);
-            uint_vector_temp_.clear();
-            uint_vector_temp_.push_back(0);
-            uint_vector_temp_.push_back(1);
-            uint_vector_temp_.push_back(2);
+            literal_scratch_.count = 0;
+            ScratchPush(&literal_scratch_, 0);
+            ScratchPush(&literal_scratch_, 1);
+            ScratchPush(&literal_scratch_, 2);
             spv::Id blend_constant_color_unclamped =
-                builder_->createRvalueSwizzle(spv::NoPrecision, type_float3_,
+                builder_->createRvalueSwizzleView(spv::NoPrecision, type_float3_,
                                               blend_constant_unclamped,
-                                              uint_vector_temp_);
+                                              xe_spv_scratch_view(&literal_scratch_));
             spv::Id blend_constant_color_clamped =
                 FSI_FlushNaNClampAndInBlending(
                     blend_constant_color_unclamped, rt_color_is_fixed_point,
@@ -1133,12 +1133,12 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
                     rt_alpha_is_fixed_point, rt_clamp_alpha_min,
                     rt_clamp_alpha_max);
 
-            uint_vector_temp_.clear();
-            uint_vector_temp_.push_back(0);
-            uint_vector_temp_.push_back(1);
-            uint_vector_temp_.push_back(2);
-            spv::Id source_color_unclamped = builder_->createRvalueSwizzle(
-                spv::NoPrecision, type_float3_, color, uint_vector_temp_);
+            literal_scratch_.count = 0;
+            ScratchPush(&literal_scratch_, 0);
+            ScratchPush(&literal_scratch_, 1);
+            ScratchPush(&literal_scratch_, 2);
+            spv::Id source_color_unclamped = builder_->createRvalueSwizzleView(
+                spv::NoPrecision, type_float3_, color, xe_spv_scratch_view(&literal_scratch_));
             spv::Id source_color_clamped = FSI_FlushNaNClampAndInBlending(
                 source_color_unclamped, rt_color_is_fixed_point,
                 rt_clamp_color_min, rt_clamp_color_max);
@@ -1161,22 +1161,22 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
 
               spv::Id rt_sample_address =
                   FSI_AddSampleOffset(rt_sample_0_address, i, rt_is_64bpp_id);
-              id_vector_temp_.clear();
+              id_scratch_.count = 0;
               // First SSBO structure element.
-              id_vector_temp_.push_back(const_int_0_);
-              id_vector_temp_.push_back(rt_sample_address);
-              spv::Id rt_access_chain_0 = builder_->createAccessChain(
+              ScratchPush(&id_scratch_, const_int_0_);
+              ScratchPush(&id_scratch_, rt_sample_address);
+              spv::Id rt_access_chain_0 = builder_->createAccessChainView(
                   features_.spirv_version >= spv::Spv_1_3
                       ? spv::StorageClassStorageBuffer
                       : spv::StorageClassUniform,
-                  buffer_edram_, id_vector_temp_);
-              id_vector_temp_.back() = builder_->createBinOp(
+                  buffer_edram_, xe_spv_scratch_view(&id_scratch_));
+              xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1] = builder_->createBinOp(
                   spv::OpIAdd, type_int_, rt_sample_address, fsi_const_int_1);
-              spv::Id rt_access_chain_1 = builder_->createAccessChain(
+              spv::Id rt_access_chain_1 = builder_->createAccessChainView(
                   features_.spirv_version >= spv::Spv_1_3
                       ? spv::StorageClassStorageBuffer
                       : spv::StorageClassUniform,
-                  buffer_edram_, id_vector_temp_);
+                  buffer_edram_, xe_spv_scratch_view(&id_scratch_));
 
               // Load the destination color.
               std::array<spv::Id, 2> dest_packed;
@@ -1188,12 +1188,12 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
                                    : const_uint_0_;
               std::array<spv::Id, 4> dest_unpacked =
                   FSI_UnpackColor(dest_packed, rt_format);
-              id_vector_temp_.clear();
-              id_vector_temp_.push_back(dest_unpacked[0]);
-              id_vector_temp_.push_back(dest_unpacked[1]);
-              id_vector_temp_.push_back(dest_unpacked[2]);
-              spv::Id dest_color = builder_->createCompositeConstruct(
-                  type_float3_, id_vector_temp_);
+              id_scratch_.count = 0;
+              ScratchPush(&id_scratch_, dest_unpacked[0]);
+              ScratchPush(&id_scratch_, dest_unpacked[1]);
+              ScratchPush(&id_scratch_, dest_unpacked[2]);
+              spv::Id dest_color = builder_->createCompositeConstructView(
+                  type_float3_, xe_spv_scratch_view(&id_scratch_));
 
               // Blend the components.
               spv::Id result_color = FSI_BlendColorOrAlphaWithUnclampedResult(
@@ -1266,12 +1266,12 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
         // after blending on the Xbox 360, but this is just one of many blending
         // issues in the host render target path.
         // TODO(Triang3l): Gamma as unorm8 check.
-        uint_vector_temp_.clear();
-        uint_vector_temp_.push_back(0);
-        uint_vector_temp_.push_back(1);
-        uint_vector_temp_.push_back(2);
-        spv::Id color_rgb = builder_->createRvalueSwizzle(
-            spv::NoPrecision, type_float3_, color, uint_vector_temp_);
+        literal_scratch_.count = 0;
+        ScratchPush(&literal_scratch_, 0);
+        ScratchPush(&literal_scratch_, 1);
+        ScratchPush(&literal_scratch_, 2);
+        spv::Id color_rgb = builder_->createRvalueSwizzleView(
+            spv::NoPrecision, type_float3_, color, xe_spv_scratch_view(&literal_scratch_));
         spv::Id is_gamma = builder_->createBinOp(
             spv::OpINotEqual, type_bool_,
             builder_->createBinOp(
@@ -1332,12 +1332,12 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
              rt0_a_premult_factor != xenos::BlendFactor::kOne)) {
           // Helper to extract RGB (xyz) from a float4.
           auto extract_rgb = [&](spv::Id vec4) -> spv::Id {
-            uint_vector_temp_.clear();
-            uint_vector_temp_.push_back(0);
-            uint_vector_temp_.push_back(1);
-            uint_vector_temp_.push_back(2);
-            return builder_->createRvalueSwizzle(spv::NoPrecision, type_float3_,
-                                                 vec4, uint_vector_temp_);
+            literal_scratch_.count = 0;
+            ScratchPush(&literal_scratch_, 0);
+            ScratchPush(&literal_scratch_, 1);
+            ScratchPush(&literal_scratch_, 2);
+            return builder_->createRvalueSwizzleView(spv::NoPrecision, type_float3_,
+                                                 vec4, xe_spv_scratch_view(&literal_scratch_));
           };
 
           // Get blend factor values.
@@ -1385,13 +1385,13 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
               case xenos::BlendFactor::kConstantColor:
               case xenos::BlendFactor::kConstantAlpha: {
                 // Load blend constant from system constants.
-                id_vector_temp_.clear();
-                id_vector_temp_.push_back(builder_->makeIntConstant(
+                id_scratch_.count = 0;
+                ScratchPush(&id_scratch_, builder_->makeIntConstant(
                     kSystemConstantEdramBlendConstant));
                 spv::Id blend_constant = builder_->createLoad(
-                    builder_->createAccessChain(spv::StorageClassUniform,
+                    builder_->createAccessChainView(spv::StorageClassUniform,
                                                 uniform_system_constants_,
-                                                id_vector_temp_),
+                                                xe_spv_scratch_view(&id_scratch_)),
                     spv::NoPrecision);
                 if (factor == xenos::BlendFactor::kConstantAlpha) {
                   spv::Id alpha = builder_->createCompositeExtract(
@@ -1410,13 +1410,13 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
               }
               case xenos::BlendFactor::kOneMinusConstantColor:
               case xenos::BlendFactor::kOneMinusConstantAlpha: {
-                id_vector_temp_.clear();
-                id_vector_temp_.push_back(builder_->makeIntConstant(
+                id_scratch_.count = 0;
+                ScratchPush(&id_scratch_, builder_->makeIntConstant(
                     kSystemConstantEdramBlendConstant));
                 spv::Id blend_constant = builder_->createLoad(
-                    builder_->createAccessChain(spv::StorageClassUniform,
+                    builder_->createAccessChainView(spv::StorageClassUniform,
                                                 uniform_system_constants_,
-                                                id_vector_temp_),
+                                                xe_spv_scratch_view(&id_scratch_)),
                     spv::NoPrecision);
                 spv::Id constant_value;
                 if (factor == xenos::BlendFactor::kOneMinusConstantAlpha) {
@@ -1457,16 +1457,16 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
             // Reconstruct float4 with new RGB and original alpha.
             spv::Id alpha =
                 builder_->createCompositeExtract(color, type_float_, 3);
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_,
                 builder_->createCompositeExtract(rgb, type_float_, 0));
-            id_vector_temp_.push_back(
+            ScratchPush(&id_scratch_,
                 builder_->createCompositeExtract(rgb, type_float_, 1));
-            id_vector_temp_.push_back(
+            ScratchPush(&id_scratch_,
                 builder_->createCompositeExtract(rgb, type_float_, 2));
-            id_vector_temp_.push_back(alpha);
-            color = builder_->createCompositeConstruct(type_float4_,
-                                                       id_vector_temp_);
+            ScratchPush(&id_scratch_, alpha);
+            color = builder_->createCompositeConstructView(type_float4_,
+                                                       xe_spv_scratch_view(&id_scratch_));
           }
 
           // Apply alpha pre-multiply.
@@ -1477,16 +1477,16 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
             alpha = builder_->createBinOp(spv::OpFMul, type_float_, alpha,
                                           a_factor);
             // Replace alpha in color (extract RGB, reconstruct with new alpha).
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_,
                 builder_->createCompositeExtract(color, type_float_, 0));
-            id_vector_temp_.push_back(
+            ScratchPush(&id_scratch_,
                 builder_->createCompositeExtract(color, type_float_, 1));
-            id_vector_temp_.push_back(
+            ScratchPush(&id_scratch_,
                 builder_->createCompositeExtract(color, type_float_, 2));
-            id_vector_temp_.push_back(alpha);
-            color = builder_->createCompositeConstruct(type_float4_,
-                                                       id_vector_temp_);
+            ScratchPush(&id_scratch_, alpha);
+            color = builder_->createCompositeConstructView(type_float4_,
+                                                       xe_spv_scratch_view(&id_scratch_));
           }
         }
 
@@ -1546,12 +1546,12 @@ void SpirvShaderTranslator::CompleteFragmentShader_DSV_DepthTo24Bit() {
       assert_true(main_fbo_depth_derivatives_[0] != spv::NoResult);
       assert_true(main_fbo_depth_derivatives_[1] != spv::NoResult);
       auto load_system_constant_float = [&](SystemConstantIndex index) {
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(builder_->makeIntConstant(index));
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_, builder_->makeIntConstant(index));
         return builder_->createLoad(
-            builder_->createAccessChain(spv::StorageClassUniform,
+            builder_->createAccessChainView(spv::StorageClassUniform,
                                         uniform_system_constants_,
-                                        id_vector_temp_),
+                                        xe_spv_scratch_view(&id_scratch_)),
             spv::NoPrecision);
       };
       spv::Id depth_dx = builder_->createUnaryBuiltinCall(
@@ -1582,12 +1582,12 @@ void SpirvShaderTranslator::CompleteFragmentShader_DSV_DepthTo24Bit() {
           spv::OpFAdd, type_float_, main_fbo_depth_unbiased_, poly_offset);
     } else {
       assert_true(input_fragment_coordinates_ != spv::NoResult);
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(builder_->makeIntConstant(2));
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, builder_->makeIntConstant(2));
       host_depth = builder_->createLoad(
-          builder_->createAccessChain(spv::StorageClassInput,
+          builder_->createAccessChainView(spv::StorageClassInput,
                                       input_fragment_coordinates_,
-                                      id_vector_temp_),
+                                      xe_spv_scratch_view(&id_scratch_)),
           spv::NoPrecision);
     }
     if (is_float24) {
@@ -1703,13 +1703,13 @@ void SpirvShaderTranslator::FSI_LoadSampleMask() {
   assert_true(input_sample_mask_ != spv::NoResult);
   main_fsi_z_fail_sample_mask_ = const_uint_0_;
   main_fsi_stencil_fail_sample_mask_ = const_uint_0_;
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(const_int_0_);
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, const_int_0_);
   spv::Id input_sample_mask_value = builder_->createUnaryOp(
       spv::OpBitcast, type_uint_,
       builder_->createLoad(
-          builder_->createAccessChain(spv::StorageClassInput,
-                                      input_sample_mask_, id_vector_temp_),
+          builder_->createAccessChainView(spv::StorageClassInput,
+                                      input_sample_mask_, xe_spv_scratch_view(&id_scratch_)),
           spv::NoPrecision));
 
   if (FSI_GetMsaaSamples() != xenos::MsaaSamples::k2X) {
@@ -1756,13 +1756,13 @@ void SpirvShaderTranslator::FSI_LoadEdramOffsets() {
                                         draw_resolution_scale_y_};
   spv::Id guest_pixel[2], guest_subpixel[2];
   for (uint32_t i = 0; i < 2; ++i) {
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeIntConstant(int32_t(i)));
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeIntConstant(int32_t(i)));
     spv::Id host_pixel = builder_->createUnaryOp(
         spv::OpConvertFToU, type_uint_,
-        builder_->createLoad(builder_->createAccessChain(
+        builder_->createLoad(builder_->createAccessChainView(
                                  spv::StorageClassInput,
-                                 input_fragment_coordinates_, id_vector_temp_),
+                                 input_fragment_coordinates_, xe_spv_scratch_view(&id_scratch_)),
                              spv::NoPrecision));
     if (resolution_scale[i] > 1) {
       spv::Id const_scale = builder_->makeUintConstant(resolution_scale[i]);
@@ -1855,14 +1855,14 @@ void SpirvShaderTranslator::FSI_LoadEdramOffsets() {
   // Multiply the Y tile position by the surface tile pitch in dwords at 32bpp
   // to get the address of the origin of the row of tiles within a 32bpp surface
   // in dwords (later it needs to be multiplied by 2 for 64bpp).
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(builder_->makeIntConstant(
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, builder_->makeIntConstant(
       kSystemConstantEdram32bppTilePitchDwordsScaled));
   spv::Id tile_row_offset_at_32bpp = builder_->createBinOp(
       spv::OpIMul, type_uint_,
-      builder_->createLoad(builder_->createAccessChain(
+      builder_->createLoad(builder_->createAccessChainView(
                                spv::StorageClassUniform,
-                               uniform_system_constants_, id_vector_temp_),
+                               uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
                            spv::NoPrecision),
       tile_half_index[1]);
 
@@ -1895,16 +1895,16 @@ void SpirvShaderTranslator::FSI_LoadEdramOffsets() {
   // samples 40...79 in the first half-tile, 0...39 in the second (flipped as
   // opposed to color). Then add the EDRAM base for depth / stencil, and wrap
   // addressing.
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(kSystemConstantEdramDepthBaseDwordsScaled));
   main_fsi_address_depth_ = builder_->createBinOp(
       spv::OpUMod, type_uint_,
       builder_->createBinOp(
           spv::OpIAdd, type_uint_,
-          builder_->createLoad(builder_->createAccessChain(
+          builder_->createLoad(builder_->createAccessChainView(
                                    spv::StorageClassUniform,
-                                   uniform_system_constants_, id_vector_temp_),
+                                   uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
                                spv::NoPrecision),
           builder_->createBinOp(
               spv::OpIAdd, type_uint_, offset_in_first_tile_half_at_32bpp,
@@ -1975,12 +1975,12 @@ void SpirvShaderTranslator::FSI_AddMSAASamplesToZPD(bool count_passed,
   assert_true(buffer_zpd_counter_ != spv::NoResult);
 
   // UINT32_MAX means no ZPD segment is currently open for this draw.
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(kSystemConstantZpdFsiCounterIndex));
   spv::Id counter_index = builder_->createLoad(
-      builder_->createAccessChain(spv::StorageClassUniform,
-                                  uniform_system_constants_, id_vector_temp_),
+      builder_->createAccessChainView(spv::StorageClassUniform,
+                                  uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
       spv::NoPrecision);
   SpirvBuilder::IfBuilder if_counter_open(
       builder_->createBinOp(spv::OpINotEqual, type_bool_, counter_index,
@@ -2008,21 +2008,21 @@ void SpirvShaderTranslator::FSI_AddMSAASamplesToZPD(bool count_passed,
         builder_->createBinOp(spv::OpINotEqual, type_bool_, sample_count,
                               const_uint_0_),
         spv::SelectionControlDontFlattenMask, *builder_);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(const_int_0_);
-    id_vector_temp_.push_back(builder_->createUnaryOp(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, const_int_0_);
+    ScratchPush(&id_scratch_, builder_->createUnaryOp(
         spv::OpBitcast, type_int_,
         builder_->createBinOp(spv::OpIAdd, type_uint_, counter_base,
                               builder_->makeUintConstant(lane))));
-    spv::Id counter_ptr = builder_->createAccessChain(
-        storage_class, buffer_zpd_counter_, id_vector_temp_);
+    spv::Id counter_ptr = builder_->createAccessChainView(
+        storage_class, buffer_zpd_counter_, xe_spv_scratch_view(&id_scratch_));
     if (flag) {
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(counter_ptr);
-      id_vector_temp_.push_back(const_scope_device);
-      id_vector_temp_.push_back(const_semantics_relaxed);
-      id_vector_temp_.push_back(builder_->makeUintConstant(1));
-      builder_->createNoResultOp(spv::OpAtomicStore, id_vector_temp_);
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, counter_ptr);
+      ScratchPush(&id_scratch_, const_scope_device);
+      ScratchPush(&id_scratch_, const_semantics_relaxed);
+      ScratchPush(&id_scratch_, builder_->makeUintConstant(1));
+      builder_->createNoResultOpView(spv::OpAtomicStore, xe_spv_scratch_view(&id_scratch_));
     } else {
       builder_->createQuadOp(spv::OpAtomicIAdd, type_uint_, counter_ptr,
                              const_scope_device, const_semantics_relaxed,
@@ -2053,12 +2053,12 @@ void SpirvShaderTranslator::FBO_AddMSAASamplesToZPDTotal() {
   assert_true(buffer_zpd_counter_ != spv::NoResult);
   assert_true(var_main_zpd_coverage_ != spv::NoResult);
 
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(kSystemConstantZpdFsiCounterIndex));
   spv::Id counter_index = builder_->createLoad(
-      builder_->createAccessChain(spv::StorageClassUniform,
-                                  uniform_system_constants_, id_vector_temp_),
+      builder_->createAccessChainView(spv::StorageClassUniform,
+                                  uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
       spv::NoPrecision);
   SpirvBuilder::IfBuilder if_counter_open(
       builder_->createBinOp(spv::OpINotEqual, type_bool_, counter_index,
@@ -2069,11 +2069,11 @@ void SpirvShaderTranslator::FBO_AddMSAASamplesToZPDTotal() {
   spv::Id coverage =
       builder_->createLoad(var_main_zpd_coverage_, spv::NoPrecision);
   if (features_.demote_to_helper_invocation) {
-    id_vector_temp_.clear();
+    id_scratch_.count = 0;
     coverage =
         builder_->createTriOp(spv::OpSelect, type_uint_,
-                              builder_->createOp(spv::OpIsHelperInvocationEXT,
-                                                 type_bool_, id_vector_temp_),
+                              builder_->createOpView(spv::OpIsHelperInvocationEXT,
+                                                 type_bool_, xe_spv_scratch_view(&id_scratch_)),
                               const_uint_0_, coverage);
   }
   spv::Id sample_count =
@@ -2087,15 +2087,15 @@ void SpirvShaderTranslator::FBO_AddMSAASamplesToZPDTotal() {
   spv::Id counter_offset =
       builder_->createBinOp(spv::OpIMul, type_uint_, counter_index,
                             builder_->makeUintConstant(XenosZPDReport::kCount));
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(const_int_0_);
-  id_vector_temp_.push_back(
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, const_int_0_);
+  ScratchPush(&id_scratch_,
       builder_->createUnaryOp(spv::OpBitcast, type_int_, counter_offset));
   spv::StorageClass storage_class = features_.spirv_version >= spv::Spv_1_3
                                         ? spv::StorageClassStorageBuffer
                                         : spv::StorageClassUniform;
-  spv::Id counter_ptr = builder_->createAccessChain(
-      storage_class, buffer_zpd_counter_, id_vector_temp_);
+  spv::Id counter_ptr = builder_->createAccessChainView(
+      storage_class, buffer_zpd_counter_, xe_spv_scratch_view(&id_scratch_));
   spv::Id const_scope_device =
       builder_->makeUintConstant(static_cast<unsigned int>(spv::ScopeDevice));
   spv::Id const_semantics_relaxed = const_uint_0_;
@@ -2142,12 +2142,12 @@ void SpirvShaderTranslator::FSI_DepthStencilTest(
     // Load the depth in the center of the pixel and calculate the derivatives
     // of the depth outside non-uniform control flow.
     assert_true(input_fragment_coordinates_ != spv::NoResult);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeIntConstant(2));
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeIntConstant(2));
     center_depth32_unbiased =
-        builder_->createLoad(builder_->createAccessChain(
+        builder_->createLoad(builder_->createAccessChainView(
                                  spv::StorageClassInput,
-                                 input_fragment_coordinates_, id_vector_temp_),
+                                 input_fragment_coordinates_, xe_spv_scratch_view(&id_scratch_)),
                              spv::NoPrecision);
     builder_->addCapability(spv::CapabilityDerivativeControl);
     depth_dxy[0] = builder_->createUnaryOp(spv::OpDPdxCoarse, type_float_,
@@ -2234,53 +2234,53 @@ void SpirvShaderTranslator::FSI_DepthStencilTest(
       builder_->createLoad(input_front_facing_, spv::NoPrecision);
   spv::Id poly_offset_scale, poly_offset_offset, stencil_parameters;
   {
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantEdramPolyOffsetFrontScale));
     spv::Id poly_offset_front_scale = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantEdramPolyOffsetBackScale));
     spv::Id poly_offset_back_scale = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
     poly_offset_scale =
         builder_->createTriOp(spv::OpSelect, type_float_, front_facing,
                               poly_offset_front_scale, poly_offset_back_scale);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantEdramPolyOffsetFrontOffset));
     spv::Id poly_offset_front_offset = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantEdramPolyOffsetBackOffset));
     spv::Id poly_offset_back_offset = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
     poly_offset_offset = builder_->createTriOp(
         spv::OpSelect, type_float_, front_facing, poly_offset_front_offset,
         poly_offset_back_offset);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantEdramStencilFront));
     spv::Id stencil_parameters_front = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantEdramStencilBack));
     spv::Id stencil_parameters_back = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
     stencil_parameters = builder_->createTriOp(
         spv::OpSelect, type_uint2_,
@@ -2367,14 +2367,14 @@ void SpirvShaderTranslator::FSI_DepthStencilTest(
 
     // Load the original depth and stencil for the sample.
     spv::Id sample_address = FSI_AddSampleOffset(main_fsi_address_depth_, i);
-    id_vector_temp_.clear();
+    id_scratch_.count = 0;
     // First SSBO structure element.
-    id_vector_temp_.push_back(const_int_0_);
-    id_vector_temp_.push_back(sample_address);
-    spv::Id sample_access_chain = builder_->createAccessChain(
+    ScratchPush(&id_scratch_, const_int_0_);
+    ScratchPush(&id_scratch_, sample_address);
+    spv::Id sample_access_chain = builder_->createAccessChainView(
         features_.spirv_version >= spv::Spv_1_3 ? spv::StorageClassStorageBuffer
                                                 : spv::StorageClassUniform,
-        buffer_edram_, id_vector_temp_);
+        buffer_edram_, xe_spv_scratch_view(&id_scratch_));
     spv::Id old_depth_stencil =
         builder_->createLoad(sample_access_chain, spv::NoPrecision);
 
@@ -2625,26 +2625,26 @@ void SpirvShaderTranslator::FSI_DepthStencilTest(
       // Select the new stencil (with undefined data in bits starting from 8)
       // based on the stencil operation.
       builder_->setBuildPoint(&block_stencil_op_merge);
-      id_vector_temp_.clear();
-      id_vector_temp_.reserve(2 * 8);
-      id_vector_temp_.push_back(old_depth_stencil);
-      id_vector_temp_.push_back(block_stencil_op_keep.getId());
-      id_vector_temp_.push_back(const_uint_0_);
-      id_vector_temp_.push_back(block_stencil_op_zero.getId());
-      id_vector_temp_.push_back(stencil_reference);
-      id_vector_temp_.push_back(block_stencil_op_replace.getId());
-      id_vector_temp_.push_back(new_stencil_in_low_bits_increment_clamp);
-      id_vector_temp_.push_back(block_stencil_op_increment_clamp.getId());
-      id_vector_temp_.push_back(new_stencil_in_low_bits_decrement_clamp);
-      id_vector_temp_.push_back(block_stencil_op_decrement_clamp.getId());
-      id_vector_temp_.push_back(new_stencil_in_low_bits_invert);
-      id_vector_temp_.push_back(block_stencil_op_invert.getId());
-      id_vector_temp_.push_back(new_stencil_in_low_bits_increment_wrap);
-      id_vector_temp_.push_back(block_stencil_op_increment_wrap.getId());
-      id_vector_temp_.push_back(new_stencil_in_low_bits_decrement_wrap);
-      id_vector_temp_.push_back(block_stencil_op_decrement_wrap.getId());
+      id_scratch_.count = 0;
+      ScratchReserve(&id_scratch_, 2 * 8);
+      ScratchPush(&id_scratch_, old_depth_stencil);
+      ScratchPush(&id_scratch_, block_stencil_op_keep.getId());
+      ScratchPush(&id_scratch_, const_uint_0_);
+      ScratchPush(&id_scratch_, block_stencil_op_zero.getId());
+      ScratchPush(&id_scratch_, stencil_reference);
+      ScratchPush(&id_scratch_, block_stencil_op_replace.getId());
+      ScratchPush(&id_scratch_, new_stencil_in_low_bits_increment_clamp);
+      ScratchPush(&id_scratch_, block_stencil_op_increment_clamp.getId());
+      ScratchPush(&id_scratch_, new_stencil_in_low_bits_decrement_clamp);
+      ScratchPush(&id_scratch_, block_stencil_op_decrement_clamp.getId());
+      ScratchPush(&id_scratch_, new_stencil_in_low_bits_invert);
+      ScratchPush(&id_scratch_, block_stencil_op_invert.getId());
+      ScratchPush(&id_scratch_, new_stencil_in_low_bits_increment_wrap);
+      ScratchPush(&id_scratch_, block_stencil_op_increment_wrap.getId());
+      ScratchPush(&id_scratch_, new_stencil_in_low_bits_decrement_wrap);
+      ScratchPush(&id_scratch_, block_stencil_op_decrement_wrap.getId());
       spv::Id new_stencil_in_low_bits_if_enabled =
-          builder_->createOp(spv::OpPhi, type_uint_, id_vector_temp_);
+          builder_->createOpView(spv::OpPhi, type_uint_, xe_spv_scratch_view(&id_scratch_));
       // Merge the old depth / stencil (old depth kept from the old depth /
       // stencil so the separate old depth register is not needed anymore after
       // the depth test) and the new stencil based on the write mask.
@@ -2766,38 +2766,38 @@ void SpirvShaderTranslator::FSI_DepthStencilTest(
     builder_->createBranch(block_any_sample_covered_merge);
     spv::Block& block_any_sample_covered_end = *builder_->getBuildPoint();
     builder_->setBuildPoint(block_any_sample_covered_merge);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(new_sample_mask);
-    id_vector_temp_.push_back(block_any_sample_covered_end.getId());
-    id_vector_temp_.push_back(main_fsi_sample_mask_);
-    id_vector_temp_.push_back(block_any_sample_covered_head->getId());
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, new_sample_mask);
+    ScratchPush(&id_scratch_, block_any_sample_covered_end.getId());
+    ScratchPush(&id_scratch_, main_fsi_sample_mask_);
+    ScratchPush(&id_scratch_, block_any_sample_covered_head->getId());
     new_sample_mask =
-        builder_->createOp(spv::OpPhi, type_uint_, id_vector_temp_);
+        builder_->createOpView(spv::OpPhi, type_uint_, xe_spv_scratch_view(&id_scratch_));
     if (zpd_full_counters_) {
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(z_fail_sample_mask);
-      id_vector_temp_.push_back(block_any_sample_covered_end.getId());
-      id_vector_temp_.push_back(const_uint_0_);
-      id_vector_temp_.push_back(block_any_sample_covered_head->getId());
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, z_fail_sample_mask);
+      ScratchPush(&id_scratch_, block_any_sample_covered_end.getId());
+      ScratchPush(&id_scratch_, const_uint_0_);
+      ScratchPush(&id_scratch_, block_any_sample_covered_head->getId());
       z_fail_sample_mask =
-          builder_->createOp(spv::OpPhi, type_uint_, id_vector_temp_);
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(stencil_fail_sample_mask);
-      id_vector_temp_.push_back(block_any_sample_covered_end.getId());
-      id_vector_temp_.push_back(const_uint_0_);
-      id_vector_temp_.push_back(block_any_sample_covered_head->getId());
+          builder_->createOpView(spv::OpPhi, type_uint_, xe_spv_scratch_view(&id_scratch_));
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, stencil_fail_sample_mask);
+      ScratchPush(&id_scratch_, block_any_sample_covered_end.getId());
+      ScratchPush(&id_scratch_, const_uint_0_);
+      ScratchPush(&id_scratch_, block_any_sample_covered_head->getId());
       stencil_fail_sample_mask =
-          builder_->createOp(spv::OpPhi, type_uint_, id_vector_temp_);
+          builder_->createOpView(spv::OpPhi, type_uint_, xe_spv_scratch_view(&id_scratch_));
     }
     if (is_early) {
       for (uint32_t i = 0; i < sample_count; ++i) {
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(late_write_depth_stencil[i]);
-        id_vector_temp_.push_back(block_any_sample_covered_end.getId());
-        id_vector_temp_.push_back(const_uint_0_);
-        id_vector_temp_.push_back(block_any_sample_covered_head->getId());
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_, late_write_depth_stencil[i]);
+        ScratchPush(&id_scratch_, block_any_sample_covered_end.getId());
+        ScratchPush(&id_scratch_, const_uint_0_);
+        ScratchPush(&id_scratch_, block_any_sample_covered_head->getId());
         late_write_depth_stencil[i] =
-            builder_->createOp(spv::OpPhi, type_uint_, id_vector_temp_);
+            builder_->createOpView(spv::OpPhi, type_uint_, xe_spv_scratch_view(&id_scratch_));
       }
     }
   }
@@ -2849,22 +2849,22 @@ spv::Id SpirvShaderTranslator::PackFloat16x2ExtendedRange(
                                 builder_->makeUintConstant(16)),
           const_0x7C00),
       const_0x7C00);
-  id_vector_temp_.clear();
-  id_vector_temp_.resize(2, builder_->makeFloatConstant(-131008.0f));
+  id_scratch_.count = 0;
+  ScratchResize(&id_scratch_, 2, builder_->makeFloatConstant(-131008.0f));
   spv::Id const_neg_131008 =
-      builder_->makeCompositeConstant(type_float2_, id_vector_temp_);
-  id_vector_temp_.clear();
-  id_vector_temp_.resize(2, builder_->makeFloatConstant(131008.0f));
+      builder_->makeCompositeConstantView(type_float2_, xe_spv_scratch_view(&id_scratch_));
+  id_scratch_.count = 0;
+  ScratchResize(&id_scratch_, 2, builder_->makeFloatConstant(131008.0f));
   spv::Id const_131008 =
-      builder_->makeCompositeConstant(type_float2_, id_vector_temp_);
+      builder_->makeCompositeConstantView(type_float2_, xe_spv_scratch_view(&id_scratch_));
   spv::Id clamped = builder_->createTriBuiltinCall(
       type_float2_, ext_inst_glsl_std_450_, GLSLstd450FClamp, float2_value,
       const_neg_131008, const_131008);
-  id_vector_temp_.clear();
-  id_vector_temp_.resize(2, builder_->makeFloatConstant(0.5f));
+  id_scratch_.count = 0;
+  ScratchResize(&id_scratch_, 2, builder_->makeFloatConstant(0.5f));
   spv::Id halved = builder_->createBinOp(
       spv::OpFMul, type_float2_, clamped,
-      builder_->makeCompositeConstant(type_float2_, id_vector_temp_));
+      builder_->makeCompositeConstantView(type_float2_, xe_spv_scratch_view(&id_scratch_)));
   spv::Id halved_packed = builder_->createUnaryBuiltinCall(
       type_uint_, ext_inst_glsl_std_450_, GLSLstd450PackHalf2x16, halved);
   // halved_packed has exponent <= 30 in both lanes, so adding 0x0400 per lane
@@ -2926,11 +2926,11 @@ spv::Id SpirvShaderTranslator::UnpackFloat16x2ExtendedRange(
                                                   sub_lower, sub_upper));
   spv::Id reduced_unpacked = builder_->createUnaryBuiltinCall(
       type_float2_, ext_inst_glsl_std_450_, GLSLstd450UnpackHalf2x16, reduced);
-  id_vector_temp_.clear();
-  id_vector_temp_.resize(2, builder_->makeFloatConstant(2.0f));
+  id_scratch_.count = 0;
+  ScratchResize(&id_scratch_, 2, builder_->makeFloatConstant(2.0f));
   spv::Id extended = builder_->createBinOp(
       spv::OpFMul, type_float2_, reduced_unpacked,
-      builder_->makeCompositeConstant(type_float2_, id_vector_temp_));
+      builder_->makeCompositeConstantView(type_float2_, xe_spv_scratch_view(&id_scratch_)));
   spv::Id result_x = builder_->createTriOp(
       spv::OpSelect, type_float_, lower_overflow,
       builder_->createCompositeExtract(extended, type_float_, 0),
@@ -2939,10 +2939,10 @@ spv::Id SpirvShaderTranslator::UnpackFloat16x2ExtendedRange(
       spv::OpSelect, type_float_, upper_overflow,
       builder_->createCompositeExtract(extended, type_float_, 1),
       builder_->createCompositeExtract(standard, type_float_, 1));
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(result_x);
-  id_vector_temp_.push_back(result_y);
-  return builder_->createCompositeConstruct(type_float2_, id_vector_temp_);
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, result_x);
+  ScratchPush(&id_scratch_, result_y);
+  return builder_->createCompositeConstructView(type_float2_, xe_spv_scratch_view(&id_scratch_));
 }
 
 std::array<spv::Id, 2> SpirvShaderTranslator::FSI_ClampAndPackColor(
@@ -2950,10 +2950,10 @@ std::array<spv::Id, 2> SpirvShaderTranslator::FSI_ClampAndPackColor(
   bool rt_format_is_64bpp = (RenderTargetCache::AddPSIColorFormatFlags(format) &
                              RenderTargetCache::kPSIColorFormatFlag_64bpp) != 0;
   spv::Id unorm_round_offset_float = builder_->makeFloatConstant(0.5f);
-  id_vector_temp_.clear();
-  id_vector_temp_.resize(4, unorm_round_offset_float);
+  id_scratch_.count = 0;
+  ScratchResize(&id_scratch_, 4, unorm_round_offset_float);
   spv::Id unorm_round_offset_float4 =
-      builder_->makeCompositeConstant(type_float4_, id_vector_temp_);
+      builder_->makeCompositeConstantView(type_float4_, xe_spv_scratch_view(&id_scratch_));
 
   std::array<spv::Id, 2> packed{const_uint_0_, const_uint_0_};
   switch (format) {
@@ -2982,16 +2982,16 @@ std::array<spv::Id, 2> SpirvShaderTranslator::FSI_ClampAndPackColor(
     } break;
     case xenos::ColorRenderTargetFormat::k_8_8_8_8_GAMMA: {
       spv::Id packed_8_8_8_8_gamma;
-      uint_vector_temp_.clear();
-      uint_vector_temp_.push_back(0);
-      uint_vector_temp_.push_back(1);
-      uint_vector_temp_.push_back(2);
-      spv::Id color_rgb = builder_->createRvalueSwizzle(
-          spv::NoPrecision, type_float3_, color_float4, uint_vector_temp_);
+      literal_scratch_.count = 0;
+      ScratchPush(&literal_scratch_, 0);
+      ScratchPush(&literal_scratch_, 1);
+      ScratchPush(&literal_scratch_, 2);
+      spv::Id color_rgb = builder_->createRvalueSwizzleView(
+          spv::NoPrecision, type_float3_, color_float4, xe_spv_scratch_view(&literal_scratch_));
       spv::Id rgb_gamma = SpirvShaderTranslator::LinearToPWLGamma(
           builder_.get(),
-          builder_->createRvalueSwizzle(spv::NoPrecision, type_float3_,
-                                        color_float4, uint_vector_temp_),
+          builder_->createRvalueSwizzleView(spv::NoPrecision, type_float3_,
+                                        color_float4, xe_spv_scratch_view(&literal_scratch_)),
           false, ext_inst_glsl_std_450_);
       spv::Id alpha_clamped = builder_->createTriBuiltinCall(
           type_float_, ext_inst_glsl_std_450_, GLSLstd450NClamp,
@@ -3036,12 +3036,12 @@ std::array<spv::Id, 2> SpirvShaderTranslator::FSI_ClampAndPackColor(
       spv::Id color_clamped = builder_->createTriBuiltinCall(
           type_float4_, ext_inst_glsl_std_450_, GLSLstd450NClamp, color_float4,
           const_float4_0_, const_float4_1_);
-      id_vector_temp_.clear();
-      id_vector_temp_.resize(3, builder_->makeFloatConstant(1023.0f));
-      id_vector_temp_.push_back(builder_->makeFloatConstant(3.0f));
+      id_scratch_.count = 0;
+      ScratchResize(&id_scratch_, 3, builder_->makeFloatConstant(1023.0f));
+      ScratchPush(&id_scratch_, builder_->makeFloatConstant(3.0f));
       spv::Id color_scaled = builder_->createNoContractionBinOp(
           spv::OpFMul, type_float4_, color_clamped,
-          builder_->makeCompositeConstant(type_float4_, id_vector_temp_));
+          builder_->makeCompositeConstantView(type_float4_, xe_spv_scratch_view(&id_scratch_)));
       spv::Id color_offset = builder_->createNoContractionBinOp(
           spv::OpFAdd, type_float4_, color_scaled, unorm_round_offset_float4);
       spv::Id color_uint4 = builder_->createUnaryOp(spv::OpConvertFToU,
@@ -3099,15 +3099,15 @@ std::array<spv::Id, 2> SpirvShaderTranslator::FSI_ClampAndPackColor(
     case xenos::ColorRenderTargetFormat::k_16_16:
     case xenos::ColorRenderTargetFormat::k_16_16_16_16: {
       std::array<spv::Id, 2> packed_16{const_uint_0_, const_uint_0_};
-      id_vector_temp_.clear();
-      id_vector_temp_.resize(4, builder_->makeFloatConstant(-32.0f));
+      id_scratch_.count = 0;
+      ScratchResize(&id_scratch_, 4, builder_->makeFloatConstant(-32.0f));
       spv::Id const_float4_minus_32 =
-          builder_->makeCompositeConstant(type_float4_, id_vector_temp_);
-      id_vector_temp_.clear();
-      id_vector_temp_.resize(4, builder_->makeFloatConstant(32.0f));
+          builder_->makeCompositeConstantView(type_float4_, xe_spv_scratch_view(&id_scratch_));
+      id_scratch_.count = 0;
+      ScratchResize(&id_scratch_, 4, builder_->makeFloatConstant(32.0f));
       spv::Id const_float4_32 =
-          builder_->makeCompositeConstant(type_float4_, id_vector_temp_);
-      id_vector_temp_.clear();
+          builder_->makeCompositeConstantView(type_float4_, xe_spv_scratch_view(&id_scratch_));
+      id_scratch_.count = 0;
       // NaN to 0, not to -32.
       spv::Id color_scaled = builder_->createNoContractionBinOp(
           spv::OpVectorTimesScalar, type_float4_,
@@ -3120,10 +3120,10 @@ std::array<spv::Id, 2> SpirvShaderTranslator::FSI_ClampAndPackColor(
                   const_float4_0_, color_float4),
               const_float4_minus_32, const_float4_32),
           builder_->makeFloatConstant(32767.0f / 32.0f));
-      id_vector_temp_.clear();
-      id_vector_temp_.resize(4, builder_->makeFloatConstant(-0.5f));
+      id_scratch_.count = 0;
+      ScratchResize(&id_scratch_, 4, builder_->makeFloatConstant(-0.5f));
       spv::Id unorm_round_offset_negative_float4 =
-          builder_->makeCompositeConstant(type_float4_, id_vector_temp_);
+          builder_->makeCompositeConstantView(type_float4_, xe_spv_scratch_view(&id_scratch_));
       spv::Id color_offset = builder_->createNoContractionBinOp(
           spv::OpFAdd, type_float4_, color_scaled,
           builder_->createTriOp(
@@ -3153,12 +3153,12 @@ std::array<spv::Id, 2> SpirvShaderTranslator::FSI_ClampAndPackColor(
       // NaN is flushed to 0 inside PackFloat16x2ExtendedRange. The high dword
       // only exists on the 64bpp formats.
       for (uint32_t i = 0; i < (rt_format_is_64bpp ? 2u : 1u); ++i) {
-        uint_vector_temp_.clear();
-        uint_vector_temp_.push_back(2 * i);
-        uint_vector_temp_.push_back(2 * i + 1);
+        literal_scratch_.count = 0;
+        ScratchPush(&literal_scratch_, 2 * i);
+        ScratchPush(&literal_scratch_, 2 * i + 1);
         packed_16_float[i] = PackFloat16x2ExtendedRange(
-            builder_->createRvalueSwizzle(spv::NoPrecision, type_float2_,
-                                          color_float4, uint_vector_temp_));
+            builder_->createRvalueSwizzleView(spv::NoPrecision, type_float2_,
+                                          color_float4, xe_spv_scratch_view(&literal_scratch_)));
       }
       packed = packed_16_float;
     } break;
@@ -3524,24 +3524,24 @@ spv::Id SpirvShaderTranslator::FSI_ApplyColorBlendFactor(
 
   // Select the term for the non-zero factor.
   builder_->setBuildPoint(&block_factor_merge);
-  id_vector_temp_.clear();
-  id_vector_temp_.reserve(2 * 14);
-  id_vector_temp_.push_back(value);
-  id_vector_temp_.push_back(block_factor_one.getId());
+  id_scratch_.count = 0;
+  ScratchReserve(&id_scratch_, 2 * 14);
+  ScratchPush(&id_scratch_, value);
+  ScratchPush(&id_scratch_, block_factor_one.getId());
   for (uint32_t i = 0; i < 3; ++i) {
-    id_vector_temp_.push_back(color_factor_results[i]);
-    id_vector_temp_.push_back(color_factor_blocks[i]->getId());
-    id_vector_temp_.push_back(one_minus_color_factor_results[i]);
-    id_vector_temp_.push_back(one_minus_color_factor_blocks[i]->getId());
-    id_vector_temp_.push_back(alpha_factor_results[i]);
-    id_vector_temp_.push_back(alpha_factor_blocks[i]->getId());
-    id_vector_temp_.push_back(one_minus_alpha_factor_results[i]);
-    id_vector_temp_.push_back(one_minus_alpha_factor_blocks[i]->getId());
+    ScratchPush(&id_scratch_, color_factor_results[i]);
+    ScratchPush(&id_scratch_, color_factor_blocks[i]->getId());
+    ScratchPush(&id_scratch_, one_minus_color_factor_results[i]);
+    ScratchPush(&id_scratch_, one_minus_color_factor_blocks[i]->getId());
+    ScratchPush(&id_scratch_, alpha_factor_results[i]);
+    ScratchPush(&id_scratch_, alpha_factor_blocks[i]->getId());
+    ScratchPush(&id_scratch_, one_minus_alpha_factor_results[i]);
+    ScratchPush(&id_scratch_, one_minus_alpha_factor_blocks[i]->getId());
   }
-  id_vector_temp_.push_back(result_source_alpha_saturate);
-  id_vector_temp_.push_back(block_factor_source_alpha_saturate.getId());
+  ScratchPush(&id_scratch_, result_source_alpha_saturate);
+  ScratchPush(&id_scratch_, block_factor_source_alpha_saturate.getId());
   spv::Id result_unclamped =
-      builder_->createOp(spv::OpPhi, type_float3_, id_vector_temp_);
+      builder_->createOpView(spv::OpPhi, type_float3_, xe_spv_scratch_view(&id_scratch_));
   spv::Id result = FSI_FlushNaNClampAndInBlending(
       result_unclamped, is_fixed_point, clamp_min_value, clamp_max_value);
 
@@ -3685,20 +3685,20 @@ spv::Id SpirvShaderTranslator::FSI_ApplyAlphaBlendFactor(
 
   // Select the term for the non-zero factor.
   builder_->setBuildPoint(&block_factor_merge);
-  id_vector_temp_.clear();
-  id_vector_temp_.reserve(2 * 8);
-  id_vector_temp_.push_back(value);
-  id_vector_temp_.push_back(block_factor_one.getId());
+  id_scratch_.count = 0;
+  ScratchReserve(&id_scratch_, 2 * 8);
+  ScratchPush(&id_scratch_, value);
+  ScratchPush(&id_scratch_, block_factor_one.getId());
   for (uint32_t i = 0; i < 3; ++i) {
-    id_vector_temp_.push_back(alpha_factor_results[i]);
-    id_vector_temp_.push_back(alpha_factor_blocks[i]->getId());
-    id_vector_temp_.push_back(one_minus_alpha_factor_results[i]);
-    id_vector_temp_.push_back(one_minus_alpha_factor_blocks[i]->getId());
+    ScratchPush(&id_scratch_, alpha_factor_results[i]);
+    ScratchPush(&id_scratch_, alpha_factor_blocks[i]->getId());
+    ScratchPush(&id_scratch_, one_minus_alpha_factor_results[i]);
+    ScratchPush(&id_scratch_, one_minus_alpha_factor_blocks[i]->getId());
   }
-  id_vector_temp_.push_back(result_source_alpha_saturate);
-  id_vector_temp_.push_back(block_factor_source_alpha_saturate.getId());
+  ScratchPush(&id_scratch_, result_source_alpha_saturate);
+  ScratchPush(&id_scratch_, block_factor_source_alpha_saturate.getId());
   spv::Id result_unclamped =
-      builder_->createOp(spv::OpPhi, type_float_, id_vector_temp_);
+      builder_->createOpView(spv::OpPhi, type_float_, xe_spv_scratch_view(&id_scratch_));
   spv::Id result = FSI_FlushNaNClampAndInBlending(
       result_unclamped, is_fixed_point, clamp_min_value, clamp_max_value);
 
@@ -3812,19 +3812,19 @@ spv::Id SpirvShaderTranslator::FSI_BlendColorOrAlphaWithUnclampedResult(
 
   // Merge and create phi for the result.
   builder_->setBuildPoint(&block_equation_merge);
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(result_add);
-  id_vector_temp_.push_back(block_equation_add.getId());
-  id_vector_temp_.push_back(result_subtract);
-  id_vector_temp_.push_back(block_equation_subtract.getId());
-  id_vector_temp_.push_back(result_rev_subtract);
-  id_vector_temp_.push_back(block_equation_rev_subtract.getId());
-  id_vector_temp_.push_back(result_min);
-  id_vector_temp_.push_back(block_equation_min.getId());
-  id_vector_temp_.push_back(result_max);
-  id_vector_temp_.push_back(block_equation_max.getId());
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, result_add);
+  ScratchPush(&id_scratch_, block_equation_add.getId());
+  ScratchPush(&id_scratch_, result_subtract);
+  ScratchPush(&id_scratch_, block_equation_subtract.getId());
+  ScratchPush(&id_scratch_, result_rev_subtract);
+  ScratchPush(&id_scratch_, block_equation_rev_subtract.getId());
+  ScratchPush(&id_scratch_, result_min);
+  ScratchPush(&id_scratch_, block_equation_min.getId());
+  ScratchPush(&id_scratch_, result_max);
+  ScratchPush(&id_scratch_, block_equation_max.getId());
   spv::Id result_unclamped =
-      builder_->createOp(spv::OpPhi, value_type, id_vector_temp_);
+      builder_->createOpView(spv::OpPhi, value_type, xe_spv_scratch_view(&id_scratch_));
 
   return FSI_FlushNaNClampAndInBlending(result_unclamped, is_fixed_point,
                                         clamp_min_value, clamp_max_value);
@@ -3913,12 +3913,12 @@ void SpirvShaderTranslator::FSI_AlphaToMask() {
     }
 
     // Load alpha_to_mask constant and check if enabled
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantAlphaToMask));
     spv::Id alpha_to_mask_constant = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
 
     spv::Id alpha_to_mask_enabled = builder_->createBinOp(
@@ -3987,12 +3987,12 @@ void SpirvShaderTranslator::FSI_AlphaToMask() {
 
     // Load alpha from RT0.w (oC0.w) once for all samples (optimization)
     assert_true(output_or_var_fragment_data_[0] != spv::NoResult);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeIntConstant(3));  // W component
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeIntConstant(3));  // W component
     spv::Id alpha = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassFunction,
+        builder_->createAccessChainView(spv::StorageClassFunction,
                                     output_or_var_fragment_data_[0],
-                                    id_vector_temp_),
+                                    xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
 
     // Only this shader's own samples and dithering thresholds are emitted.
@@ -4026,15 +4026,15 @@ void SpirvShaderTranslator::FSI_AlphaToMask() {
 
     // Continue from merge block with PHI for the final mask
     builder_->setBuildPoint(&block_merge);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(coverage);
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, coverage);
+    ScratchPush(&id_scratch_,
         block_alpha_enabled_end->getId());  // Coming from the enabled path
-    id_vector_temp_.push_back(mask_before);
-    id_vector_temp_.push_back(
+    ScratchPush(&id_scratch_, mask_before);
+    ScratchPush(&id_scratch_,
         block_before->getId());  // Coming from the disabled path
     main_fsi_sample_mask_ =
-        builder_->createOp(spv::OpPhi, type_uint_, id_vector_temp_);
+        builder_->createOpView(spv::OpPhi, type_uint_, xe_spv_scratch_view(&id_scratch_));
   }
 
   // For FBO mode, ensure gl_SampleMask output was created
@@ -4045,20 +4045,20 @@ void SpirvShaderTranslator::FSI_AlphaToMask() {
 
   // Initialize OMask to full coverage (in case alpha to mask is disabled).
   // gl_SampleMask is an array, so we need to access element [0].
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(builder_->makeIntConstant(0));
-  spv::Id sample_mask_element = builder_->createAccessChain(
-      spv::StorageClassOutput, output_fragment_sample_mask_, id_vector_temp_);
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, builder_->makeIntConstant(0));
+  spv::Id sample_mask_element = builder_->createAccessChainView(
+      spv::StorageClassOutput, output_fragment_sample_mask_, xe_spv_scratch_view(&id_scratch_));
   spv::Id full_coverage = builder_->makeIntConstant(-1);  // All bits set
   builder_->createStore(full_coverage, sample_mask_element);
 
   // Load alpha_to_mask constant and check if enabled.
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(kSystemConstantAlphaToMask));
   spv::Id alpha_to_mask_constant = builder_->createLoad(
-      builder_->createAccessChain(spv::StorageClassUniform,
-                                  uniform_system_constants_, id_vector_temp_),
+      builder_->createAccessChainView(spv::StorageClassUniform,
+                                  uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
       spv::NoPrecision);
 
   spv::Id alpha_to_mask_enabled = builder_->createBinOp(
@@ -4126,12 +4126,12 @@ void SpirvShaderTranslator::FSI_AlphaToMask() {
       spv::OpConvertUToF, type_float_, threshold_offset_uint);
 
   // Load alpha from RT0.w (oC0.w) once for all samples (optimization)
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(builder_->makeIntConstant(3));  // W component
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, builder_->makeIntConstant(3));  // W component
   spv::Id alpha = builder_->createLoad(
-      builder_->createAccessChain(spv::StorageClassFunction,
+      builder_->createAccessChainView(spv::StorageClassFunction,
                                   output_or_var_fragment_data_[0],
-                                  id_vector_temp_),
+                                  xe_spv_scratch_view(&id_scratch_)),
       spv::NoPrecision);
 
   // Load MSAA sample count to determine which mode to use.
@@ -4217,14 +4217,14 @@ void SpirvShaderTranslator::FSI_AlphaToMask() {
 
   builder_->setBuildPoint(&block_msaa_mode_merge);
   // Merge coverage from 4x and 2x MSAA paths using PHI.
-  id_vector_temp_.clear();
-  id_vector_temp_.reserve(2 * 2);
-  id_vector_temp_.push_back(coverage_4x);
-  id_vector_temp_.push_back(block_4x_msaa.getId());
-  id_vector_temp_.push_back(coverage_2x);
-  id_vector_temp_.push_back(block_2x_msaa.getId());
+  id_scratch_.count = 0;
+  ScratchReserve(&id_scratch_, 2 * 2);
+  ScratchPush(&id_scratch_, coverage_4x);
+  ScratchPush(&id_scratch_, block_4x_msaa.getId());
+  ScratchPush(&id_scratch_, coverage_2x);
+  ScratchPush(&id_scratch_, block_2x_msaa.getId());
   spv::Id coverage_msaa_enabled =
-      builder_->createOp(spv::OpPhi, type_uint_, id_vector_temp_);
+      builder_->createOpView(spv::OpPhi, type_uint_, xe_spv_scratch_view(&id_scratch_));
   builder_->createBranch(&block_msaa_merge);
 
   // MSAA disabled - single sample
@@ -4236,22 +4236,22 @@ void SpirvShaderTranslator::FSI_AlphaToMask() {
 
   builder_->setBuildPoint(&block_msaa_merge);
   // Merge coverage from MSAA enabled and disabled paths using PHI.
-  id_vector_temp_.clear();
-  id_vector_temp_.reserve(2 * 2);
-  id_vector_temp_.push_back(coverage_msaa_enabled);
-  id_vector_temp_.push_back(block_msaa_mode_merge.getId());
-  id_vector_temp_.push_back(coverage_1x);
-  id_vector_temp_.push_back(block_msaa_disabled.getId());
+  id_scratch_.count = 0;
+  ScratchReserve(&id_scratch_, 2 * 2);
+  ScratchPush(&id_scratch_, coverage_msaa_enabled);
+  ScratchPush(&id_scratch_, block_msaa_mode_merge.getId());
+  ScratchPush(&id_scratch_, coverage_1x);
+  ScratchPush(&id_scratch_, block_msaa_disabled.getId());
   spv::Id coverage_final =
-      builder_->createOp(spv::OpPhi, type_uint_, id_vector_temp_);
+      builder_->createOpView(spv::OpPhi, type_uint_, xe_spv_scratch_view(&id_scratch_));
 
   // Write coverage to gl_SampleMask and discard if zero (FBO mode only).
   if (!edram_fragment_shader_interlock_) {
     // Write to gl_SampleMask[0].
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeIntConstant(0));
-    spv::Id sample_mask_element = builder_->createAccessChain(
-        spv::StorageClassOutput, output_fragment_sample_mask_, id_vector_temp_);
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeIntConstant(0));
+    spv::Id sample_mask_element = builder_->createAccessChainView(
+        spv::StorageClassOutput, output_fragment_sample_mask_, xe_spv_scratch_view(&id_scratch_));
     spv::Id coverage_int =
         builder_->createUnaryOp(spv::OpBitcast, type_int_, coverage_final);
     builder_->createStore(coverage_int, sample_mask_element);
@@ -4274,10 +4274,10 @@ void SpirvShaderTranslator::FSI_AlphaToMask() {
       var_main_zpd_coverage_ != spv::NoResult) {
     // Samples dropped by alpha-to-coverage never reach the depth/stencil test,
     // so they shouldn't be included in the ZPD Total counter either.
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(const_int_0_);
-    spv::Id sample_mask_element = builder_->createAccessChain(
-        spv::StorageClassOutput, output_fragment_sample_mask_, id_vector_temp_);
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, const_int_0_);
+    spv::Id sample_mask_element = builder_->createAccessChainView(
+        spv::StorageClassOutput, output_fragment_sample_mask_, xe_spv_scratch_view(&id_scratch_));
     spv::Id alpha_to_coverage_mask = builder_->createUnaryOp(
         spv::OpBitcast, type_uint_,
         builder_->createLoad(sample_mask_element, spv::NoPrecision));

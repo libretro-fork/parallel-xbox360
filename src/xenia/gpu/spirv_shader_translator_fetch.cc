@@ -70,18 +70,18 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
   // Load the second fetch constant word up front - it holds the endianness
   // (bits 0:1) for the swap below and the buffer size in words (bits 2:25) used
   // for bound checking here.
-  id_vector_temp_.clear();
+  id_scratch_.count = 0;
   // The only element of the fetch constant buffer.
-  id_vector_temp_.push_back(const_int_0_);
+  ScratchPush(&id_scratch_, const_int_0_);
   // Vector index.
-  id_vector_temp_.push_back(
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(int(fetch_constant_word_1_index >> 2)));
   // Component index.
-  id_vector_temp_.push_back(
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(int(fetch_constant_word_1_index & 3)));
   spv::Id fetch_constant_word_1 = builder_->createLoad(
-      builder_->createAccessChain(spv::StorageClassUniform,
-                                  uniform_fetch_constants_, id_vector_temp_),
+      builder_->createAccessChainView(spv::StorageClassUniform,
+                                  uniform_fetch_constants_, xe_spv_scratch_view(&id_scratch_)),
       spv::NoPrecision);
 
   spv::Id address;
@@ -95,18 +95,18 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
   } else {
     // Get the base address in dwords from the bits 2:31 of the first fetch
     // constant word.
-    id_vector_temp_.clear();
+    id_scratch_.count = 0;
     // The only element of the fetch constant buffer.
-    id_vector_temp_.push_back(const_int_0_);
+    ScratchPush(&id_scratch_, const_int_0_);
     // Vector index.
-    id_vector_temp_.push_back(
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(int(fetch_constant_word_0_index >> 2)));
     // Component index.
-    id_vector_temp_.push_back(
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(int(fetch_constant_word_0_index & 3)));
     spv::Id fetch_constant_word_0 = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_fetch_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_fetch_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
     // TODO(Triang3l): Verify the fetch constant type (that it's a vertex fetch,
     // not a texture fetch) here instead of dropping draws with invalid vertex
@@ -197,14 +197,10 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
   }
   spv::Id words;
   if (word_count > 1) {
-    // Copying from the array to id_vector_temp_ now, not in the loop above,
-    // because of the LoadUint32FromSharedMemory call (potentially using
-    // id_vector_temp_ internally).
-    id_vector_temp_.clear();
-    id_vector_temp_.insert(id_vector_temp_.cend(), word_composite_constituents,
-                           word_composite_constituents + word_count);
-    words = builder_->createCompositeConstruct(
-        type_uint_vectors_[word_count - 1], id_vector_temp_);
+    // Borrow the finished array after LoadUint32FromSharedMemory has returned.
+    words = builder_->createCompositeConstructView(
+        type_uint_vectors_[word_count - 1],
+        xe_spv_words_view(word_composite_constituents, word_count));
   } else {
     words = word_composite_constituents[0];
   }
@@ -356,12 +352,10 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
               spv::Id const_no_zero =
                   builder_->makeFloatConstant(0.5f / 2147483647.5f);
               if (used_format_component_count > 1) {
-                id_vector_temp_.clear();
-                id_vector_temp_.insert(id_vector_temp_.cend(),
-                                       used_format_component_count,
-                                       const_no_zero);
-                const_no_zero = builder_->makeCompositeConstant(
-                    result_type, id_vector_temp_);
+                id_scratch_.count = 0;
+                ScratchFill(&id_scratch_, used_format_component_count, const_no_zero);
+                const_no_zero = builder_->makeCompositeConstantView(
+                    result_type, xe_spv_scratch_view(&id_scratch_));
               }
               result = builder_->createNoContractionBinOp(
                   spv::OpFAdd, result_type, result, const_no_zero);
@@ -433,15 +427,11 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
     // Combine extracted components into a vector.
     assert_true(extracted_component_count == used_format_component_count);
     if (used_format_component_count > 1) {
-      id_vector_temp_.clear();
-      id_vector_temp_.insert(
-          id_vector_temp_.cend(), extracted_components,
-          extracted_components + used_format_component_count);
-      result = builder_->createCompositeConstruct(
+      result = builder_->createCompositeConstructView(
           instr.attributes.is_signed
               ? type_int_vectors_[used_format_component_count - 1]
               : type_uint_vectors_[used_format_component_count - 1],
-          id_vector_temp_);
+          xe_spv_words_view(extracted_components, used_format_component_count));
     } else {
       result = extracted_components[0];
     }
@@ -479,14 +469,14 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
           packed_scale_mul_op = spv::OpVectorTimesScalar;
         } else {
           packed_scale_mul_op = spv::OpFMul;
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(const_packed_scale);
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_, const_packed_scale);
           for (uint32_t i = 1; i < used_format_component_count; ++i) {
-            id_vector_temp_.push_back(
+            ScratchPush(&id_scratch_,
                 builder_->makeFloatConstant(packed_scales[i]));
           }
           const_packed_scale =
-              builder_->makeCompositeConstant(result_type, id_vector_temp_);
+              builder_->makeCompositeConstantView(result_type, xe_spv_scratch_view(&id_scratch_));
         }
       } else {
         packed_scale_mul_op = spv::OpFMul;
@@ -500,28 +490,28 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
             // not NMax, because the number is known not to be NaN.
             spv::Id const_minus_1 = builder_->makeFloatConstant(-1.0f);
             if (used_format_component_count > 1) {
-              id_vector_temp_.clear();
-              id_vector_temp_.resize(used_format_component_count,
+              id_scratch_.count = 0;
+              ScratchResize(&id_scratch_, used_format_component_count,
                                      const_minus_1);
               const_minus_1 =
-                  builder_->makeCompositeConstant(result_type, id_vector_temp_);
+                  builder_->makeCompositeConstantView(result_type, xe_spv_scratch_view(&id_scratch_));
             }
             result = builder_->createBinBuiltinCall(
                 result_type, ext_inst_glsl_std_450_, GLSLstd450FMax, result,
                 const_minus_1);
           } break;
           case xenos::SignedRepeatingFractionMode::kNoZero:
-            id_vector_temp_.clear();
+            id_scratch_.count = 0;
             for (uint32_t i = 0; i < used_format_component_count; ++i) {
-              id_vector_temp_.push_back(
+              ScratchPush(&id_scratch_,
                   builder_->makeFloatConstant(0.5f * packed_scales[i]));
             }
             result = builder_->createNoContractionBinOp(
                 spv::OpFAdd, result_type, result,
                 used_format_component_count > 1
-                    ? builder_->makeCompositeConstant(result_type,
-                                                      id_vector_temp_)
-                    : id_vector_temp_[0]);
+                    ? builder_->makeCompositeConstantView(result_type,
+                                                      xe_spv_scratch_view(&id_scratch_))
+                    : xe_spv_scratch_data(&id_scratch_)[0]);
             break;
           default:
             assert_unhandled_case(instr.attributes.signed_rf_mode);
@@ -966,16 +956,16 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
     if (data_is_3d_needed) {
       // Get the data dimensionality from the bits 9:10 of the fetch constant
       // word 5.
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(const_int_0_);
-      id_vector_temp_.push_back(builder_->makeIntConstant(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, const_int_0_);
+      ScratchPush(&id_scratch_, builder_->makeIntConstant(
           int((fetch_constant_word_0_index + 5) >> 2)));
-      id_vector_temp_.push_back(builder_->makeIntConstant(
+      ScratchPush(&id_scratch_, builder_->makeIntConstant(
           int((fetch_constant_word_0_index + 5) & 3)));
       spv::Id fetch_constant_word_5 =
-          builder_->createLoad(builder_->createAccessChain(
+          builder_->createLoad(builder_->createAccessChainView(
                                    spv::StorageClassUniform,
-                                   uniform_fetch_constants_, id_vector_temp_),
+                                   uniform_fetch_constants_, xe_spv_scratch_view(&id_scratch_)),
                                spv::NoPrecision);
       spv::Id data_dimension = builder_->createTriOp(
           spv::OpBitFieldUExtract, type_uint_, fetch_constant_word_5,
@@ -991,16 +981,16 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
     spv::Id size_1d_width_minus_1_uint = spv::NoResult;
     if (size_needed_components) {
       // Get the size from the fetch constant word 2.
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(const_int_0_);
-      id_vector_temp_.push_back(builder_->makeIntConstant(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, const_int_0_);
+      ScratchPush(&id_scratch_, builder_->makeIntConstant(
           int((fetch_constant_word_0_index + 2) >> 2)));
-      id_vector_temp_.push_back(builder_->makeIntConstant(
+      ScratchPush(&id_scratch_, builder_->makeIntConstant(
           int((fetch_constant_word_0_index + 2) & 3)));
       spv::Id fetch_constant_word_2 =
-          builder_->createLoad(builder_->createAccessChain(
+          builder_->createLoad(builder_->createAccessChainView(
                                    spv::StorageClassUniform,
-                                   uniform_fetch_constants_, id_vector_temp_),
+                                   uniform_fetch_constants_, xe_spv_scratch_view(&id_scratch_)),
                                spv::NoPrecision);
       switch (coordinate_dimension) {
         case xenos::FetchOpDimension::k1D: {
@@ -1038,16 +1028,16 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
             // keep the 24-bit width for the wide 1D remap below, which
             // performs its own runtime dimension check.
             assert_true((size_needed_components & 0b11) == 0b11);
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(const_int_0_);
-            id_vector_temp_.push_back(builder_->makeIntConstant(
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_, const_int_0_);
+            ScratchPush(&id_scratch_, builder_->makeIntConstant(
                 int((fetch_constant_word_0_index + 5) >> 2)));
-            id_vector_temp_.push_back(builder_->makeIntConstant(
+            ScratchPush(&id_scratch_, builder_->makeIntConstant(
                 int((fetch_constant_word_0_index + 5) & 3)));
             spv::Id fetch_constant_word_5_promoted = builder_->createLoad(
-                builder_->createAccessChain(spv::StorageClassUniform,
+                builder_->createAccessChainView(spv::StorageClassUniform,
                                             uniform_fetch_constants_,
-                                            id_vector_temp_),
+                                            xe_spv_scratch_view(&id_scratch_)),
                 spv::NoPrecision);
             spv::Id constant_is_1d = builder_->createBinOp(
                 spv::OpIEqual, type_bool_,
@@ -1135,16 +1125,16 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
           instr.attributes.unnormalized_coordinates;
       if (selected_mip_grid_possible) {
         // Word 4 has MipMinLevel in bits 2:5 and MipMaxLevel in bits 6:9.
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(const_int_0_);
-        id_vector_temp_.push_back(builder_->makeIntConstant(
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_, const_int_0_);
+        ScratchPush(&id_scratch_, builder_->makeIntConstant(
             int((fetch_constant_word_0_index + 4) >> 2)));
-        id_vector_temp_.push_back(builder_->makeIntConstant(
+        ScratchPush(&id_scratch_, builder_->makeIntConstant(
             int((fetch_constant_word_0_index + 4) & 3)));
         spv::Id fetch_constant_word_4_mips =
-            builder_->createLoad(builder_->createAccessChain(
+            builder_->createLoad(builder_->createAccessChainView(
                                      spv::StorageClassUniform,
-                                     uniform_fetch_constants_, id_vector_temp_),
+                                     uniform_fetch_constants_, xe_spv_scratch_view(&id_scratch_)),
                                  spv::NoPrecision);
         selected_mip_level = builder_->createTriOp(
             spv::OpBitFieldUExtract, type_uint_, fetch_constant_word_4_mips,
@@ -1191,13 +1181,13 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
     if (cvars::draw_resolution_scaled_texture_offsets &&
         (draw_resolution_scale_x_ > 1 || draw_resolution_scale_y_ > 1)) {
       // Load textures_resolved from system constants.
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(kSystemConstantTexturesResolved));
       spv::Id textures_resolved =
-          builder_->createLoad(builder_->createAccessChain(
+          builder_->createLoad(builder_->createAccessChainView(
                                    spv::StorageClassUniform,
-                                   uniform_system_constants_, id_vector_temp_),
+                                   uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
                                spv::NoPrecision);
       // Check if this texture is resolved:
       // (textures_resolved >> fetch_constant_index) & 1
@@ -1411,16 +1401,16 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
         // Check if the fetch constant's actual dimension is k1D (word 5, bits
         // 9-10). If not, skip wide 1D handling as size bits differ per
         // dimension.
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(const_int_0_);
-        id_vector_temp_.push_back(builder_->makeIntConstant(
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_, const_int_0_);
+        ScratchPush(&id_scratch_, builder_->makeIntConstant(
             int((fetch_constant_word_0_index + 5) >> 2)));
-        id_vector_temp_.push_back(builder_->makeIntConstant(
+        ScratchPush(&id_scratch_, builder_->makeIntConstant(
             int((fetch_constant_word_0_index + 5) & 3)));
         spv::Id fetch_constant_word_5_for_1d =
-            builder_->createLoad(builder_->createAccessChain(
+            builder_->createLoad(builder_->createAccessChainView(
                                      spv::StorageClassUniform,
-                                     uniform_fetch_constants_, id_vector_temp_),
+                                     uniform_fetch_constants_, xe_spv_scratch_view(&id_scratch_)),
                                  spv::NoPrecision);
         spv::Id data_dimension_1d = builder_->createTriOp(
             spv::OpBitFieldUExtract, type_uint_, fetch_constant_word_5_for_1d,
@@ -1721,20 +1711,20 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
         }
       }
 
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(kSystemConstantTextureSwizzledSigns));
-      id_vector_temp_.push_back(
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(fetch_constant_index >> 4));
-      id_vector_temp_.push_back(
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant((fetch_constant_index >> 2) & 3));
       // All 32 bits containing the values for 4 fetch constants (use
       // OpBitFieldUExtract to get the signednesses for the specific components
       // of this texture).
       spv::Id swizzled_signs_word =
-          builder_->createLoad(builder_->createAccessChain(
+          builder_->createLoad(builder_->createAccessChainView(
                                    spv::StorageClassUniform,
-                                   uniform_system_constants_, id_vector_temp_),
+                                   uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
                                spv::NoPrecision);
       uint32_t swizzled_signs_word_offset = 8 * (fetch_constant_index & 3);
 
@@ -1766,12 +1756,12 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
           spv::Id lod_3d;
           {
             // 3D.
-            id_vector_temp_.clear();
+            id_scratch_.count = 0;
             for (uint32_t i = 0; i < 3; ++i) {
-              id_vector_temp_.push_back(coordinates[i]);
+              ScratchPush(&id_scratch_, coordinates[i]);
             }
-            texture_parameters.coords = builder_->createCompositeConstruct(
-                type_float3_, id_vector_temp_);
+            texture_parameters.coords = builder_->createCompositeConstructView(
+                type_float3_, xe_spv_scratch_view(&id_scratch_));
             lod_3d = QueryTextureLod(texture_parameters, image_3d_unsigned,
                                      image_3d_signed, sampler,
                                      swizzled_signs_all_signed);
@@ -1780,12 +1770,12 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
           spv::Id lod_stacked;
           {
             // 2D stacked.
-            id_vector_temp_.clear();
+            id_scratch_.count = 0;
             for (uint32_t i = 0; i < 2; ++i) {
-              id_vector_temp_.push_back(coordinates[i]);
+              ScratchPush(&id_scratch_, coordinates[i]);
             }
-            texture_parameters.coords = builder_->createCompositeConstruct(
-                type_float2_, id_vector_temp_);
+            texture_parameters.coords = builder_->createCompositeConstructView(
+                type_float2_, xe_spv_scratch_view(&id_scratch_));
             lod_stacked = QueryTextureLod(texture_parameters,
                                           image_2d_array_or_cube_unsigned,
                                           image_2d_array_or_cube_signed,
@@ -1796,13 +1786,13 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
         } else {
           uint32_t lod_query_coordinate_component_count =
               instr.dimension == xenos::FetchOpDimension::kCube ? 3 : 2;
-          id_vector_temp_.clear();
+          id_scratch_.count = 0;
           for (uint32_t i = 0; i < lod_query_coordinate_component_count; ++i) {
-            id_vector_temp_.push_back(coordinates[i]);
+            ScratchPush(&id_scratch_, coordinates[i]);
           }
-          texture_parameters.coords = builder_->createCompositeConstruct(
+          texture_parameters.coords = builder_->createCompositeConstructView(
               type_float_vectors_[lod_query_coordinate_component_count - 1],
-              id_vector_temp_);
+              xe_spv_scratch_view(&id_scratch_));
           result[0] = QueryTextureLod(texture_parameters,
                                       image_2d_array_or_cube_unsigned,
                                       image_2d_array_or_cube_signed, sampler,
@@ -1859,31 +1849,31 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
 
         // Load the fetch constant word 3, needed for result exponent biasing.
         // exp_adjust is in word 3, bits 13:18 (6-bit signed).
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(const_int_0_);
-        id_vector_temp_.push_back(builder_->makeIntConstant(
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_, const_int_0_);
+        ScratchPush(&id_scratch_, builder_->makeIntConstant(
             int((fetch_constant_word_0_index + 3) >> 2)));
-        id_vector_temp_.push_back(builder_->makeIntConstant(
+        ScratchPush(&id_scratch_, builder_->makeIntConstant(
             int((fetch_constant_word_0_index + 3) & 3)));
         spv::Id fetch_constant_word_3_signed = builder_->createUnaryOp(
             spv::OpBitcast, type_int_,
-            builder_->createLoad(builder_->createAccessChain(
+            builder_->createLoad(builder_->createAccessChainView(
                                      spv::StorageClassUniform,
-                                     uniform_fetch_constants_, id_vector_temp_),
+                                     uniform_fetch_constants_, xe_spv_scratch_view(&id_scratch_)),
                                  spv::NoPrecision));
 
         // Load the fetch constant word 4, needed unconditionally for LOD
         // biasing, and conditionally for stacked texture filtering.
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(const_int_0_);
-        id_vector_temp_.push_back(builder_->makeIntConstant(
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_, const_int_0_);
+        ScratchPush(&id_scratch_, builder_->makeIntConstant(
             int((fetch_constant_word_0_index + 4) >> 2)));
-        id_vector_temp_.push_back(builder_->makeIntConstant(
+        ScratchPush(&id_scratch_, builder_->makeIntConstant(
             int((fetch_constant_word_0_index + 4) & 3)));
         spv::Id fetch_constant_word_4 =
-            builder_->createLoad(builder_->createAccessChain(
+            builder_->createLoad(builder_->createAccessChainView(
                                      spv::StorageClassUniform,
-                                     uniform_fetch_constants_, id_vector_temp_),
+                                     uniform_fetch_constants_, xe_spv_scratch_view(&id_scratch_)),
                                  spv::NoPrecision);
         spv::Id fetch_constant_word_4_signed = builder_->createUnaryOp(
             spv::OpBitcast, type_int_, fetch_constant_word_4);
@@ -2010,16 +2000,16 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                   spv::OpFMul, type_float_, gradient_v_y, lod_gradient_scale_v);
               // 1D textures are sampled as 2D arrays - need 2-component
               // gradients.
-              id_vector_temp_.clear();
-              id_vector_temp_.push_back(gradient_h_x);
-              id_vector_temp_.push_back(gradient_h_y);
-              gradients_h = builder_->createCompositeConstruct(type_float2_,
-                                                               id_vector_temp_);
-              id_vector_temp_.clear();
-              id_vector_temp_.push_back(gradient_v_x);
-              id_vector_temp_.push_back(gradient_v_y);
-              gradients_v = builder_->createCompositeConstruct(type_float2_,
-                                                               id_vector_temp_);
+              id_scratch_.count = 0;
+              ScratchPush(&id_scratch_, gradient_h_x);
+              ScratchPush(&id_scratch_, gradient_h_y);
+              gradients_h = builder_->createCompositeConstructView(type_float2_,
+                                                               xe_spv_scratch_view(&id_scratch_));
+              id_scratch_.count = 0;
+              ScratchPush(&id_scratch_, gradient_v_x);
+              ScratchPush(&id_scratch_, gradient_v_y);
+              gradients_v = builder_->createCompositeConstructView(type_float2_,
+                                                               xe_spv_scratch_view(&id_scratch_));
             } break;
             case xenos::FetchOpDimension::k2D: {
               if (instr.attributes.use_register_gradients) {
@@ -2043,21 +2033,21 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                     register_gradient_y = builder_->createNoContractionBinOp(
                         spv::OpFDiv, type_float_, register_gradient_y, size[1]);
                   }
-                  id_vector_temp_.clear();
-                  id_vector_temp_.push_back(register_gradient_x);
-                  id_vector_temp_.push_back(register_gradient_y);
+                  id_scratch_.count = 0;
+                  ScratchPush(&id_scratch_, register_gradient_x);
+                  ScratchPush(&id_scratch_, register_gradient_y);
                   (i ? gradients_v : gradients_h) =
-                      builder_->createCompositeConstruct(type_float2_,
-                                                         id_vector_temp_);
+                      builder_->createCompositeConstructView(type_float2_,
+                                                         xe_spv_scratch_view(&id_scratch_));
                 }
               } else {
-                id_vector_temp_.clear();
+                id_scratch_.count = 0;
                 for (uint32_t i = 0; i < 2; ++i) {
-                  id_vector_temp_.push_back(coordinates[i]);
+                  ScratchPush(&id_scratch_, coordinates[i]);
                 }
                 spv::Id gradient_coordinate_vector =
-                    builder_->createCompositeConstruct(type_float2_,
-                                                       id_vector_temp_);
+                    builder_->createCompositeConstructView(type_float2_,
+                                                       xe_spv_scratch_view(&id_scratch_));
                 builder_->addCapability(spv::CapabilityDerivativeControl);
                 gradients_h = builder_->createUnaryOp(
                     DerivativeXOp(), type_float2_, gradient_coordinate_vector);
@@ -2081,28 +2071,28 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                   // Normalize the gradients.
                   for (uint32_t i = 0; i < 2; ++i) {
                     spv::Id& gradient_ref = i ? gradients_v : gradients_h;
-                    id_vector_temp_.clear();
+                    id_scratch_.count = 0;
                     for (uint32_t j = 0; j < 3; ++j) {
                       assert_true(size[j] != spv::NoResult);
-                      id_vector_temp_.push_back(
+                      ScratchPush(&id_scratch_,
                           builder_->createNoContractionBinOp(
                               spv::OpFDiv, type_float_,
                               builder_->createCompositeExtract(gradient_ref,
                                                                type_float_, j),
                               size[j]));
                     }
-                    gradient_ref = builder_->createCompositeConstruct(
-                        type_float3_, id_vector_temp_);
+                    gradient_ref = builder_->createCompositeConstructView(
+                        type_float3_, xe_spv_scratch_view(&id_scratch_));
                   }
                 }
               } else {
-                id_vector_temp_.clear();
+                id_scratch_.count = 0;
                 for (uint32_t i = 0; i < 3; ++i) {
-                  id_vector_temp_.push_back(coordinates[i]);
+                  ScratchPush(&id_scratch_, coordinates[i]);
                 }
                 spv::Id gradient_coordinate_vector =
-                    builder_->createCompositeConstruct(type_float3_,
-                                                       id_vector_temp_);
+                    builder_->createCompositeConstructView(type_float3_,
+                                                       xe_spv_scratch_view(&id_scratch_));
                 builder_->addCapability(spv::CapabilityDerivativeControl);
                 gradients_h = builder_->createUnaryOp(
                     DerivativeXOp(), type_float3_, gradient_coordinate_vector);
@@ -2136,17 +2126,17 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
           }
         }
 
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_,
             builder_->makeIntConstant(kSystemConstantTextureIntegerScaleBits));
-        id_vector_temp_.push_back(
+        ScratchPush(&id_scratch_,
             builder_->makeIntConstant(int32_t(fetch_constant_index >> 2)));
-        id_vector_temp_.push_back(
+        ScratchPush(&id_scratch_,
             builder_->makeIntConstant(int32_t(fetch_constant_index & 3)));
         spv::Id integer_scale_bits_packed = builder_->createLoad(
-            builder_->createAccessChain(spv::StorageClassUniform,
+            builder_->createAccessChainView(spv::StorageClassUniform,
                                         uniform_system_constants_,
-                                        id_vector_temp_),
+                                        xe_spv_scratch_view(&id_scratch_)),
             spv::NoPrecision);
         if (point_snap) {
           // Point sampled fetch constant uses the texel center in host texels
@@ -2275,12 +2265,12 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
               texture_parameters.gradX = gradients_h;
               texture_parameters.gradY = gradients_v;
             }
-            id_vector_temp_.clear();
+            id_scratch_.count = 0;
             for (uint32_t i = 0; i < 3; ++i) {
-              id_vector_temp_.push_back(coordinates[i]);
+              ScratchPush(&id_scratch_, coordinates[i]);
             }
-            texture_parameters.coords = builder_->createCompositeConstruct(
-                type_float3_, id_vector_temp_);
+            texture_parameters.coords = builder_->createCompositeConstructView(
+                type_float3_, xe_spv_scratch_view(&id_scratch_));
             SampleTexture(texture_parameters, image_operands_mask,
                           image_3d_unsigned, image_3d_signed, sampler,
                           is_any_unsigned, is_any_signed,
@@ -2292,15 +2282,15 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
             // 2D stacked.
             if (use_computed_lod && !use_lod_bias) {
               // Extract 2D gradients for stacked textures which are 2D arrays.
-              uint_vector_temp_.clear();
-              uint_vector_temp_.push_back(0);
-              uint_vector_temp_.push_back(1);
+              literal_scratch_.count = 0;
+              ScratchPush(&literal_scratch_, 0);
+              ScratchPush(&literal_scratch_, 1);
               texture_parameters.gradX =
-                  builder_->createRvalueSwizzle(spv::NoPrecision, type_float2_,
-                                                gradients_h, uint_vector_temp_);
+                  builder_->createRvalueSwizzleView(spv::NoPrecision, type_float2_,
+                                                gradients_h, xe_spv_scratch_view(&literal_scratch_));
               texture_parameters.gradY =
-                  builder_->createRvalueSwizzle(spv::NoPrecision, type_float2_,
-                                                gradients_v, uint_vector_temp_);
+                  builder_->createRvalueSwizzleView(spv::NoPrecision, type_float2_,
+                                                gradients_v, xe_spv_scratch_view(&literal_scratch_));
             }
             // Check if linear filtering is needed.
             bool vol_mag_filter_is_fetch_const =
@@ -2407,12 +2397,12 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
             spv::Id layer_0_coordinate = builder_->createUnaryBuiltinCall(
                 type_float_, ext_inst_glsl_std_450_, GLSLstd450Floor,
                 layer_coordinate);
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(coordinates[0]);
-            id_vector_temp_.push_back(coordinates[1]);
-            id_vector_temp_.push_back(layer_0_coordinate);
-            texture_parameters.coords = builder_->createCompositeConstruct(
-                type_float3_, id_vector_temp_);
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_, coordinates[0]);
+            ScratchPush(&id_scratch_, coordinates[1]);
+            ScratchPush(&id_scratch_, layer_0_coordinate);
+            texture_parameters.coords = builder_->createCompositeConstructView(
+                type_float3_, xe_spv_scratch_view(&id_scratch_));
             SampleTexture(
                 texture_parameters, image_operands_mask,
                 image_2d_array_or_cube_unsigned, image_2d_array_or_cube_signed,
@@ -2442,12 +2432,12 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
               spv::Id layer_1_coordinate = builder_->createBinOp(
                   spv::OpFAdd, type_float_, layer_0_coordinate,
                   builder_->makeFloatConstant(1.0f));
-              id_vector_temp_.clear();
-              id_vector_temp_.push_back(coordinates[0]);
-              id_vector_temp_.push_back(coordinates[1]);
-              id_vector_temp_.push_back(layer_1_coordinate);
-              texture_parameters.coords = builder_->createCompositeConstruct(
-                  type_float3_, id_vector_temp_);
+              id_scratch_.count = 0;
+              ScratchPush(&id_scratch_, coordinates[0]);
+              ScratchPush(&id_scratch_, coordinates[1]);
+              ScratchPush(&id_scratch_, layer_1_coordinate);
+              texture_parameters.coords = builder_->createCompositeConstructView(
+                  type_float3_, xe_spv_scratch_view(&id_scratch_));
               spv::Id layer_lerp_factor = builder_->createUnaryBuiltinCall(
                   type_float_, ext_inst_glsl_std_450_, GLSLstd450Fract,
                   layer_coordinate);
@@ -2511,12 +2501,12 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
             texture_parameters.gradX = gradients_h;
             texture_parameters.gradY = gradients_v;
           }
-          id_vector_temp_.clear();
+          id_scratch_.count = 0;
           for (uint32_t i = 0; i < 3; ++i) {
-            id_vector_temp_.push_back(coordinates[i]);
+            ScratchPush(&id_scratch_, coordinates[i]);
           }
           texture_parameters.coords =
-              builder_->createCompositeConstruct(type_float3_, id_vector_temp_);
+              builder_->createCompositeConstructView(type_float3_, xe_spv_scratch_view(&id_scratch_));
           SampleTexture(texture_parameters, image_operands_mask,
                         image_2d_array_or_cube_unsigned,
                         image_2d_array_or_cube_signed, sampler, is_any_unsigned,
@@ -2532,18 +2522,18 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
         // so doing it during (for unsigned vs. signed) and after (for biased
         // and gamma) swizzling.
         if (!features_.image_view_format_swizzle) {
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_,
               builder_->makeIntConstant(kSystemConstantTextureSwizzles));
-          id_vector_temp_.push_back(
+          ScratchPush(&id_scratch_,
               builder_->makeIntConstant(fetch_constant_index >> 3));
-          id_vector_temp_.push_back(
+          ScratchPush(&id_scratch_,
               builder_->makeIntConstant((fetch_constant_index >> 1) & 3));
           // All 32 bits containing the values (24 bits) for 2 fetch constants.
           spv::Id swizzle_word = builder_->createLoad(
-              builder_->createAccessChain(spv::StorageClassUniform,
+              builder_->createAccessChainView(spv::StorageClassUniform,
                                           uniform_system_constants_,
-                                          id_vector_temp_),
+                                          xe_spv_scratch_view(&id_scratch_)),
               spv::NoPrecision);
           uint32_t swizzle_word_offset = 3 * 4 * (fetch_constant_index & 1);
           spv::Id const_float_1 = builder_->makeFloatConstant(1.0f);
@@ -2768,10 +2758,8 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
         }
 
         // Apply num_format after signs/gamma.
-        id_vector_temp_.clear();
-        id_vector_temp_.insert(id_vector_temp_.cend(), result, result + 4);
         spv::Id integer_scale_result =
-            builder_->createCompositeConstruct(type_float4_, id_vector_temp_);
+            builder_->createCompositeConstructView(type_float4_, xe_spv_words_view(result, 4));
         {
           // Uniform early out. Zero means leave the sample alone.
           // Bit 26 is the coordinate snap, not a scale.
@@ -2805,9 +2793,9 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                   const_uint_0_);
               SpirvBuilder::IfBuilder if_grid(
                   has_grid, spv::SelectionControlMaskNone, *builder_);
-              id_vector_temp_.clear();
+              id_scratch_.count = 0;
               for (uint32_t i = 0; i < 4; ++i) {
-                id_vector_temp_.push_back(builder_->makeUintConstant(i * 6));
+                ScratchPush(&id_scratch_, builder_->makeUintConstant(i * 6));
               }
               spv::Id lane_bits = builder_->createBinOp(
                   spv::OpBitwiseAnd, type_uint4_,
@@ -2816,8 +2804,8 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                       builder_->smearScalar(spv::NoPrecision,
                                             integer_scale_bits_packed,
                                             type_uint4_),
-                      builder_->makeCompositeConstant(type_uint4_,
-                                                      id_vector_temp_)),
+                      builder_->makeCompositeConstantView(type_uint4_,
+                                                      xe_spv_scratch_view(&id_scratch_))),
                   builder_->smearScalar(spv::NoPrecision,
                                         builder_->makeUintConstant(0x3F),
                                         type_uint4_));
@@ -2880,9 +2868,9 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
             rounded_result = builder_->createNoContractionBinOp(
                 spv::OpVectorTimesScalar, type_float4_, rounded_result,
                 builder_->makeFloatConstant(1.0f / 65536.0f));
-            id_vector_temp_.clear();
+            id_scratch_.count = 0;
             for (uint32_t i = 0; i < 4; ++i) {
-              id_vector_temp_.push_back(builder_->makeUintConstant(i * 6 + 4));
+              ScratchPush(&id_scratch_, builder_->makeUintConstant(i * 6 + 4));
             }
             spv::Id lane_signs = builder_->createBinOp(
                 spv::OpBitwiseAnd, type_uint4_,
@@ -2891,8 +2879,8 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                     builder_->smearScalar(spv::NoPrecision,
                                           integer_scale_bits_packed,
                                           type_uint4_),
-                    builder_->makeCompositeConstant(type_uint4_,
-                                                    id_vector_temp_)),
+                    builder_->makeCompositeConstantView(type_uint4_,
+                                                    xe_spv_scratch_view(&id_scratch_))),
                 builder_->smearScalar(spv::NoPrecision,
                                       builder_->makeUintConstant(3),
                                       type_uint4_));
@@ -2922,15 +2910,15 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                 normalized_result);
             if_normalized.makeBeginElse();
             spv::Id const_uint_1 = builder_->makeUintConstant(1);
-            id_vector_temp_.clear();
+            id_scratch_.count = 0;
             for (uint32_t i = 0; i < 4; ++i) {
-              id_vector_temp_.push_back(builder_->makeUintConstant(i * 6));
+              ScratchPush(&id_scratch_, builder_->makeUintConstant(i * 6));
             }
             spv::Id scale_bits = builder_->createBinOp(
                 spv::OpShiftRightLogical, type_uint4_,
                 builder_->smearScalar(spv::NoPrecision,
                                       integer_scale_bits_packed, type_uint4_),
-                builder_->makeCompositeConstant(type_uint4_, id_vector_temp_));
+                builder_->makeCompositeConstantView(type_uint4_, xe_spv_scratch_view(&id_scratch_)));
             scale_bits = builder_->createBinOp(
                 spv::OpBitwiseAnd, type_uint4_, scale_bits,
                 builder_->smearScalar(spv::NoPrecision,
@@ -3060,16 +3048,16 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
   // Store the needed components of the result.
   spv::Id result_vector;
   if (used_result_component_count > 1) {
-    id_vector_temp_.clear();
+    id_scratch_.count = 0;
     uint32_t result_components_remaining = used_result_components;
     uint32_t result_component_index;
     while (xe::bit_scan_forward(result_components_remaining,
                                 &result_component_index)) {
       result_components_remaining &= ~(UINT32_C(1) << result_component_index);
-      id_vector_temp_.push_back(result[result_component_index]);
+      ScratchPush(&id_scratch_, result[result_component_index]);
     }
-    result_vector = builder_->createCompositeConstruct(
-        type_float_vectors_[used_result_component_count - 1], id_vector_temp_);
+    result_vector = builder_->createCompositeConstructView(
+        type_float_vectors_[used_result_component_count - 1], xe_spv_scratch_view(&id_scratch_));
   } else {
     uint32_t result_component_index;
     xe::bit_scan_forward(used_result_components, &result_component_index);

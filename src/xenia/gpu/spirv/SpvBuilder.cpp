@@ -3109,10 +3109,15 @@ void Builder::createNoResultOp(Op opCode, Id operand)
 // An opcode that has one or more operands, no result id, and no type
 void Builder::createNoResultOp(Op opCode, const std::vector<Id>& operands)
 {
+    createNoResultOpView(opCode, xe_spv_words_view(operands.data(), operands.size()));
+}
+
+void Builder::createNoResultOpView(Op opCode, xe_spv_word_view operands)
+{
     Instruction* op = createInstruction(opCode);
-    op->reserveOperands(operands.size());
-    for (auto id : operands) {
-        op->addIdOperand(id);
+    op->reserveOperands(operands.count);
+    for (size_t i = 0; i < operands.count; ++i) {
+        op->addIdOperand(operands.words[i]);
     }
     addInstruction(std::unique_ptr<Instruction>(op));
 }
@@ -4735,13 +4740,21 @@ void Builder::createSelectionMerge(Block* mergeBlock, SelectionControlMask contr
 void Builder::createLoopMerge(Block* mergeBlock, Block* continueBlock, LoopControlMask control,
                               const std::vector<unsigned int>& operands)
 {
+    createLoopMergeView(mergeBlock, continueBlock, control,
+        xe_spv_words_view(operands.data(), operands.size()));
+}
+
+void Builder::createLoopMergeView(Block* mergeBlock, Block* continueBlock, LoopControlMask control,
+                                  xe_spv_word_view operands)
+{
+    if (operands.count > size_t(-1) - 3) throw std::bad_alloc();
     Instruction* merge = createInstruction(Op::OpLoopMerge);
-    merge->reserveOperands(operands.size() + 3);
+    merge->reserveOperands(operands.count + 3);
     merge->addIdOperand(mergeBlock->getId());
     merge->addIdOperand(continueBlock->getId());
     merge->addImmediateOperand(control);
-    for (int op = 0; op < (int)operands.size(); ++op)
-        merge->addImmediateOperand(operands[op]);
+    for (size_t i = 0; i < operands.count; ++i)
+        merge->addImmediateOperand(operands.words[i]);
     addInstruction(std::unique_ptr<Instruction>(merge));
 }
 

@@ -559,6 +559,7 @@ public:
     void createNoResultOp(Op);
     void createNoResultOp(Op, Id operand);
     void createNoResultOp(Op, const std::vector<Id>& operands);
+    void createNoResultOpView(Op, xe_spv_word_view operands);
     void createNoResultOp(Op, const std::vector<IdImmediate>& operands);
     void createControlBarrier(Scope execution, Scope memory, MemorySemanticsMask);
     void createMemoryBarrier(Scope executionScope, MemorySemanticsMask memorySemantics);
@@ -944,6 +945,8 @@ public:
     void createConditionalBranch(Id condition, Block* thenBlock, Block* elseBlock);
     void createLoopMerge(Block* mergeBlock, Block* continueBlock, LoopControlMask control,
         const std::vector<unsigned int>& operands);
+    void createLoopMergeView(Block* mergeBlock, Block* continueBlock, LoopControlMask control,
+        xe_spv_word_view operands);
 
     // Sets to generate opcode for specialization constants.
     void setToSpecConstCodeGenMode() { generatingOpCodeForSpecConst = true; }

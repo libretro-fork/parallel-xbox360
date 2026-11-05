@@ -44,14 +44,14 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
 
     // Check X coordinate.
     if (GetCurrentDrawResolutionScaleX() > 1) {
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(const_int_0_);
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, const_int_0_);
       spv::Id pixel_x = builder_->createUnaryOp(
           spv::OpConvertFToU, type_uint_,
           builder_->createLoad(
-              builder_->createAccessChain(spv::StorageClassInput,
+              builder_->createAccessChainView(spv::StorageClassInput,
                                           input_fragment_coordinates_,
-                                          id_vector_temp_),
+                                          xe_spv_scratch_view(&id_scratch_)),
               spv::NoPrecision));
       spv::Id pixel_x_remainder = builder_->createBinOp(
           spv::OpUMod, type_uint_, pixel_x,
@@ -65,14 +65,14 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
 
     // Check Y coordinate.
     if (GetCurrentDrawResolutionScaleY() > 1) {
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(builder_->makeIntConstant(1));
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, builder_->makeIntConstant(1));
       spv::Id pixel_y = builder_->createUnaryOp(
           spv::OpConvertFToU, type_uint_,
           builder_->createLoad(
-              builder_->createAccessChain(spv::StorageClassInput,
+              builder_->createAccessChainView(spv::StorageClassInput,
                                           input_fragment_coordinates_,
-                                          id_vector_temp_),
+                                          xe_spv_scratch_view(&id_scratch_)),
               spv::NoPrecision));
       spv::Id pixel_y_remainder = builder_->createBinOp(
           spv::OpUMod, type_uint_, pixel_y,
@@ -118,20 +118,20 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
   spv::Id eA_vector = builder_->createUnaryOp(
       spv::OpBitcast, type_uint4_,
       builder_->createLoad(var_main_memexport_address_, spv::NoPrecision));
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(builder_->makeUintConstant(30));
-  id_vector_temp_.push_back(builder_->makeUintConstant(23));
-  id_vector_temp_.push_back(builder_->makeUintConstant(20));
-  id_vector_temp_.push_back(builder_->makeUintConstant(23));
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, builder_->makeUintConstant(30));
+  ScratchPush(&id_scratch_, builder_->makeUintConstant(23));
+  ScratchPush(&id_scratch_, builder_->makeUintConstant(20));
+  ScratchPush(&id_scratch_, builder_->makeUintConstant(23));
   spv::Id address_validation_shift =
-      builder_->makeCompositeConstant(type_uint4_, id_vector_temp_);
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(builder_->makeUintConstant(0x1));
-  id_vector_temp_.push_back(builder_->makeUintConstant(0x96));
-  id_vector_temp_.push_back(builder_->makeUintConstant(0x4B0));
-  id_vector_temp_.push_back(builder_->makeUintConstant(0x96));
+      builder_->makeCompositeConstantView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, builder_->makeUintConstant(0x1));
+  ScratchPush(&id_scratch_, builder_->makeUintConstant(0x96));
+  ScratchPush(&id_scratch_, builder_->makeUintConstant(0x4B0));
+  ScratchPush(&id_scratch_, builder_->makeUintConstant(0x96));
   spv::Id address_validation_value =
-      builder_->makeCompositeConstant(type_uint4_, id_vector_temp_);
+      builder_->makeCompositeConstantView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
   SpirvBuilder::IfBuilder if_address_valid(
       builder_->createUnaryOp(
           spv::OpAll, type_bool_,
@@ -169,18 +169,18 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
                             builder_->makeUintConstant(uint32_t(1) << 19)),
       const_uint_0_);
   EMIdArray eM_swapped;
-  uint_vector_temp_.clear();
-  uint_vector_temp_.push_back(2);
-  uint_vector_temp_.push_back(1);
-  uint_vector_temp_.push_back(0);
-  uint_vector_temp_.push_back(3);
+  literal_scratch_.count = 0;
+  ScratchPush(&literal_scratch_, 2);
+  ScratchPush(&literal_scratch_, 1);
+  ScratchPush(&literal_scratch_, 0);
+  ScratchPush(&literal_scratch_, 3);
   spv::Id swap_red_blue_bool4 =
       builder_->smearScalar(spv::NoPrecision, swap_red_blue, type_bool4_);
   for_each_eM([&](uint32_t eM_index) {
     eM_swapped[eM_index] = builder_->createTriOp(
         spv::OpSelect, type_float4_, swap_red_blue_bool4,
-        builder_->createRvalueSwizzle(spv::NoPrecision, type_float4_,
-                                      eM_original[eM_index], uint_vector_temp_),
+        builder_->createRvalueSwizzleView(spv::NoPrecision, type_float4_,
+                                      eM_original[eM_index], xe_spv_scratch_view(&literal_scratch_)),
         eM_original[eM_index]);
   });
 
@@ -218,13 +218,13 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
       [&](float value) -> std::array<spv::Id, 4> {
     std::array<spv::Id, 4> const_vectors;
     const_vectors[0] = builder_->makeFloatConstant(value);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(const_vectors[0]);
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, const_vectors[0]);
     for (unsigned int component_count_minus_1 = 1; component_count_minus_1 < 4;
          ++component_count_minus_1) {
-      id_vector_temp_.push_back(const_vectors[0]);
-      const_vectors[component_count_minus_1] = builder_->makeCompositeConstant(
-          type_float_vectors_[component_count_minus_1], id_vector_temp_);
+      ScratchPush(&id_scratch_, const_vectors[0]);
+      const_vectors[component_count_minus_1] = builder_->makeCompositeConstantView(
+          type_float_vectors_[component_count_minus_1], xe_spv_scratch_view(&id_scratch_));
     }
     return const_vectors;
   };
@@ -265,15 +265,15 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
               eM_unflushed[eM_index], type_float_, 0);
         });
       } else {
-        uint_vector_temp_.clear();
+        literal_scratch_.count = 0;
         for (unsigned int component_index = 0;
              component_index < component_count; ++component_index) {
-          uint_vector_temp_.push_back(component_index);
+          ScratchPush(&literal_scratch_, component_index);
         }
         for_each_eM([&](uint32_t eM_index) {
-          eM_unflushed[eM_index] = builder_->createRvalueSwizzle(
+          eM_unflushed[eM_index] = builder_->createRvalueSwizzleView(
               spv::NoPrecision, type_float_vectors_[component_count - 1],
-              eM_unflushed[eM_index], uint_vector_temp_);
+              eM_unflushed[eM_index], xe_spv_scratch_view(&literal_scratch_));
         });
       }
     }
@@ -292,17 +292,17 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
       EMIdArray eM_norm;
       {
         // Signed normalized.
-        id_vector_temp_.clear();
+        id_scratch_.count = 0;
         for (unsigned int component_index = 0;
              component_index < component_count; ++component_index) {
-          id_vector_temp_.push_back(builder_->makeFloatConstant(
+          ScratchPush(&id_scratch_, builder_->makeFloatConstant(
               float((uint32_t(1) << (widths[component_index] - 1)) - 1)));
         }
         spv::Id const_max_value =
             component_count > 1
-                ? builder_->makeCompositeConstant(
-                      type_float_vectors_[component_count - 1], id_vector_temp_)
-                : id_vector_temp_.front();
+                ? builder_->makeCompositeConstantView(
+                      type_float_vectors_[component_count - 1], xe_spv_scratch_view(&id_scratch_))
+                : xe_spv_scratch_data(&id_scratch_)[0];
         for_each_eM([&](uint32_t eM_index) {
           eM_norm[eM_index] = builder_->createNoContractionBinOp(
               spv::OpFMul, type_float_vectors_[component_count - 1],
@@ -350,17 +350,17 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
       EMIdArray eM_norm;
       {
         // Unsigned normalized.
-        id_vector_temp_.clear();
+        id_scratch_.count = 0;
         for (unsigned int component_index = 0;
              component_index < component_count; ++component_index) {
-          id_vector_temp_.push_back(builder_->makeFloatConstant(
+          ScratchPush(&id_scratch_, builder_->makeFloatConstant(
               float((uint32_t(1) << widths[component_index]) - 1)));
         }
         spv::Id const_max_value =
             component_count > 1
-                ? builder_->makeCompositeConstant(
-                      type_float_vectors_[component_count - 1], id_vector_temp_)
-                : id_vector_temp_.front();
+                ? builder_->makeCompositeConstantView(
+                      type_float_vectors_[component_count - 1], xe_spv_scratch_view(&id_scratch_))
+                : xe_spv_scratch_data(&id_scratch_)[0];
         for_each_eM([&](uint32_t eM_index) {
           eM_norm[eM_index] = builder_->createNoContractionBinOp(
               spv::OpFMul, type_float_vectors_[component_count - 1],
@@ -414,11 +414,11 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
             builder_->makeUintConstant(offsets[component_index]),
             builder_->makeUintConstant(widths[component_index]));
       }
-      id_vector_temp_.clear();
-      id_vector_temp_.resize(4, const_uint_0_);
-      id_vector_temp_.front() = eM_packed[eM_index];
+      id_scratch_.count = 0;
+      ScratchResize(&id_scratch_, 4, const_uint_0_);
+      xe_spv_scratch_data(&id_scratch_)[0] = eM_packed[eM_index];
       eM_packed[eM_index] =
-          builder_->createCompositeConstruct(type_uint4_, id_vector_temp_);
+          builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
     });
 
     return eM_packed;
@@ -540,11 +540,11 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
       EMIdArray fixed16_norm;
       {
         // Signed normalized.
-        id_vector_temp_.clear();
-        id_vector_temp_.resize(4, builder_->makeFloatConstant(
+        id_scratch_.count = 0;
+        ScratchResize(&id_scratch_, 4, builder_->makeFloatConstant(
                                       float((uint32_t(1) << (16 - 1)) - 1)));
         spv::Id const_snorm16_max_value =
-            builder_->makeCompositeConstant(type_float4_, id_vector_temp_);
+            builder_->makeCompositeConstantView(type_float4_, xe_spv_scratch_view(&id_scratch_));
         for_each_eM([&](uint32_t eM_index) {
           fixed16_norm[eM_index] = builder_->createNoContractionBinOp(
               spv::OpFMul, type_float4_,
@@ -588,11 +588,11 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
       EMIdArray fixed16_norm;
       {
         // Unsigned normalized.
-        id_vector_temp_.clear();
-        id_vector_temp_.resize(
+        id_scratch_.count = 0;
+        ScratchResize(&id_scratch_,
             4, builder_->makeFloatConstant(float((uint32_t(1) << 16) - 1)));
         spv::Id const_unorm16_max_value =
-            builder_->makeCompositeConstant(type_float4_, id_vector_temp_);
+            builder_->makeCompositeConstantView(type_float4_, xe_spv_scratch_view(&id_scratch_));
         for_each_eM([&](uint32_t eM_index) {
           fixed16_norm[eM_index] = builder_->createNoContractionBinOp(
               spv::OpFMul, type_float4_,
@@ -630,10 +630,10 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
     spv::Id const_uint_16 = builder_->makeUintConstant(16);
     for_each_eM([&](uint32_t eM_index) {
       spv::Id fixed16_element_unpacked = fixed16_unpacked[eM_index];
-      id_vector_temp_.clear();
+      id_scratch_.count = 0;
       for (uint32_t component_index = 0; component_index < 2;
            ++component_index) {
-        id_vector_temp_.push_back(builder_->createQuadOp(
+        ScratchPush(&id_scratch_, builder_->createQuadOp(
             spv::OpBitFieldInsert, type_uint_,
             builder_->createCompositeExtract(fixed16_element_unpacked,
                                              type_uint_, 2 * component_index),
@@ -643,10 +643,10 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
       }
       for (uint32_t component_index = 2; component_index < 4;
            ++component_index) {
-        id_vector_temp_.push_back(const_uint_0_);
+        ScratchPush(&id_scratch_, const_uint_0_);
       }
       fixed16_packed[eM_index] =
-          builder_->createCompositeConstruct(type_uint4_, id_vector_temp_);
+          builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
     });
 
     add_format_case(fixed16_packed, 3);
@@ -661,17 +661,17 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
   {
     EMIdArray format_packed_16_float;
     for_each_eM([&](uint32_t eM_index) {
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(builder_->createCompositeExtract(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, builder_->createCompositeExtract(
           eM_swapped[eM_index], type_float_, 0));
-      id_vector_temp_.push_back(const_float_0_);
+      ScratchPush(&id_scratch_, const_float_0_);
       spv::Id format_packed_16_float_x = PackFloat16x2ExtendedRange(
-          builder_->createCompositeConstruct(type_float2_, id_vector_temp_));
-      id_vector_temp_.clear();
-      id_vector_temp_.resize(4, const_uint_0_);
-      id_vector_temp_.front() = format_packed_16_float_x;
+          builder_->createCompositeConstructView(type_float2_, xe_spv_scratch_view(&id_scratch_)));
+      id_scratch_.count = 0;
+      ScratchResize(&id_scratch_, 4, const_uint_0_);
+      xe_spv_scratch_data(&id_scratch_)[0] = format_packed_16_float_x;
       format_packed_16_float[eM_index] =
-          builder_->createCompositeConstruct(type_uint4_, id_vector_temp_);
+          builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
     });
     add_format_case(format_packed_16_float, 1);
   }
@@ -682,18 +682,18 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
   {
     EMIdArray format_packed_16_16_float;
     for_each_eM([&](uint32_t eM_index) {
-      uint_vector_temp_.clear();
-      uint_vector_temp_.push_back(0);
-      uint_vector_temp_.push_back(1);
+      literal_scratch_.count = 0;
+      ScratchPush(&literal_scratch_, 0);
+      ScratchPush(&literal_scratch_, 1);
       spv::Id format_packed_16_16_float_xy =
-          PackFloat16x2ExtendedRange(builder_->createRvalueSwizzle(
+          PackFloat16x2ExtendedRange(builder_->createRvalueSwizzleView(
               spv::NoPrecision, type_float2_, eM_swapped[eM_index],
-              uint_vector_temp_));
-      id_vector_temp_.clear();
-      id_vector_temp_.resize(4, const_uint_0_);
-      id_vector_temp_.front() = format_packed_16_16_float_xy;
+              xe_spv_scratch_view(&literal_scratch_)));
+      id_scratch_.count = 0;
+      ScratchResize(&id_scratch_, 4, const_uint_0_);
+      xe_spv_scratch_data(&id_scratch_)[0] = format_packed_16_16_float_xy;
       format_packed_16_16_float[eM_index] =
-          builder_->createCompositeConstruct(type_uint4_, id_vector_temp_);
+          builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
     });
     add_format_case(format_packed_16_16_float, 2);
   }
@@ -707,21 +707,21 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
       spv::Id format_packed_16_16_16_16_float_xy_zw[2];
       for (uint32_t component_index = 0; component_index < 2;
            ++component_index) {
-        uint_vector_temp_.clear();
-        uint_vector_temp_.push_back(2 * component_index);
-        uint_vector_temp_.push_back(2 * component_index + 1);
+        literal_scratch_.count = 0;
+        ScratchPush(&literal_scratch_, 2 * component_index);
+        ScratchPush(&literal_scratch_, 2 * component_index + 1);
         format_packed_16_16_16_16_float_xy_zw[component_index] =
-            PackFloat16x2ExtendedRange(builder_->createRvalueSwizzle(
+            PackFloat16x2ExtendedRange(builder_->createRvalueSwizzleView(
                 spv::NoPrecision, type_float2_, eM_swapped[eM_index],
-                uint_vector_temp_));
+                xe_spv_scratch_view(&literal_scratch_)));
       }
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(format_packed_16_16_16_16_float_xy_zw[0]);
-      id_vector_temp_.push_back(format_packed_16_16_16_16_float_xy_zw[1]);
-      id_vector_temp_.push_back(const_uint_0_);
-      id_vector_temp_.push_back(const_uint_0_);
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, format_packed_16_16_16_16_float_xy_zw[0]);
+      ScratchPush(&id_scratch_, format_packed_16_16_16_16_float_xy_zw[1]);
+      ScratchPush(&id_scratch_, const_uint_0_);
+      ScratchPush(&id_scratch_, const_uint_0_);
       format_packed_16_16_16_16_float[eM_index] =
-          builder_->createCompositeConstruct(type_uint4_, id_vector_temp_);
+          builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
     });
     add_format_case(format_packed_16_16_16_16_float, 3);
   }

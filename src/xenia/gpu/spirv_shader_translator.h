@@ -22,6 +22,7 @@
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/shader_translator.h"
 #include "xenia/gpu/spirv/InstructionArena.h"
+#include "libretro/core_spv_scratch.h"
 #include "xenia/gpu/spirv_builder.h"
 #include "xenia/gpu/xenos.h"
 
@@ -566,6 +567,13 @@ class SpirvShaderTranslator : public ShaderTranslator {
         draw_resolution_scale_x_(draw_resolution_scale_x),
         draw_resolution_scale_y_(draw_resolution_scale_y) {}
 
+  ~SpirvShaderTranslator() override {
+    xe_spv_scratch_close(&id_scratch_);
+    xe_spv_scratch_close(&id_scratch_util_);
+    xe_spv_scratch_close(&literal_scratch_);
+    xe_spv_scratch_close(&literal_scratch_util_);
+  }
+
   uint64_t GetDefaultVertexShaderModification(
       uint32_t dynamic_addressable_register_count,
       Shader::HostVertexShaderType host_vertex_shader_type =
@@ -1100,12 +1108,25 @@ class SpirvShaderTranslator : public ShaderTranslator {
   std::unique_lock<std::mutex> resource_bindings_lock_;
   bool preloaded_resource_bindings_ = false;
 
-  std::vector<spv::Id> id_vector_temp_;
+  static void ScratchPush(xe_spv_scratch* scratch, uint32_t word) {
+    if (!xe_spv_scratch_push(scratch, word)) throw std::bad_alloc();
+  }
+  static void ScratchReserve(xe_spv_scratch* scratch, size_t count) {
+    if (!xe_spv_scratch_reserve(scratch, count)) throw std::bad_alloc();
+  }
+  static void ScratchResize(xe_spv_scratch* scratch, size_t count, uint32_t fill) {
+    if (!xe_spv_scratch_resize(scratch, count, fill)) throw std::bad_alloc();
+  }
+  static void ScratchFill(xe_spv_scratch* scratch, size_t count, uint32_t fill) {
+    if (!xe_spv_scratch_fill(scratch, count, fill)) throw std::bad_alloc();
+  }
+
+  xe_spv_scratch id_scratch_ = {};
   // For helper functions like operand loading, so they don't conflict with
-  // id_vector_temp_ usage in bigger callbacks.
-  std::vector<spv::Id> id_vector_temp_util_;
-  std::vector<unsigned int> uint_vector_temp_;
-  std::vector<unsigned int> uint_vector_temp_util_;
+  // id_scratch_ usage in bigger callbacks. Builder views are consumed immediately.
+  xe_spv_scratch id_scratch_util_ = {};
+  xe_spv_scratch literal_scratch_ = {};
+  xe_spv_scratch literal_scratch_util_ = {};
 
   spv::Id ext_inst_glsl_std_450_;
 

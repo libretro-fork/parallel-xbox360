@@ -420,13 +420,13 @@ void SpirvShaderTranslator::BisectSnapshotAfterInstruction() {
 
 void SpirvShaderTranslator::BisectStoreSnapshot() {
   EnsureBuildPointAvailable();
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(cvars::shader_bisect_register));
   builder_->createStore(
       builder_->createLoad(
-          builder_->createAccessChain(spv::StorageClassFunction,
-                                      var_main_registers_, id_vector_temp_),
+          builder_->createAccessChainView(spv::StorageClassFunction,
+                                      var_main_registers_, xe_spv_scratch_view(&id_scratch_)),
           spv::NoPrecision),
       var_main_bisect_snapshot_);
   bisect_snapshot_emitted_ = true;
@@ -527,39 +527,39 @@ void SpirvShaderTranslator::StartTranslation() {
   type_float4_ = builder_->makeVectorType(type_float_, 4);
 
   const_int_0_ = builder_->makeIntConstant(0);
-  id_vector_temp_.clear();
+  id_scratch_.count = 0;
   for (uint32_t i = 0; i < 4; ++i) {
-    id_vector_temp_.push_back(const_int_0_);
+    ScratchPush(&id_scratch_, const_int_0_);
   }
-  const_int4_0_ = builder_->makeCompositeConstant(type_int4_, id_vector_temp_);
+  const_int4_0_ = builder_->makeCompositeConstantView(type_int4_, xe_spv_scratch_view(&id_scratch_));
   const_uint_0_ = builder_->makeUintConstant(0);
-  id_vector_temp_.clear();
+  id_scratch_.count = 0;
   for (uint32_t i = 0; i < 4; ++i) {
-    id_vector_temp_.push_back(const_uint_0_);
+    ScratchPush(&id_scratch_, const_uint_0_);
   }
   const_uint4_0_ =
-      builder_->makeCompositeConstant(type_uint4_, id_vector_temp_);
+      builder_->makeCompositeConstantView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
   const_float_0_ = builder_->makeFloatConstant(0.0f);
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(const_float_0_);
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, const_float_0_);
   for (uint32_t i = 1; i < 4; ++i) {
-    id_vector_temp_.push_back(const_float_0_);
-    const_float_vectors_0_[i] = builder_->makeCompositeConstant(
-        type_float_vectors_[i], id_vector_temp_);
+    ScratchPush(&id_scratch_, const_float_0_);
+    const_float_vectors_0_[i] = builder_->makeCompositeConstantView(
+        type_float_vectors_[i], xe_spv_scratch_view(&id_scratch_));
   }
   const_float_1_ = builder_->makeFloatConstant(1.0f);
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(const_float_1_);
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, const_float_1_);
   for (uint32_t i = 1; i < 4; ++i) {
-    id_vector_temp_.push_back(const_float_1_);
-    const_float_vectors_1_[i] = builder_->makeCompositeConstant(
-        type_float_vectors_[i], id_vector_temp_);
+    ScratchPush(&id_scratch_, const_float_1_);
+    const_float_vectors_1_[i] = builder_->makeCompositeConstantView(
+        type_float_vectors_[i], xe_spv_scratch_view(&id_scratch_));
   }
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(const_float_0_);
-  id_vector_temp_.push_back(const_float_1_);
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, const_float_0_);
+  ScratchPush(&id_scratch_, const_float_1_);
   const_float2_0_1_ =
-      builder_->makeCompositeConstant(type_float2_, id_vector_temp_);
+      builder_->makeCompositeConstantView(type_float2_, xe_spv_scratch_view(&id_scratch_));
 
   // Common uniform buffer - system constants.
   struct SystemConstant {
@@ -667,13 +667,13 @@ void SpirvShaderTranslator::StartTranslation() {
        offsetof(SystemConstants, texture_integer_scale_bits),
        type_uint4_array_8},
   };
-  id_vector_temp_.clear();
-  id_vector_temp_.reserve(xe::countof(system_constants));
+  id_scratch_.count = 0;
+  ScratchReserve(&id_scratch_, xe::countof(system_constants));
   for (size_t i = 0; i < xe::countof(system_constants); ++i) {
-    id_vector_temp_.push_back(system_constants[i].type);
+    ScratchPush(&id_scratch_, system_constants[i].type);
   }
   spv::Id type_system_constants =
-      builder_->makeStructType(id_vector_temp_, "XeSystemConstants");
+      builder_->makeStructTypeView(xe_spv_scratch_view(&id_scratch_), "XeSystemConstants");
   for (size_t i = 0; i < xe::countof(system_constants); ++i) {
     const SystemConstant& system_constant = system_constants[i];
     builder_->addMemberName(type_system_constants, static_cast<unsigned int>(i),
@@ -702,17 +702,17 @@ void SpirvShaderTranslator::StartTranslation() {
     uint32_t float_constant_count =
         current_shader().constant_register_map().float_count;
     if (float_constant_count) {
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(builder_->makeArrayType(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, builder_->makeArrayType(
           type_float4_, builder_->makeUintConstant(float_constant_count),
           sizeof(float) * 4));
       // Currently (as of October 24, 2020) makeArrayType only uses the stride
       // to check if deduplication can be done - the array stride decoration
       // needs to be applied explicitly.
-      builder_->addDecoration(id_vector_temp_.back(),
+      builder_->addDecoration(xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1],
                               spv::DecorationArrayStride, sizeof(float) * 4);
       spv::Id type_float_constants =
-          builder_->makeStructType(id_vector_temp_, "XeFloatConstants");
+          builder_->makeStructTypeView(xe_spv_scratch_view(&id_scratch_), "XeFloatConstants");
       builder_->addMemberName(type_float_constants, 0, "float_constants");
       builder_->addMemberDecoration(type_float_constants, 0,
                                     spv::DecorationOffset, 0);
@@ -736,19 +736,19 @@ void SpirvShaderTranslator::StartTranslation() {
     // Uniform buffers must have std140 packing, so using arrays of 4-component
     // vectors instead of scalar arrays because the latter would have padding to
     // 16 bytes in each element.
-    id_vector_temp_.clear();
+    id_scratch_.count = 0;
     // 256 bool constants.
-    id_vector_temp_.push_back(builder_->makeArrayType(
+    ScratchPush(&id_scratch_, builder_->makeArrayType(
         type_uint4_, builder_->makeUintConstant(2), sizeof(uint32_t) * 4));
-    builder_->addDecoration(id_vector_temp_.back(), spv::DecorationArrayStride,
+    builder_->addDecoration(xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1], spv::DecorationArrayStride,
                             sizeof(uint32_t) * 4);
     // 32 loop constants.
-    id_vector_temp_.push_back(builder_->makeArrayType(
+    ScratchPush(&id_scratch_, builder_->makeArrayType(
         type_uint4_, builder_->makeUintConstant(8), sizeof(uint32_t) * 4));
-    builder_->addDecoration(id_vector_temp_.back(), spv::DecorationArrayStride,
+    builder_->addDecoration(xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1], spv::DecorationArrayStride,
                             sizeof(uint32_t) * 4);
     spv::Id type_bool_loop_constants =
-        builder_->makeStructType(id_vector_temp_, "XeBoolLoopConstants");
+        builder_->makeStructTypeView(xe_spv_scratch_view(&id_scratch_), "XeBoolLoopConstants");
     builder_->addMemberName(type_bool_loop_constants, 0, "bool_constants");
     builder_->addMemberDecoration(type_bool_loop_constants, 0,
                                   spv::DecorationOffset, 0);
@@ -771,14 +771,14 @@ void SpirvShaderTranslator::StartTranslation() {
 
     // Common uniform buffer - fetch constants (32 x 6 uints packed in std140 as
     // 4-component vectors).
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeArrayType(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeArrayType(
         type_uint4_, builder_->makeUintConstant(32 * 6 / 4),
         sizeof(uint32_t) * 4));
-    builder_->addDecoration(id_vector_temp_.back(), spv::DecorationArrayStride,
+    builder_->addDecoration(xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1], spv::DecorationArrayStride,
                             sizeof(uint32_t) * 4);
     spv::Id type_fetch_constants =
-        builder_->makeStructType(id_vector_temp_, "XeFetchConstants");
+        builder_->makeStructTypeView(xe_spv_scratch_view(&id_scratch_), "XeFetchConstants");
     builder_->addMemberName(type_fetch_constants, 0, "fetch_constants");
     builder_->addMemberDecoration(type_fetch_constants, 0,
                                   spv::DecorationOffset, 0);
@@ -797,13 +797,13 @@ void SpirvShaderTranslator::StartTranslation() {
 
     // Common storage buffers - shared memory uint[], each 128 MB or larger,
     // depending on what's possible on the device.
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeRuntimeArray(type_uint_));
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeRuntimeArray(type_uint_));
     // Storage buffers have std430 packing, no padding to 4-component vectors.
-    builder_->addDecoration(id_vector_temp_.back(), spv::DecorationArrayStride,
+    builder_->addDecoration(xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1], spv::DecorationArrayStride,
                             sizeof(uint32_t));
     spv::Id type_shared_memory =
-        builder_->makeStructType(id_vector_temp_, "XeSharedMemory");
+        builder_->makeStructTypeView(xe_spv_scratch_view(&id_scratch_), "XeSharedMemory");
     builder_->addMemberName(type_shared_memory, 0, "shared_memory");
     builder_->addMemberDecoration(type_shared_memory, 0,
                                   spv::DecorationRestrict);
@@ -862,11 +862,11 @@ void SpirvShaderTranslator::StartTranslation() {
       &function_main_entry);
 
   // Load the flags system constant since it may be used in many places.
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(builder_->makeIntConstant(kSystemConstantFlags));
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, builder_->makeIntConstant(kSystemConstantFlags));
   main_system_constant_flags_ = builder_->createLoad(
-      builder_->createAccessChain(spv::StorageClassUniform,
-                                  uniform_system_constants_, id_vector_temp_),
+      builder_->createAccessChainView(spv::StorageClassUniform,
+                                  uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
       spv::NoPrecision);
 
   if (!is_depth_only_fragment_shader_) {
@@ -975,21 +975,21 @@ void SpirvShaderTranslator::StartTranslation() {
     builder_->createBranch(main_rect_list_loop_header_);
 
     builder_->setBuildPoint(main_rect_list_loop_header_);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(const_int_0_);
-    id_vector_temp_.push_back(main_rect_list_loop_pre_header.getId());
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, const_int_0_);
+    ScratchPush(&id_scratch_, main_rect_list_loop_pre_header.getId());
     main_rect_list_loop_vertex_index_next_ = builder_->getUniqueId();
-    id_vector_temp_.push_back(main_rect_list_loop_vertex_index_next_);
-    id_vector_temp_.push_back(main_rect_list_loop_continue_->getId());
+    ScratchPush(&id_scratch_, main_rect_list_loop_vertex_index_next_);
+    ScratchPush(&id_scratch_, main_rect_list_loop_continue_->getId());
     main_rect_list_loop_vertex_index_ =
-        builder_->createOp(spv::OpPhi, type_int_, id_vector_temp_);
+        builder_->createOpView(spv::OpPhi, type_int_, xe_spv_scratch_view(&id_scratch_));
     spv::Id main_rect_list_loop_condition = builder_->createBinOp(
         spv::OpSLessThan, type_bool_, main_rect_list_loop_vertex_index_,
         builder_->makeIntConstant(3));
-    uint_vector_temp_.clear();
-    builder_->createLoopMerge(
+    literal_scratch_.count = 0;
+    builder_->createLoopMergeView(
         main_rect_list_loop_merge_, main_rect_list_loop_continue_,
-        spv::LoopControlDontUnrollMask, uint_vector_temp_);
+        spv::LoopControlDontUnrollMask, xe_spv_scratch_view(&literal_scratch_));
     builder_->createConditionalBranch(main_rect_list_loop_condition,
                                       &main_rect_list_loop_body,
                                       main_rect_list_loop_merge_);
@@ -997,12 +997,12 @@ void SpirvShaderTranslator::StartTranslation() {
     builder_->setBuildPoint(&main_rect_list_loop_body);
     ResetUcodeInvocationStateInMain();
     ResetVertexShaderInvocationStateInMain();
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(main_rect_list_loop_vertex_index_);
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, main_rect_list_loop_vertex_index_);
     WriteVertexIndexToRegister0(builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassFunction,
+        builder_->createAccessChainView(spv::StorageClassFunction,
                                     var_main_rect_list_guest_vertex_indices_,
-                                    id_vector_temp_),
+                                    xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision));
   }
 
@@ -1029,18 +1029,18 @@ void SpirvShaderTranslator::StartTranslation() {
   spv::Id main_loop_pc_current = spv::NoResult;
   if (has_main_switch) {
     // OpPhi must be the first in the block.
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(const_int_0_);
-    id_vector_temp_.push_back(main_loop_pre_header.getId());
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, const_int_0_);
+    ScratchPush(&id_scratch_, main_loop_pre_header.getId());
     main_loop_pc_next_ = builder_->getUniqueId();
-    id_vector_temp_.push_back(main_loop_pc_next_);
-    id_vector_temp_.push_back(main_loop_continue_->getId());
+    ScratchPush(&id_scratch_, main_loop_pc_next_);
+    ScratchPush(&id_scratch_, main_loop_continue_->getId());
     main_loop_pc_current =
-        builder_->createOp(spv::OpPhi, type_int_, id_vector_temp_);
+        builder_->createOpView(spv::OpPhi, type_int_, xe_spv_scratch_view(&id_scratch_));
   }
-  uint_vector_temp_.clear();
-  builder_->createLoopMerge(main_loop_merge_, main_loop_continue_,
-                            spv::LoopControlDontUnrollMask, uint_vector_temp_);
+  literal_scratch_.count = 0;
+  builder_->createLoopMergeView(main_loop_merge_, main_loop_continue_,
+                            spv::LoopControlDontUnrollMask, xe_spv_scratch_view(&literal_scratch_));
   builder_->createBranch(&main_loop_body);
 
   // Main loop body.
@@ -1142,19 +1142,19 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
 
       // Store the current guest vertex shader outputs for this rectangle
       // vertex iteration.
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(kOutputPerVertexMemberPosition));
       spv::Id position = builder_->createLoad(
-          builder_->createAccessChain(spv::StorageClassOutput,
-                                      output_per_vertex_, id_vector_temp_),
+          builder_->createAccessChainView(spv::StorageClassOutput,
+                                      output_per_vertex_, xe_spv_scratch_view(&id_scratch_)),
           spv::NoPrecision);
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(main_rect_list_loop_vertex_index_);
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, main_rect_list_loop_vertex_index_);
       builder_->createStore(
-          position, builder_->createAccessChain(
+          position, builder_->createAccessChainView(
                         spv::StorageClassFunction,
-                        var_main_rect_list_guest_positions_, id_vector_temp_));
+                        var_main_rect_list_guest_positions_, xe_spv_scratch_view(&id_scratch_)));
 
       uint32_t interpolators_remaining = GetModificationInterpolatorMask();
       uint32_t interpolator_index;
@@ -1166,12 +1166,12 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
         assert_true(rect_list_interpolators != spv::NoResult);
         spv::Id interpolator = builder_->createLoad(
             input_output_interpolators_[interpolator_index], spv::NoPrecision);
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(main_rect_list_loop_vertex_index_);
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_, main_rect_list_loop_vertex_index_);
         builder_->createStore(
-            interpolator, builder_->createAccessChain(spv::StorageClassFunction,
+            interpolator, builder_->createAccessChainView(spv::StorageClassFunction,
                                                       rect_list_interpolators,
-                                                      id_vector_temp_));
+                                                      xe_spv_scratch_view(&id_scratch_)));
       }
 
       // Finalize memexport for this guest vertex shader execution.
@@ -1470,21 +1470,21 @@ void SpirvShaderTranslator::ProcessLoopStartInstruction(
 
   EnsureBuildPointAvailable();
 
-  id_vector_temp_.clear();
+  id_scratch_.count = 0;
   // Loop constants (member 1).
-  id_vector_temp_.push_back(builder_->makeIntConstant(1));
+  ScratchPush(&id_scratch_, builder_->makeIntConstant(1));
   // 4-component vector.
-  id_vector_temp_.push_back(
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(int(instr.loop_constant_index >> 2)));
   // Scalar within the vector.
-  id_vector_temp_.push_back(
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(int(instr.loop_constant_index & 3)));
   // Count (unsigned) in bits 0:7 of the loop constant (struct member 1),
   // initial aL (unsigned) in 8:15.
   spv::Id loop_constant =
-      builder_->createLoad(builder_->createAccessChain(
+      builder_->createLoad(builder_->createAccessChainView(
                                spv::StorageClassUniform,
-                               uniform_bool_loop_constants_, id_vector_temp_),
+                               uniform_bool_loop_constants_, xe_spv_scratch_view(&id_scratch_)),
                            spv::NoPrecision);
 
   spv::Id const_int_8 = builder_->makeIntConstant(8);
@@ -1496,38 +1496,38 @@ void SpirvShaderTranslator::ProcessLoopStartInstruction(
   spv::Id loop_count_new =
       builder_->createTriOp(spv::OpBitFieldUExtract, type_uint_, loop_constant,
                             const_int_0_, const_int_8);
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(loop_count_new);
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, loop_count_new);
   for (unsigned int i = 0; i < 3; ++i) {
-    id_vector_temp_.push_back(
+    ScratchPush(&id_scratch_,
         builder_->createCompositeExtract(loop_count_stack_old, type_uint_, i));
   }
   builder_->createStore(
-      builder_->createCompositeConstruct(type_uint4_, id_vector_temp_),
+      builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_)),
       var_main_loop_count_);
 
   // Push aL - keep the same value as in the previous loop if repeating, or the
   // new one otherwise.
   spv::Id address_relative_stack_old =
       builder_->createLoad(var_main_loop_address_, spv::NoPrecision);
-  id_vector_temp_.clear();
+  id_scratch_.count = 0;
   if (instr.is_repeat) {
-    id_vector_temp_.emplace_back();
+    ScratchPush(&id_scratch_, 0);
   } else {
-    id_vector_temp_.push_back(builder_->createUnaryOp(
+    ScratchPush(&id_scratch_, builder_->createUnaryOp(
         spv::OpBitcast, type_int_,
         builder_->createTriOp(spv::OpBitFieldUExtract, type_uint_,
                               loop_constant, const_int_8, const_int_8)));
   }
   for (unsigned int i = 0; i < 3; ++i) {
-    id_vector_temp_.push_back(builder_->createCompositeExtract(
+    ScratchPush(&id_scratch_, builder_->createCompositeExtract(
         address_relative_stack_old, type_int_, i));
   }
   if (instr.is_repeat) {
-    id_vector_temp_[0] = id_vector_temp_[1];
+    xe_spv_scratch_data(&id_scratch_)[0] = xe_spv_scratch_data(&id_scratch_)[1];
   }
   builder_->createStore(
-      builder_->createCompositeConstruct(type_int4_, id_vector_temp_),
+      builder_->createCompositeConstructView(type_int4_, xe_spv_scratch_view(&id_scratch_)),
       var_main_loop_address_);
 
   // Break (jump to the skip label) if the loop counter is 0 (since the
@@ -1629,19 +1629,19 @@ void SpirvShaderTranslator::ProcessLoopEndInstruction(
                         var_main_loop_count_);
   // Extract the value to add to aL (signed, in bits 16:23 of the loop
   // constant).
-  id_vector_temp_.clear();
+  id_scratch_.count = 0;
   // Loop constants (member 1).
-  id_vector_temp_.push_back(builder_->makeIntConstant(1));
+  ScratchPush(&id_scratch_, builder_->makeIntConstant(1));
   // 4-component vector.
-  id_vector_temp_.push_back(
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(int(instr.loop_constant_index >> 2)));
   // Scalar within the vector.
-  id_vector_temp_.push_back(
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(int(instr.loop_constant_index & 3)));
   spv::Id loop_constant =
-      builder_->createLoad(builder_->createAccessChain(
+      builder_->createLoad(builder_->createAccessChainView(
                                spv::StorageClassUniform,
-                               uniform_bool_loop_constants_, id_vector_temp_),
+                               uniform_bool_loop_constants_, xe_spv_scratch_view(&id_scratch_)),
                            spv::NoPrecision);
   spv::Id address_relative_old = builder_->createCompositeExtract(
       address_relative_stack_old, type_int_, 0);
@@ -1667,23 +1667,23 @@ void SpirvShaderTranslator::ProcessLoopEndInstruction(
   builder_->setBuildPoint(&break_block);
   // Pop the current loop off the loop counter and the relative address stacks -
   // move YZW to XYZ and set W to 0.
-  id_vector_temp_.clear();
+  id_scratch_.count = 0;
   for (unsigned int i = 1; i < 4; ++i) {
-    id_vector_temp_.push_back(
+    ScratchPush(&id_scratch_,
         builder_->createCompositeExtract(loop_count_stack_old, type_uint_, i));
   }
-  id_vector_temp_.push_back(const_uint_0_);
+  ScratchPush(&id_scratch_, const_uint_0_);
   builder_->createStore(
-      builder_->createCompositeConstruct(type_uint4_, id_vector_temp_),
+      builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_)),
       var_main_loop_count_);
-  id_vector_temp_.clear();
+  id_scratch_.count = 0;
   for (unsigned int i = 1; i < 4; ++i) {
-    id_vector_temp_.push_back(builder_->createCompositeExtract(
+    ScratchPush(&id_scratch_, builder_->createCompositeExtract(
         address_relative_stack_old, type_int_, i));
   }
-  id_vector_temp_.push_back(const_int_0_);
+  ScratchPush(&id_scratch_, const_int_0_);
   builder_->createStore(
-      builder_->createCompositeConstruct(type_int4_, id_vector_temp_),
+      builder_->createCompositeConstructView(type_int4_, xe_spv_scratch_view(&id_scratch_)),
       var_main_loop_address_);
   // Now going to fall through to the next control flow instruction.
 }
@@ -1760,11 +1760,11 @@ spv::Id SpirvShaderTranslator::SpirvSmearScalarResultOrConstant(
     return scalar;
   }
   int num_components = builder_->getNumTypeComponents(vector_type);
-  id_vector_temp_util_.clear();
+  id_scratch_util_.count = 0;
   for (int i = 0; i < num_components; ++i) {
-    id_vector_temp_util_.push_back(scalar);
+    ScratchPush(&id_scratch_util_, scalar);
   }
-  return builder_->makeCompositeConstant(vector_type, id_vector_temp_util_,
+  return builder_->makeCompositeConstantView(vector_type, xe_spv_scratch_view(&id_scratch_util_),
                                          is_spec_constant);
 }
 
@@ -1819,29 +1819,29 @@ void SpirvShaderTranslator::ResetUcodeInvocationStateInMain() {
 
 void SpirvShaderTranslator::ResetVertexShaderInvocationStateInMain() {
   if (var_main_point_size_edge_flag_kill_vertex_ != spv::NoResult) {
-    id_vector_temp_.clear();
+    id_scratch_.count = 0;
     // Set the point size to a negative value to tell the point sprite expansion
     // that it should use the default point size if the vertex shader does not
     // override it.
-    id_vector_temp_.push_back(builder_->makeFloatConstant(-1.0f));
+    ScratchPush(&id_scratch_, builder_->makeFloatConstant(-1.0f));
     // The edge flag is ignored.
-    id_vector_temp_.push_back(const_float_0_);
+    ScratchPush(&id_scratch_, const_float_0_);
     // Don't kill by default (zero bits 0:30).
-    id_vector_temp_.push_back(const_float_0_);
+    ScratchPush(&id_scratch_, const_float_0_);
     builder_->createStore(
-        builder_->makeCompositeConstant(type_float3_, id_vector_temp_),
+        builder_->makeCompositeConstantView(type_float3_, xe_spv_scratch_view(&id_scratch_)),
         var_main_point_size_edge_flag_kill_vertex_);
   }
 
   // Zero general-purpose registers to prevent crashes when the game references
   // them after only initializing them conditionally.
   for (uint32_t i = 0; i < register_count(); ++i) {
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeIntConstant(int(i)));
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeIntConstant(int(i)));
     builder_->createStore(
         const_float4_0_,
-        builder_->createAccessChain(spv::StorageClassFunction,
-                                    var_main_registers_, id_vector_temp_));
+        builder_->createAccessChainView(spv::StorageClassFunction,
+                                    var_main_registers_, xe_spv_scratch_view(&id_scratch_)));
   }
 
   // Zero the interpolators.
@@ -1858,13 +1858,13 @@ void SpirvShaderTranslator::WriteVertexIndexToRegister0(spv::Id vertex_index) {
   if (!register_count()) {
     return;
   }
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(const_int_0_);
-  id_vector_temp_.push_back(const_int_0_);
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, const_int_0_);
+  ScratchPush(&id_scratch_, const_int_0_);
   builder_->createStore(
       builder_->createUnaryOp(spv::OpConvertSToF, type_float_, vertex_index),
-      builder_->createAccessChain(spv::StorageClassFunction,
-                                  var_main_registers_, id_vector_temp_));
+      builder_->createAccessChainView(spv::StorageClassFunction,
+                                  var_main_registers_, xe_spv_scratch_view(&id_scratch_)));
 }
 
 void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
@@ -2039,19 +2039,19 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
 
   // The edge flag isn't used for any purpose by the translator.
   if (current_shader().writes_point_size_edge_flag_kill_vertex() & 0b101) {
-    id_vector_temp_.clear();
+    id_scratch_.count = 0;
     // Set the point size to a negative value to tell the point sprite expansion
     // that it should use the default point size if the vertex shader does not
     // override it.
-    id_vector_temp_.push_back(builder_->makeFloatConstant(-1.0f));
+    ScratchPush(&id_scratch_, builder_->makeFloatConstant(-1.0f));
     // The edge flag is ignored.
-    id_vector_temp_.push_back(const_float_0_);
+    ScratchPush(&id_scratch_, const_float_0_);
     // Don't kill by default (zero bits 0:30).
-    id_vector_temp_.push_back(const_float_0_);
+    ScratchPush(&id_scratch_, const_float_0_);
     var_main_point_size_edge_flag_kill_vertex_ = builder_->createVariable(
         spv::NoPrecision, spv::StorageClassFunction, type_float3_,
         "xe_var_point_size_edge_flag_kill_vertex",
-        builder_->makeCompositeConstant(type_float3_, id_vector_temp_));
+        builder_->makeCompositeConstantView(type_float3_, xe_spv_scratch_view(&id_scratch_)));
   }
 
   if (!main_vertex_rect_list_as_triangle_strip_) {
@@ -2164,33 +2164,33 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
                 kSysFlag_ComputeOrPrimitiveVertexIndexLoad32Bit))),
         const_uint_0_);
 
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantVertexIndexLoadAddress));
     spv::Id vertex_index_load_address_base = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantVertexIndexCount));
     spv::Id vertex_index_count = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantVertexIndexEndian));
     spv::Id vertex_index_endian = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantVertexBaseIndex));
     spv::Id vertex_base_index = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
 
     for (uint32_t i = 0; i < 3; ++i) {
@@ -2245,13 +2245,13 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
           spv::OpIAdd, type_int_,
           builder_->createUnaryOp(spv::OpBitcast, type_int_, vertex_index),
           vertex_base_index);
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(builder_->makeIntConstant(i));
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, builder_->makeIntConstant(i));
       builder_->createStore(
           guest_vertex_index,
-          builder_->createAccessChain(spv::StorageClassFunction,
+          builder_->createAccessChainView(spv::StorageClassFunction,
                                       var_main_rect_list_guest_vertex_indices_,
-                                      id_vector_temp_));
+                                      xe_spv_scratch_view(&id_scratch_)));
     }
   }
 
@@ -2275,28 +2275,28 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
           assert_true(register_count() >= 2);
           // Triangle domain: gl_TessCoord.xyz -> r0.zyx
           // ZYX swizzle according to 415607E1 and 4D5307F2.
-          uint_vector_temp_.clear();
-          uint_vector_temp_.push_back(2);  // z -> r0.x
-          uint_vector_temp_.push_back(1);  // y -> r0.y
-          uint_vector_temp_.push_back(0);  // x -> r0.z
-          spv::Id tess_coord_zyx = builder_->createRvalueSwizzle(
-              spv::NoPrecision, type_float3_, tess_coord, uint_vector_temp_);
+          literal_scratch_.count = 0;
+          ScratchPush(&literal_scratch_, 2);  // z -> r0.x
+          ScratchPush(&literal_scratch_, 1);  // y -> r0.y
+          ScratchPush(&literal_scratch_, 0);  // x -> r0.z
+          spv::Id tess_coord_zyx = builder_->createRvalueSwizzleView(
+              spv::NoPrecision, type_float3_, tess_coord, xe_spv_scratch_view(&literal_scratch_));
           // Store to r0.xyz
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(const_int_0_);
-          spv::Id r0_ptr = builder_->createAccessChain(
-              spv::StorageClassFunction, var_main_registers_, id_vector_temp_);
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_, const_int_0_);
+          spv::Id r0_ptr = builder_->createAccessChainView(
+              spv::StorageClassFunction, var_main_registers_, xe_spv_scratch_view(&id_scratch_));
           // Build float4 from swizzled xyz and w=1.0
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_,
               builder_->createCompositeExtract(tess_coord_zyx, type_float_, 0));
-          id_vector_temp_.push_back(
+          ScratchPush(&id_scratch_,
               builder_->createCompositeExtract(tess_coord_zyx, type_float_, 1));
-          id_vector_temp_.push_back(
+          ScratchPush(&id_scratch_,
               builder_->createCompositeExtract(tess_coord_zyx, type_float_, 2));
-          id_vector_temp_.push_back(const_float_1_);
+          ScratchPush(&id_scratch_, const_float_1_);
           builder_->createStore(
-              builder_->createCompositeConstruct(type_float4_, id_vector_temp_),
+              builder_->createCompositeConstructView(type_float4_, xe_spv_scratch_view(&id_scratch_)),
               r0_ptr);
           break;
         }
@@ -2314,42 +2314,42 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
           spv::Id tess_coord_y =
               builder_->createCompositeExtract(tess_coord, type_float_, 1);
           // Load control point index 0.
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(const_int_0_);
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_, const_int_0_);
           spv::Id control_point_index_0 = builder_->createLoad(
-              builder_->createAccessChain(spv::StorageClassInput,
+              builder_->createAccessChainView(spv::StorageClassInput,
                                           input_control_point_index_,
-                                          id_vector_temp_),
+                                          xe_spv_scratch_view(&id_scratch_)),
               spv::NoPrecision);
           // Store r0 = (domain.x, domain.y, control point index 0, 0).
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(const_int_0_);
-          spv::Id r0_ptr = builder_->createAccessChain(
-              spv::StorageClassFunction, var_main_registers_, id_vector_temp_);
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(tess_coord_x);
-          id_vector_temp_.push_back(tess_coord_y);
-          id_vector_temp_.push_back(control_point_index_0);
-          id_vector_temp_.push_back(const_float_0_);
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_, const_int_0_);
+          spv::Id r0_ptr = builder_->createAccessChainView(
+              spv::StorageClassFunction, var_main_registers_, xe_spv_scratch_view(&id_scratch_));
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_, tess_coord_x);
+          ScratchPush(&id_scratch_, tess_coord_y);
+          ScratchPush(&id_scratch_, control_point_index_0);
+          ScratchPush(&id_scratch_, const_float_0_);
           builder_->createStore(
-              builder_->createCompositeConstruct(type_float4_, id_vector_temp_),
+              builder_->createCompositeConstructView(type_float4_, xe_spv_scratch_view(&id_scratch_)),
               r0_ptr);
           // Store r1.xyz = control point indices 1, 2, 3.
           for (uint32_t i = 1; i <= 3; ++i) {
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(builder_->makeIntConstant(int(i)));
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_, builder_->makeIntConstant(int(i)));
             spv::Id control_point_index = builder_->createLoad(
-                builder_->createAccessChain(spv::StorageClassInput,
+                builder_->createAccessChainView(spv::StorageClassInput,
                                             input_control_point_index_,
-                                            id_vector_temp_),
+                                            xe_spv_scratch_view(&id_scratch_)),
                 spv::NoPrecision);
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(builder_->makeIntConstant(1));
-            id_vector_temp_.push_back(builder_->makeIntConstant(int(i - 1)));
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_, builder_->makeIntConstant(1));
+            ScratchPush(&id_scratch_, builder_->makeIntConstant(int(i - 1)));
             builder_->createStore(control_point_index,
-                                  builder_->createAccessChain(
+                                  builder_->createAccessChainView(
                                       spv::StorageClassFunction,
-                                      var_main_registers_, id_vector_temp_));
+                                      var_main_registers_, xe_spv_scratch_view(&id_scratch_)));
           }
           break;
         }
@@ -2360,46 +2360,46 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
           // Quad domain patch-indexed: gl_TessCoord.xy -> r0.yz,
           // patch index -> r0.x, r0.w = 1
           // XY swizzle according to the ground shader in 4D5307F2.
-          uint_vector_temp_.clear();
-          uint_vector_temp_.push_back(0);  // x -> r0.y
-          uint_vector_temp_.push_back(1);  // y -> r0.z
-          spv::Id tess_coord_xy = builder_->createRvalueSwizzle(
-              spv::NoPrecision, type_float2_, tess_coord, uint_vector_temp_);
+          literal_scratch_.count = 0;
+          ScratchPush(&literal_scratch_, 0);  // x -> r0.y
+          ScratchPush(&literal_scratch_, 1);  // y -> r0.z
+          spv::Id tess_coord_xy = builder_->createRvalueSwizzleView(
+              spv::NoPrecision, type_float2_, tess_coord, xe_spv_scratch_view(&literal_scratch_));
           // Read the patch index from control point 0 (already endian swapped,
           // offset, wrapped and clamped by the host vertex and hull shaders),
           // matching the Direct3D 12 domain shader, rather than using the raw
           // gl_PrimitiveID.
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(const_int_0_);
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_, const_int_0_);
           spv::Id patch_index_float = builder_->createLoad(
-              builder_->createAccessChain(spv::StorageClassInput,
+              builder_->createAccessChainView(spv::StorageClassInput,
                                           input_control_point_index_,
-                                          id_vector_temp_),
+                                          xe_spv_scratch_view(&id_scratch_)),
               spv::NoPrecision);
           // Store to r0: x = patch index, yz = tess coord, w = 1
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(const_int_0_);
-          spv::Id r0_ptr = builder_->createAccessChain(
-              spv::StorageClassFunction, var_main_registers_, id_vector_temp_);
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(patch_index_float);
-          id_vector_temp_.push_back(
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_, const_int_0_);
+          spv::Id r0_ptr = builder_->createAccessChainView(
+              spv::StorageClassFunction, var_main_registers_, xe_spv_scratch_view(&id_scratch_));
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_, patch_index_float);
+          ScratchPush(&id_scratch_,
               builder_->createCompositeExtract(tess_coord_xy, type_float_, 0));
-          id_vector_temp_.push_back(
+          ScratchPush(&id_scratch_,
               builder_->createCompositeExtract(tess_coord_xy, type_float_, 1));
-          id_vector_temp_.push_back(const_float_1_);
+          ScratchPush(&id_scratch_, const_float_1_);
           builder_->createStore(
-              builder_->createCompositeConstruct(type_float4_, id_vector_temp_),
+              builder_->createCompositeConstructView(type_float4_, xe_spv_scratch_view(&id_scratch_)),
               r0_ptr);
           // Also set r1.x = 0.0f (swizzle indicator for identity swizzle).
           if (register_count() >= 2) {
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(builder_->makeIntConstant(1));
-            id_vector_temp_.push_back(const_int_0_);
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_, builder_->makeIntConstant(1));
+            ScratchPush(&id_scratch_, const_int_0_);
             builder_->createStore(const_float_0_,
-                                  builder_->createAccessChain(
+                                  builder_->createAccessChainView(
                                       spv::StorageClassFunction,
-                                      var_main_registers_, id_vector_temp_));
+                                      var_main_registers_, xe_spv_scratch_view(&id_scratch_)));
           }
           break;
         }
@@ -2425,51 +2425,51 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
           // offset, wrapped and clamped by the host vertex and hull shaders),
           // matching the Direct3D 12 domain shader, rather than using the raw
           // gl_PrimitiveID.
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(const_int_0_);
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_, const_int_0_);
           spv::Id patch_index_float = builder_->createLoad(
-              builder_->createAccessChain(spv::StorageClassInput,
+              builder_->createAccessChainView(spv::StorageClassInput,
                                           input_control_point_index_,
-                                          id_vector_temp_),
+                                          xe_spv_scratch_view(&id_scratch_)),
               spv::NoPrecision);
           // Store patch index to r1.x
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(builder_->makeIntConstant(1));
-          id_vector_temp_.push_back(const_int_0_);
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_, builder_->makeIntConstant(1));
+          ScratchPush(&id_scratch_, const_int_0_);
           builder_->createStore(patch_index_float,
-                                builder_->createAccessChain(
+                                builder_->createAccessChainView(
                                     spv::StorageClassFunction,
-                                    var_main_registers_, id_vector_temp_));
+                                    var_main_registers_, xe_spv_scratch_view(&id_scratch_)));
           // Store swizzle indicator (0.0f = identity) to r1.y
           // According to D3D12 implementation and comments in
           // adaptive_triangle.hs.glsl, r1.y == 0 means identity swizzle.
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(builder_->makeIntConstant(1));
-          id_vector_temp_.push_back(builder_->makeIntConstant(1));
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_, builder_->makeIntConstant(1));
+          ScratchPush(&id_scratch_, builder_->makeIntConstant(1));
           builder_->createStore(const_float_0_,
-                                builder_->createAccessChain(
+                                builder_->createAccessChainView(
                                     spv::StorageClassFunction,
-                                    var_main_registers_, id_vector_temp_));
+                                    var_main_registers_, xe_spv_scratch_view(&id_scratch_)));
         } else if (host_type ==
                    Shader::HostVertexShaderType::kTriangleDomainCPIndexed) {
           // Store the three control point indices (already endian swapped and
           // converted to float by the host vertex and hull shaders) to r1.xyz,
           // matching the Direct3D 12 domain shader.
           for (uint32_t i = 0; i < 3; ++i) {
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(builder_->makeIntConstant(int(i)));
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_, builder_->makeIntConstant(int(i)));
             spv::Id control_point_index = builder_->createLoad(
-                builder_->createAccessChain(spv::StorageClassInput,
+                builder_->createAccessChainView(spv::StorageClassInput,
                                             input_control_point_index_,
-                                            id_vector_temp_),
+                                            xe_spv_scratch_view(&id_scratch_)),
                 spv::NoPrecision);
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(builder_->makeIntConstant(1));
-            id_vector_temp_.push_back(builder_->makeIntConstant(int(i)));
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_, builder_->makeIntConstant(1));
+            ScratchPush(&id_scratch_, builder_->makeIntConstant(int(i)));
             builder_->createStore(control_point_index,
-                                  builder_->createAccessChain(
+                                  builder_->createAccessChainView(
                                       spv::StorageClassFunction,
-                                      var_main_registers_, id_vector_temp_));
+                                      var_main_registers_, xe_spv_scratch_view(&id_scratch_)));
           }
         }
       }
@@ -2477,13 +2477,13 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
       spv::Id vertex_index = builder_->createUnaryOp(
           spv::OpBitcast, type_uint_,
           builder_->createLoad(input_vertex_index_, spv::NoPrecision));
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(kSystemConstantVertexIndexCount));
       spv::Id vertex_index_count =
-          builder_->createLoad(builder_->createAccessChain(
+          builder_->createLoad(builder_->createAccessChainView(
                                    spv::StorageClassUniform,
-                                   uniform_system_constants_, id_vector_temp_),
+                                   uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
                                spv::NoPrecision);
       if (main_vertex_rect_list_as_triangle_strip_) {
         // For rectangle list VS expansion, the translated guest shader is
@@ -2523,15 +2523,15 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
                       kSysFlag_ComputeOrPrimitiveVertexIndexLoad32Bit))),
               const_uint_0_);
           // Calculate the vertex index address in the shared memory.
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_,
               builder_->makeIntConstant(kSystemConstantVertexIndexLoadAddress));
           spv::Id vertex_index_address = builder_->createBinOp(
               spv::OpIAdd, type_uint_,
               builder_->createLoad(
-                  builder_->createAccessChain(spv::StorageClassUniform,
+                  builder_->createAccessChainView(spv::StorageClassUniform,
                                               uniform_system_constants_,
-                                              id_vector_temp_),
+                                              xe_spv_scratch_view(&id_scratch_)),
                   spv::NoPrecision),
               builder_->createBinOp(
                   spv::OpShiftLeftLogical, type_uint_, vertex_index,
@@ -2559,15 +2559,15 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
                       builder_->makeUintConstant(4 - 1)),
                   builder_->makeUintConstant(16)));
           // Endian-swap the loaded index.
-          id_vector_temp_.clear();
-          id_vector_temp_.push_back(
+          id_scratch_.count = 0;
+          ScratchPush(&id_scratch_,
               builder_->makeIntConstant(kSystemConstantVertexIndexEndian));
           loaded_vertex_index = EndianSwap32Uint(
               loaded_vertex_index,
               builder_->createLoad(
-                  builder_->createAccessChain(spv::StorageClassUniform,
+                  builder_->createAccessChainView(spv::StorageClassUniform,
                                               uniform_system_constants_,
-                                              id_vector_temp_),
+                                              xe_spv_scratch_view(&id_scratch_)),
                   spv::NoPrecision));
         }
         load_vertex_index_if.makeEndIf();
@@ -2602,8 +2602,8 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
           {
             // Load the 32-bit index.
             // TODO(Triang3l): Bounds checking.
-            id_vector_temp_.clear();
-            id_vector_temp_.push_back(builder_->makeIntConstant(
+            id_scratch_.count = 0;
+            ScratchPush(&id_scratch_, builder_->makeIntConstant(
                 kSystemConstantVertexIndexLoadAddress));
             loaded_vertex_index =
                 LoadUint32FromSharedMemory(builder_->createUnaryOp(
@@ -2613,9 +2613,9 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
                         builder_->createBinOp(
                             spv::OpShiftRightLogical, type_uint_,
                             builder_->createLoad(
-                                builder_->createAccessChain(
+                                builder_->createAccessChainView(
                                     spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
                                 spv::NoPrecision),
                             builder_->makeUintConstant(2)),
                         vertex_index)));
@@ -2635,14 +2635,14 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
               vertex_index_clamped, vertex_index);
         }
         // Endian-swap the index.
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_,
             builder_->makeIntConstant(kSystemConstantVertexIndexEndian));
         vertex_index = EndianSwap32Uint(
             vertex_index, builder_->createLoad(
-                              builder_->createAccessChain(
+                              builder_->createAccessChainView(
                                   spv::StorageClassUniform,
-                                  uniform_system_constants_, id_vector_temp_),
+                                  uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
                               spv::NoPrecision));
       }
       if (!main_vertex_rect_list_as_triangle_strip_) {
@@ -2650,15 +2650,15 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
         vertex_index =
             builder_->createUnaryOp(spv::OpBitcast, type_int_, vertex_index);
         // Add the base to the index.
-        id_vector_temp_.clear();
-        id_vector_temp_.push_back(
+        id_scratch_.count = 0;
+        ScratchPush(&id_scratch_,
             builder_->makeIntConstant(kSystemConstantVertexBaseIndex));
         vertex_index = builder_->createBinOp(
             spv::OpIAdd, type_int_, vertex_index,
             builder_->createLoad(
-                builder_->createAccessChain(spv::StorageClassUniform,
+                builder_->createAccessChainView(spv::StorageClassUniform,
                                             uniform_system_constants_,
-                                            id_vector_temp_),
+                                            xe_spv_scratch_view(&id_scratch_)),
                 spv::NoPrecision));
         WriteVertexIndexToRegister0(vertex_index);
       }
@@ -2669,22 +2669,22 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
 void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
   Modification shader_modification = GetSpirvShaderModification();
 
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(kOutputPerVertexMemberPosition));
-  spv::Id position_ptr = builder_->createAccessChain(
-      spv::StorageClassOutput, output_per_vertex_, id_vector_temp_);
+  spv::Id position_ptr = builder_->createAccessChainView(
+      spv::StorageClassOutput, output_per_vertex_, xe_spv_scratch_view(&id_scratch_));
   if (main_vertex_rect_list_as_triangle_strip_) {
     assert_true(var_main_rect_list_strip_vertex_ != spv::NoResult);
     assert_true(var_main_rect_list_guest_positions_ != spv::NoResult);
 
     auto load_rect_list_position = [&](spv::Id index) {
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(index);
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, index);
       return builder_->createLoad(
-          builder_->createAccessChain(spv::StorageClassFunction,
+          builder_->createAccessChainView(spv::StorageClassFunction,
                                       var_main_rect_list_guest_positions_,
-                                      id_vector_temp_),
+                                      xe_spv_scratch_view(&id_scratch_)),
           spv::NoPrecision);
     };
 
@@ -2721,27 +2721,27 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
             builder_->makeUintConstant(
                 static_cast<unsigned int>(kSysFlag_XYDividedByW))),
         const_uint_0_);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantNdcScale));
     spv::Id ndc_scale = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantNdcOffset));
     spv::Id ndc_offset = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
-    uint_vector_temp_.clear();
-    uint_vector_temp_.push_back(0);
-    uint_vector_temp_.push_back(1);
-    spv::Id ndc_scale_xy = builder_->createRvalueSwizzle(
-        spv::NoPrecision, type_float2_, ndc_scale, uint_vector_temp_);
-    spv::Id ndc_offset_xy = builder_->createRvalueSwizzle(
-        spv::NoPrecision, type_float2_, ndc_offset, uint_vector_temp_);
+    literal_scratch_.count = 0;
+    ScratchPush(&literal_scratch_, 0);
+    ScratchPush(&literal_scratch_, 1);
+    spv::Id ndc_scale_xy = builder_->createRvalueSwizzleView(
+        spv::NoPrecision, type_float2_, ndc_scale, xe_spv_scratch_view(&literal_scratch_));
+    spv::Id ndc_offset_xy = builder_->createRvalueSwizzleView(
+        spv::NoPrecision, type_float2_, ndc_offset, xe_spv_scratch_view(&literal_scratch_));
     spv::Id rect_positions_xy_converted[3];
     for (uint32_t i = 0; i < 3; ++i) {
       spv::Id rect_position_w_raw =
@@ -2750,8 +2750,8 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
           spv::OpSelect, type_float_, is_w_not_reciprocal, rect_position_w_raw,
           builder_->createNoContractionBinOp(
               spv::OpFDiv, type_float_, const_float_1_, rect_position_w_raw));
-      spv::Id rect_position_xy = builder_->createRvalueSwizzle(
-          spv::NoPrecision, type_float2_, rect_positions[i], uint_vector_temp_);
+      spv::Id rect_position_xy = builder_->createRvalueSwizzleView(
+          spv::NoPrecision, type_float2_, rect_positions[i], xe_spv_scratch_view(&literal_scratch_));
       rect_position_xy = builder_->createTriOp(
           spv::OpSelect, type_float2_,
           builder_->smearScalar(spv::NoPrecision, is_xy_divided_by_w,
@@ -2846,11 +2846,11 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
 
     auto load_rect_list_interpolator = [&](spv::Id interpolator_array,
                                            spv::Id index) {
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(index);
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, index);
       return builder_->createLoad(
-          builder_->createAccessChain(spv::StorageClassFunction,
-                                      interpolator_array, id_vector_temp_),
+          builder_->createAccessChainView(spv::StorageClassFunction,
+                                      interpolator_array, xe_spv_scratch_view(&id_scratch_)),
           spv::NoPrecision);
     };
 
@@ -2928,11 +2928,11 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
   {
     // Check if the shader returns XY/W rather than XY, and if it does, revert
     // that.
-    uint_vector_temp_.clear();
-    uint_vector_temp_.push_back(0);
-    uint_vector_temp_.push_back(1);
-    spv::Id position_xy = builder_->createRvalueSwizzle(
-        spv::NoPrecision, type_float2_, guest_position, uint_vector_temp_);
+    literal_scratch_.count = 0;
+    ScratchPush(&literal_scratch_, 0);
+    ScratchPush(&literal_scratch_, 1);
+    spv::Id position_xy = builder_->createRvalueSwizzleView(
+        spv::NoPrecision, type_float2_, guest_position, xe_spv_scratch_view(&literal_scratch_));
     spv::Id is_xy_divided_by_w = builder_->createBinOp(
         spv::OpINotEqual, type_bool_,
         builder_->createBinOp(
@@ -3007,15 +3007,15 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
     // Compute distance to each enabled user clip plane via dot product.
     for (uint32_t i = 0; i < user_clip_plane_count; ++i) {
       // Load user clip plane from the system constants buffer.
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(kSystemConstantUserClipPlanes));
-      id_vector_temp_.push_back(
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(int(i)));  // Array index
       spv::Id clip_plane =
-          builder_->createLoad(builder_->createAccessChain(
+          builder_->createLoad(builder_->createAccessChainView(
                                    spv::StorageClassUniform,
-                                   uniform_system_constants_, id_vector_temp_),
+                                   uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
                                spv::NoPrecision);
 
       // Compute dot product: distance = dot(clip_space_position, clip_plane).
@@ -3023,31 +3023,31 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
                                                clip_space_position, clip_plane);
 
       // Store to gl_ClipDistance[i] or gl_CullDistance[i].
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(clip_cull_distance_member_index));
-      id_vector_temp_.push_back(builder_->makeIntConstant(int(i)));
-      spv::Id distance_ptr = builder_->createAccessChain(
-          spv::StorageClassOutput, output_per_vertex_, id_vector_temp_);
+      ScratchPush(&id_scratch_, builder_->makeIntConstant(int(i)));
+      spv::Id distance_ptr = builder_->createAccessChainView(
+          spv::StorageClassOutput, output_per_vertex_, xe_spv_scratch_view(&id_scratch_));
       builder_->createStore(distance, distance_ptr);
     }
   }
 
   // Apply the NDC scale and offset for guest to host viewport transformation.
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(builder_->makeIntConstant(kSystemConstantNdcScale));
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, builder_->makeIntConstant(kSystemConstantNdcScale));
   spv::Id ndc_scale = builder_->createLoad(
-      builder_->createAccessChain(spv::StorageClassUniform,
-                                  uniform_system_constants_, id_vector_temp_),
+      builder_->createAccessChainView(spv::StorageClassUniform,
+                                  uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
       spv::NoPrecision);
   position_xyz = builder_->createNoContractionBinOp(spv::OpFMul, type_float3_,
                                                     position_xyz, ndc_scale);
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_,
       builder_->makeIntConstant(kSystemConstantNdcOffset));
   spv::Id ndc_offset = builder_->createLoad(
-      builder_->createAccessChain(spv::StorageClassUniform,
-                                  uniform_system_constants_, id_vector_temp_),
+      builder_->createAccessChainView(spv::StorageClassUniform,
+                                  uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
       spv::NoPrecision);
   spv::Id ndc_offset_mul_w = builder_->createNoContractionBinOp(
       spv::OpVectorTimesScalar, type_float3_, ndc_offset, position_w);
@@ -3059,13 +3059,13 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
   // cull distance is just a flag and the position is about to be written.
   if (current_shader().writes_point_size_edge_flag_kill_vertex() & 0b100) {
     assert_true(var_main_point_size_edge_flag_kill_vertex_ != spv::NoResult);
-    id_vector_temp_.clear();
+    id_scratch_.count = 0;
     // Z vector component.
-    id_vector_temp_.push_back(builder_->makeIntConstant(2));
+    ScratchPush(&id_scratch_, builder_->makeIntConstant(2));
     spv::Id kill_value = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassFunction,
+        builder_->createAccessChainView(spv::StorageClassFunction,
                                     var_main_point_size_edge_flag_kill_vertex_,
-                                    id_vector_temp_),
+                                    xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
     // Test the integer bits 0:30 rather than comparing the float to avoid
     // denormal flushing affecting the result (matching the Direct3D 12 path).
@@ -3083,17 +3083,17 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
           shader_modification.vertex.user_clip_plane_cull
               ? user_clip_plane_count
               : 0;
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(builder_->makeIntConstant(
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, builder_->makeIntConstant(
           int(output_per_vertex_cull_distance_member_index_)));
-      id_vector_temp_.push_back(
+      ScratchPush(&id_scratch_,
           builder_->makeIntConstant(int(vertex_kill_cull_distance_index)));
       builder_->createStore(
           builder_->createTriOp(spv::OpSelect, type_float_, vertex_killed,
                                 builder_->makeFloatConstant(-1.0f),
                                 const_float_0_),
-          builder_->createAccessChain(spv::StorageClassOutput,
-                                      output_per_vertex_, id_vector_temp_));
+          builder_->createAccessChainView(spv::StorageClassOutput,
+                                      output_per_vertex_, xe_spv_scratch_view(&id_scratch_)));
     } else {
       // "or" operator - setting the position W to NaN kills the whole primitive
       // if any of its vertices requests the kill.
@@ -3111,13 +3111,13 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
     spv::Id point_size;
     if (current_shader().writes_point_size_edge_flag_kill_vertex() & 0b001) {
       assert_true(var_main_point_size_edge_flag_kill_vertex_ != spv::NoResult);
-      id_vector_temp_.clear();
+      id_scratch_.count = 0;
       // X vector component.
-      id_vector_temp_.push_back(const_int_0_);
+      ScratchPush(&id_scratch_, const_int_0_);
       point_size = builder_->createLoad(
-          builder_->createAccessChain(
+          builder_->createAccessChainView(
               spv::StorageClassFunction,
-              var_main_point_size_edge_flag_kill_vertex_, id_vector_temp_),
+              var_main_point_size_edge_flag_kill_vertex_, xe_spv_scratch_view(&id_scratch_)),
           spv::NoPrecision);
     } else {
       // Not statically overridden - write a negative value.
@@ -3133,9 +3133,9 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
     // simply based on counterclockwise meaning front with
     // frontFace = VkFrontFace(0), but faceness is ignored for non-polygon
     // primitive types).
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeUintConstant(0b10));
-    id_vector_temp_.push_back(builder_->makeUintConstant(0b01));
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeUintConstant(0b10));
+    ScratchPush(&id_scratch_, builder_->makeUintConstant(0b01));
     spv::Id point_vertex_positive = builder_->createBinOp(
         spv::OpINotEqual, type_bool2_,
         builder_->createBinOp(
@@ -3146,26 +3146,26 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
                                       builder_->createLoad(input_vertex_index_,
                                                            spv::NoPrecision)),
                                   type_uint2_),
-            builder_->createCompositeConstruct(type_uint2_, id_vector_temp_)),
+            builder_->createCompositeConstructView(type_uint2_, xe_spv_scratch_view(&id_scratch_))),
         SpirvSmearScalarResultOrConstant(const_uint_0_, type_uint2_));
 
     // Load the point diameter in guest pixels, with the override from the
     // vertex shader if provided.
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(kSystemConstantPointConstantDiameter));
     spv::Id point_guest_diameter = builder_->createLoad(
-        builder_->createAccessChain(spv::StorageClassUniform,
-                                    uniform_system_constants_, id_vector_temp_),
+        builder_->createAccessChainView(spv::StorageClassUniform,
+                                    uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
     if (current_shader().writes_point_size_edge_flag_kill_vertex() & 0b001) {
       assert_true(var_main_point_size_edge_flag_kill_vertex_ != spv::NoResult);
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(const_int_0_);
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, const_int_0_);
       spv::Id point_vertex_diameter = builder_->createLoad(
-          builder_->createAccessChain(
+          builder_->createAccessChainView(
               spv::StorageClassFunction,
-              var_main_point_size_edge_flag_kill_vertex_, id_vector_temp_),
+              var_main_point_size_edge_flag_kill_vertex_, xe_spv_scratch_view(&id_scratch_)),
           spv::NoPrecision);
       // The vertex shader's header writes -1.0 to point_size by default, so any
       // non-negative value means that it was overwritten by the translated
@@ -3185,14 +3185,14 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
     }
     // Transform the diameter in the guest screen coordinates to radius in the
     // normalized device coordinates.
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeIntConstant(
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeIntConstant(
         kSystemConstantPointScreenDiameterToNdcRadius));
     spv::Id point_radius = builder_->createNoContractionBinOp(
         spv::OpFMul, type_float2_, point_guest_diameter,
-        builder_->createLoad(builder_->createAccessChain(
+        builder_->createLoad(builder_->createAccessChainView(
                                  spv::StorageClassUniform,
-                                 uniform_system_constants_, id_vector_temp_),
+                                 uniform_system_constants_, xe_spv_scratch_view(&id_scratch_)),
                              spv::NoPrecision));
     // Transform the radius from the normalized device coordinates to the clip
     // space.
@@ -3200,13 +3200,13 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
         spv::OpVectorTimesScalar, type_float2_, point_radius, position_w);
 
     // Expand the point sprite in the direction for the current host vertex.
-    uint_vector_temp_.clear();
-    uint_vector_temp_.push_back(0);
-    uint_vector_temp_.push_back(1);
+    literal_scratch_.count = 0;
+    ScratchPush(&literal_scratch_, 0);
+    ScratchPush(&literal_scratch_, 1);
     spv::Id point_position_xy = builder_->createNoContractionBinOp(
         spv::OpFAdd, type_float2_,
-        builder_->createRvalueSwizzle(spv::NoPrecision, type_float2_,
-                                      position_xyz, uint_vector_temp_),
+        builder_->createRvalueSwizzleView(spv::NoPrecision, type_float2_,
+                                      position_xyz, xe_spv_scratch_view(&literal_scratch_)),
         builder_->createTriOp(spv::OpSelect, type_float2_,
                               point_vertex_positive, point_radius,
                               builder_->createNoContractionUnaryOp(
@@ -3271,12 +3271,12 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
     builder_->addExtension("SPV_EXT_fragment_shader_interlock");
 
     // EDRAM buffer uint[].
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeRuntimeArray(type_uint_));
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeRuntimeArray(type_uint_));
     // Storage buffers have std430 packing, no padding to 4-component vectors.
-    builder_->addDecoration(id_vector_temp_.back(), spv::DecorationArrayStride,
+    builder_->addDecoration(xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1], spv::DecorationArrayStride,
                             sizeof(uint32_t));
-    spv::Id type_edram = builder_->makeStructType(id_vector_temp_, "XeEdram");
+    spv::Id type_edram = builder_->makeStructTypeView(xe_spv_scratch_view(&id_scratch_), "XeEdram");
     builder_->addMemberName(type_edram, 0, "edram");
     builder_->addMemberDecoration(type_edram, 0, spv::DecorationCoherent);
     builder_->addMemberDecoration(type_edram, 0, spv::DecorationRestrict);
@@ -3299,12 +3299,12 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
 
   if (edram_fragment_shader_interlock_ || IsZpdTotal()) {
     // ZPD counter buffer uint[], for FSI and hybrid queries.
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeRuntimeArray(type_uint_));
-    builder_->addDecoration(id_vector_temp_.back(), spv::DecorationArrayStride,
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeRuntimeArray(type_uint_));
+    builder_->addDecoration(xe_spv_scratch_data(&id_scratch_)[id_scratch_.count - 1], spv::DecorationArrayStride,
                             sizeof(uint32_t));
     spv::Id type_zpd_counter =
-        builder_->makeStructType(id_vector_temp_, "XeZPDCounter");
+        builder_->makeStructTypeView(xe_spv_scratch_view(&id_scratch_), "XeZPDCounter");
     builder_->addMemberName(type_zpd_counter, 0, "counter");
     builder_->addMemberDecoration(type_zpd_counter, 0, spv::DecorationCoherent);
     builder_->addMemberDecoration(type_zpd_counter, 0, spv::DecorationRestrict);
@@ -3560,10 +3560,10 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
     var_main_zpd_coverage_ =
         builder_->createVariable(spv::NoPrecision, spv::StorageClassFunction,
                                  type_uint_, "xe_var_zpd_coverage");
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(const_int_0_);
-    spv::Id sample_mask_element = builder_->createAccessChain(
-        spv::StorageClassInput, input_sample_mask_, id_vector_temp_);
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, const_int_0_);
+    spv::Id sample_mask_element = builder_->createAccessChainView(
+        spv::StorageClassInput, input_sample_mask_, xe_spv_scratch_view(&id_scratch_));
     builder_->createStore(
         builder_->createUnaryOp(
             spv::OpBitcast, type_uint_,
@@ -3636,12 +3636,12 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
     // The decal path needs the original triangle depth slope, not the slope of
     // whichever lanes survive guest control flow or kill.
     assert_true(input_fragment_coordinates_ != spv::NoResult);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeIntConstant(2));
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeIntConstant(2));
     main_fbo_depth_unbiased_ =
-        builder_->createLoad(builder_->createAccessChain(
+        builder_->createLoad(builder_->createAccessChainView(
                                  spv::StorageClassInput,
-                                 input_fragment_coordinates_, id_vector_temp_),
+                                 input_fragment_coordinates_, xe_spv_scratch_view(&id_scratch_)),
                              spv::NoPrecision);
     builder_->addCapability(spv::CapabilityDerivativeControl);
     main_fbo_depth_derivatives_[0] = builder_->createUnaryOp(
@@ -3743,20 +3743,20 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
         builder_->createCompositeExtract(barycentric_coords, type_float_, 1);
     spv::Id bary_z =
         builder_->createCompositeExtract(barycentric_coords, type_float_, 2);
-    id_vector_temp_util_.clear();
-    id_vector_temp_util_.push_back(bary_y);
-    id_vector_temp_util_.push_back(bary_y);
-    id_vector_temp_util_.push_back(bary_y);
-    id_vector_temp_util_.push_back(bary_y);
+    id_scratch_util_.count = 0;
+    ScratchPush(&id_scratch_util_, bary_y);
+    ScratchPush(&id_scratch_util_, bary_y);
+    ScratchPush(&id_scratch_util_, bary_y);
+    ScratchPush(&id_scratch_util_, bary_y);
     bary_y_vec4 =
-        builder_->createCompositeConstruct(type_float4_, id_vector_temp_util_);
-    id_vector_temp_util_.clear();
-    id_vector_temp_util_.push_back(bary_z);
-    id_vector_temp_util_.push_back(bary_z);
-    id_vector_temp_util_.push_back(bary_z);
-    id_vector_temp_util_.push_back(bary_z);
+        builder_->createCompositeConstructView(type_float4_, xe_spv_scratch_view(&id_scratch_util_));
+    id_scratch_util_.count = 0;
+    ScratchPush(&id_scratch_util_, bary_z);
+    ScratchPush(&id_scratch_util_, bary_z);
+    ScratchPush(&id_scratch_util_, bary_z);
+    ScratchPush(&id_scratch_util_, bary_z);
     bary_z_vec4 =
-        builder_->createCompositeConstruct(type_float4_, id_vector_temp_util_);
+        builder_->createCompositeConstructView(type_float4_, xe_spv_scratch_view(&id_scratch_util_));
   }
 
   // The Xenos samples a pixel once, at its center. With resolution scaling, the
@@ -3777,12 +3777,12 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
         guest_pixel_center_offsets[i] = const_float_0_;
         continue;
       }
-      id_vector_temp_.clear();
-      id_vector_temp_.push_back(builder_->makeIntConstant(int(i)));
+      id_scratch_.count = 0;
+      ScratchPush(&id_scratch_, builder_->makeIntConstant(int(i)));
       spv::Id host_position = builder_->createLoad(
-          builder_->createAccessChain(spv::StorageClassInput,
+          builder_->createAccessChainView(spv::StorageClassInput,
                                       input_fragment_coordinates_,
-                                      id_vector_temp_),
+                                      xe_spv_scratch_view(&id_scratch_)),
           spv::NoPrecision);
       spv::Id pixel_scale = builder_->makeFloatConstant(float(pixel_scales[i]));
       // (floor(position / scale) + 0.5) * scale - position.
@@ -3805,8 +3805,8 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
     if (i == param_gen_interpolator) {
       continue;
     }
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeIntConstant(int(i)));
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeIntConstant(int(i)));
 
     spv::Id interpolated_value;
     if (i < xenos::kMaxInterpolators &&
@@ -3827,23 +3827,23 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
         spv::Id per_vertex_array = input_interpolators_per_vertex_[i];
 
         // Load per-vertex values (vertex 0, 1, 2).
-        id_vector_temp_util_.clear();
-        id_vector_temp_util_.push_back(builder_->makeIntConstant(0));
+        id_scratch_util_.count = 0;
+        ScratchPush(&id_scratch_util_, builder_->makeIntConstant(0));
         spv::Id v0 = builder_->createLoad(
-            builder_->createAccessChain(spv::StorageClassInput,
-                                        per_vertex_array, id_vector_temp_util_),
+            builder_->createAccessChainView(spv::StorageClassInput,
+                                        per_vertex_array, xe_spv_scratch_view(&id_scratch_util_)),
             spv::NoPrecision);
-        id_vector_temp_util_.clear();
-        id_vector_temp_util_.push_back(builder_->makeIntConstant(1));
+        id_scratch_util_.count = 0;
+        ScratchPush(&id_scratch_util_, builder_->makeIntConstant(1));
         spv::Id v1 = builder_->createLoad(
-            builder_->createAccessChain(spv::StorageClassInput,
-                                        per_vertex_array, id_vector_temp_util_),
+            builder_->createAccessChainView(spv::StorageClassInput,
+                                        per_vertex_array, xe_spv_scratch_view(&id_scratch_util_)),
             spv::NoPrecision);
-        id_vector_temp_util_.clear();
-        id_vector_temp_util_.push_back(builder_->makeIntConstant(2));
+        id_scratch_util_.count = 0;
+        ScratchPush(&id_scratch_util_, builder_->makeIntConstant(2));
         spv::Id v2 = builder_->createLoad(
-            builder_->createAccessChain(spv::StorageClassInput,
-                                        per_vertex_array, id_vector_temp_util_),
+            builder_->createAccessChainView(spv::StorageClassInput,
+                                        per_vertex_array, xe_spv_scratch_view(&id_scratch_util_)),
             spv::NoPrecision);
 
         // Compute deltas from v0 (anchor vertex).
@@ -3893,8 +3893,8 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
 
     builder_->createStore(
         interpolated_value,
-        builder_->createAccessChain(spv::StorageClassFunction,
-                                    var_main_registers_, id_vector_temp_));
+        builder_->createAccessChainView(spv::StorageClassFunction,
+                                    var_main_registers_, xe_spv_scratch_view(&id_scratch_)));
   }
 
   // The beginning of the shader may be jumped back to.
@@ -3922,16 +3922,16 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
     spv::Id const_sign_bit = builder_->makeUintConstant(UINT32_C(1) << 31);
     // X - pixel X .0 in the magnitude, is back-facing in the sign bit.
     assert_true(input_fragment_coordinates_ != spv::NoResult);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(const_int_0_);
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, const_int_0_);
     spv::Id param_gen_x = builder_->createUnaryBuiltinCall(
         type_float_, ext_inst_glsl_std_450_, GLSLstd450FAbs,
         builder_->createUnaryBuiltinCall(
             type_float_, ext_inst_glsl_std_450_, GLSLstd450Floor,
             builder_->createLoad(
-                builder_->createAccessChain(spv::StorageClassInput,
+                builder_->createAccessChainView(spv::StorageClassInput,
                                             input_fragment_coordinates_,
-                                            id_vector_temp_),
+                                            xe_spv_scratch_view(&id_scratch_)),
                 spv::NoPrecision)));
     // Apply resolution scale inversion after truncating.
     if (GetCurrentDrawResolutionScaleX() > 1) {
@@ -3964,16 +3964,16 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
                   const_sign_bit)));
     }
     // Y - pixel Y .0 in the magnitude, is point in the sign bit.
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(builder_->makeIntConstant(1));
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, builder_->makeIntConstant(1));
     spv::Id param_gen_y = builder_->createUnaryBuiltinCall(
         type_float_, ext_inst_glsl_std_450_, GLSLstd450FAbs,
         builder_->createUnaryBuiltinCall(
             type_float_, ext_inst_glsl_std_450_, GLSLstd450Floor,
             builder_->createLoad(
-                builder_->createAccessChain(spv::StorageClassInput,
+                builder_->createAccessChainView(spv::StorageClassInput,
                                             input_fragment_coordinates_,
-                                            id_vector_temp_),
+                                            xe_spv_scratch_view(&id_scratch_)),
                 spv::NoPrecision)));
     // Apply resolution scale inversion after truncating.
     if (GetCurrentDrawResolutionScaleY() > 1) {
@@ -4021,19 +4021,19 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
       param_gen_w = const_float_0_;
     }
     // Store the pixel parameters.
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(param_gen_x);
-    id_vector_temp_.push_back(param_gen_y);
-    id_vector_temp_.push_back(param_gen_z);
-    id_vector_temp_.push_back(param_gen_w);
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_, param_gen_x);
+    ScratchPush(&id_scratch_, param_gen_y);
+    ScratchPush(&id_scratch_, param_gen_z);
+    ScratchPush(&id_scratch_, param_gen_w);
     spv::Id param_gen =
-        builder_->createCompositeConstruct(type_float4_, id_vector_temp_);
-    id_vector_temp_.clear();
-    id_vector_temp_.push_back(
+        builder_->createCompositeConstructView(type_float4_, xe_spv_scratch_view(&id_scratch_));
+    id_scratch_.count = 0;
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(int(param_gen_interpolator)));
-    builder_->createStore(param_gen, builder_->createAccessChain(
+    builder_->createStore(param_gen, builder_->createAccessChainView(
                                          spv::StorageClassFunction,
-                                         var_main_registers_, id_vector_temp_));
+                                         var_main_registers_, xe_spv_scratch_view(&id_scratch_)));
   }
 }
 
@@ -4076,19 +4076,19 @@ void SpirvShaderTranslator::UpdateExecConditionals(
   EnsureBuildPointAvailable();
   spv::Id condition_id;
   if (type == ParsedExecInstruction::Type::kConditional) {
-    id_vector_temp_.clear();
+    id_scratch_.count = 0;
     // Bool constants (member 0).
-    id_vector_temp_.push_back(const_int_0_);
+    ScratchPush(&id_scratch_, const_int_0_);
     // 128-bit vector.
-    id_vector_temp_.push_back(
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(int(bool_constant_index >> 7)));
     // 32-bit scalar of a 128-bit vector.
-    id_vector_temp_.push_back(
+    ScratchPush(&id_scratch_,
         builder_->makeIntConstant(int((bool_constant_index >> 5) & 3)));
     spv::Id bool_constant_scalar =
-        builder_->createLoad(builder_->createAccessChain(
+        builder_->createLoad(builder_->createAccessChainView(
                                  spv::StorageClassUniform,
-                                 uniform_bool_loop_constants_, id_vector_temp_),
+                                 uniform_bool_loop_constants_, xe_spv_scratch_view(&id_scratch_)),
                              spv::NoPrecision);
     condition_id = builder_->createBinOp(
         spv::OpINotEqual, type_bool_,
@@ -4213,11 +4213,11 @@ spv::Id SpirvShaderTranslator::GetStorageAddressingIndex(
       break;
     case InstructionStorageAddressingMode::kLoopRelative:
       // Load X component.
-      id_vector_temp_util_.clear();
-      id_vector_temp_util_.push_back(const_int_0_);
-      base_pointer = builder_->createAccessChain(spv::StorageClassFunction,
+      id_scratch_util_.count = 0;
+      ScratchPush(&id_scratch_util_, const_int_0_);
+      base_pointer = builder_->createAccessChainView(spv::StorageClassFunction,
                                                  var_main_loop_address_,
-                                                 id_vector_temp_util_);
+                                                 xe_spv_scratch_view(&id_scratch_util_));
       break;
   }
   assert_true(!is_float_constant ||
@@ -4252,22 +4252,22 @@ spv::Id SpirvShaderTranslator::LoadOperandStorage(
   switch (operand.storage_source) {
     case InstructionStorageSource::kRegister:
       assert_true(var_main_registers_ != spv::NoResult);
-      id_vector_temp_util_.clear();
+      id_scratch_util_.count = 0;
       // Array element.
-      id_vector_temp_util_.push_back(index);
-      vec4_pointer = builder_->createAccessChain(
-          spv::StorageClassFunction, var_main_registers_, id_vector_temp_util_);
+      ScratchPush(&id_scratch_util_, index);
+      vec4_pointer = builder_->createAccessChainView(
+          spv::StorageClassFunction, var_main_registers_, xe_spv_scratch_view(&id_scratch_util_));
       break;
     case InstructionStorageSource::kConstantFloat:
       assert_true(uniform_float_constants_ != spv::NoResult);
-      id_vector_temp_util_.clear();
+      id_scratch_util_.count = 0;
       // The first and the only structure member.
-      id_vector_temp_util_.push_back(const_int_0_);
+      ScratchPush(&id_scratch_util_, const_int_0_);
       // Array element.
-      id_vector_temp_util_.push_back(index);
-      vec4_pointer = builder_->createAccessChain(spv::StorageClassUniform,
+      ScratchPush(&id_scratch_util_, index);
+      vec4_pointer = builder_->createAccessChainView(spv::StorageClassUniform,
                                                  uniform_float_constants_,
-                                                 id_vector_temp_util_);
+                                                 xe_spv_scratch_view(&id_scratch_util_));
       break;
     default:
       assert_unhandled_case(operand.storage_source);
@@ -4318,19 +4318,19 @@ spv::Id SpirvShaderTranslator::GetUnmodifiedOperandComponents(
         static_cast<unsigned int>(original_operand.GetComponent(scalar_index)) -
             static_cast<unsigned int>(SwizzleSource::kX));
   }
-  uint_vector_temp_util_.clear();
+  literal_scratch_util_.count = 0;
   uint32_t components_remaining = components;
   uint32_t component_index;
   while (xe::bit_scan_forward(components_remaining, &component_index)) {
     components_remaining &= ~(uint32_t(1) << component_index);
-    uint_vector_temp_util_.push_back(
+    ScratchPush(&literal_scratch_util_,
         static_cast<unsigned int>(
             original_operand.GetComponent(component_index)) -
         static_cast<unsigned int>(SwizzleSource::kX));
   }
-  return builder_->createRvalueSwizzle(spv::NoPrecision,
+  return builder_->createRvalueSwizzleView(spv::NoPrecision,
                                        type_float_vectors_[component_count - 1],
-                                       operand_storage, uint_vector_temp_util_);
+                                       operand_storage, xe_spv_scratch_view(&literal_scratch_util_));
 }
 
 void SpirvShaderTranslator::GetOperandScalarXY(
@@ -4384,14 +4384,14 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
     case InstructionStorageTarget::kRegister: {
       assert_true(var_main_registers_ != spv::NoResult);
       // Must call GetStorageAddressingIndex first because of
-      // id_vector_temp_util_ usage in it.
+      // id_scratch_util_ usage in it.
       spv::Id register_index = GetStorageAddressingIndex(
           result.storage_addressing_mode, result.storage_index);
-      id_vector_temp_util_.clear();
+      id_scratch_util_.count = 0;
       // Array element.
-      id_vector_temp_util_.push_back(register_index);
-      target_pointer = builder_->createAccessChain(
-          spv::StorageClassFunction, var_main_registers_, id_vector_temp_util_);
+      ScratchPush(&id_scratch_util_, register_index);
+      target_pointer = builder_->createAccessChainView(
+          spv::StorageClassFunction, var_main_registers_, xe_spv_scratch_view(&id_scratch_util_));
     } break;
     case InstructionStorageTarget::kInterpolator: {
       assert_true(is_vertex_shader());
@@ -4400,11 +4400,11 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
     } break;
     case InstructionStorageTarget::kPosition: {
       assert_true(is_vertex_shader());
-      id_vector_temp_util_.clear();
-      id_vector_temp_util_.push_back(
+      id_scratch_util_.count = 0;
+      ScratchPush(&id_scratch_util_,
           builder_->makeIntConstant(kOutputPerVertexMemberPosition));
-      target_pointer = builder_->createAccessChain(
-          spv::StorageClassOutput, output_per_vertex_, id_vector_temp_util_);
+      target_pointer = builder_->createAccessChainView(
+          spv::StorageClassOutput, output_per_vertex_, xe_spv_scratch_view(&id_scratch_util_));
     } break;
     case InstructionStorageTarget::kPointSizeEdgeFlagKillVertex: {
       assert_true(is_vertex_shader());
@@ -4574,12 +4574,9 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
           if (is_identity_swizzle) {
             value_to_store = value;
           } else {
-            uint_vector_temp_util_.clear();
-            uint_vector_temp_util_.insert(
-                uint_vector_temp_util_.cend(), result_swizzled_value_components,
-                result_swizzled_value_components + target_num_components);
-            value_to_store = builder_->createRvalueSwizzle(
-                spv::NoPrecision, target_type, value, uint_vector_temp_util_);
+            value_to_store = builder_->createRvalueSwizzleView(
+                spv::NoPrecision, target_type, value,
+                xe_spv_words_view(result_swizzled_value_components, target_num_components));
           }
         } else {
           // Non-constants only - vector target, scalar source.
@@ -4599,13 +4596,13 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
     } else if (!non_constant_components) {
       if (target_num_components > 1) {
         // Constants only - vector target.
-        id_vector_temp_util_.clear();
+        id_scratch_util_.count = 0;
         for (uint32_t i = 0; i < target_num_components; ++i) {
-          id_vector_temp_util_.push_back(
+          ScratchPush(&id_scratch_util_,
               (constant_values & (1 << i)) ? const_float_1_ : const_float_0_);
         }
         value_to_store =
-            builder_->makeCompositeConstant(target_type, id_vector_temp_util_);
+            builder_->makeCompositeConstantView(target_type, xe_spv_scratch_view(&id_scratch_util_));
       } else {
         // Constants only - scalar target.
         value_to_store =
@@ -4630,17 +4627,17 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
         builder_->getBuildPoint()->addInstruction(std::move(shuffle_op));
       } else {
         // Mixed non-constants and constants - scalar source.
-        id_vector_temp_util_.clear();
+        id_scratch_util_.count = 0;
         for (uint32_t i = 0; i < target_num_components; ++i) {
           if (constant_components & (1 << i)) {
-            id_vector_temp_util_.push_back(
+            ScratchPush(&id_scratch_util_,
                 (constant_values & (1 << i)) ? const_float_1_ : const_float_0_);
           } else {
-            id_vector_temp_util_.push_back(value);
+            ScratchPush(&id_scratch_util_, value);
           }
         }
-        value_to_store = builder_->createCompositeConstruct(
-            target_type, id_vector_temp_util_);
+        value_to_store = builder_->createCompositeConstructView(
+            target_type, xe_spv_scratch_view(&id_scratch_util_));
       }
     }
   } else {
@@ -4706,28 +4703,28 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
     spv::Id point_size = builder_->createUnaryOp(
         spv::OpBitcast, type_int_,
         builder_->createCompositeExtract(value_to_store, type_float_, 0));
-    id_vector_temp_util_.clear();
-    id_vector_temp_util_.push_back(
+    id_scratch_util_.count = 0;
+    ScratchPush(&id_scratch_util_,
         builder_->makeIntConstant(kSystemConstantPointVertexDiameterMin));
     spv::Id point_vertex_diameter_min = builder_->createUnaryOp(
         spv::OpBitcast, type_int_,
         builder_->createLoad(
-            builder_->createAccessChain(spv::StorageClassUniform,
+            builder_->createAccessChainView(spv::StorageClassUniform,
                                         uniform_system_constants_,
-                                        id_vector_temp_util_),
+                                        xe_spv_scratch_view(&id_scratch_util_)),
             spv::NoPrecision));
     point_size = builder_->createBinBuiltinCall(
         type_int_, ext_inst_glsl_std_450_, GLSLstd450SMax,
         point_vertex_diameter_min, point_size);
-    id_vector_temp_util_.clear();
-    id_vector_temp_util_.push_back(
+    id_scratch_util_.count = 0;
+    ScratchPush(&id_scratch_util_,
         builder_->makeIntConstant(kSystemConstantPointVertexDiameterMax));
     spv::Id point_vertex_diameter_max = builder_->createUnaryOp(
         spv::OpBitcast, type_int_,
         builder_->createLoad(
-            builder_->createAccessChain(spv::StorageClassUniform,
+            builder_->createAccessChainView(spv::StorageClassUniform,
                                         uniform_system_constants_,
-                                        id_vector_temp_util_),
+                                        xe_spv_scratch_view(&id_scratch_util_)),
             spv::NoPrecision));
     point_size = builder_->createBinBuiltinCall(
         type_int_, ext_inst_glsl_std_450_, GLSLstd450SMin,
@@ -4748,20 +4745,17 @@ spv::Id SpirvShaderTranslator::EndianSwap32Uint(spv::Id value, spv::Id endian) {
   spv::Id const_uint_8_typed, const_uint_00ff00ff_typed, const_uint_16_typed;
   int num_components = builder_->getNumTypeComponents(type);
   if (num_components > 1) {
-    id_vector_temp_.clear();
-    id_vector_temp_.insert(id_vector_temp_.cend(), num_components,
-                           const_uint_8_scalar);
-    const_uint_8_typed = builder_->makeCompositeConstant(type, id_vector_temp_);
-    id_vector_temp_.clear();
-    id_vector_temp_.insert(id_vector_temp_.cend(), num_components,
-                           const_uint_00ff00ff_scalar);
+    id_scratch_.count = 0;
+    ScratchFill(&id_scratch_, num_components, const_uint_8_scalar);
+    const_uint_8_typed = builder_->makeCompositeConstantView(type, xe_spv_scratch_view(&id_scratch_));
+    id_scratch_.count = 0;
+    ScratchFill(&id_scratch_, num_components, const_uint_00ff00ff_scalar);
     const_uint_00ff00ff_typed =
-        builder_->makeCompositeConstant(type, id_vector_temp_);
-    id_vector_temp_.clear();
-    id_vector_temp_.insert(id_vector_temp_.cend(), num_components,
-                           const_uint_16_scalar);
+        builder_->makeCompositeConstantView(type, xe_spv_scratch_view(&id_scratch_));
+    id_scratch_.count = 0;
+    ScratchFill(&id_scratch_, num_components, const_uint_16_scalar);
     const_uint_16_typed =
-        builder_->makeCompositeConstant(type, id_vector_temp_);
+        builder_->makeCompositeConstantView(type, xe_spv_scratch_view(&id_scratch_));
   } else {
     const_uint_8_typed = const_uint_8_scalar;
     const_uint_00ff00ff_typed = const_uint_00ff00ff_scalar;
@@ -4830,32 +4824,32 @@ spv::Id SpirvShaderTranslator::EndianSwap128Uint4(spv::Id value,
       spv::OpIEqual, type_bool_, endian,
       builder_->makeUintConstant(
           static_cast<unsigned int>(xenos::Endian128::k8in64)));
-  uint_vector_temp_.clear();
-  uint_vector_temp_.push_back(1);
-  uint_vector_temp_.push_back(0);
-  uint_vector_temp_.push_back(3);
-  uint_vector_temp_.push_back(2);
+  literal_scratch_.count = 0;
+  ScratchPush(&literal_scratch_, 1);
+  ScratchPush(&literal_scratch_, 0);
+  ScratchPush(&literal_scratch_, 3);
+  ScratchPush(&literal_scratch_, 2);
   value = builder_->createTriOp(
       spv::OpSelect, type_uint4_,
       builder_->smearScalar(spv::NoPrecision, is_8in64, type_bool4_),
-      builder_->createRvalueSwizzle(spv::NoPrecision, type_uint4_, value,
-                                    uint_vector_temp_),
+      builder_->createRvalueSwizzleView(spv::NoPrecision, type_uint4_, value,
+                                    xe_spv_scratch_view(&literal_scratch_)),
       value);
 
   spv::Id is_8in128 = builder_->createBinOp(
       spv::OpIEqual, type_bool_, endian,
       builder_->makeUintConstant(
           static_cast<unsigned int>(xenos::Endian128::k8in128)));
-  uint_vector_temp_.clear();
-  uint_vector_temp_.push_back(3);
-  uint_vector_temp_.push_back(2);
-  uint_vector_temp_.push_back(1);
-  uint_vector_temp_.push_back(0);
+  literal_scratch_.count = 0;
+  ScratchPush(&literal_scratch_, 3);
+  ScratchPush(&literal_scratch_, 2);
+  ScratchPush(&literal_scratch_, 1);
+  ScratchPush(&literal_scratch_, 0);
   value = builder_->createTriOp(
       spv::OpSelect, type_uint4_,
       builder_->smearScalar(spv::NoPrecision, is_8in128, type_bool4_),
-      builder_->createRvalueSwizzle(spv::NoPrecision, type_uint4_, value,
-                                    uint_vector_temp_),
+      builder_->createRvalueSwizzleView(spv::NoPrecision, type_uint4_, value,
+                                    xe_spv_scratch_view(&literal_scratch_)),
       value);
 
   endian = builder_->createTriOp(
@@ -4878,13 +4872,13 @@ spv::Id SpirvShaderTranslator::LoadUint32FromSharedMemory(
 
   if (!binding_count_log2) {
     // Single binding - load directly.
-    id_vector_temp_.clear();
+    id_scratch_.count = 0;
     // The only SSBO struct member.
-    id_vector_temp_.push_back(const_int_0_);
-    id_vector_temp_.push_back(address_dwords_int);
+    ScratchPush(&id_scratch_, const_int_0_);
+    ScratchPush(&id_scratch_, address_dwords_int);
     return builder_->createLoad(
-        builder_->createAccessChain(storage_class, buffers_shared_memory_,
-                                    id_vector_temp_),
+        builder_->createAccessChainView(storage_class, buffers_shared_memory_,
+                                    xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision);
   }
 
@@ -4913,18 +4907,18 @@ spv::Id SpirvShaderTranslator::LoadUint32FromSharedMemory(
       binding_index, spv::SelectionControlDontFlattenMask, *builder_);
   uint32_t binding_count = uint32_t(1) << binding_count_log2;
 
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(spv::NoResult);
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, spv::NoResult);
   // The only SSBO struct member.
-  id_vector_temp_.push_back(const_int_0_);
-  id_vector_temp_.push_back(binding_address);
+  ScratchPush(&id_scratch_, const_int_0_);
+  ScratchPush(&id_scratch_, binding_address);
 
   for (uint32_t i = 0; i < binding_count; ++i) {
     binding_switch.makeBeginCase(i);
-    id_vector_temp_[0] = builder_->makeIntConstant(int(i));
+    xe_spv_scratch_data(&id_scratch_)[0] = builder_->makeIntConstant(int(i));
     value_phi_op->addIdOperand(builder_->createLoad(
-        builder_->createAccessChain(storage_class, buffers_shared_memory_,
-                                    id_vector_temp_),
+        builder_->createAccessChainView(storage_class, buffers_shared_memory_,
+                                    xe_spv_scratch_view(&id_scratch_)),
         spv::NoPrecision));
     value_phi_op->addIdOperand(builder_->getBuildPoint()->getId());
   }
@@ -4971,12 +4965,12 @@ void SpirvShaderTranslator::StoreUint32ToSharedMemory(
 
   if (!binding_count_log2) {
     // Single binding - store directly.
-    id_vector_temp_.clear();
+    id_scratch_.count = 0;
     // The only SSBO struct member.
-    id_vector_temp_.push_back(const_int_0_);
-    id_vector_temp_.push_back(address_dwords_int);
-    store(builder_->createAccessChain(storage_class, buffers_shared_memory_,
-                                      id_vector_temp_));
+    ScratchPush(&id_scratch_, const_int_0_);
+    ScratchPush(&id_scratch_, address_dwords_int);
+    store(builder_->createAccessChainView(storage_class, buffers_shared_memory_,
+                                      xe_spv_scratch_view(&id_scratch_)));
     return;
   }
 
@@ -4999,17 +4993,17 @@ void SpirvShaderTranslator::StoreUint32ToSharedMemory(
       binding_index, spv::SelectionControlDontFlattenMask, *builder_);
   uint32_t binding_count = uint32_t(1) << binding_count_log2;
 
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(spv::NoResult);
+  id_scratch_.count = 0;
+  ScratchPush(&id_scratch_, spv::NoResult);
   // The only SSBO struct member.
-  id_vector_temp_.push_back(const_int_0_);
-  id_vector_temp_.push_back(binding_address);
+  ScratchPush(&id_scratch_, const_int_0_);
+  ScratchPush(&id_scratch_, binding_address);
 
   for (uint32_t i = 0; i < binding_count; ++i) {
     binding_switch.makeBeginCase(i);
-    id_vector_temp_[0] = builder_->makeIntConstant(int(i));
-    store(builder_->createAccessChain(storage_class, buffers_shared_memory_,
-                                      id_vector_temp_));
+    xe_spv_scratch_data(&id_scratch_)[0] = builder_->makeIntConstant(int(i));
+    store(builder_->createAccessChainView(storage_class, buffers_shared_memory_,
+                                      xe_spv_scratch_view(&id_scratch_)));
   }
 
   binding_switch.makeEndSwitch();

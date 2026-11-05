@@ -293,33 +293,33 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
         spv::Id different_type = type_float_vectors_[different_count - 1];
         // Extract the different components, if not all are different.
         if (multiplicands_different != used_result_components) {
-          uint_vector_temp_.clear();
+          literal_scratch_.count = 0;
           uint32_t components_remaining = used_result_components;
           for (uint32_t i = 0; i < used_result_component_count; ++i) {
             uint32_t component;
             xe::bit_scan_forward(components_remaining, &component);
             components_remaining &= ~(uint32_t(1) << component);
             if (multiplicands_different & (1 << component)) {
-              uint_vector_temp_.push_back(i);
+              ScratchPush(&literal_scratch_, i);
             }
           }
-          assert_true(uint_vector_temp_.size() == different_count);
+          assert_true(literal_scratch_.count == different_count);
           if (different_count > 1) {
             for (uint32_t i = 0; i < 2; ++i) {
-              different_operands[i] = builder_->createRvalueSwizzle(
+              different_operands[i] = builder_->createRvalueSwizzleView(
                   spv::NoPrecision, different_type, different_operands[i],
-                  uint_vector_temp_);
+                  xe_spv_scratch_view(&literal_scratch_));
             }
-            different_result = builder_->createRvalueSwizzle(
+            different_result = builder_->createRvalueSwizzleView(
                 spv::NoPrecision, different_type, different_result,
-                uint_vector_temp_);
+                xe_spv_scratch_view(&literal_scratch_));
           } else {
             for (uint32_t i = 0; i < 2; ++i) {
               different_operands[i] = builder_->createCompositeExtract(
-                  different_operands[i], different_type, uint_vector_temp_[0]);
+                  different_operands[i], different_type, xe_spv_scratch_data(&literal_scratch_)[0]);
             }
             different_result = builder_->createCompositeExtract(
-                different_result, different_type, uint_vector_temp_[0]);
+                different_result, different_type, xe_spv_scratch_data(&literal_scratch_)[0]);
           }
         }
         // Check if the different components in any of the operands are zero,
@@ -431,14 +431,14 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
         // components - the mixed case uses CompositeExtract, which works fine.
         if (used_result_component_count > 1) {
           // Need all but the last (W) element of operand_0 as a vector.
-          uint_vector_temp_.clear();
+          literal_scratch_.count = 0;
           for (unsigned int i = 0; i < used_result_component_count; ++i) {
-            uint_vector_temp_.push_back(i);
+            ScratchPush(&literal_scratch_, i);
           }
-          operand_0_per_component = builder_->createRvalueSwizzle(
+          operand_0_per_component = builder_->createRvalueSwizzleView(
               spv::NoPrecision,
               type_float_vectors_[used_result_component_count - 1], operand_0,
-              uint_vector_temp_);
+              xe_spv_scratch_view(&literal_scratch_));
         } else {
           // Need the non-W component as scalar.
           operand_0_per_component =
@@ -474,7 +474,7 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
       }
       // Mixed identical and different components.
       assert_true(used_result_component_count > 1);
-      id_vector_temp_.clear();
+      id_scratch_.count = 0;
       uint32_t components_remaining = used_result_components;
       for (uint32_t i = 0; i < used_result_component_count; ++i) {
         // Composite extraction of operand_0[i] works fine even it's maxa with
@@ -499,9 +499,9 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
                                     operand_1_component),
               result_component, operand_1_component);
         }
-        id_vector_temp_.push_back(result_component);
+        ScratchPush(&id_scratch_, result_component);
       }
-      return builder_->createCompositeConstruct(result_type, id_vector_temp_);
+      return builder_->createCompositeConstructView(result_type, xe_spv_scratch_view(&id_scratch_));
     }
 
     case ucode::AluVectorOpcode::kSeq:
@@ -745,29 +745,29 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
       ma_z_if.makeEndIf();
 
       // Choose the result options from Z and YX cases.
-      id_vector_temp_.clear();
+      id_scratch_.count = 0;
       for (uint32_t i = 0; i < 4; ++i) {
         if (!(used_result_components & (1 << i))) {
           continue;
         }
-        id_vector_temp_.push_back(
+        ScratchPush(&id_scratch_,
             ma_z_if.createMergePhi(ma_z_result[i], ma_yx_result[i]));
       }
-      assert_true(id_vector_temp_.size() == used_result_component_count);
+      assert_true(id_scratch_.count == used_result_component_count);
       if (used_result_components & 0b0100) {
         // Multiply the major axis by 2.
-        spv::Id& ma2 = id_vector_temp_[xe::bit_count(used_result_components &
+        spv::Id& ma2 = xe_spv_scratch_data(&id_scratch_)[xe::bit_count(used_result_components &
                                                      ((1 << 2) - 1))];
         ma2 = builder_->createNoContractionBinOp(
             spv::OpFMul, type_float_, builder_->makeFloatConstant(2.0f), ma2);
       }
       if (used_result_component_count == 1) {
         // Only one component - not composite.
-        return id_vector_temp_[0];
+        return xe_spv_scratch_data(&id_scratch_)[0];
       }
-      return builder_->createCompositeConstruct(
+      return builder_->createCompositeConstructView(
           type_float_vectors_[used_result_component_count - 1],
-          id_vector_temp_);
+          xe_spv_scratch_view(&id_scratch_));
     }
 
     case ucode::AluVectorOpcode::kMax4: {
@@ -916,37 +916,37 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
               GetAbsoluteOperand(operands_y[1], instr.vector_operands[1]));
         }
       }
-      id_vector_temp_.clear();
+      id_scratch_.count = 0;
       if (used_result_components & 0b0001) {
         // x = 1.0
-        id_vector_temp_.push_back(const_float_1_);
+        ScratchPush(&id_scratch_, const_float_1_);
       }
       if (used_result_components & 0b0010) {
         // y = src0.y * src1.y
-        id_vector_temp_.push_back(result_y);
+        ScratchPush(&id_scratch_, result_y);
       }
       if (used_result_components & 0b0100) {
         // z = src0.z
-        id_vector_temp_.push_back(
+        ScratchPush(&id_scratch_,
             (used_result_components & 0b0010)
                 ? builder_->createCompositeExtract(operands[0], type_float_, 1)
                 : operands[0]);
       }
       if (used_result_components & 0b1000) {
         // w = src1.w
-        id_vector_temp_.push_back(
+        ScratchPush(&id_scratch_,
             (used_result_components & 0b0010)
                 ? builder_->createCompositeExtract(operands[1], type_float_, 1)
                 : operands[1]);
       }
-      assert_true(id_vector_temp_.size() == used_result_component_count);
+      assert_true(id_scratch_.count == used_result_component_count);
       if (used_result_component_count == 1) {
         // Only one component - not composite.
-        return id_vector_temp_[0];
+        return xe_spv_scratch_data(&id_scratch_)[0];
       }
-      return builder_->createCompositeConstruct(
+      return builder_->createCompositeConstructView(
           type_float_vectors_[used_result_component_count - 1],
-          id_vector_temp_);
+          xe_spv_scratch_view(&id_scratch_));
     }
   }
 

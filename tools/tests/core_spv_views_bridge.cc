@@ -106,6 +106,37 @@ int main(int argc, char** argv) {
   builder.createSpecConstantOpView(spv::Op::OpIAdd, uint_type, WORDS(spec_args, 2), xe_spv_words_view(nullptr, 0));
 #endif
   spec_args[0] = spec_args[1] = 0;
+  Id barrier_args[2] = {
+      builder.makeUintConstant(uint32_t(spv::Scope::Device)),
+      builder.makeUintConstant(uint32_t(spv::MemorySemanticsMask::AcquireRelease) |
+                               uint32_t(spv::MemorySemanticsMask::UniformMemory))};
+#ifdef XE_SPV_OUTPUT_LEGACY
+  builder.createNoResultOp(spv::Op::OpMemoryBarrier, WORDS(barrier_args, 2));
+#else
+  builder.createNoResultOpView(spv::Op::OpMemoryBarrier, WORDS(barrier_args, 2));
+#endif
+  barrier_args[0] = barrier_args[1] = 0;
+  auto* loop_header = &builder.makeNewBlock();
+  auto* loop_body = &builder.makeNewBlock();
+  auto* loop_continue = &builder.makeNewBlock();
+  auto* loop_merge = &builder.makeNewBlock();
+  builder.createBranch(loop_header);
+  builder.setBuildPoint(loop_header);
+  uint32_t loop_args[1] = {3};
+#ifdef XE_SPV_OUTPUT_LEGACY
+  builder.createLoopMerge(loop_merge, loop_continue,
+      spv::LoopControlMask::DependencyLength, WORDS(loop_args, 1));
+#else
+  builder.createLoopMergeView(loop_merge, loop_continue,
+      spv::LoopControlMask::DependencyLength, WORDS(loop_args, 1));
+#endif
+  loop_args[0] = 0;
+  builder.createConditionalBranch(builder.makeBoolConstant(false), loop_body, loop_merge);
+  builder.setBuildPoint(loop_body);
+  builder.createBranch(loop_continue);
+  builder.setBuildPoint(loop_continue);
+  builder.createBranch(loop_header);
+  builder.setBuildPoint(loop_merge);
   builder.makeReturn(true);
   builder.leaveFunction();
   builder.postProcess(false);
