@@ -124,7 +124,16 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
   if (!xe_gpu_worklist_init(&dump_rectangles_, kResolveWorkCapacity,
           sizeof(ResolveCopyDumpRectangle)) ||
       !xe_gpu_worklist_init(&dump_invocations_, kResolveWorkCapacity,
-          sizeof(DumpInvocation))) return false;
+          sizeof(DumpInvocation)) ||
+      !xe_gpu_worklist_init(&current_transfer_invocations_,
+          kTransferWorkCapacity, sizeof(TransferInvocation))) return false;
+  for (auto& transfers : clear_transfers_) {
+    if (!xe_gpu_worklist_init(&transfers, xenos::kEdramTileCount,
+                              sizeof(Transfer))) {
+      Shutdown();
+      return false;
+    }
+  }
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
 
@@ -880,11 +889,17 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
               sizeof(last_update_framebuffer_attachments_));
   last_update_framebuffer_ = VK_NULL_HANDLE;
 
-  InitializeCommon();
+  if (!InitializeCommon()) {
+    Shutdown();
+    return false;
+  }
   return true;
 }
 
 void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
+  for (auto& transfers : clear_transfers_)
+    xe_gpu_worklist_close(&transfers);
+  xe_gpu_worklist_close(&current_transfer_invocations_);
   xe_gpu_worklist_close(&dump_invocations_);
   xe_gpu_worklist_close(&dump_rectangles_);
   const ui::vulkan::VulkanDevice* const vulkan_device =
@@ -2834,7 +2849,7 @@ VkPipeline const* VulkanRenderTargetCache::GetTransferPipelines(
 
 void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     uint32_t render_target_count, RenderTarget* const* render_targets,
-    const std::vector<Transfer>* render_target_transfers,
+    const xe_gpu_worklist* render_target_transfers,
     const uint64_t* render_target_resolve_clear_values,
     const Transfer::Rectangle* resolve_clear_rectangle) {
   SCOPE_profile_cpu_f("gpu");
@@ -2847,7 +2862,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
   bool has_transfers = false;
   for (uint32_t i = 0; i < render_target_count && !has_transfers; ++i) {
     if (render_targets[i] &&
-        (!render_target_transfers[i].empty() || resolve_clear_needed)) {
+        (render_target_transfers[i].count != 0 || resolve_clear_needed)) {
       has_transfers = true;
     }
   }
@@ -2905,7 +2920,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     if (!dest_rt_key.is_depth) {
       continue;
     }
-    const std::vector<Transfer>& depth_transfers = render_target_transfers[i];
+    auto depth_transfers = Transfers(render_target_transfers[i]);
     for (const Transfer& transfer : depth_transfers) {
       if (transfer.host_depth_source != dest_rt) {
         continue;
@@ -3001,7 +3016,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     if (!dest_rt) {
       continue;
     }
-    const std::vector<Transfer>& dest_transfers = render_target_transfers[i];
+    auto dest_transfers = Transfers(render_target_transfers[i]);
     if (!resolve_clear_needed && dest_transfers.empty()) {
       continue;
     }
@@ -3009,7 +3024,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     // earlier.
     bool dest_used_previously_as_source = false;
     for (uint32_t j = 0; j < i; ++j) {
-      for (const Transfer& previous_transfer : render_target_transfers[j]) {
+      for (const Transfer& previous_transfer : Transfers(render_target_transfers[j])) {
         if (previous_transfer.source == dest_rt ||
             previous_transfer.host_depth_source == dest_rt) {
           dest_used_previously_as_source = true;
@@ -3042,7 +3057,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       bool source_previously_used_as_dest = false;
       bool host_depth_source_previously_used_as_dest = false;
       for (uint32_t j = 0; j < i; ++j) {
-        if (render_target_transfers[j].empty()) {
+        if (render_target_transfers[j].count == 0) {
           continue;
         }
         const RenderTarget* previous_rt = render_targets[j];
@@ -3111,7 +3126,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       continue;
     }
 
-    const std::vector<Transfer>& current_transfers = render_target_transfers[i];
+    auto current_transfers = Transfers(render_target_transfers[i]);
     if (current_transfers.empty() && !resolve_clear_needed) {
       continue;
     }
@@ -3192,9 +3207,14 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       bool need_stencil_bit_draws =
           dest_rt_key.is_depth &&
           !vulkan_device->extensions().ext_EXT_shader_stencil_export;
-      current_transfer_invocations_.clear();
-      current_transfer_invocations_.reserve(
-          current_transfers.size() << uint32_t(need_stencil_bit_draws));
+      xe_gpu_worklist_reset(&current_transfer_invocations_);
+      // Each source transfer covers at least one disjoint physical tile.
+      // The optional second pass writes stencil bits from the same records.
+      if (current_transfers.size() > xenos::kEdramTileCount) {
+        XELOGE("Render target transfer work exceeds physical EDRAM capacity");
+        command_processor_.PopDebugMarker();
+        return;
+      }
       uint32_t rt_sort_index = 0;
       EdramTransferShaderKey new_transfer_shader_key;
       new_transfer_shader_key.dest_msaa_samples = dest_rt_key.msaa_samples;
@@ -3286,22 +3306,25 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
                                          : EdramTransferMode::kColorToColor;
             }
           }
-          current_transfer_invocations_.emplace_back(transfer,
-                                                     new_transfer_shader_key);
-          if (j) {
-            current_transfer_invocations_.back().transfer.host_depth_source =
-                nullptr;
+          void* slot =
+              xe_gpu_worklist_append(&current_transfer_invocations_);
+          if (!slot) {
+            XELOGE("Render target transfer invocation storage exhausted");
+            command_processor_.PopDebugMarker();
+            return;
           }
+          new (slot) TransferInvocation(transfer, new_transfer_shader_key,
+                                        j != 0);
         }
       }
-      std::sort(current_transfer_invocations_.begin(),
-                current_transfer_invocations_.end());
+      auto transfer_invocations = TransferInvocations();
+      std::sort(transfer_invocations.begin(), transfer_invocations.end());
 
-      for (auto it = current_transfer_invocations_.cbegin();
-           it != current_transfer_invocations_.cend(); ++it) {
-        assert_not_null(it->transfer.source);
+      for (auto it = transfer_invocations.begin();
+           it != transfer_invocations.end(); ++it) {
+        assert_not_null(it->GetTransfer().source);
         auto& source_vulkan_rt =
-            *static_cast<VulkanRenderTarget*>(it->transfer.source);
+            *static_cast<VulkanRenderTarget*>(it->GetTransfer().source);
         command_processor_.PushImageMemoryBarrier(
             source_vulkan_rt.image(),
             ui::vulkan::util::InitializeSubresourceRange(
@@ -3314,9 +3337,9 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
         source_vulkan_rt.SetUsage(kSourceStageMask, kSourceAccessMask,
                                   kSourceLayout);
         auto host_depth_source_vulkan_rt =
-            static_cast<VulkanRenderTarget*>(it->transfer.host_depth_source);
+            static_cast<VulkanRenderTarget*>(it->GetHostDepthSource());
         if (host_depth_source_vulkan_rt) {
-          EdramTransferShaderKey transfer_shader_key = it->shader_key;
+          EdramTransferShaderKey transfer_shader_key = it->GetShaderKey();
           if (transfer_shader_key.mode ==
                   EdramTransferMode::kDepthAndHostDepthCopyToDepth ||
               transfer_shader_key.mode ==
@@ -3411,22 +3434,22 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       transfer_scissor.extent = transfer_framebuffer->host_extent;
       command_processor_.SetScissor(transfer_scissor);
 
-      for (auto it = current_transfer_invocations_.cbegin();
-           it != current_transfer_invocations_.cend(); ++it) {
+      for (auto it = transfer_invocations.begin();
+           it != transfer_invocations.end(); ++it) {
         const TransferInvocation& transfer_invocation_first = *it;
         // Will be merging transfers from the same source into one mesh.
         auto it_merged_first = it, it_merged_last = it;
         uint32_t transfer_rectangle_count =
-            transfer_invocation_first.transfer.GetRectangles(
+            transfer_invocation_first.GetTransfer().GetRectangles(
                 dest_rt_key.base_tiles, dest_pitch_tiles,
                 dest_rt_key.msaa_samples, dest_is_64bpp, nullptr,
                 resolve_clear_rectangle);
         for (auto it_merge = std::next(it_merged_first);
-             it_merge != current_transfer_invocations_.cend(); ++it_merge) {
+             it_merge != transfer_invocations.end(); ++it_merge) {
           if (!transfer_invocation_first.CanBeMergedIntoOneDraw(*it_merge)) {
             break;
           }
-          transfer_rectangle_count += it_merge->transfer.GetRectangles(
+          transfer_rectangle_count += it_merge->GetTransfer().GetRectangles(
               dest_rt_key.base_tiles, dest_pitch_tiles,
               dest_rt_key.msaa_samples, dest_is_64bpp, nullptr,
               resolve_clear_rectangle);
@@ -3436,12 +3459,12 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
         // Skip the merged transfers in the subsequent iterations.
         it = it_merged_last;
 
-        assert_not_null(it->transfer.source);
+        assert_not_null(it->GetTransfer().source);
         auto& source_vulkan_rt =
-            *static_cast<VulkanRenderTarget*>(it->transfer.source);
+            *static_cast<VulkanRenderTarget*>(it->GetTransfer().source);
         auto host_depth_source_vulkan_rt =
-            static_cast<VulkanRenderTarget*>(it->transfer.host_depth_source);
-        EdramTransferShaderKey transfer_shader_key = it->shader_key;
+            static_cast<VulkanRenderTarget*>(it->GetHostDepthSource());
+        EdramTransferShaderKey transfer_shader_key = it->GetShaderKey();
         const EdramTransferModeInfo& transfer_mode_info =
             kEdramTransferModes[size_t(transfer_shader_key.mode)];
         EdramTransferPipelineLayoutIndex transfer_pipeline_layout_index =
@@ -3473,7 +3496,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
           Transfer::Rectangle transfer_invocation_rectangles
               [Transfer::kMaxRectanglesWithCutout];
           uint32_t transfer_invocation_rectangle_count =
-              it_merged->transfer.GetRectangles(
+              it_merged->GetTransfer().GetRectangles(
                   dest_rt_key.base_tiles, dest_pitch_tiles,
                   dest_rt_key.msaa_samples, dest_is_64bpp,
                   transfer_invocation_rectangles, resolve_clear_rectangle);

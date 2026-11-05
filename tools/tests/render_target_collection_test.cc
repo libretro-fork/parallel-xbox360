@@ -39,7 +39,7 @@ class RenderTargetCollectionTest final : public RenderTargetCache {
   }
  public:
   RenderTargetCollectionTest(const RegisterFile& registers, const Memory& memory)
-      : RenderTargetCache(registers,memory,nullptr,2,2) { InitializeCommon(); }
+      : RenderTargetCache(registers,memory,nullptr,2,2) { CHECK(InitializeCommon()); }
   Path GetPath() const override { return Path::kHostRenderTargets; }
   uint32_t GetMaxRenderTargetWidth() const override { return 16384; }
   uint32_t GetMaxRenderTargetHeight() const override { return 16384; }
@@ -188,6 +188,98 @@ class RenderTargetCollectionTest final : public RenderTargetCache {
     xe_gpu_retire_collect(&retirement_,42);
     CHECK(render_targets_.empty() && destroyed_ == created_);
   }
+  void RunTransferBounds() {
+    RenderTargetKey sources[2], dest;
+    xe_gpu_worklist transfers = {};
+    CHECK(xe_gpu_worklist_init(&transfers, xenos::kEdramTileCount,
+                               sizeof(Transfer)));
+    void* stable = transfers.data;
+    unsigned total = 0, maximum = 0;
+    for (unsigned i = 0; i < 2; ++i) {
+      sources[i].key = 0;
+      sources[i].pitch_tiles_at_32bpp = 64;
+      sources[i].base_tiles = i;
+      CHECK(GetOrCreateRenderTarget(sources[i]));
+    }
+    for (unsigned round = 0; round < 512; ++round) {
+      dest = sources[0];
+      dest.pitch_tiles_at_32bpp = 32;
+      dest.base_tiles = (round * 37) & (xenos::kEdramTileCount - 1);
+      CHECK(GetOrCreateRenderTarget(dest));
+      ownership_ranges_.clear();
+      for (unsigned tile = 0; tile < xenos::kEdramTileCount; ++tile) {
+        ownership_ranges_.emplace(tile, OwnershipRange(tile + 1,
+            sources[tile & 1], {}, {}));
+      }
+      uint32_t start = (round * 13) & (xenos::kEdramTileCount - 1);
+      uint32_t length = round & 1 ? (round * 17) % xenos::kEdramTileCount + 1
+                                 : xenos::kEdramTileCount;
+      xe_gpu_worklist_reset(&transfers);
+      CHECK(ChangeOwnership(dest, start, length, &transfers, nullptr));
+      CHECK(transfers.count <= xenos::kEdramTileCount);
+      CHECK(transfers.data == stable);
+      bool seen[xenos::kEdramTileCount] = {};
+      unsigned covered = 0;
+      for (const Transfer& transfer : Transfers(transfers)) {
+        CHECK(transfer.start_tiles < transfer.end_tiles);
+        CHECK(transfer.end_tiles <= xenos::kEdramTileCount);
+        for (unsigned tile = transfer.start_tiles; tile < transfer.end_tiles;
+             ++tile) {
+          CHECK(!seen[tile]);
+          seen[tile] = true;
+          CHECK(transfer.source->key() == sources[tile & 1]);
+          ++covered;
+        }
+      }
+      CHECK(covered == length);
+      if (transfers.count > maximum) maximum = unsigned(transfers.count);
+      total += unsigned(transfers.count);
+    }
+    CHECK(maximum == xenos::kEdramTileCount);
+    // Equal source records coalesce even when other ownership fields split
+    // the map. Wrapping preserves the two physical extents' original order.
+    dest.base_tiles = 0;
+    CHECK(GetOrCreateRenderTarget(dest));
+    for (unsigned wrapped = 0; wrapped < 2; ++wrapped) {
+      ownership_ranges_.clear();
+      for (unsigned tile = 0; tile < xenos::kEdramTileCount; ++tile) {
+        auto& range = ownership_ranges_.emplace(tile,
+            OwnershipRange(tile + 1, sources[0], {}, {})).first->second;
+        range.depth_bits_target = sources[tile & 1];
+      }
+      xe_gpu_worklist_reset(&transfers);
+      CHECK(ChangeOwnership(dest, wrapped ? 123 : 0,
+                            xenos::kEdramTileCount, &transfers));
+      auto records = Transfers(transfers);
+      uint32_t begin = (dest.base_tiles + (wrapped ? 123 : 0)) &
+                       (xenos::kEdramTileCount - 1);
+      CHECK(records.size() == (begin ? 2 : 1));
+      CHECK(records[0].start_tiles == begin);
+      CHECK(records[0].end_tiles == xenos::kEdramTileCount);
+      if (begin) {
+        CHECK(records[1].start_tiles == 0);
+        CHECK(records[1].end_tiles == begin);
+      }
+    }
+    // Refuse undersized/uninitialized output before changing any ownership.
+    xe_gpu_worklist_reset(&transfers);
+    transfers.capacity = 1;
+    const auto old_ranges = ownership_ranges_;
+    CHECK(!ChangeOwnership(dest, 0, 2, &transfers, nullptr));
+    CHECK(ownership_ranges_.size() == old_ranges.size());
+    for (const auto& entry : old_ranges) {
+      const auto& actual = ownership_ranges_.find(entry.first)->second;
+      CHECK(actual.end_tiles == entry.second.end_tiles);
+      CHECK(actual.AreOwnersSame(entry.second));
+    }
+    xe_gpu_worklist_close(&transfers);
+    ownership_ranges_.clear();
+    ownership_ranges_.emplace(0, OwnershipRange(xenos::kEdramTileCount, {}, {}, {}));
+    ClearCache();
+    xe_gpu_retire_collect(&retirement_,42);
+    CHECK(render_targets_.empty() && destroyed_ == created_);
+    std::printf("PASS: %u real ownership transfers across 512 fragmented/wrapped extents; disjoint tile bound attained\n", total);
+  }
   void RunResolveQueries() {
     RenderTargetKey native, scaled;
     native.key = 0;
@@ -318,6 +410,7 @@ int main() {
   test.RunReuse();
   test.RunResolveQueries();
   test.RunFixedResolveStorage();
+  test.RunTransferBounds();
   std::puts("PASS: ownership/fence lifetime; 20000 moving EDRAM bases reuse four images without map growth; incompatible shapes remain distinct");
   std::puts("PASS: 10000 resolve cases match collected-rectangle semantics with zero query allocations");
   std::puts("PASS: 10000 fixed-storage resolves match vector output; maximum EDRAM fragmentation/wrap, stable storage and overflow rejection");

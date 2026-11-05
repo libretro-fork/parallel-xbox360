@@ -12,13 +12,15 @@
 #include "libretro/core_gpu_worklist.h"
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <span>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
-#include <vector>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
@@ -279,7 +281,7 @@ class RenderTargetCache {
 
   // Call last in implementation-specific initialization (when things like path
   // are initialized by the implementation).
-  void InitializeCommon();
+  bool InitializeCommon();
   // May be called from the destructor, or from the implementation shutdown to
   // destroy all render targets before destroying what they depend on in the
   // implementation.
@@ -460,6 +462,15 @@ class RenderTargetCache {
                                  Rectangle* rectangles_out,
                                  const Rectangle* cutout = nullptr);
   };
+
+  static std::span<Transfer> Transfers(xe_gpu_worklist& list) {
+    return {static_cast<Transfer*>(list.data), list.count};
+  }
+  static std::span<const Transfer> Transfers(const xe_gpu_worklist& list) {
+    return {static_cast<const Transfer*>(list.data), list.count};
+  }
+  static_assert(std::is_trivially_destructible<Transfer>::value);
+  static_assert(alignof(Transfer) <= alignof(std::max_align_t));
 
   union HostDepthStoreRectangleConstant {
     uint32_t constant;
@@ -649,7 +660,7 @@ class RenderTargetCache {
     return last_update_accumulated_render_targets_;
   }
 
-  const std::vector<Transfer>* last_update_transfers() const {
+  const xe_gpu_worklist* last_update_transfers() const {
     assert_true(GetPath() == Path::kHostRenderTargets);
     return last_update_transfers_;
   }
@@ -715,9 +726,9 @@ class RenderTargetCache {
       const draw_util::ResolveInfo& resolve_info,
       Transfer::Rectangle& clear_rectangle_out,
       RenderTarget*& depth_render_target_out,
-      std::vector<Transfer>& depth_transfers_out,
+      xe_gpu_worklist& depth_transfers_out,
       RenderTarget*& color_render_target_out,
-      std::vector<Transfer>& color_transfers_out);
+      xe_gpu_worklist& color_transfers_out);
 
   // For restoring EDRAM contents from frame traces, obtains or creates a render
   // target at base 0 with of 1280 (only 1 sample and color because copying
@@ -763,7 +774,7 @@ class RenderTargetCache {
   // Logs one round of EDRAM ownership transfers.
   void LogTransfers(uint32_t render_target_count,
                     RenderTarget* const* render_targets,
-                    const std::vector<Transfer>* render_target_transfers,
+                    const xe_gpu_worklist* render_target_transfers,
                     const Transfer::Rectangle* resolve_clear_rectangle) const;
 
  private:
@@ -886,9 +897,9 @@ class RenderTargetCache {
   // Updates ownership_ranges_, adds the transfers needed for the ownership
   // change to transfers_append_out if it's not null. If keep_depth_bits is true
   // the existing depth bits target is preserved.
-  void ChangeOwnership(
+  bool ChangeOwnership(
       RenderTargetKey dest, uint32_t start_tiles_base_relative,
-      uint32_t length_tiles, std::vector<Transfer>* transfers_append_out,
+      uint32_t length_tiles, xe_gpu_worklist* transfers_append_out,
       const Transfer::Rectangle* resolve_clear_cutout = nullptr,
       bool keep_depth_bits = false);
 
@@ -939,11 +950,10 @@ class RenderTargetCache {
   // incorrect to keep the previously bound render targets.
   bool are_accumulated_render_targets_valid_ = false;
   // After an update (for simplicity, even an unsuccessful update invalidates
-  // this), contains needed ownership transfer sources for each of the current
-  // render targets. They are reordered so for one source, all transfers are
-  // consecutive in the array.
-  std::vector<Transfer>
-      last_update_transfers_[1 + xenos::kMaxColorRenderTargets];
+  // this), contains needed ownership transfer sources for each current target.
+  // Backend sorted invocations borrow these immovable records through command
+  // encoding. Reset only after those consumers have returned.
+  xe_gpu_worklist last_update_transfers_[1 + xenos::kMaxColorRenderTargets] = {};
 };
 
 }  // namespace gpu

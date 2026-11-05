@@ -11,6 +11,7 @@
 #define XENIA_GPU_VULKAN_VULKAN_RENDER_TARGET_CACHE_H_
 
 #include "libretro/core_gpu_retire.h"
+#include "libretro/core_gpu_transfer.h"
 #include <array>
 #include <cstdint>
 #include <cstddef>
@@ -543,12 +544,24 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     }
   };
 
-  struct TransferInvocation {
-    Transfer transfer;
-    EdramTransferShaderKey shader_key;
+  struct TransferInvocation : xe_gpu_transfer_ref {
     TransferInvocation(const Transfer& transfer,
-                       const EdramTransferShaderKey& shader_key)
-        : transfer(transfer), shader_key(shader_key) {}
+                       const EdramTransferShaderKey& shader_key,
+                       bool stencil_bits) {
+      xe_gpu_transfer_ref_set(this, &transfer, shader_key.key, stencil_bits);
+    }
+    const Transfer& GetTransfer() const {
+      return *static_cast<const Transfer*>(transfer);
+    }
+    RenderTarget* GetHostDepthSource() const {
+      return static_cast<RenderTarget*>(const_cast<void*>(
+          xe_gpu_transfer_host_depth(this, GetTransfer().host_depth_source)));
+    }
+    EdramTransferShaderKey GetShaderKey() const {
+      EdramTransferShaderKey result;
+      result.key = shader_key;
+      return result;
+    }
     bool operator<(const TransferInvocation& other_invocation) const {
       // TODO(Triang3l): See if it may be better to sort by the source in the
       // first place, especially when reading the same data multiple times (like
@@ -561,25 +574,36 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       // Host depth render targets are changed rarely if they exist, won't save
       // many binding changes, ignore them for simplicity (their existence is
       // caught by the shader key change).
-      assert_not_null(transfer.source);
-      assert_not_null(other_invocation.transfer.source);
+      assert_not_null(GetTransfer().source);
+      assert_not_null(other_invocation.GetTransfer().source);
       uint32_t source_index =
-          static_cast<const VulkanRenderTarget*>(transfer.source)
+          static_cast<const VulkanRenderTarget*>(GetTransfer().source)
               ->temporary_sort_index();
       uint32_t other_source_index = static_cast<const VulkanRenderTarget*>(
-                                        other_invocation.transfer.source)
+                                        other_invocation.GetTransfer().source)
                                         ->temporary_sort_index();
       if (source_index != other_source_index) {
         return source_index < other_source_index;
       }
-      return transfer.start_tiles < other_invocation.transfer.start_tiles;
+      return GetTransfer().start_tiles <
+             other_invocation.GetTransfer().start_tiles;
     }
     bool CanBeMergedIntoOneDraw(
         const TransferInvocation& other_invocation) const {
-      return shader_key == other_invocation.shader_key &&
-             transfer.AreSourcesSame(other_invocation.transfer);
+      return xe_gpu_transfer_mergeable(this, GetTransfer().source,
+          GetTransfer().host_depth_source, &other_invocation,
+          other_invocation.GetTransfer().source,
+          other_invocation.GetTransfer().host_depth_source) != 0;
     }
   };
+  std::span<TransferInvocation> TransferInvocations() {
+    return {static_cast<TransferInvocation*>(current_transfer_invocations_.data),
+            current_transfer_invocations_.count};
+  }
+  static_assert(std::is_trivially_destructible<TransferInvocation>::value);
+  static_assert(alignof(TransferInvocation) <= alignof(std::max_align_t));
+  static_assert(sizeof(TransferInvocation) ==
+                sizeof(void*) + 2 * sizeof(uint32_t));
 
   enum DumpDescriptorSet : uint32_t {
     // Never changes. Same in both color and depth pipeline layouts, keep the
@@ -654,7 +678,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // bound checks.
   void PerformTransfersAndResolveClears(
       uint32_t render_target_count, RenderTarget* const* render_targets,
-      const std::vector<Transfer>* render_target_transfers,
+      const xe_gpu_worklist* render_target_transfers,
       const uint64_t* render_target_resolve_clear_values = nullptr,
       const Transfer::Rectangle* resolve_clear_rectangle = nullptr);
 
@@ -748,10 +772,13 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       dump_pipelines_;
 
   // Temporary storage for Resolve.
-  std::vector<Transfer> clear_transfers_[2];
+  xe_gpu_worklist clear_transfers_[2] = {};
 
   // Temporary storage for PerformTransfersAndResolveClears.
-  std::vector<TransferInvocation> current_transfer_invocations_;
+  // At most one disjoint transfer per EDRAM tile, encoded once for color/depth
+  // and once more for stencil fallback. Borrowed only until encoding returns.
+  enum { kTransferWorkCapacity = 2 * xenos::kEdramTileCount };
+  xe_gpu_worklist current_transfer_invocations_ = {};
 
   // Temporary storage for DumpRenderTargets.
   xe_gpu_worklist dump_rectangles_ = {};

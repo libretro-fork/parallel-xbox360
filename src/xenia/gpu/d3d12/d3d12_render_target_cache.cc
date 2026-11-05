@@ -119,7 +119,31 @@ bool D3D12RenderTargetCache::Initialize() {
   if (!xe_gpu_worklist_init(&dump_rectangles_, kResolveWorkCapacity,
           sizeof(ResolveCopyDumpRectangle)) ||
       !xe_gpu_worklist_init(&dump_invocations_, kResolveWorkCapacity,
-          sizeof(DumpInvocation))) return false;
+          sizeof(DumpInvocation)) ||
+      !xe_gpu_worklist_init(&current_transfer_invocations_,
+          kTransferWorkCapacity, sizeof(TransferInvocation))) return false;
+  for (auto& transfers : clear_transfers_) {
+    if (!xe_gpu_worklist_init(&transfers, xenos::kEdramTileCount,
+                              sizeof(Transfer))) {
+      Shutdown();
+      return false;
+    }
+  }
+  if (!xe_gpu_worklist_init(&current_temporary_descriptors_cpu_,
+          kTemporaryDescriptorCapacity, sizeof(D3D12_CPU_DESCRIPTOR_HANDLE)) ||
+      !xe_gpu_worklist_init(&current_temporary_descriptors_gpu_,
+          kTemporaryDescriptorCapacity,
+          sizeof(ui::d3d12::util::DescriptorCpuGpuHandlePair))) {
+    Shutdown();
+    return false;
+  }
+  // The common allocator provides raw storage. Start pair lifetimes once,
+  // rather than value-initializing them whenever the requested count grows.
+  auto* descriptor_pairs = static_cast<
+      ui::d3d12::util::DescriptorCpuGpuHandlePair*>(
+          current_temporary_descriptors_gpu_.data);
+  for (size_t i = 0; i < kTemporaryDescriptorCapacity; ++i)
+    new (descriptor_pairs + i) ui::d3d12::util::DescriptorCpuGpuHandlePair();
   const ui::d3d12::D3D12Provider& provider =
       command_processor_.GetD3D12Provider();
   ID3D12Device* device = provider.GetDevice();
@@ -954,12 +978,20 @@ bool D3D12RenderTargetCache::Initialize() {
     return false;
   }
 
-  InitializeCommon();
+  if (!InitializeCommon()) {
+    Shutdown();
+    return false;
+  }
 
   return true;
 }
 
 void D3D12RenderTargetCache::Shutdown(bool from_destructor) {
+  xe_gpu_worklist_close(&current_temporary_descriptors_cpu_);
+  xe_gpu_worklist_close(&current_temporary_descriptors_gpu_);
+  for (auto& transfers : clear_transfers_)
+    xe_gpu_worklist_close(&transfers);
+  xe_gpu_worklist_close(&current_transfer_invocations_);
   xe_gpu_worklist_close(&dump_invocations_);
   xe_gpu_worklist_close(&dump_rectangles_);
   // The command processor has completed GPU work before cache destruction.
@@ -2344,14 +2376,32 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(
   return pipelines;
 }
 
+bool D3D12RenderTargetCache::UploadTemporaryDescriptors() {
+  if (current_temporary_descriptors_cpu_.failed ||
+      current_temporary_descriptors_cpu_.count >
+          current_temporary_descriptors_gpu_.capacity) return false;
+  uint32_t count = uint32_t(current_temporary_descriptors_cpu_.count);
+  current_temporary_descriptors_gpu_.count = count;
+  auto cpu = TemporaryCPUDescriptors();
+  auto gpu = TemporaryGPUDescriptors();
+  if (!command_processor_.RequestOneUseSingleViewDescriptors(count, gpu.data()))
+    return false;
+  ID3D12Device* device = command_processor_.GetD3D12Provider().GetDevice();
+  for (uint32_t i = 0; i < count; ++i)
+    device->CopyDescriptorsSimple(1, gpu[i].first, cpu[i],
+                                  D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+  return true;
+}
+
 void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
     uint32_t render_target_count, RenderTarget* const* render_targets,
-    const std::vector<Transfer>* render_target_transfers,
+    const xe_gpu_worklist* render_target_transfers,
     const uint64_t* render_target_resolve_clear_values,
     const Transfer::Rectangle* resolve_clear_rectangle) {
   SCOPE_profile_cpu_f("gpu");
   assert_true(GetPath() == Path::kHostRenderTargets);
 
+  if (render_target_count > 1 + xenos::kMaxColorRenderTargets) return;
   bool resolve_clear_needed =
       render_target_resolve_clear_values && resolve_clear_rectangle;
 
@@ -2359,7 +2409,7 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
   bool has_transfers = false;
   for (uint32_t i = 0; i < render_target_count && !has_transfers; ++i) {
     if (render_targets[i] &&
-        (!render_target_transfers[i].empty() || resolve_clear_needed)) {
+        (render_target_transfers[i].count != 0 || resolve_clear_needed)) {
       has_transfers = true;
     }
   }
@@ -2419,7 +2469,7 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
     if (!dest_rt_key.is_depth) {
       continue;
     }
-    const std::vector<Transfer>& depth_transfers = render_target_transfers[i];
+    auto depth_transfers = Transfers(render_target_transfers[i]);
     for (const Transfer& transfer : depth_transfers) {
       if (transfer.host_depth_source != dest_rt) {
         continue;
@@ -2512,17 +2562,17 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
       continue;
     }
     auto& dest_d3d12_rt = *static_cast<D3D12RenderTarget*>(dest_rt);
-    const std::vector<Transfer>& dest_transfers = render_target_transfers[i];
+    auto dest_transfers = Transfers(render_target_transfers[i]);
     if (!resolve_clear_needed && dest_transfers.empty()) {
       continue;
     }
     // Transition the sources, only if not going to be used as destinations
     // earlier.
-    for (const Transfer& transfer : render_target_transfers[i]) {
+    for (const Transfer& transfer : Transfers(render_target_transfers[i])) {
       bool source_previously_used_as_dest = false;
       bool host_depth_source_previously_used_as_dest = false;
       for (uint32_t j = 0; j < i; ++j) {
-        if (render_target_transfers[j].empty()) {
+        if (render_target_transfers[j].count == 0) {
           continue;
         }
         const RenderTarget* previous_rt = render_targets[j];
@@ -2559,7 +2609,7 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
     // earlier.
     bool dest_used_previously_as_source = false;
     for (uint32_t j = 0; j < i; ++j) {
-      for (const Transfer& previous_transfer : render_target_transfers[j]) {
+      for (const Transfer& previous_transfer : Transfers(render_target_transfers[j])) {
         if (previous_transfer.source == dest_rt ||
             previous_transfer.host_depth_source == dest_rt) {
           dest_used_previously_as_source = true;
@@ -2588,7 +2638,7 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
     if (!dest_rt) {
       continue;
     }
-    for (const Transfer& transfer : render_target_transfers[i]) {
+    for (const Transfer& transfer : Transfers(render_target_transfers[i])) {
       assert_not_null(transfer.source);
       auto& source_d3d12_rt = *static_cast<D3D12RenderTarget*>(transfer.source);
       source_d3d12_rt.SetTemporarySRVDescriptorIndex(UINT32_MAX);
@@ -2602,29 +2652,35 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
       }
     }
   }
-  current_temporary_descriptors_cpu_.clear();
+  xe_gpu_worklist_reset(&current_temporary_descriptors_cpu_);
   for (uint32_t i = 0; i < render_target_count; ++i) {
     RenderTarget* dest_rt = render_targets[i];
     if (!dest_rt) {
       continue;
     }
     bool dest_is_depth = dest_rt->key().is_depth;
-    for (const Transfer& transfer : render_target_transfers[i]) {
+    for (const Transfer& transfer : Transfers(render_target_transfers[i])) {
       assert_not_null(transfer.source);
       auto& source_d3d12_rt = *static_cast<D3D12RenderTarget*>(transfer.source);
       if (source_d3d12_rt.temporary_srv_descriptor_index() == UINT32_MAX) {
         source_d3d12_rt.SetTemporarySRVDescriptorIndex(
-            uint32_t(current_temporary_descriptors_cpu_.size()));
-        current_temporary_descriptors_cpu_.push_back(
-            source_d3d12_rt.descriptor_srv().GetHandle());
+            uint32_t(current_temporary_descriptors_cpu_.count));
+        if (!AppendTemporaryDescriptor(
+                source_d3d12_rt.descriptor_srv().GetHandle())) {
+          command_processor_.PopDebugMarker();
+          return;
+        }
       }
       if (source_d3d12_rt.key().is_depth &&
           source_d3d12_rt.temporary_srv_descriptor_index_stencil() ==
               UINT32_MAX) {
         source_d3d12_rt.SetTemporarySRVDescriptorIndexStencil(
-            uint32_t(current_temporary_descriptors_cpu_.size()));
-        current_temporary_descriptors_cpu_.push_back(
-            source_d3d12_rt.descriptor_srv_stencil().GetHandle());
+            uint32_t(current_temporary_descriptors_cpu_.count));
+        if (!AppendTemporaryDescriptor(
+                source_d3d12_rt.descriptor_srv_stencil().GetHandle())) {
+          command_processor_.PopDebugMarker();
+          return;
+        }
       }
       bool source_is_depth = source_d3d12_rt.key().is_depth;
       auto* host_depth_source_d3d12_rt =
@@ -2635,24 +2691,18 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
           host_depth_source_d3d12_rt->temporary_srv_descriptor_index() ==
               UINT32_MAX) {
         host_depth_source_d3d12_rt->SetTemporarySRVDescriptorIndex(
-            uint32_t(current_temporary_descriptors_cpu_.size()));
-        current_temporary_descriptors_cpu_.push_back(
-            host_depth_source_d3d12_rt->descriptor_srv().GetHandle());
+            uint32_t(current_temporary_descriptors_cpu_.count));
+        if (!AppendTemporaryDescriptor(
+                host_depth_source_d3d12_rt->descriptor_srv().GetHandle())) {
+          command_processor_.PopDebugMarker();
+          return;
+        }
       }
     }
   }
-  uint32_t descriptor_count =
-      uint32_t(current_temporary_descriptors_cpu_.size());
-  current_temporary_descriptors_gpu_.resize(descriptor_count);
-  if (!command_processor_.RequestOneUseSingleViewDescriptors(
-          descriptor_count, current_temporary_descriptors_gpu_.data())) {
+  if (!UploadTemporaryDescriptors()) {
+    command_processor_.PopDebugMarker();
     return;
-  }
-  for (uint32_t i = 0; i < descriptor_count; ++i) {
-    device->CopyDescriptorsSimple(1,
-                                  current_temporary_descriptors_gpu_[i].first,
-                                  current_temporary_descriptors_cpu_[i],
-                                  D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
   }
 
   // Perform the transfers and clears.
@@ -2680,7 +2730,7 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
       continue;
     }
 
-    const std::vector<Transfer>& current_transfers = render_target_transfers[i];
+    auto current_transfers = Transfers(render_target_transfers[i]);
     if (current_transfers.empty() && !resolve_clear_needed) {
       continue;
     }
@@ -2725,9 +2775,14 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
       // switches. Also gather stencil rectangles to clear if needed.
       bool need_stencil_bit_draws =
           dest_rt_key.is_depth && !use_stencil_reference_output_;
-      current_transfer_invocations_.clear();
-      current_transfer_invocations_.reserve(
-          current_transfers.size() << uint32_t(need_stencil_bit_draws));
+      xe_gpu_worklist_reset(&current_transfer_invocations_);
+      // Each source transfer covers at least one disjoint physical tile.
+      // The optional second pass writes stencil bits from the same records.
+      if (current_transfers.size() > xenos::kEdramTileCount) {
+        XELOGE("Render target transfer work exceeds physical EDRAM capacity");
+        command_processor_.PopDebugMarker();
+        return;
+      }
       uint32_t rt_sort_index = 0;
       EdramTransferShaderKey new_transfer_shader_key;
       new_transfer_shader_key.dest_msaa_samples = dest_rt_key.msaa_samples;
@@ -2822,16 +2877,19 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
                                          : EdramTransferMode::kColorToColor;
             }
           }
-          current_transfer_invocations_.emplace_back(transfer,
-                                                     new_transfer_shader_key);
-          if (j) {
-            current_transfer_invocations_.back().transfer.host_depth_source =
-                nullptr;
+          void* slot =
+              xe_gpu_worklist_append(&current_transfer_invocations_);
+          if (!slot) {
+            XELOGE("Render target transfer invocation storage exhausted");
+            command_processor_.PopDebugMarker();
+            return;
           }
+          new (slot) TransferInvocation(transfer, new_transfer_shader_key,
+                                        j != 0);
         }
       }
-      std::sort(current_transfer_invocations_.begin(),
-                current_transfer_invocations_.end());
+      auto transfer_invocations = TransferInvocations();
+      std::sort(transfer_invocations.begin(), transfer_invocations.end());
 
       // Clear the stencil to 0 where it will be loaded - will be setting the
       // bits that need to be 1 by discarding samples. Clearing everything here
@@ -2899,22 +2957,22 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
         command_processor_.SetScissorRect(transfer_scissor);
       }
 
-      for (auto it = current_transfer_invocations_.cbegin();
-           it != current_transfer_invocations_.cend(); ++it) {
+      for (auto it = transfer_invocations.begin();
+           it != transfer_invocations.end(); ++it) {
         const TransferInvocation& transfer_invocation_first = *it;
         // Will be merging transfers from the same source into one mesh.
         auto it_merged_first = it, it_merged_last = it;
         uint32_t transfer_rectangle_count =
-            transfer_invocation_first.transfer.GetRectangles(
+            transfer_invocation_first.GetTransfer().GetRectangles(
                 dest_rt_key.base_tiles, dest_pitch_tiles,
                 dest_rt_key.msaa_samples, dest_is_64bpp, nullptr,
                 resolve_clear_rectangle);
         for (auto it_merge = std::next(it_merged_first);
-             it_merge != current_transfer_invocations_.cend(); ++it_merge) {
+             it_merge != transfer_invocations.end(); ++it_merge) {
           if (!transfer_invocation_first.CanBeMergedIntoOneDraw(*it_merge)) {
             break;
           }
-          transfer_rectangle_count += it_merge->transfer.GetRectangles(
+          transfer_rectangle_count += it_merge->GetTransfer().GetRectangles(
               dest_rt_key.base_tiles, dest_pitch_tiles,
               dest_rt_key.msaa_samples, dest_is_64bpp, nullptr,
               resolve_clear_rectangle);
@@ -2924,12 +2982,12 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
         // Skip the merged transfers in the subsequent iterations.
         it = it_merged_last;
 
-        assert_not_null(it->transfer.source);
+        assert_not_null(it->GetTransfer().source);
         auto& source_d3d12_rt =
-            *static_cast<D3D12RenderTarget*>(it->transfer.source);
+            *static_cast<D3D12RenderTarget*>(it->GetTransfer().source);
         auto* host_depth_source_d3d12_rt =
-            static_cast<D3D12RenderTarget*>(it->transfer.host_depth_source);
-        EdramTransferShaderKey transfer_shader_key = it->shader_key;
+            static_cast<D3D12RenderTarget*>(it->GetHostDepthSource());
+        EdramTransferShaderKey transfer_shader_key = it->GetShaderKey();
         EdramTransferMode transfer_mode = transfer_shader_key.mode;
         const EdramTransferModeInfo& transfer_mode_info =
             kEdramTransferModes[size_t(transfer_mode)];
@@ -2991,7 +3049,7 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
           Transfer::Rectangle transfer_invocation_rectangles
               [Transfer::kMaxRectanglesWithCutout];
           uint32_t transfer_invocation_rectangle_count =
-              it_merged->transfer.GetRectangles(
+              it_merged->GetTransfer().GetRectangles(
                   dest_rt_key.base_tiles, dest_pitch_tiles,
                   dest_rt_key.msaa_samples, dest_is_64bpp,
                   transfer_invocation_rectangles, resolve_clear_rectangle);
@@ -3167,7 +3225,7 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
           command_list.D3DSetGraphicsRootDescriptorTable(
               xe::bit_count(transfer_root_parameters_used &
                             (kTransferUsedRootParameterHostDepthSRVBit - 1)),
-              current_temporary_descriptors_gpu_
+              TemporaryGPUDescriptors()
                   [last_descriptor_index_host_depth]
                       .second);
           transfer_root_parameters_set |=
@@ -3189,7 +3247,7 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
           command_list.D3DSetGraphicsRootDescriptorTable(
               xe::bit_count(transfer_root_parameters_used &
                             (kTransferUsedRootParameterStencilSRVBit - 1)),
-              current_temporary_descriptors_gpu_[last_descriptor_index_stencil]
+              TemporaryGPUDescriptors()[last_descriptor_index_stencil]
                   .second);
           transfer_root_parameters_set |=
               kTransferUsedRootParameterStencilSRVBit;
@@ -3200,7 +3258,7 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
           command_list.D3DSetGraphicsRootDescriptorTable(
               xe::bit_count(transfer_root_parameters_used &
                             (kTransferUsedRootParameterDepthSRVBit - 1)),
-              current_temporary_descriptors_gpu_[last_descriptor_index_depth]
+              TemporaryGPUDescriptors()[last_descriptor_index_depth]
                   .second);
           transfer_root_parameters_set |= kTransferUsedRootParameterDepthSRVBit;
         }
@@ -3210,7 +3268,7 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
           command_list.D3DSetGraphicsRootDescriptorTable(
               xe::bit_count(transfer_root_parameters_used &
                             (kTransferUsedRootParameterColorSRVBit - 1)),
-              current_temporary_descriptors_gpu_[last_descriptor_index_color]
+              TemporaryGPUDescriptors()[last_descriptor_index_color]
                   .second);
           transfer_root_parameters_set |= kTransferUsedRootParameterColorSRVBit;
         }
@@ -3528,7 +3586,7 @@ bool D3D12RenderTargetCache::PrepareDumpSourceDescriptors() {
     d3d12_rt.SetTemporarySRVDescriptorIndex(UINT32_MAX);
     d3d12_rt.SetTemporarySRVDescriptorIndexStencil(UINT32_MAX);
   }
-  current_temporary_descriptors_cpu_.clear();
+  xe_gpu_worklist_reset(&current_temporary_descriptors_cpu_);
   uint32_t rt_sort_index = 0;
   for (const ResolveCopyDumpRectangle& rectangle : DumpRectangles()) {
     auto& d3d12_rt = *static_cast<D3D12RenderTarget*>(rectangle.render_target);
@@ -3537,35 +3595,20 @@ bool D3D12RenderTargetCache::PrepareDumpSourceDescriptors() {
     }
     if (d3d12_rt.temporary_srv_descriptor_index() == UINT32_MAX) {
       d3d12_rt.SetTemporarySRVDescriptorIndex(
-          uint32_t(current_temporary_descriptors_cpu_.size()));
-      current_temporary_descriptors_cpu_.push_back(
-          d3d12_rt.descriptor_srv().GetHandle());
+          uint32_t(current_temporary_descriptors_cpu_.count));
+      if (!AppendTemporaryDescriptor(d3d12_rt.descriptor_srv().GetHandle()))
+        return false;
     }
     if (d3d12_rt.key().is_depth &&
         d3d12_rt.temporary_srv_descriptor_index_stencil() == UINT32_MAX) {
       d3d12_rt.SetTemporarySRVDescriptorIndexStencil(
-          uint32_t(current_temporary_descriptors_cpu_.size()));
-      current_temporary_descriptors_cpu_.push_back(
-          d3d12_rt.descriptor_srv_stencil().GetHandle());
+          uint32_t(current_temporary_descriptors_cpu_.count));
+      if (!AppendTemporaryDescriptor(
+              d3d12_rt.descriptor_srv_stencil().GetHandle())) return false;
     }
   }
 
-  // Copy source descriptors to a shader-visible heap.
-  uint32_t descriptor_count =
-      uint32_t(current_temporary_descriptors_cpu_.size());
-  current_temporary_descriptors_gpu_.resize(descriptor_count);
-  if (!command_processor_.RequestOneUseSingleViewDescriptors(
-          descriptor_count, current_temporary_descriptors_gpu_.data())) {
-    return false;
-  }
-  ID3D12Device* device = command_processor_.GetD3D12Provider().GetDevice();
-  for (uint32_t i = 0; i < descriptor_count; ++i) {
-    device->CopyDescriptorsSimple(1,
-                                  current_temporary_descriptors_gpu_[i].first,
-                                  current_temporary_descriptors_cpu_[i],
-                                  D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-  }
-  return true;
+  return UploadTemporaryDescriptors();
 }
 
 bool D3D12RenderTargetCache::DirectResolveRenderTargets(
@@ -3752,7 +3795,7 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
       if (!(root_parameters_set & kDumpRootParameterDepthStencilBit)) {
         command_list.D3DSetComputeRootDescriptorTable(
             kDumpRootParameterDepthStencil,
-            current_temporary_descriptors_gpu_[last_descriptor_index_stencil]
+            TemporaryGPUDescriptors()[last_descriptor_index_stencil]
                 .second);
         root_parameters_set |= kDumpRootParameterDepthStencilBit;
       }
@@ -3770,7 +3813,7 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
     if (!(root_parameters_set & kDumpRootParameterSourceBit)) {
       command_list.D3DSetComputeRootDescriptorTable(
           kDumpRootParameterSource,
-          current_temporary_descriptors_gpu_[last_descriptor_index_source]
+          TemporaryGPUDescriptors()[last_descriptor_index_source]
               .second);
       root_parameters_set |= kDumpRootParameterSourceBit;
     }
@@ -3965,7 +4008,7 @@ void D3D12RenderTargetCache::DumpRenderTargets(uint32_t dump_base,
       if (!(root_parameters_set & kDumpRootParameterDepthStencilBit)) {
         command_list.D3DSetComputeRootDescriptorTable(
             kDumpRootParameterDepthStencil,
-            current_temporary_descriptors_gpu_[last_descriptor_index_stencil]
+            TemporaryGPUDescriptors()[last_descriptor_index_stencil]
                 .second);
         root_parameters_set |= kDumpRootParameterDepthStencilBit;
       }
@@ -3983,7 +4026,7 @@ void D3D12RenderTargetCache::DumpRenderTargets(uint32_t dump_base,
     if (!(root_parameters_set & kDumpRootParameterSourceBit)) {
       command_list.D3DSetComputeRootDescriptorTable(
           kDumpRootParameterSource,
-          current_temporary_descriptors_gpu_[last_descriptor_index_source]
+          TemporaryGPUDescriptors()[last_descriptor_index_source]
               .second);
       root_parameters_set |= kDumpRootParameterSourceBit;
     }

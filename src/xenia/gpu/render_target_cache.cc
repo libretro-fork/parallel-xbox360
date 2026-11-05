@@ -561,7 +561,16 @@ uint32_t RenderTargetCache::Transfer::AddRectangle(const Rectangle& rectangle,
 
 RenderTargetCache::~RenderTargetCache() { ShutdownCommon(); }
 
-void RenderTargetCache::InitializeCommon() {
+bool RenderTargetCache::InitializeCommon() {
+  // One disjoint physical range per tile bounds each destination's list.
+  for (auto& transfers : last_update_transfers_) {
+    if (!xe_gpu_worklist_init(&transfers, xenos::kEdramTileCount,
+                              sizeof(Transfer))) {
+      for (auto& allocated : last_update_transfers_)
+        xe_gpu_worklist_close(&allocated);
+      return false;
+    }
+  }
   assert_true(ownership_ranges_.empty());
   ownership_ranges_.emplace(
       std::piecewise_construct, std::forward_as_tuple(uint32_t(0)),
@@ -579,6 +588,7 @@ void RenderTargetCache::InitializeCommon() {
           "draw_resolution_scale_x/y above 1 - ignoring");
     }
   }
+  return true;
 }
 
 void RenderTargetCache::DestroyAllRenderTargets(bool shutting_down) {
@@ -598,7 +608,11 @@ void RenderTargetCache::DestroyAllRenderTargets(bool shutting_down) {
   render_targets_.clear();
 }
 
-void RenderTargetCache::ShutdownCommon() { DestroyAllRenderTargets(true); }
+void RenderTargetCache::ShutdownCommon() {
+  for (auto& transfers : last_update_transfers_)
+    xe_gpu_worklist_close(&transfers);
+  DestroyAllRenderTargets(true);
+}
 
 void RenderTargetCache::ClearCache() {
   if (PrepareRenderTargetCollection()) CollectPreparedRenderTargets();
@@ -641,7 +655,8 @@ void RenderTargetCache::CollectPreparedRenderTargets() {
               sizeof(last_update_accumulated_render_targets_));
   std::memset(last_update_used_render_targets_, 0,
               sizeof(last_update_used_render_targets_));
-  for (auto& transfers : last_update_transfers_) transfers.clear();
+  for (auto& transfers : last_update_transfers_)
+    xe_gpu_worklist_reset(&transfers);
   auto it = render_targets_.begin();
   while (it != render_targets_.end()) {
     RenderTarget* target = it->second;
@@ -921,7 +936,7 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
   // Clear ownership transfers before adding any.
   if (!interlock_barrier_only) {
     for (size_t i = 0; i < xe::countof(last_update_transfers_); ++i) {
-      last_update_transfers_[i].clear();
+      xe_gpu_worklist_reset(&last_update_transfers_[i]);
     }
   }
 
@@ -1137,11 +1152,11 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
   for (uint32_t i = 0; i < edram_bases_sorted_count; ++i) {
     const std::pair<uint32_t, uint32_t>& rt_base_index = edram_bases_sorted[i];
     uint32_t rt_bit_index = rt_base_index.second;
-    ChangeOwnership(rt_keys[rt_bit_index], 0, rt_lengths_tiles[i],
+    if (!ChangeOwnership(rt_keys[rt_bit_index], 0, rt_lengths_tiles[i],
                     interlock_barrier_only
                         ? nullptr
                         : &last_update_transfers_[rt_bit_index],
-                    nullptr, rts_keep_depth_bits[rt_bit_index]);
+                    nullptr, rts_keep_depth_bits[rt_bit_index])) return false;
   }
 
   if (interlock_barrier_only) {
@@ -1504,9 +1519,9 @@ bool RenderTargetCache::PrepareHostRenderTargetsResolveClear(
     const draw_util::ResolveInfo& resolve_info,
     Transfer::Rectangle& clear_rectangle_out,
     RenderTarget*& depth_render_target_out,
-    std::vector<Transfer>& depth_transfers_out,
+    xe_gpu_worklist& depth_transfers_out,
     RenderTarget*& color_render_target_out,
-    std::vector<Transfer>& color_transfers_out) {
+    xe_gpu_worklist& color_transfers_out) {
   assert_true(GetPath() == Path::kHostRenderTargets);
 
   // These transfers precede a clear rather than a draw, so drop the last
@@ -1717,18 +1732,20 @@ bool RenderTargetCache::PrepareHostRenderTargetsResolveClear(
 
   clear_rectangle_out = clear_rectangle;
   depth_render_target_out = depth_render_target;
-  depth_transfers_out.clear();
+  xe_gpu_worklist_reset(&depth_transfers_out);
   if (depth_render_target) {
-    ChangeOwnership(
+    if (!ChangeOwnership(
         depth_render_target_key, depth_clear_start_tiles_base_relative,
-        depth_clear_length_tiles, &depth_transfers_out, &clear_rectangle);
+        depth_clear_length_tiles, &depth_transfers_out, &clear_rectangle))
+      return false;
   }
   color_render_target_out = color_render_target;
-  color_transfers_out.clear();
+  xe_gpu_worklist_reset(&color_transfers_out);
   if (color_render_target) {
-    ChangeOwnership(
+    if (!ChangeOwnership(
         color_render_target_key, color_clear_start_tiles_base_relative,
-        color_clear_length_tiles, &color_transfers_out, &clear_rectangle);
+        color_clear_length_tiles, &color_transfers_out, &clear_rectangle))
+      return false;
   }
   return true;
 }
@@ -1936,7 +1953,7 @@ bool RenderTargetCache::IsTransferValueConverted7e3And8888(
 
 void RenderTargetCache::LogTransfers(
     uint32_t render_target_count, RenderTarget* const* render_targets,
-    const std::vector<Transfer>* render_target_transfers,
+    const xe_gpu_worklist* render_target_transfers,
     const Transfer::Rectangle* resolve_clear_rectangle) const {
   if (!cvars::log_transfers) {
     return;
@@ -1954,7 +1971,7 @@ void RenderTargetCache::LogTransfers(
       continue;
     }
     std::string dest_name = dest->key().GetDebugName();
-    for (const Transfer& transfer : render_target_transfers[i]) {
+    for (const Transfer& transfer : Transfers(render_target_transfers[i])) {
       std::string host_depth_name;
       if (transfer.host_depth_source) {
         host_depth_name = ", host depth from " +
@@ -2071,9 +2088,9 @@ bool RenderTargetCache::IsHostDepthCurrent(RenderTargetKey depth_target,
          is_current_in_extent(0, end_tiles & (xenos::kEdramTileCount - 1));
 }
 
-void RenderTargetCache::ChangeOwnership(
+bool RenderTargetCache::ChangeOwnership(
     RenderTargetKey dest, uint32_t start_tiles_base_relative,
-    uint32_t length_tiles, std::vector<Transfer>* transfers_append_out,
+    uint32_t length_tiles, xe_gpu_worklist* transfers_append_out,
     const Transfer::Rectangle* resolve_clear_cutout, bool keep_depth_bits) {
   // xenos::kEdramTileCount with length 0 is fine if both the start and the end
   // are clamped to xenos::kEdramTileCount.
@@ -2081,8 +2098,15 @@ void RenderTargetCache::ChangeOwnership(
               (xenos::kEdramTileCount - uint32_t(length_tiles != 0)));
   assert_true(length_tiles <= xenos::kEdramTileCount);
   if (length_tiles == 0) {
-    return;
+    return true;
   }
+  // Validate worst-case append space before mutating ownership. Every new
+  // record covers at least one tile in this claim's disjoint wrapped extents.
+  if (transfers_append_out &&
+      (!transfers_append_out->data || transfers_append_out->failed ||
+       transfers_append_out->count > transfers_append_out->capacity ||
+       length_tiles > transfers_append_out->capacity -
+                          transfers_append_out->count)) return false;
   uint32_t dest_pitch_tiles = dest.GetPitchTiles();
   bool dest_is_64bpp = dest.Is64bpp();
   // Native scale render targets are kept out of host depth tracking entirely
@@ -2106,7 +2130,7 @@ void RenderTargetCache::ChangeOwnership(
     return dest_writes_depth_bits && range.depth_bits_target != dest;
   };
   auto change_ownership_in_extent = [&](uint32_t extent_start,
-                                        uint32_t extent_end) {
+                                        uint32_t extent_end) -> bool {
     // The map contains consecutive ranges, merged if the adjacent ones are the
     // same. Find the range starting at >= the start. A portion of the range
     // preceding it may be intersecting the render target's range (or even fully
@@ -2164,17 +2188,17 @@ void RenderTargetCache::ChangeOwnership(
               // Same render target, don't provide a separate host depth source.
               transfer_host_depth_source = RenderTargetKey();
             }
-            if (!transfers_append_out->empty() &&
-                transfers_append_out->back().end_tiles == it->first &&
-                transfers_append_out->back().source->key() == transfer_source &&
-                ((transfers_append_out->back().host_depth_source == nullptr) ==
+            if (!Transfers(*transfers_append_out).empty() &&
+                Transfers(*transfers_append_out).back().end_tiles == it->first &&
+                Transfers(*transfers_append_out).back().source->key() == transfer_source &&
+                ((Transfers(*transfers_append_out).back().host_depth_source == nullptr) ==
                  transfer_host_depth_source.IsEmpty()) &&
                 (transfer_host_depth_source.IsEmpty() ||
-                 transfers_append_out->back().host_depth_source->key() ==
+                 Transfers(*transfers_append_out).back().host_depth_source->key() ==
                      transfer_host_depth_source)) {
               // Extend the last transfer if, for example, transferring color,
               // but host depth is different.
-              transfers_append_out->back().end_tiles = transfer_end_tiles;
+              Transfers(*transfers_append_out).back().end_tiles = transfer_end_tiles;
             } else {
               auto transfer_source_rt_it =
                   render_targets_.find(transfer_source);
@@ -2189,8 +2213,9 @@ void RenderTargetCache::ChangeOwnership(
                   assert_false(transfer_host_depth_source_rt_it !=
                                    render_targets_.end() &&
                                !transfer_host_depth_source_rt_it->second);
-                  transfers_append_out->emplace_back(
-                      it->first, transfer_end_tiles,
+                  void* slot = xe_gpu_worklist_append(transfers_append_out);
+                  if (!slot) return false;
+                  new (slot) Transfer(it->first, transfer_end_tiles,
                       transfer_source_rt_it->second,
                       transfer_host_depth_source_rt_it != render_targets_.end()
                           ? transfer_host_depth_source_rt_it->second
@@ -2235,19 +2260,21 @@ void RenderTargetCache::ChangeOwnership(
       }
       it = it_next;
     }
+    return true;
   };
   // start_tiles_base_relative may already be in the next 11 bits - wrap the
   // start tile index to use the same code as if that was not the case.
   uint32_t start_tiles = (dest.base_tiles + start_tiles_base_relative) &
                          (xenos::kEdramTileCount - 1);
   uint32_t end_tiles = start_tiles + length_tiles;
-  change_ownership_in_extent(start_tiles,
-                             std::min(end_tiles, xenos::kEdramTileCount));
+  if (!change_ownership_in_extent(start_tiles,
+          std::min(end_tiles, xenos::kEdramTileCount))) return false;
   if (end_tiles > xenos::kEdramTileCount) {
     // The ownership change extent goes to the next EDRAM addressing period.
-    change_ownership_in_extent(
+    return change_ownership_in_extent(
         0, std::min(end_tiles & (xenos::kEdramTileCount - 1), start_tiles));
   }
+  return true;
 }
 
 }  // namespace gpu
