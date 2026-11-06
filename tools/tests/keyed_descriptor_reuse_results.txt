@@ -1,0 +1,89 @@
+Layout-keyed Vulkan descriptor reuse (0123)
+==========================================
+
+Replace the pending texture descriptor deque and unordered_map<layout, vector>
+free lists with single-owner C89 storage. Keys are the existing full 32-bit layout
+key, including stage. Key zero and UINT32_MAX work; no key/type bits are dropped.
+The layout caches and their asynchronous pipeline ownership remain unchanged.
+
+Stable shared storage:
+- A checked open-addressed index contains pointers to nonmoving 32-byte key
+  records, not copied owners. Two recent keys are checked before hashing. Labels
+  and bucket capacity survive explicit clears; layout handles stay elsewhere.
+- Every layout shares the same 128-record pages of 16-byte handle/next records.
+  No per-key array or per-key 128-handle page is warmed. Empty canceled slots can
+  be used by any key; valid handles remain exclusively on their matching key.
+- A global FIFO stores 40-byte key/frame batches in shared 16-record pages.
+  Within each batch, handles are linked in reverse use order. Retirement splices
+  the batch onto its key's free LIFO, preserving the old FIFO-to-LIFO handle order
+  without visiting/copying individual handles or looking up the key again.
+- Collection visits only completed batches. It does not scan historical keys,
+  pending keys with future frames, map capacity or free handles. Frame ordering
+  follows the old global deque's monotonic contract; invalid backward pending
+  frame requests are rejected. Existing completed-frame thresholds are unchanged.
+
+Lease/reset safety:
+- Reserve CPU key/frame/handle metadata before native allocation. Failed native
+  allocation and C++ exceptions cancel the lease through a thin scope guard.
+  A leased pending head is pinned against retirement; private-frame leases can
+  commit safely after the prior queue tail has been collected.
+- Canceled empty CPU slots never hide valid handles reclaimed during a lease.
+  Metadata failures leave existing handles/pending groups intact and are retryable.
+- Reset preflights leases for all descriptor stores before resetting any native
+  pools. It rewinds shared record pages and advances an epoch; old per-key roots
+  and stale handles are forgotten lazily on their next lease. Normal reset does
+  not scan capacity. Epoch wrap has an allocation-free cold key-epoch sweep.
+- CPU records never own/destroy native descriptor sets, layouts or pools. The
+  prior GPU-safe native pool reset and shutdown/join ordering remain in place.
+  This store is not a concurrent MPMC queue and requires the command-processor
+  owner. No locks, clocks, sleeps, release logging or GPU round trips are added.
+
+Offline validation:
+- GCC strict C89 -pedantic -Wall -Wextra -Werror with ASan/UBSan and MSVC /TC
+  /W4 /WX: all four partial warm failures, 56 distinct growth allocation failures
+  with retries, zero/MAX keys, hash growth with stable leased key identity,
+  lease/reset/destroy gates, pinned collection, private frame commits after queue
+  drain, backward frames, epoch wrap, exact key ownership, balanced frees and
+  240,000 leases with no allocations after warming the tested high-water demand.
+- C++ legacy reference uses actual VkDescriptorSet handles: 640,000 events match
+  the old deque/free vectors, including randomized keys, FIFO/LIFO order, native
+  failures, C++ exceptions and ten simulated GPU-drained pool resets. Pointer and
+  integer Vulkan handle forms pass. Simulated handles are not real GPU resources.
+- Actual MSVC Vulkan and D3D12 command-processor units compile; full Windows
+  static Make -j5 passes. Existing generic reuse and submission tests also pass.
+  D3D12 has different descriptor-heap queues; no Vulkan-set reuse path was ported
+  to D3D12. No game, frontend, JIT or GPU is launched; actual device/rendering and
+  post-unload validation remain unrun under the launch restriction.
+
+CPU metadata benchmark (not FPS):
+32M leases, 64 per frame, two pending frames, 1,000 warm-up frames, median three
+CPU-time runs. Same workload/checksum for legacy/new; no native driver calls.
+Two synthetic layouts represent concentrated reuse; 256 layouts exercise a
+wider key set. Instrumented allocation counters affect allocation-path timings.
+
+Compiler/host                 2-key prior/current ms    256-key prior/current ms
+GCC13.3 WSL Linux -O3             143.945 / 67.668          193.639 / 160.669
+MinGW16.2 Windows -O3             160.000 / 63.000          192.000 / 175.000
+MSVC x64 Windows /O2             245.000 / 88.000          310.000 / 189.000
+
+Timed metadata allocations: GNU legacy 1,523,810, C89 zero. MSVC legacy already
+retained warmed deque blocks (zero); C89 is also zero. New peaks can allocate.
+Warmed requested metadata including owners (bytes, not process RSS):
+                        GNU 2-key/256-key       MSVC 2-key/256-key
+Legacy                     4,504 / 18,152           9,256 / 30,888
+C89                        4,968 / 21,856           4,968 / 21,856
+
+Thus GNU trades 464/3,704 more retained bytes in these fixtures for fewer heap
+calls/copies; MSVC requests less in both. Retained historical keys/free capacity
+can exceed a cleared map's idle metadata. Native GPU memory/allocation behavior
+is unchanged. No whole-core allocation-free, RSS reduction or gameplay claim.
+Initial x64 warm storage is 4,968 bytes: owner 208, buckets 1,024, one key page
+1,032, one handle page 2,056 and one frame page 648. All page sizes are growth
+units, not hard limits. Allocation failure is checked, and all storage is freed
+at owner destruction. New key/high-water demand still allocates mid-game.
+
+Reproduce run_keyed_descriptor_reuse_tests.sh/.cmd and
+run_keyed_descriptor_reuse_bench.sh. MSVC benchmark: cl /O2 /EHsc /std:c++20
+/DNDEBUG /Ilibretro /Ithird_party/libretro-common/include
+ tools/tests/keyed_descriptor_reuse_bench.cc. Benchmarks are separate CPU-only
+programs; they do not initialize the core or overwrite an installed DLL.

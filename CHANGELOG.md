@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan texture descriptor reuse replaces its deque and layout-keyed free vectors with shared C89 records. Completed key/frame batches retire by splice, preserving exact per-layout handle order without per-handle copies or hash lookups. Native completion checks and reset boundaries are unchanged. Offline compiler benchmarks improve; retained metadata can be larger on GNU, and new peaks still allocate.
+
 - Vulkan descriptor budgets now use borrowed C89 request plans and count-only mutable storage. Removed duplicate descriptor-type IDs and their initialization copies, halving counter payload and saving 1,536 bytes across the four warmed owner pools on tested x64 builds. Native allocation traces and failure cleanup remain unchanged; paired CPU fixtures improve on GCC/MinGW/MSVC. Gameplay gains are unmeasured.
 
 - Vulkan descriptor-pool search now uses retained C89 nodes instead of a multimap and copied page values. Switching active pages moves pointers, and insertion/removal no longer allocates. Native selection order and failure-safe ownership are preserved. Mixed-search CPU fixtures improve on GCC/MinGW/MSVC; hot-page results vary slightly. New metadata peaks and native pools still allocate.

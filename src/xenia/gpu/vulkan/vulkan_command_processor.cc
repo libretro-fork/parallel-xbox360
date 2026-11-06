@@ -130,6 +130,7 @@ VulkanCommandProcessor::~VulkanCommandProcessor() {
   xe_sampler_stage_free(&samplers_pixel_);
   xe_descriptor_scratch_free(&descriptor_write_image_info_);
   xe_sparse_bind_destroy(&sparse_binds_);
+  xe_keyed_reuse_destroy(&texture_transient_descriptors_);
   xe_descriptor_reuse_destroy(&constants_transient_descriptors_);
   for (auto& pool : single_transient_descriptors_) xe_descriptor_reuse_destroy(&pool);
 }
@@ -253,6 +254,7 @@ bool VulkanCommandProcessor::SetupContext() {
   }
 
   if (!xe_sparse_bind_warm(&sparse_binds_)) return false;
+  if (!xe_keyed_reuse_warm(&texture_transient_descriptors_)) return false;
   if (!xe_descriptor_reuse_warm(&constants_transient_descriptors_)) return false;
   for (auto& pool : single_transient_descriptors_)
     if (!xe_descriptor_reuse_warm(&pool)) return false;
@@ -5517,26 +5519,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     for (auto& pool : single_transient_descriptors_)
       xe_descriptor_reuse_collect(&pool, frame_completed_);
     xe_descriptor_reuse_collect(&constants_transient_descriptors_, frame_completed_);
-    while (!texture_transient_descriptor_sets_used_.empty()) {
-      const UsedTextureTransientDescriptorSet& used_transient_descriptor_set =
-          texture_transient_descriptor_sets_used_.front();
-      if (used_transient_descriptor_set.frame > frame_completed_) {
-        break;
-      }
-      auto it = texture_transient_descriptor_sets_free_.find(
-          used_transient_descriptor_set.layout);
-      if (it == texture_transient_descriptor_sets_free_.end()) {
-        it =
-            texture_transient_descriptor_sets_free_
-                .emplace(
-                    std::piecewise_construct,
-                    std::forward_as_tuple(used_transient_descriptor_set.layout),
-                    std::forward_as_tuple())
-                .first;
-      }
-      it->second.push_back(used_transient_descriptor_set.set);
-      texture_transient_descriptor_sets_used_.pop_front();
-    }
+    xe_keyed_reuse_collect(&texture_transient_descriptors_, frame_completed_);
 
     primitive_processor_->BeginFrame();
 
@@ -5886,10 +5869,9 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
 }
 
 void VulkanCommandProcessor::ClearTransientDescriptorPools() {
-  if (constants_transient_descriptors_.leased) return;
+  if (texture_transient_descriptors_.leased || constants_transient_descriptors_.leased) return;
   for (const auto& pool : single_transient_descriptors_) if (pool.leased) return;
-  texture_transient_descriptor_sets_free_.clear();
-  texture_transient_descriptor_sets_used_.clear();
+  xe_keyed_reuse_reset(&texture_transient_descriptors_);
   transient_descriptor_allocator_textures_.Reset();
 
   xe_descriptor_reuse_reset(&constants_transient_descriptors_);
@@ -7127,15 +7109,13 @@ uint32_t VulkanCommandProcessor::WriteTransientTextureBindings(
   texture_descriptor_set_layout_key.texture_count = texture_count;
   texture_descriptor_set_layout_key.sampler_count = sampler_count;
   texture_descriptor_set_layout_key.is_vertex = uint32_t(is_vertex);
-  VkDescriptorSet texture_descriptor_set;
-  auto textures_free_it = texture_transient_descriptor_sets_free_.find(
-      texture_descriptor_set_layout_key);
-  if (textures_free_it != texture_transient_descriptor_sets_free_.end() &&
-      !textures_free_it->second.empty()) {
-    texture_descriptor_set = textures_free_it->second.back();
-    textures_free_it->second.pop_back();
-  } else {
-    std::array<VkDescriptorPoolSize, 2> texture_descriptor_counts;
+  xe_descriptor_reuse_node* lease = xe_keyed_reuse_acquire(
+      &texture_transient_descriptors_, texture_descriptor_set_layout_key.key, frame_current_);
+  if (!lease) return 0;
+  xe_keyed_reuse_scope lease_scope(&texture_transient_descriptors_);
+  VkDescriptorSet texture_descriptor_set = (VkDescriptorSet)lease->handle;
+  if (texture_descriptor_set == VK_NULL_HANDLE) {
+    VkDescriptorPoolSize texture_descriptor_counts[2];
     uint32_t texture_descriptor_counts_count = 0;
     if (texture_count) {
       VkDescriptorPoolSize& texture_descriptor_count =
@@ -7151,17 +7131,14 @@ uint32_t VulkanCommandProcessor::WriteTransientTextureBindings(
     }
     assert_not_zero(texture_descriptor_counts_count);
     texture_descriptor_set = transient_descriptor_allocator_textures_.Allocate(
-        descriptor_set_layout, texture_descriptor_counts.data(),
+        descriptor_set_layout, texture_descriptor_counts,
         texture_descriptor_counts_count);
     if (texture_descriptor_set == VK_NULL_HANDLE) {
       return 0;
     }
   }
-  UsedTextureTransientDescriptorSet& used_texture_descriptor_set =
-      texture_transient_descriptor_sets_used_.emplace_back();
-  used_texture_descriptor_set.frame = frame_current_;
-  used_texture_descriptor_set.layout = texture_descriptor_set_layout_key;
-  used_texture_descriptor_set.set = texture_descriptor_set;
+  lease->handle = (uint64_t)texture_descriptor_set;
+  if (!xe_keyed_reuse_commit(&texture_transient_descriptors_)) return 0;
   uint32_t descriptor_set_write_count = 0;
   if (texture_count) {
     VkWriteDescriptorSet& descriptor_set_write =

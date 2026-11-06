@@ -29,6 +29,7 @@
 #include "libretro/core_sampler_scratch.h"
 #include "libretro/core_descriptor_scratch.h"
 #include "libretro/core_descriptor_reuse.h"
+#include "libretro/core_keyed_descriptor_reuse.h"
 #include "libretro/core_submission_counter.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/hash.h"
@@ -488,12 +489,6 @@ class VulkanCommandProcessor final : public CommandProcessor {
     VkDescriptorSetLayout descriptor_set_layout_textures_pixel_ref_;
   };
 
-struct UsedTextureTransientDescriptorSet {
-    uint64_t frame;
-    TextureDescriptorSetLayoutKey layout;
-    VkDescriptorSet set;
-  };
-
   enum SwapApplyGammaDescriptorSet : uint32_t {
     kSwapApplyGammaDescriptorSetRamp,
     kSwapApplyGammaDescriptorSetSource,
@@ -777,12 +772,7 @@ struct UsedTextureTransientDescriptorSet {
   xe_descriptor_reuse constants_transient_descriptors_{};
   ui::vulkan::LinkedTypeDescriptorSetAllocator
       transient_descriptor_allocator_textures_;
-  std::deque<UsedTextureTransientDescriptorSet>
-      texture_transient_descriptor_sets_used_;
-  std::unordered_map<TextureDescriptorSetLayoutKey,
-                     std::vector<VkDescriptorSet>,
-                     TextureDescriptorSetLayoutKey::Hasher>
-      texture_transient_descriptor_sets_free_;
+  xe_keyed_descriptor_reuse texture_transient_descriptors_{};
 
   std::unique_ptr<VulkanSharedMemory> shared_memory_;
 
