@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan and D3D12 CPU-upload filtering now borrow and compact the producer's C89 range records, removing two duplicate vectors and their growth allocations. Unchanged lists are not copied; mixed lists move only surviving records after a removed range. GPU memexport refresh, validity updates, native payload copies and barriers keep their ordering. Offline selection and build checks pass; no gameplay performance claim is made.
+
 - D3D12 deferred recording now checks packet sizes and grows with reusable C89 pages instead of relying on a release-disabled assertion around a fixed 8 MiB buffer. Larger submissions keep prior command views stable without copying recorded packets; warmed pages survive reset. Removed four unused descriptor snapshot vectors and their layout IDs. New peaks still allocate, and CPU fixtures show some cost for the added bounds checks; no gameplay speedup is claimed.
 
 - D3D12 bindless descriptor reuse replaces its free vector and pending deque with fixed C89 index links and batches attached to existing command allocators. Completed transient batches splice into reusable storage without copying their indices or allocating separate index metadata. Bounds and duplicate releases are checked, and CPU ownership is reserved before native allocator creation. This trades a cold 1 MiB reservation for reduced hot allocation; transient/mixed CPU fixtures improve, while persistent-only loops remain slower. Existing command-allocator growth, GPU lifetime and audio pacing are unchanged.

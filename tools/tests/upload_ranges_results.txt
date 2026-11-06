@@ -1,0 +1,98 @@
+Borrowed upload-range filtering, Vulkan and D3D12
+================================================
+
+Change and ownership
+--------------------
+SharedMemory::RequestRange produces GPU-thread scratch and synchronously calls
+the backend UploadRanges. Both backends used another vector<pair<uint32,uint32>>
+to copy every CPU-upload range after GPU memexport refresh. They now borrow an
+exclusive mutable xe_upload_range span from the existing owner and compact it
+in place with a C89 helper. Both extra vectors and their high-water allocations
+are removed. The common producer fills POD first/second fields directly instead
+of assigning temporary std::pairs. The tested record size remains eight bytes.
+
+Before the first removed range, surviving records are already in their final
+slots and are not written. After a hole, only survivors move into consumed
+source slots. Stable order, fields, count and front/back upload bounds match
+the former vector. An all-CPU list is borrowed unchanged; an all-GPU list
+returns without metadata movement. A mixed list can still move eight bytes per
+survivor after the first hole. This is not universally zero-copy filtering.
+
+The refresh helper is called once for each original input in the same order.
+Source review of both EnsureMemexportRangeInDeviceBuffer implementations and
+GatherMemexportCopyRuns found GPU copy/barrier recording, with no recursive
+SharedMemory::RequestRange call. MakeRangeValid remains at the same points,
+including before the actual CPU memcpy; this is required to preserve concurrent
+guest invalidation behavior. Imported guest-RAM zero_copy_ early paths, trace
+events, native payload uploads, barriers and submission ordering are unchanged.
+
+No native GPU command retains this CPU metadata. The backend cannot retain or
+recursively reuse the borrowed source span. RequestRange does not use the old
+source records after UploadRanges returns. On later retry it regenerates ranges
+from page validity, rather than relying on an unmodified old scratch list.
+No locks, clocks, pacing, audio or shutdown behavior changed.
+
+The source FixedVMemVector scratch, bitmap scanner and synchronization remain.
+Their fixed-capacity boundary, modular-shift and unlocked flag-access audit is
+separate work; removing these two vectors does not prove those paths correct
+or make all renderer allocation/copying disappear.
+
+Verification
+------------
+tools/tests/run_upload_ranges_tests.sh: strict GCC C89 -pedantic -Wall -Wextra
+-Werror with ASan/UBSan. PASS.
+tools/tests/run_upload_ranges_tests.cmd: MSVC /TC /O2 /W4 /WX. PASS.
+
+- 131,071 exhaustive keep masks for lengths 0..16.
+- Full 65,536-record spans, empty/all-kept/all-removed, alternating selections,
+  kept prefixes/suffixes and sparse removals.
+- Every future callback input remains unchanged by earlier compaction writes.
+- Exact selected fields and stable ordering, untouched prefix, exact moved
+  record counts, logical-end and owner canaries, eight-byte C layout.
+
+Actual MSVC common SharedMemory, VulkanSharedMemory and D3D12SharedMemory
+translation units compile, as do both command processors and the deferred D3D12
+list. Existing descriptor/submission/storage checks PASS. Full Windows GNU Make
+-j5 build PASS. No game, GPU device, native transfer replay, content-close or
+audio runtime test was run; no gameplay speedup or device-memory gain claimed.
+
+CPU metadata reference/benchmark
+-------------------------------
+tools/tests/upload_ranges_bench.cc implements the legacy vector<std::pair>
+selection and the production C89 compactor. Each regenerates its source list,
+filters it, then invokes a noinline checksum consumer so selected fields are
+read from actual storage. Matching checksums complement the C leaf's exact
+order/content checks. No GPU callback/driver cost is simulated. Allocation
+instrumentation covers only the legacy destination vector, since the producer
+scratch exists in both implementations. Timings include generation and checksum.
+
+Exactly 33,554,432 (32 Mi) measured source visits per case; 1,000 warm
+batches, median of three sequential CPU runs with owned builds finished.
+GCC/MinGW g++ -std=c++20 -O2 -Wall -Wextra -Werror; MSVC /O2 /std:c++20 /EHsc.
+C++ is only the old-container reference/benchmark; production filtering is C89.
+
+Milliseconds, vector -> C89:
+case                    GCC             MinGW          MSVC
+64 all CPU              40.124/32.711     35/32           35/35
+64 half GPU             35.625/35.958     32/32           32/27
+64 all GPU              20.135/17.874     22/16           23/22
+4096 all CPU            41.347/33.844     48/42           32/31
+4096 half GPU           32.896/33.689     32/32           31/27
+4096 all GPU            21.075/18.728     16/16           24/24
+
+All-CPU measured range-record copies: 33,554,432 -> 0.
+Alternating half-GPU copies/moves: 16,777,216 -> 16,777,216.
+All-GPU copies/moves: 0 -> 0. All warmed cases already allocate zero on the old
+path too. Cold/new-peak destination allocations disappear; all-CPU 64/4096 cases
+use 7/13 GNU or 12/22 MSVC vector growth allocations -> 0. Half-GPU cases use
+6/12 GNU or 10/20 MSVC -> 0. All-GPU was already zero.
+
+Retained extra vector payload bytes for all-CPU 64/4096 cases: GNU 512/32,768,
+MSVC 752/43,160 -> 0. Half-GPU: GNU 256/16,384, MSVC 336/19,184 -> 0. All-GPU
+already zero. The common producer scratch is unchanged and excluded on both
+sides. These requested payload totals exclude allocator bookkeeping and do not
+measure RSS. Near-equal mixed timings should not be read as a robust speed gain.
+
+Reproduce by compiling the benchmark with the flags above, -Ilibretro and
+-Ithird_party/libretro-common/include (MSVC /I equivalents). No native GPU,
+frontend, shader compiler or game is needed.

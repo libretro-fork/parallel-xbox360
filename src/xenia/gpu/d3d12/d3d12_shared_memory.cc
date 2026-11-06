@@ -526,7 +526,7 @@ bool D3D12SharedMemory::AllocateSparseHostGpuMemoryRange(
 }
 
 bool D3D12SharedMemory::UploadRanges(
-    const std::pair<uint32_t, uint32_t>* upload_page_ranges,
+    xe_upload_range* upload_page_ranges,
     uint32_t num_upload_page_ranges) {
   SCOPE_profile_cpu_f("gpu");
   if (!num_upload_page_ranges) {
@@ -547,7 +547,7 @@ bool D3D12SharedMemory::UploadRanges(
   // Ranges holding memexport output live in the host buffer (guest RAM) and may
   // still be being written by the GPU, so reading them with the CPU below races
   // those writes. Refresh those on the GPU and upload only what is left.
-  cpu_upload_ranges_.clear();
+  uint32_t cpu_range_count = 0;
   for (uint32_t i = 0; i < num_upload_page_ranges; ++i) {
     uint32_t range_base = upload_page_ranges[i].first << page_size_log2();
     uint32_t range_size = upload_page_ranges[i].second << page_size_log2();
@@ -556,13 +556,12 @@ bool D3D12SharedMemory::UploadRanges(
       MakeRangeValid(range_base, range_size, false);
       continue;
     }
-    cpu_upload_ranges_.push_back(upload_page_ranges[i]);
+    xe_upload_range_keep(upload_page_ranges, i, &cpu_range_count);
   }
-  if (cpu_upload_ranges_.empty()) {
+  if (!cpu_range_count) {
     return true;
   }
-  upload_page_ranges = cpu_upload_ranges_.data();
-  num_upload_page_ranges = uint32_t(cpu_upload_ranges_.size());
+  num_upload_page_ranges = cpu_range_count;
 
   CommitUAVWritesAndTransitionBuffer(D3D12_RESOURCE_STATE_COPY_DEST);
   command_processor_.SubmitBarriers();

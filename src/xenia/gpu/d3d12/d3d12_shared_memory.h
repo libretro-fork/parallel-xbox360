@@ -129,7 +129,7 @@ class D3D12SharedMemory : public SharedMemory {
   bool AllocateSparseHostGpuMemoryRange(uint32_t offset_allocations,
                                         uint32_t length_allocations) override;
 
-  bool UploadRanges(const std::pair<uint32_t, uint32_t>* upload_page_ranges,
+  bool UploadRanges(xe_upload_range* upload_page_ranges,
                     uint32_t num_ranges) override;
 
  private:
@@ -188,8 +188,6 @@ class D3D12SharedMemory : public SharedMemory {
   D3D12_CPU_DESCRIPTOR_HANDLE buffer_descriptor_heap_start_;
 
   std::unique_ptr<ui::d3d12::D3D12UploadBufferPool> upload_buffer_pool_;
-  // Upload ranges left after the memexport ones are refreshed on the GPU.
-  std::vector<std::pair<uint32_t, uint32_t>> cpu_upload_ranges_;
 
   // Created temporarily, only for downloading.
   ID3D12Resource* trace_download_buffer_ = nullptr;

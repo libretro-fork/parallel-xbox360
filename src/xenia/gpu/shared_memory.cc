@@ -480,8 +480,8 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
 
   upload_ranges_.clear();
 
-  std::pair<uint32_t, uint32_t>* uploads =
-      reinterpret_cast<std::pair<uint32_t, uint32_t>*>(upload_ranges_.data());
+  xe_upload_range* uploads =
+      reinterpret_cast<xe_upload_range*>(upload_ranges_.data());
 
   // swcache::PrefetchL1(&system_page_flags_[block_first]);
   uint32_t range_start = UINT32_MAX;
@@ -492,8 +492,9 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
                        range_start, current_upload_range, uploads);
   }
   if (range_start != UINT32_MAX) {
-    uploads[current_upload_range++] =
-        (std::make_pair(range_start, page_last + 1 - range_start));
+    uploads[current_upload_range].first = range_start;
+    uploads[current_upload_range].second = page_last + 1 - range_start;
+    ++current_upload_range;
   }
   if (!current_upload_range) {
     return true;
@@ -545,7 +546,7 @@ void SharedMemory::TryFindUploadRange(const uint32_t& block_first,
                                       const uint32_t& page_last,
                                       uint32_t& range_start,
                                       unsigned int& current_upload_range,
-                                      std::pair<uint32_t, uint32_t>* uploads) {
+                                      xe_upload_range* uploads) {
   for (uint32_t i = block_first; i <= block_last; ++i) {
     uint64_t block_valid = system_page_flags_valid_[i];
     if (i == block_first) {
@@ -582,7 +583,7 @@ static bool UploadRange_DoBestScanForward(uint64_t v, uint32_t* out) {
 void SharedMemory::TryGetNextUploadRange(
     uint32_t& range_start, uint64_t& block_valid, const uint32_t& i,
     unsigned int& current_upload_range,
-    std::pair<uint32_t, uint32_t>* uploads) {
+    xe_upload_range* uploads) {
   while (true) {
     uint32_t block_page = 0;
     if (range_start == UINT32_MAX) {
@@ -603,8 +604,9 @@ void SharedMemory::TryGetNextUploadRange(
         break;
       }
       if (current_upload_range + 1 < MAX_UPLOAD_RANGES) {
-        uploads[current_upload_range++] =
-            std::make_pair(range_start, (i << 6) + block_page - range_start);
+        uploads[current_upload_range].first = range_start;
+        uploads[current_upload_range].second = (i << 6) + block_page - range_start;
+        ++current_upload_range;
         // In the next iteration within this block, consider this range valid
         // since it has been queued for upload.
         block_valid |= (uint64_t(1) << block_page) - 1;

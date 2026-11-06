@@ -74,7 +74,7 @@ class VulkanSharedMemory : public SharedMemory {
   bool AllocateSparseHostGpuMemoryRange(uint32_t offset_allocations,
                                         uint32_t length_allocations) override;
 
-  bool UploadRanges(const std::pair<uint32_t, uint32_t>* upload_page_ranges,
+  bool UploadRanges(xe_upload_range* upload_page_ranges,
                     uint32_t num_ranges) override;
 
  private:
@@ -116,8 +116,6 @@ class VulkanSharedMemory : public SharedMemory {
 
   std::unique_ptr<ui::vulkan::VulkanUploadBufferPool> upload_buffer_pool_;
   std::vector<VkBufferCopy> upload_regions_;
-  // Upload ranges left after the memexport ones are refreshed on the GPU.
-  std::vector<std::pair<uint32_t, uint32_t>> cpu_upload_ranges_;
 
   // Created temporarily, only for downloading.
   VkBuffer trace_download_buffer_ = VK_NULL_HANDLE;
