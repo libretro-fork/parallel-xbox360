@@ -3386,8 +3386,12 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
   // FBO float24 in-PS conversion of the rasterizer's depth: reads
   // gl_FragCoord.z
   // - and must do so per-sample for MSAA antialiasing of intersections.
+  // Scaled memory export: needed even for shaders without color output, to
+  // select the center host pixel and avoid duplicate guest writes.
   bool need_frag_coord =
       edram_fragment_shader_interlock_ || param_gen_needed || IsSampleRate() ||
+      (!is_depth_only_fragment_shader_ && IsMemoryExportUsed() &&
+       (GetCurrentDrawResolutionScaleX() > 1 || GetCurrentDrawResolutionScaleY() > 1)) ||
       DSV_IsApplyingPolygonOffset() || IsGuestPixelCenterFetchNeeded() ||
       (!edram_fragment_shader_interlock_ && !is_depth_only_fragment_shader_ &&
        current_shader().writes_color_target(0) &&

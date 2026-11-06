@@ -6,6 +6,13 @@ its classes does not satisfy this requirement. This migration is incomplete.
 
 ## Current cuts
 
+- Memory-export generation replaces its nested erased callbacks with 34 direct
+  loops over a C89 borrowed scalar mask. No callable owner, copied index list or
+  new temporary buffer is created. Original guarded-body scopes are preserved.
+  A pre-existing scaled pixel memory-export input declaration is corrected;
+  the actual guest microcode matrix distinguishes this fix from byte-preserving
+  callback removal.
+
 - Live readable-order serialization uses a callback pointer and borrowed context
   rather than `std::function`. Exception containment remains at the C++ bridge.
 - The unused standalone postprocessor and typed canonical-rewrite helpers are

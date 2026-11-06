@@ -1,0 +1,102 @@
+Direct memory-export mask loops, 2026-11-06
+Parent: 76d1102c0321f4597e7a87c1e0dec981eaf2d364.
+
+Remove the two nested std::function<void(uint32_t)> helpers in the actual
+SpirvShaderTranslator::ExportToMemory path. Replace all 29 ordinary and five
+guarded-store callback sites with direct loops using a C89 least-set-bit
+iterator. Iteration keeps only a scalar remaining mask and index, rather than
+copying a callable or materializing an index list. Selected registers retain
+ascending order. Original body scopes, including local destruction before the
+guard's makeEndIf(), are preserved. Packing/NaN/rounding/store expressions are
+unchanged. No generic C++ callback wrapper or owning replacement is introduced.
+
+The C89 iterator reuses libretro-common compat_ctz, guards the zero input before
+the intrinsic and clears the least set bit with value & (value - 1). It supports
+all 32 bits; the guest decoder restricts this generator to the five hardware
+export registers. No allocator, global state, copied payload or staging array.
+Other C++ arrays and translation allocations remain.
+
+The new actual-microcode fixture found a pre-existing crash before runtime code
+was edited. Pixel memory export at resolution scale 2x3, host-RT mode, with no
+color output could use input_fragment_coordinates_ == NoResult. Offline GDB
+traced the resulting null record to createAccessChainView's base=0 in the center
+host-pixel guard. The existing guard already needs FragCoord regardless of color
+output; the interface declaration now includes supported scaled memory export.
+Depth-only helper paths are short-circuited before accessing a current shader.
+The fix adds an input where the previous build crashed, not a new resampling or
+memory-export algorithm. No frontend/game/GPU process was started.
+
+Reference strategy and coverage:
+- C89 test microcode follows the repository's CF Alloc/ExecEnd and ALU field
+  definitions: eA = mad r0,c0,c1, selected eM# = max r0,r0. Shader::AnalyzeUcode
+  must recover the exact mask and stream constant. No private Shader mutation.
+- All 32 five-register masks, vertex/pixel stages and four host-RT/interlock /
+  resolution profiles: 256 actual translations, 248 with memory export.
+- The parent completes 225 cases (217 export cases). The 31 failing scaled
+  host-RT pixel cases were skipped only for this whole-parent byte reference.
+  Current output for all 225 matches the captured parent exactly. The remaining
+  31 now compile, explicitly contain the FragCoord declaration and validate.
+- To isolate callback removal on all 256 cases, a saved parent memexport object
+  is linked ahead of the current core archive, retaining the new coordinate
+  declaration in both executables. The public translator/storage headers and
+  layouts are unchanged in this patch. Only ExportToMemory's implementation is
+  overridden; the archive's current member is not extracted. All 256 resulting
+  modules match current bytes exactly. This is an explicit implementation
+  overlay, not a claim that the whole parent can compile its crashing cases.
+- Saved parent object SHA256
+  82C997841E11AC71689CD9534BE7F92050E6C3ABF4D1689BF52C1AFC582FCB83.
+- All 256 current modules pass spirv-val. Concatenated output, including
+  per-module length fields, is 11068376 bytes.
+
+Allocation/CPU measurements:
+The production translator is linked from actual Make objects (-O3) into an -O2
+fixture. C++ new/new[] and corresponding delete hooks count ordinary C++ heap
+requests only; C malloc/realloc, aligned allocation, RSS and VRAM are not counted.
+Each profile warms one complete 64-case round, then measures four rounds. Each
+sample therefore measures 1024 TranslateAnalyzedShader calls, 992 with nonzero
+export masks. Shader construction/analysis, I/O and validation are outside timing.
+The parent-object overlay uses the same fixed coordinate declaration, isolating
+the callback/loop change. All compared module files match byte-for-byte.
+
+Seven alternating quiet pairs, compiler processes terminal:
+                         old callback object      direct mask loops
+ ordinary C++ requests       646992                    506128
+ requested bytes          14879360                  10070144
+ CPU median ms               63.924                    58.366
+ observed range ms           63.659..63.969            58.085..58.583
+
+This removes 140864 C++ requests / 4809216 requested bytes per measured sample:
+142 requests / 4848 bytes per tested nonempty export translation. Ordinary C++
+request counts fall about 21.8%, bytes about 32.3%, and fixture CPU time about
+8.7%. The remaining 506128 C++ requests are still present. No allocation-free
+translation, universal workload speedup, driver compile or gameplay/FPS claim.
+
+Validation:
+- Full Make -j5 passes. Native MSVC compiles both changed production translator
+  units with optimization; new algorithm/test helpers compile /TC /W4 /WX.
+- Strict C89 and ASan/UBSan test all 65536 low-16 masks, 100000 full-width masks,
+  empty-mask output preservation and all 32 bounded microcode encodings.
+- All 256 current modules validate. Parent/full-overlay comparisons above pass.
+- Actual cached Tekken (1410) and Tomb Raider (210) translations retain reference
+  bytes across host-RT/interlock profiles, including 2 + 96 control-flow cases.
+- No audio timing, CPU scheduling, memory-retirement or shutdown changes, release
+  diagnostics, installed-DLL replacement or added Python/LLVM build dependency.
+- std::function is gone from this memory-export source. 197 textual references
+  remain elsewhere under src/ and libretro/ at this checkpoint; full callback
+  conversion and the broader optimization goal remain incomplete.
+
+Reproduce:
+1. At the parent, build via static Make and save
+   build/make/windows-x86_64/obj/src/xenia/gpu/spirv_shader_translator_memexport.cc.o.
+   Run core_spv_memexport_bridge.cc using run_shader_publication_tests.sh with
+   SPV_MEMEXPORT_SKIP_SCALE_HOST=1 to capture the 225-case parent stream.
+2. Apply the mailbox patch and build. Run run_spv_memexport_tests.sh with
+   SPV_MEMEXPORT_VALIDATE_DIR=<existing directory> to save every module;
+   run spirv-val on those files. Compare the skip-mode stream to the parent.
+3. Set PROFILE=1 for the measured fixture. Set MEMEXPORT_REFERENCE_OBJECT to the
+   saved parent object in a separate TEST_BUILD_DIR for the isolated reference.
+   This overlay is valid only with this patch's unchanged public layouts and
+   matching compiler/ABI. It is not a general historical-object compatibility
+   mechanism. Run both executables in seven alternating pairs after compilation,
+   compare output streams, and record PROFILE lines. On Windows put
+   C:/msys64/mingw64/bin first on PATH for the correct runtime DLLs.
