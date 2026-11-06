@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Memexport tracking now marks and clears bitmap words in C89 and borrows copy runs instead of allocating per-backend vectors. Vulkan counts runs with word operations and fills final native copy records directly, removing its intermediate region vector and memcpy. D3D12 emits runs in one pass. Exact copy/barrier bounds and existing fence/readback ordering are preserved; native command-storage growth still allocates at new peaks.
+
 - Shared-memory upload generation now writes directly into cold-allocated C89 storage sized from the guest page aperture. Fixed the valid 65,536-range boundary, removed undefined wide shifts and the remaining FixedVMemVector template, and bounded partial bitmap refreshes. Validity readers and all writers now use libretro-common atomics while preserving required watch synchronization and native GPU ordering. Range-record storage no longer grows during play; refresh helpers may still allocate. Offline fixtures and builds pass, while TSan could not start on this host.
 
 - Vulkan and D3D12 CPU-upload filtering now borrow and compact the producer's C89 range records, removing two duplicate vectors and their growth allocations. Unchanged lists are not copied; mixed lists move only surviving records after a removed range. GPU memexport refresh, validity updates, native payload copies and barriers keep their ordering. Offline selection and build checks pass; no gameplay performance claim is made.

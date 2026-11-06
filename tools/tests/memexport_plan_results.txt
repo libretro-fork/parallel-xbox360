@@ -1,0 +1,116 @@
+Memexport ownership and direct native copy recording
+===================================================
+
+Runtime changes
+---------------
+core_memexport.h implements GPU-command-thread page marking, inward clearing,
+overlap queries, exact copy bounds/counts and borrowed run iteration in MSVC C89.
+The fixed 512 MiB / 4 KiB ownership bitmap remains CPU-owned. Mark/clear update
+64 pages per word rather than visiting each page. Conservative first/last marks
+remain conservative after clears, preserving the original semantics.
+
+The shared class-body include now supplies only the thin emulator boundary and
+existing submission/await bookkeeping. Its std::array and per-backend copy-run
+vectors are gone. No new allocation, lock, wait, timer or callback is introduced.
+The existing GPU fence/coherency waits and staged readback remain unchanged.
+
+Both native backends borrow run metadata directly from the stable bitmap.
+D3D12 needs no region count and records individual CopyBufferRegion packets in
+one emission pass, after an overlap query. Vulkan needs exact bounds/count before
+reserving a contiguous native region array. A word-level transition popcount
+computes that summary without constructing runs. The iterator caches each word
+and emits directly into existing CmdCopyBufferEmplace storage. The Vulkan
+intermediate VkBufferCopy vector and its memcpy into the final packet are gone.
+Whole-range refresh uses just an overlap query and one scalar span, with no
+per-page collection. Partial paths preserve sorted runs and byte clipping.
+
+Exact Vulkan barrier extent stays first copied byte through last copied byte;
+it is not broadened to the requested envelope. Native source/destination offsets,
+sizes, stage/access masks, buffer state transitions, packet/submission ordering,
+actual guest payload transfers and resource lifetimes are preserved. This is
+metadata/copy construction work, not elimination of required GPU transfers.
+Native/deferred stream growth, other barrier vectors and driver work may still
+allocate at new peaks. This does not make the whole renderer allocation-free.
+
+Ownership contract
+------------------
+All bitmap mutation and planning/emission occurs on the GPU command thread;
+reset is after that worker stops. The CPU resolve-fault path does not mutate
+this map or retain plans. PullMemexportEdgeBytes calls the copy helper only from
+GPU-thread NoteResolveForReadback. Source review of SubmitBarriers, EndRenderPass,
+query closure and VIZ predicate copies found no bitmap mutation between planning
+and emission. Plans borrow words only during that synchronous call, never across
+threads, callbacks, guest execution or queued CPU jobs. Whole-range plans need
+no bitmap reread during emission. Mutating the map while a partial plan is live
+violates the internal contract; the iterator is not a concurrent snapshot API.
+
+Offline correctness/build checks
+--------------------------------
+tools/tests/run_memexport_plan_tests.sh: GCC strict C89/pedantic/Wextra/Werror,
+ASan/UBSan. PASS. Native MSVC /TC /O2 /W4 /WX and nonsanitized MinGW C89 PASS.
+
+- 32,296 exact partial/whole queries against an independent per-page reference.
+- All 4,096 ownership patterns around the 63/64 page boundary, clipped byte
+  starts/ends, empty maps, zero/out-of-aperture queries and uint32 size clipping.
+- 10,000 randomized mark/clear operations, direct bitmap comparisons and queries.
+- Full alternating aperture produces all 65,536 runs, with identical summary
+  count/barrier span and exact ordered emission from both planning strategies.
+- Partial-page clears preserve neighboring authoritative bytes. Cleared/stale
+  windows, reset, repeated exhausted iterators and original whole-range behavior.
+
+Actual MSVC Vulkan and D3D12 command processors compile, along with related
+shared-memory/deferred units and existing descriptor/submission/storage checks.
+Full Windows GNU Make -j5 core build PASS. No actual GPU device, game, content
+close, native packet replay or audio runtime was run. No gameplay/FPS gain is
+claimed. Native field construction is checked by the CPU reference benchmark;
+the C fixture is not a native GPU execution test.
+
+CPU reference/benchmark
+-----------------------
+memexport_plan_bench.cc retains the legacy page loops, vector<pair> run building,
+intermediate vector<VkBufferCopy> and final memcpy. It compares the actual C89
+plan/iterator writing final native VkBufferCopy fields. Final packet storage is
+preallocated on both sides; deferred stream growth and GPU/driver cost are not
+simulated. Bitmap storage is mandatory in both and excluded from extra bytes.
+Checksums include every native field and exact barrier bounds. No allocations
+occur inside either warmed timed query loop; new-peak/cold scratch allocations
+are measured separately with the old container allocator.
+
+Query/consumer wrappers are noinline (GCC noipa) to prevent cross-query folding.
+The release emitter's immutable-plan contract is used without adding a test-only
+branch per emitted region. Separate C fixtures check iterator exhaustion/counts.
+std::chrono::steady_clock supplies high-resolution monotonic benchmark timing,
+avoiding coarse Windows clock() quantization. It is test-only and adds no core
+timing dependency or role in pacing.
+
+Median of three sequential runs with owned builds finished, 64 warm queries:
+500,000 whole/dense queries over 64 pages; 10,000 fragmented queries over 4,096
+pages; 50,000 queries in a cleared 4,096-page window. Query edges are unaligned
+and vary. Mark/clear fixtures use 1,000,000 8-page pairs and 65,536 2,048-page
+pairs, with separate noinline operations to prevent mark/clear cancellation.
+
+Milliseconds, legacy -> C89:
+case                         GCC             MinGW           MSVC
+whole 64 pages               3.686/1.544      3.792/1.697      4.963/2.349
+dense partial 64 pages      28.147/4.213     38.200/4.365     36.578/5.033
+fragmented 4096 pages       45.125/39.703    48.435/40.633    57.463/51.047
+cleared window 4096 pages   57.029/1.037     48.990/1.251     55.105/1.817
+8-page mark/clear pairs      7.280/3.138      8.546/3.244      9.225/4.023
+2048-page mark/clear pairs 107.468/1.593    112.902/1.598    133.504/1.312
+
+The mark/clear rows isolate bitmap operations; submission stamps and fence/await
+bookkeeping are excluded on both sides and remain unchanged in the core.
+The query rows model Vulkan's construction chain. D3D12's single-pass emitter
+has exact C reference/compile coverage, not a separate native timing result.
+
+Whole/dense cold scratch allocations: 2 -> 0, requested extra payload 32 -> 0
+bytes. Fragmented: GNU 24 -> 0 allocations / 65,536 -> 0 extra bytes; MSVC 40 ->
+0 / 76,736 -> 0. Cleared windows already allocate zero on both sides. Warmed
+timed queries already allocate zero in the legacy path too. Removed scratch
+records and explicit region memcpy are source-level facts; no byte/frame or
+hardware cache-miss count is inferred from those facts.
+
+Compiler flags: GCC/MinGW g++ -std=c++20 -O2 -Wall -Wextra -Werror; MSVC /O2
+/std:c++20 /EHsc. C++ is the legacy reference/benchmark and native API boundary;
+the runtime tracker/planner/iterator algorithms and their leaf tests are C89.
+These are CPU fixtures, not hardware-counter, RSS or gameplay measurements.

@@ -2334,8 +2334,11 @@ Shader* D3D12CommandProcessor::LoadShader(xenos::ShaderType shader_type,
 
 bool D3D12CommandProcessor::EnsureMemexportRangeInDeviceBuffer(
     uint32_t base_bytes, uint32_t size_bytes, bool whole_range) {
+  xe_memexport_cursor cursor;
+  xe_memexport_run run;
   if (!cvars::memexport_enable || shared_memory_->GetHostBuffer() == nullptr ||
-      !GatherMemexportCopyRuns(base_bytes, size_bytes, whole_range)) {
+      !xe_memexport_cursor_make(&memexport_pages_, base_bytes, size_bytes,
+                                 whole_range, &cursor)) {
     return false;
   }
   // Transition the host buffer to a copy source (ordering the memexport writes,
@@ -2346,10 +2349,10 @@ bool D3D12CommandProcessor::EnsureMemexportRangeInDeviceBuffer(
   shared_memory_->UseHostAsCopySource();
   shared_memory_->UseAsCopyDestination();
   SubmitBarriers();
-  for (const auto& run : memexport_copy_runs_) {
+  while (xe_memexport_next(&cursor, &run)) {
     deferred_command_list_.D3DCopyBufferRegion(
-        shared_memory_->GetBuffer(), run.first, shared_memory_->GetHostBuffer(),
-        run.first, run.second);
+        shared_memory_->GetBuffer(), run.base, shared_memory_->GetHostBuffer(),
+        run.base, run.size);
   }
   return true;
 }
@@ -2652,7 +2655,7 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
   if (cvars::memexport_enable && shared_memory_->GetHostBuffer() != nullptr) {
     route_to_host =
         memexport_used ||
-        (any_memexport_pages_written_ &&
+        (memexport_pages_.any &&
          ((primitive_processing_result.index_buffer_type ==
                PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA &&
            IsMemexportRange(

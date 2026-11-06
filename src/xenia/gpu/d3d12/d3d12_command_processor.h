@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include "libretro/core_submission_counter.h"
+#include "libretro/core_memexport.h"
 #include "libretro/core_descriptor_indices.h"
 #include <cstdint>
 #include <cstring>

@@ -31,6 +31,7 @@
 #include "libretro/core_descriptor_reuse.h"
 #include "libretro/core_keyed_descriptor_reuse.h"
 #include "libretro/core_submission_counter.h"
+#include "libretro/core_memexport.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/hash.h"
 #include "xenia/base/logging.h"
@@ -383,8 +384,6 @@ class VulkanCommandProcessor final : public CommandProcessor {
     uint32_t offset;
   };
   std::vector<MemexportStagedRange> memexport_staged_;
-  // For EnsureMemexportRangeInDeviceBuffer.
-  std::vector<VkBufferCopy> memexport_copy_regions_;
 
   void IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbuffer_width,
                  uint32_t frontbuffer_height) override;
