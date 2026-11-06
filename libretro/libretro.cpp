@@ -1393,13 +1393,10 @@ static bool xenia_setup_and_launch(const char *path) {
                 return gs;
             },
             /*input_driver_factory=*/
-            []()
-                -> std::vector<std::unique_ptr<xe::hid::InputDriver>> {
-                std::vector<std::unique_ptr<xe::hid::InputDriver>> v;
+            []() -> std::unique_ptr<xe::hid::InputDriver> {
                 auto drv = std::make_unique<xe::hid::libretro_hid::LibretroInputDriver>();
                 lr_input_driver = drv.get();
-                v.push_back(std::move(drv));
-                return v;
+                return drv;
             });
 
         if (XFAILED(status)) {

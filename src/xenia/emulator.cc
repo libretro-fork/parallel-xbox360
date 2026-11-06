@@ -200,6 +200,7 @@ Emulator::Emulator(const std::filesystem::path& command_line,
       paused_(false),
       restoring_(false),
       restore_fence_() {
+  xe_launch_state_init(&launch_state_);
   if (cvars::priority_class != 0) {
     if (SetProcessPriorityClass(cvars::priority_class)) {
       XELOGI("Higher priority class request: Successful. New priority: {}",
@@ -241,7 +242,7 @@ void Emulator::Shutdown() {
 
   // Keep input_system_ alive across relaunch — it's bound to the persistent
   // window and SDL requires init/quit on the same thread.
-  if (!relaunching_) {
+  if (!is_relaunching()) {
     step("input system");
     input_system_.reset();
   }
@@ -277,14 +278,10 @@ uint32_t Emulator::main_thread_id() {
   return main_thread_ ? main_thread_->thread_id() : 0;
 }
 
-X_STATUS Emulator::Setup(
-    bool require_cpu_backend,
-    std::function<std::unique_ptr<apu::AudioSystem>(cpu::Processor*)>
-        audio_system_factory,
-    std::function<std::unique_ptr<gpu::GraphicsSystem>()>
-        graphics_system_factory,
-    std::function<std::vector<std::unique_ptr<hid::InputDriver>>()>
-        input_driver_factory) {
+X_STATUS Emulator::Setup(bool require_cpu_backend,
+                         AudioSystemFactory audio_system_factory,
+                         GraphicsSystemFactory graphics_system_factory,
+                         InputDriverFactory input_driver_factory) {
   // Store parameters for reuse across Shutdown/Setup cycles.
   // Only overwrite if non-null so re-calls after Shutdown keep prior values.
 
@@ -365,10 +362,8 @@ X_STATUS Emulator::Setup(
       return X_STATUS_NOT_IMPLEMENTED;
     }
     if (input_driver_factory_) {
-      auto input_drivers = input_driver_factory_();
-      for (size_t i = 0; i < input_drivers.size(); ++i) {
-        input_system_->AddDriver(std::move(input_drivers[i]));
-      }
+      auto input_driver = input_driver_factory_();
+      if (input_driver) input_system_->AddDriver(std::move(input_driver));
     }
     if (const X_STATUS result = input_system_->Setup(); result) {
       return result;
@@ -892,356 +887,6 @@ X_STATUS Emulator::LaunchDefaultModule(const std::filesystem::path& path) {
   return result;
 }
 
-// Title folders from before profiles, which content/<xuid> replaces. Dashboard
-// and profile data stays where it is.
-static std::vector<xe::filesystem::FileInfo> ListTitlesToMigrate(
-    const std::filesystem::path& content_root) {
-  auto titles = xe::filesystem::FilterByName(
-      xe::filesystem::ListDirectories(content_root), std::regex("[A-F0-9]{8}"));
-  std::erase_if(titles, [](const xe::filesystem::FileInfo& title) {
-    const std::string name = xe::path_to_utf8(title.name);
-    return name == "FFFE07D1" || name == "00000000";
-  });
-  return titles;
-}
-
-bool Emulator::HasDataToMigrate() const {
-  return !ListTitlesToMigrate(content_root_).empty();
-}
-
-uint32_t Emulator::DataMigration(const uint64_t xuid) {
-  uint32_t failure_count = 0;
-  const std::string xuid_string = fmt::format("{:016X}", xuid);
-  const std::string common_xuid_string = fmt::format("{:016X}", 0);
-  const std::filesystem::path path_to_profile_data =
-      content_root_ / xuid_string / "FFFE07D1" / "00010000" / xuid_string;
-  // Savefiles must go to user specific directory
-  // Everything else goes to common
-  for (const auto& title : ListTitlesToMigrate(content_root_)) {
-    const auto content_type_dirs = xe::filesystem::FilterByName(
-        xe::filesystem::ListDirectories(title.path / title.name),
-        std::regex("[A-F0-9]{8}"));
-
-    for (const auto& content_type : content_type_dirs) {
-      const std::string used_xuid =
-          xe::path_to_utf8(content_type.name) == "00000001"
-              ? xuid_string
-              : common_xuid_string;
-
-      const auto previous_path = content_root_ / title.name / content_type.name;
-      const auto path = content_root_ / used_xuid / title.name;
-
-      std::error_code ec;
-      std::filesystem::create_directories(path, ec);
-      if (!ec) {
-        std::filesystem::rename(previous_path, path / content_type.name, ec);
-      }
-
-      if (ec) {
-        failure_count++;
-        XELOGW("{}: Moving from: {} to: {} failed! Error message: {} ({:08X})",
-               __func__, previous_path, path / content_type.name, ec.message(),
-               ec.value());
-      }
-    }
-    // Other directories:
-    // Headers - Just copy everything to both common and xuid locations
-    // profile - ?
-    std::error_code exists_error;
-    const auto headers_path = title.path / title.name / "Headers";
-    if (std::filesystem::exists(headers_path, exists_error)) {
-      // Copies the headers to |path|, counting a failure if it can't.
-      auto copy_headers = [&,
-                           func = __func__](const std::filesystem::path& path) {
-        std::error_code ec;
-        std::filesystem::create_directories(path, ec);
-        if (!ec) {
-          std::filesystem::copy(
-              headers_path, path,
-              std::filesystem::copy_options::recursive |
-                  std::filesystem::copy_options::skip_existing,
-              ec);
-        }
-        if (ec) {
-          failure_count++;
-          XELOGW(
-              "{}: Copying from: {} to: {} failed! Error message: {} ({:08X})",
-              func, headers_path, path, ec.message(), ec.value());
-          return false;
-        }
-        return true;
-      };
-
-      // Copy to specific user
-      bool copied =
-          copy_headers(content_root_ / xuid_string / title.name / "Headers");
-
-      const auto header_types = xe::filesystem::ListDirectories(headers_path);
-
-      // Copy to common, skip cases where only savefile header is available
-      if (!(header_types.size() == 1 &&
-            header_types.at(0).name == "00000001")) {
-        if (!copy_headers(content_root_ / common_xuid_string / title.name /
-                          "Headers")) {
-          copied = false;
-        }
-      }
-
-      // The originals go only once every copy of them exists.
-      if (copied) {
-        std::error_code ec;
-        std::filesystem::remove_all(headers_path, ec);
-      }
-    }
-
-    if (std::filesystem::exists(title.path / title.name / "profile",
-                                exists_error)) {
-      // Find directory with previous username. There should be only one!
-      const auto old_profile_data =
-          xe::filesystem::ListDirectories(title.path / title.name / "profile");
-
-      xe::filesystem::FileInfo entry_to_copy = xe::filesystem::FileInfo();
-      if (old_profile_data.size() != 1) {
-        for (const auto& entry : old_profile_data) {
-          if (entry.name == "User") {
-            entry_to_copy = entry;
-          }
-        }
-      } else {
-        entry_to_copy = old_profile_data.front();
-      }
-
-      const auto path_from =
-          title.path / title.name / "profile" / entry_to_copy.name;
-      std::error_code ec;
-      // Move files from inside to outside for convenience
-      std::filesystem::rename(path_from, path_to_profile_data / title.name, ec);
-      if (ec) {
-        failure_count++;
-        XELOGW("{}: Moving from: {} to: {} failed! Error message: {} ({:08X})",
-               __func__, path_from, path_to_profile_data / title.name,
-               ec.message(), ec.value());
-      } else {
-        std::error_code ec;
-        std::filesystem::remove_all(title.path / title.name / "profile", ec);
-      }
-    }
-
-    const auto remaining_file_list =
-        xe::filesystem::ListDirectories(title.path / title.name);
-
-    if (remaining_file_list.empty()) {
-      std::error_code ec;
-      std::filesystem::remove_all(title.path / title.name, ec);
-    }
-  }
-
-  return failure_count;
-}
-
-X_STATUS Emulator::ProcessContentPackageHeader(
-    const std::filesystem::path& path, ContentInstallEntry& installation_info) {
-  installation_info.name_ = "Invalid Content Package!";
-  installation_info.content_type_ = XContentType::kInvalid;
-  installation_info.data_installation_path_ = xe::path_to_utf8(path.filename());
-
-  const auto header = vfs::XContentContainerDevice::ReadContainerHeader(path);
-
-  if (!header || !header->content_header.is_magic_valid()) {
-    installation_info.installation_state_ = InstallState::failed;
-    installation_info.installation_result_ = X_STATUS_INVALID_PARAMETER;
-    installation_info.installation_error_message_ = "Invalid Package Type!";
-    XELOGE("Failed to initialize device");
-    return X_STATUS_INVALID_PARAMETER;
-  }
-
-  // Always install savefiles to user signed to slot 0.
-  const auto profile =
-      kernel_state_->xam_state()->profile_manager()->GetProfile(
-          static_cast<uint8_t>(0));
-
-  uint64_t xuid = header->content_metadata.profile_id;
-  if (header->content_metadata.content_type == XContentType::kSavedGame &&
-      profile) {
-    xuid = profile->xuid();
-  }
-
-  installation_info.data_installation_path_ = fmt::format(
-      "{:016X}/{:08X}/{:08X}/{}", xuid,
-      header->content_metadata.execution_info.title_id.get(),
-      static_cast<uint32_t>(header->content_metadata.content_type.get()),
-      path.filename());
-
-  installation_info.header_installation_path_ = fmt::format(
-      "{:016X}/{:08X}/Headers/{:08X}/{}", xuid,
-      header->content_metadata.execution_info.title_id.get(),
-      static_cast<uint32_t>(header->content_metadata.content_type.get()),
-      path.filename());
-
-  installation_info.name_ =
-      xe::to_utf8(header->content_metadata.display_name(XLanguage::kEnglish));
-  installation_info.content_type_ =
-      static_cast<XContentType>(header->content_metadata.content_type);
-  installation_info.content_size_ = header->content_metadata.content_size;
-  installation_info.installation_state_ = InstallState::pending;
-
-  if (header->content_metadata.title_thumbnail_size > 0 &&
-      header->content_metadata.title_thumbnail_size <=
-          vfs::XContentMetadata::kThumbLengthV1) {
-    installation_info.icon_data_.assign(
-        header->content_metadata.title_thumbnail,
-        header->content_metadata.title_thumbnail +
-            header->content_metadata.title_thumbnail_size);
-  }
-
-  return X_STATUS_SUCCESS;
-}
-
-X_STATUS Emulator::InstallContentPackage(
-    const std::filesystem::path& path, ContentInstallEntry& installation_info) {
-  {
-    std::lock_guard<std::mutex> lock(*installation_info.mutex_);
-    installation_info.installation_state_ = InstallState::preparing;
-  }
-
-  // Check if installation was cancelled before starting
-  if (installation_info.cancelled_.load()) {
-    std::lock_guard<std::mutex> lock(*installation_info.mutex_);
-    installation_info.installation_state_ = InstallState::failed;
-    installation_info.installation_error_message_ = "Installation cancelled";
-    installation_info.installation_result_ = X_ERROR_CANCELLED;
-    return X_ERROR_CANCELLED;
-  }
-
-  std::unique_ptr<vfs::XContentContainerDevice> device =
-      vfs::XContentContainerDevice::CreateContentDevice("", path);
-
-  if (!device || !device->Initialize()) {
-    std::lock_guard<std::mutex> lock(*installation_info.mutex_);
-    installation_info.installation_state_ = InstallState::failed;
-    installation_info.installation_error_message_ =
-        "Device initialization failed!";
-    installation_info.installation_result_ = X_STATUS_ACCESS_DENIED;
-    XELOGE("Failed to initialize device");
-    return X_STATUS_INVALID_PARAMETER;
-  }
-
-  const std::filesystem::path installation_path =
-      content_root() / installation_info.data_installation_path_;
-
-  const std::filesystem::path header_path =
-      content_root() / installation_info.header_installation_path_;
-
-  if (!std::filesystem::exists(content_root())) {
-    const std::error_code ec = xe::filesystem::CreateFolder(content_root());
-    if (ec) {
-      std::lock_guard<std::mutex> lock(*installation_info.mutex_);
-      installation_info.installation_state_ = InstallState::failed;
-      installation_info.installation_error_message_ = ec.message();
-      installation_info.installation_result_ = X_STATUS_ACCESS_DENIED;
-      return X_STATUS_ACCESS_DENIED;
-    }
-  }
-
-  const auto disk_space = std::filesystem::space(content_root());
-  if (disk_space.available < installation_info.content_size_.load() * 1.1f) {
-    std::lock_guard<std::mutex> lock(*installation_info.mutex_);
-    installation_info.installation_state_ = InstallState::failed;
-    installation_info.installation_error_message_ = "Insufficient disk space!";
-    installation_info.installation_result_ = X_STATUS_DISK_FULL;
-    return X_STATUS_DISK_FULL;
-  }
-
-  if (std::filesystem::exists(installation_path)) {
-    // TODO(Gliniak): Popup
-    // Do you want to overwrite already existing data?
-  } else {
-    std::error_code error_code;
-    std::filesystem::create_directories(installation_path, error_code);
-    if (error_code) {
-      std::lock_guard<std::mutex> lock(*installation_info.mutex_);
-      installation_info.installation_state_ = InstallState::failed;
-      installation_info.installation_error_message_ =
-          "Cannot Create Content Directory!";
-      installation_info.installation_result_ = error_code.value();
-      return error_code.value();
-    }
-  }
-
-  installation_info.content_size_.store(device->data_size());
-  {
-    std::lock_guard<std::mutex> lock(*installation_info.mutex_);
-    installation_info.installation_state_ = InstallState::installing;
-  }
-
-  vfs::VirtualFileSystem::ExtractContentHeader(device.get(), header_path);
-
-  // Lambda to handle cleanup - defined once, used in both cancellation paths
-  auto cleanup_and_fail = [&]() {
-    std::error_code ec;
-    bool cleanup_failed = false;
-
-    if (std::filesystem::exists(installation_path)) {
-      std::filesystem::remove_all(installation_path, ec);
-      if (ec) {
-        cleanup_failed = true;
-      }
-    }
-
-    if (std::filesystem::exists(header_path)) {
-      std::filesystem::remove(header_path, ec);
-      if (ec) {
-        cleanup_failed = true;
-      }
-    }
-
-    // Set state AFTER cleanup is done, so dialog doesn't pop up prematurely
-    std::lock_guard<std::mutex> lock(*installation_info.mutex_);
-    installation_info.installation_result_ = X_ERROR_CANCELLED;
-    installation_info.installation_error_message_ =
-        cleanup_failed ? "Installation cancelled (cleanup failed)"
-                       : "Installation cancelled";
-    installation_info.installation_state_ = InstallState::failed;
-  };
-
-  // Check for cancellation before extracting files
-  if (installation_info.cancelled_.load()) {
-    cleanup_and_fail();
-    return X_ERROR_CANCELLED;
-  }
-
-  X_STATUS error_code = vfs::VirtualFileSystem::ExtractContentFiles(
-      device.get(), installation_path,
-      installation_info.currently_installed_size_,
-      [&installation_info]() { return installation_info.cancelled_.load(); });
-
-  // Check for cancellation after extraction
-  if (installation_info.cancelled_.load() || error_code == X_ERROR_CANCELLED) {
-    cleanup_and_fail();
-    return X_ERROR_CANCELLED;
-  }
-
-  if (error_code != X_ERROR_SUCCESS) {
-    std::lock_guard<std::mutex> lock(*installation_info.mutex_);
-    installation_info.installation_state_ = InstallState::failed;
-    return error_code;
-  }
-
-  installation_info.currently_installed_size_.store(
-      installation_info.content_size_.load());
-  {
-    std::lock_guard<std::mutex> lock(*installation_info.mutex_);
-    installation_info.installation_state_ = InstallState::installed;
-  }
-  kernel_state()->BroadcastNotification(kXNotificationLiveContentInstalled, 0);
-
-  if (installation_info.content_type_ == XContentType::kProfile) {
-    kernel_state_->xam_state()->profile_manager()->ReloadProfiles();
-  }
-
-  return error_code;
-}
-
 void Emulator::Pause() {
   if (paused_) {
     return;
@@ -1408,9 +1053,9 @@ void Emulator::RelaunchTitle(const std::string& host_path,
   // Each UI launch and guest launch request relaunches on its own thread, so a
   // burst of them queues here. One a newer request replaced while it waited is
   // dropped.
-  const uint64_t request = ++relaunch_requests_;
+  const uint64_t request = xe_launch_state_request(&launch_state_);
   std::lock_guard<std::recursive_mutex> launch_lock(launch_mutex_);
-  if (request != relaunch_requests_.load()) {
+  if (request != xe_launch_state_latest(&launch_state_)) {
     XELOGI("RelaunchTitle: skipping {}, a newer request replaces it",
            host_path);
     return;
@@ -1420,7 +1065,7 @@ void Emulator::RelaunchTitle(const std::string& host_path,
       host_path, launch_module);
 
   // Keep WaitUntilExit from treating a relaunch as final termination.
-  relaunching_ = true;
+  xe_launch_state_set_active(&launch_state_, 1);
   if (audio_system_) audio_system_->CancelPendingOutput();
 
   // Stop the dispatch thread gracefully before force-terminating threads,
@@ -1461,9 +1106,9 @@ void Emulator::RelaunchTitle(const std::string& host_path,
   kernel_state_->guest_scheduler()->Shutdown();
 
   // Reports the relaunch failed, unless a newer request replaces it and starts
-  // over itself. ResetTitle or that request clears relaunching_.
+  // over itself. ResetTitle or that request clears the relaunch flag.
   auto fail = [this, request]() {
-    if (request == relaunch_requests_.load()) {
+    if (request == xe_launch_state_latest(&launch_state_)) {
       ResetTitle();
     }
   };
@@ -1507,7 +1152,7 @@ void Emulator::RelaunchTitle(const std::string& host_path,
     return;
   }
 
-  relaunching_ = false;
+  xe_launch_state_set_active(&launch_state_, 0);
   XELOGI("RelaunchTitle: relaunch complete");
 }
 
@@ -1564,11 +1209,11 @@ void Emulator::StopTitleThreads() {
 
 void Emulator::ResetTitle() {
   // Drops relaunches requested before the reset.
-  ++relaunch_requests_;
+  xe_launch_state_request(&launch_state_);
   std::lock_guard<std::recursive_mutex> launch_lock(launch_mutex_);
   XELOGI("ResetTitle: stopping title and resetting kernel");
 
-  relaunching_ = true;
+  xe_launch_state_set_active(&launch_state_, 1);
 
   StopTitleThreads();
 
@@ -1577,7 +1222,7 @@ void Emulator::ResetTitle() {
   EjectXboxGame();
   SetupAgain();
 
-  relaunching_ = false;
+  xe_launch_state_set_active(&launch_state_, 0);
   XELOGI("ResetTitle: complete");
 }
 
@@ -1723,7 +1368,7 @@ bool Emulator::ExceptionCallback(Exception* ex) {
   // In-process relaunch/reset frees state under still-running guest threads;
   // their faults are expected, so park them instead of crashing. The teardown
   // thread isn't a guest thread, so its own faults still surface.
-  if (relaunching_ && kernel::XThread::IsInThread()) {
+  if (is_relaunching() && kernel::XThread::IsInThread()) {
     DivertToThunk(ex, &HaltDuringRelaunchThunk);
     return true;
   }
@@ -1925,10 +1570,10 @@ void Emulator::WaitUntilExit() {
 
     if (restoring_) {
       restore_fence_.Wait();
-    } else if (relaunching_) {
+    } else if (is_relaunching()) {
       // RelaunchTitle is running on another thread - wait for it to finish
       // and set the new main_thread_, then loop back to wait on it.
-      while (relaunching_) {
+      while (is_relaunching()) {
         xe::threading::Sleep(std::chrono::milliseconds(10));
       }
     } else {

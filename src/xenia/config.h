@@ -11,7 +11,6 @@
 #define XENIA_CONFIG_H_
 
 #include <filesystem>
-#include <functional>
 #include <string_view>
 #include "third_party/tomlplusplus/toml.hpp"
 
@@ -47,7 +46,6 @@ void SaveGameConfigSetting(xe::Emulator* emulator, const char* section,
 void SaveGameConfigSetting(xe::Emulator* emulator, const char* section,
                            const char* cvar_name, double value);
 void ReloadConfig();
-void SetConfigSavedCallback(std::function<void()> callback);
 }  // namespace config
 
 #endif  // XENIA_CONFIG_H_

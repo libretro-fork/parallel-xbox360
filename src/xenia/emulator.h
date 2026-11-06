@@ -10,7 +10,6 @@
 #ifndef XENIA_EMULATOR_H_
 #define XENIA_EMULATOR_H_
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -23,6 +22,7 @@
 
 #include "xenia/apu/audio_media_player.h"
 #include "xenia/base/exception_handler.h"
+#include "libretro/core_launch_state.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/game_info_database.h"
 #include "xenia/kernel/util/xlast.h"
@@ -151,7 +151,7 @@ class Emulator {
   // Are we currently running a title?
   bool is_title_open() const { return title_id_.has_value(); }
   // Whether a relaunch or reset is between titles.
-  bool is_relaunching() const { return relaunching_; }
+  bool is_relaunching() const { return xe_launch_state_active(&launch_state_) != 0; }
 
   uint32_t main_thread_id();
 
@@ -199,31 +199,28 @@ class Emulator {
   kernel::util::GameInfoDatabase* game_info_database() const {
     return game_info_database_.get();
   }
-  // Bare-essentials init: memory, cpu, vfs, kernel state, input system shell.
-  // Stores the subsystem factories but does not create graphics/audio or
-  // attach input drivers — call SetupSubsystems for that, after any per-game
-  // cvar overrides are in place.
-  X_STATUS Setup(
-      bool require_cpu_backend,
-      std::function<std::unique_ptr<apu::AudioSystem>(cpu::Processor*)>
-          audio_system_factory,
-      std::function<std::unique_ptr<gpu::GraphicsSystem>()>
-          graphics_system_factory,
-      std::function<std::vector<std::unique_ptr<hid::InputDriver>>()>
-          input_driver_factory);
+  using AudioSystemFactory = std::unique_ptr<apu::AudioSystem> (*)(cpu::Processor*);
+  using GraphicsSystemFactory = std::unique_ptr<gpu::GraphicsSystem> (*)();
+  using InputDriverFactory = std::unique_ptr<hid::InputDriver> (*)();
 
-  // Creates and starts graphics_system + audio_system from stored factories,
-  // and attaches input drivers. Call after Setup and after any per-game cvar
-  // overrides have been loaded.
+  // Initializes memory, CPU, VFS, kernel and the frontend input driver. Stores
+  // audio/graphics factories for SetupSubsystems after per-game cvar overrides.
+  // Null factories preserve the prior registrations across Shutdown/Setup.
+  X_STATUS Setup(bool require_cpu_backend, AudioSystemFactory audio_system_factory,
+                 GraphicsSystemFactory graphics_system_factory,
+                 InputDriverFactory input_driver_factory);
+
+  // Creates and starts graphics/audio from stored factories after Setup and
+  // after any per-game cvar overrides have been loaded.
   X_STATUS SetupSubsystems();
 
-  // Tears down graphics_system, audio_system, and input drivers. The bare
+  // Tears down graphics_system and audio_system. The bare
   // emulator (kernel, vfs, input_system shell) stays alive.
   void ShutdownSubsystems();
 
   // gpu/apu cvar values the live subsystems were built with; empty before
   // first SetupSubsystems. Used to detect a backend change driven by per-game
-  // overrides so the next launch can route through a fresh process.
+  // overrides to determine whether an in-process launch can reuse them.
   const std::string& active_gpu_backend() const { return active_gpu_backend_; }
   const std::string& active_apu_backend() const { return active_apu_backend_; }
 
@@ -288,95 +285,6 @@ class Emulator {
 
   X_STATUS LaunchDefaultModule(const std::filesystem::path& path);
 
-  enum class InstallState : uint8_t {
-    preparing,
-    pending,
-    installing,
-    installed,
-    failed
-  };
-
-  constexpr static std::string_view installStateStringName[5] = {
-      "Preparing", "Pending", "Installing", "Success", "Failed"};
-
-  struct ContentInstallEntry {
-    ContentInstallEntry(std::filesystem::path path) : path_(path) {};
-
-    // Move constructor
-    ContentInstallEntry(ContentInstallEntry&& other) noexcept
-        : name_(std::move(other.name_)),
-          path_(std::move(other.path_)),
-          data_installation_path_(std::move(other.data_installation_path_)),
-          header_installation_path_(std::move(other.header_installation_path_)),
-          content_size_(other.content_size_.load()),
-          currently_installed_size_(other.currently_installed_size_.load()),
-          content_type_(other.content_type_),
-          installation_state_(other.installation_state_),
-          installation_result_(other.installation_result_),
-          installation_error_message_(
-              std::move(other.installation_error_message_)),
-          icon_data_(std::move(other.icon_data_)),
-          cancelled_(other.cancelled_.load()),
-          mutex_(std::move(other.mutex_)) {}
-
-    // Move assignment
-    ContentInstallEntry& operator=(ContentInstallEntry&& other) noexcept {
-      if (this != &other) {
-        name_ = std::move(other.name_);
-        path_ = std::move(other.path_);
-        data_installation_path_ = std::move(other.data_installation_path_);
-        header_installation_path_ = std::move(other.header_installation_path_);
-        content_size_.store(other.content_size_.load());
-        currently_installed_size_.store(other.currently_installed_size_.load());
-        content_type_ = other.content_type_;
-        installation_state_ = other.installation_state_;
-        installation_result_ = other.installation_result_;
-        installation_error_message_ =
-            std::move(other.installation_error_message_);
-        icon_data_ = std::move(other.icon_data_);
-        cancelled_.store(other.cancelled_.load());
-        mutex_ = std::move(other.mutex_);
-      }
-      return *this;
-    }
-
-    // Delete copy constructor and copy assignment
-    ContentInstallEntry(const ContentInstallEntry&) = delete;
-    ContentInstallEntry& operator=(const ContentInstallEntry&) = delete;
-
-    std::string name_{};
-    std::filesystem::path path_;
-    std::filesystem::path data_installation_path_;
-    std::filesystem::path header_installation_path_;
-
-    std::atomic<uint64_t> content_size_{0};
-    std::atomic<uint64_t> currently_installed_size_{0};
-    XContentType content_type_{};
-
-    InstallState installation_state_{};
-    X_STATUS installation_result_{};
-    std::string installation_error_message_{};
-
-    std::vector<uint8_t> icon_data_;
-    std::atomic<bool> cancelled_{false};
-
-    // Guards every non-atomic field the install thread writes and Tick reads.
-    std::unique_ptr<std::mutex> mutex_ = std::make_unique<std::mutex>();
-  };
-
-  // Whether content holds title data from before profiles for DataMigration.
-  bool HasDataToMigrate() const;
-  // Migrates data from content to content/xuid with respect to common data.
-  // Returns how many moves and copies failed.
-  uint32_t DataMigration(const uint64_t xuid);
-
-  X_STATUS ProcessContentPackageHeader(const std::filesystem::path& path,
-                                       ContentInstallEntry& installation_info);
-
-  // Extract content of package to content specific directory.
-  X_STATUS InstallContentPackage(const std::filesystem::path& path,
-                                 ContentInstallEntry& installation_info);
-
   void Pause();
   void Resume();
   bool is_paused() const { return paused_; }
@@ -401,27 +309,6 @@ class Emulator {
   // (the libretro core) does instead of TerminateTitle, which exits it.
   void StopTitleThreads();
 
-  struct TitleDisc {
-    std::string label;
-    std::filesystem::path path;
-  };
-  // The app sets these so the core can reach the game library it can't include.
-  using DiscProvider = std::function<std::vector<TitleDisc>(uint32_t title_id)>;
-  void set_disc_provider(DiscProvider provider) {
-    disc_provider_ = std::move(provider);
-  }
-
-  using DiscRecorder =
-      std::function<void(uint32_t title_id, const std::filesystem::path& path)>;
-  void set_disc_recorder(DiscRecorder recorder) {
-    disc_recorder_ = std::move(recorder);
-  }
-  void RecordDisc(uint32_t title_id, const std::filesystem::path& path) {
-    if (disc_recorder_) {
-      disc_recorder_(title_id, path);
-    }
-  }
-
   // Disc in the drive, 1-based; follows XamSwapDisc. 0 when unknown.
   uint8_t current_disc_number() const { return current_disc_number_; }
   void set_current_disc_number(uint8_t disc_number) {
@@ -444,40 +331,6 @@ class Emulator {
   }
 
   void WaitUntilExit();
-
- public:
-  // Called when XamLoaderLaunchTitle requests launching a new title.
-  // The callback should spawn a new process with the given parameters.
-  // Parameters: host_path, launch_module, launch_flags, launch_data (hex),
-  // and the original Xbox game left in the drive for it
-  using LaunchNewTitleCallback =
-      std::function<void(const std::string&, const std::string&, uint32_t,
-                         const std::string&, const std::string&)>;
-  LaunchNewTitleCallback on_launch_new_title() const {
-    return on_launch_new_title_;
-  }
-  void set_on_launch_new_title(LaunchNewTitleCallback callback) {
-    on_launch_new_title_ = std::move(callback);
-  }
-
-  // Called when the game requests an exit to the dashboard. Returns true if
-  // the title is being reset in-process (the calling guest thread is about to
-  // be terminated), false if process exit was scheduled instead.
-  using ExitToDashboardCallback = std::function<bool()>;
-  ExitToDashboardCallback on_exit_to_dashboard() const {
-    return on_exit_to_dashboard_;
-  }
-  void set_on_exit_to_dashboard(ExitToDashboardCallback callback) {
-    on_exit_to_dashboard_ = std::move(callback);
-  }
-
-  // Called when XamSwapDisc successfully swaps to a new disc.
-  // Parameters: new_disc_number
-  using DiscSwapCallback = std::function<void(uint8_t)>;
-  DiscSwapCallback on_disc_swap() const { return on_disc_swap_; }
-  void set_on_disc_swap(DiscSwapCallback callback) {
-    on_disc_swap_ = std::move(callback);
-  }
 
  private:
   static bool ExceptionCallbackThunk(Exception* ex, void* data);
@@ -512,9 +365,7 @@ class Emulator {
   std::filesystem::path xbox_disc_path_;
   std::optional<vfs::XbeMetadata> xbox_game_;
   std::string missing_xefu_file_;
-  DiscProvider disc_provider_;
   DiscRequest disc_request_;
-  DiscRecorder disc_recorder_;
   std::filesystem::path storage_root_;
   std::filesystem::path content_root_;
   std::filesystem::path cache_root_;
@@ -546,30 +397,21 @@ class Emulator {
 
   bool paused_;
   bool restoring_;
-  std::atomic<bool> relaunching_{false};
+  xe_launch_state launch_state_;
   // Held across a launch and a whole relaunch so title teardown waits for a
   // launch to finish. Recursive, as a relaunch launches under it.
   std::recursive_mutex launch_mutex_;
-  // Relaunch requests so far, to drop one a newer request replaced while it
-  // waited for the lock.
-  std::atomic<uint64_t> relaunch_requests_{0};
   threading::Fence restore_fence_;  // Fired on restore finish.
 
   // Persisted across Shutdown/Setup for relaunch.
   bool require_cpu_backend_ = false;
-  std::function<std::unique_ptr<apu::AudioSystem>(cpu::Processor*)>
-      audio_system_factory_;
-  std::function<std::unique_ptr<gpu::GraphicsSystem>()>
-      graphics_system_factory_;
-  std::function<std::vector<std::unique_ptr<hid::InputDriver>>()>
-      input_driver_factory_;
+  AudioSystemFactory audio_system_factory_ = nullptr;
+  GraphicsSystemFactory graphics_system_factory_ = nullptr;
+  InputDriverFactory input_driver_factory_ = nullptr;
 
   std::string active_gpu_backend_;
   std::string active_apu_backend_;
 
-  LaunchNewTitleCallback on_launch_new_title_;
-  ExitToDashboardCallback on_exit_to_dashboard_;
-  DiscSwapCallback on_disc_swap_;
 };
 
 }  // namespace xe

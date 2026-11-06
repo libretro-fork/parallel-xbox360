@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed unused standalone installer/profile-migration APIs and unregistered UI/process-launch callbacks. Core subsystem factories now use stateless function pointers, and the input factory returns its driver directly without a temporary vector. Live relaunch control uses tested C89 libretro-common atomics; existing launch serialization, worker teardown and frontend disc handling are preserved. Audio scheduling is unchanged.
+
 - Memory-export format generation now writes directly into 19 bounded C89 case slots instead of growing a vector and copying temporary register arrays. Fixed-width metadata is borrowed and inactive register IDs are not copied. The measured export translation avoids six C++ allocations and 1,764 requested bytes; all 256 mask/stage/profile modules remain byte-identical and validate. Each translator retains a 536-byte workspace initialized at construction, reducing heap churn without putting the case table on the export call stack. No gameplay or CPU-speed improvement is claimed.
 
 - Vulkan and D3D12 frame refresh now borrow synchronous callbacks without owning callback copies. Guest-output capture uses nonblocking C89 consumer leases and libretro-common mailbox atomics instead of a consumer mutex; competing captures can skip rather than wait. Existing slot/resource ownership and GPU completion paths remain intact. Removed an unused GPU-loss callback parameter that the presenter never retained or invoked. The architecture audit review records remaining allocation, capacity and stutter work without treating its broad completion claims as verified.

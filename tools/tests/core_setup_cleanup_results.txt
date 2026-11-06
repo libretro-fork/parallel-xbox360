@@ -1,0 +1,56 @@
+Core-only setup/callback cleanup, 2026-11-06
+Parent: 0a458147de8dd5a8733c2b0ec9df6ac1d7642439.
+
+Caller audit before deletion (src/, libretro/, tools/):
+- The package installer, its progress/icon/mutex entry type and legacy profile
+  migration methods had no callers outside their own definitions. Remove these
+  standalone APIs, including dormant filesystem copying/moving/removal code.
+- ConfigSavedCallback had no registration caller. Remove its empty global,
+  setter/prototype and save notification.
+- Disc-provider/recorder, launch-new-process, dashboard and title-bar disc-swap
+  callback setters had no registration callers. Remove these registries and
+  their empty dispatch branches. Remove the full launch-data-to-hex conversion
+  that only fed an unregistered process-launch callback.
+- The frontend DiscRequest IS registered and asynchronous. Keep its callback,
+  completion fence, disc selection and shutdown-release path intact.
+
+The three subsystem factories have one frontend registration site, with
+noncapturing lambdas. Replace owning std::function parameters/fields with typed
+function pointers returning the same existing unique_ptr owners. Null parameters
+still preserve registrations across Shutdown/SetupAgain. Setup only attaches the
+single libretro input driver when creating InputSystem; a title relaunch retains
+that input system. Return that driver directly rather than through a temporary
+one-element vector. This does not remove InputSystem's own driver container.
+
+The remaining live emulator request counter and relaunch flag now use a C89
+libretro-common control record. Concurrent producers obtain unique 64-bit CAS
+tickets. Unsigned wrap uses a bit-preserving copy, with no signed addition
+overflow. Acquire observations and conservative fences on cold state transitions
+publish before teardown. The record does not own resource lifetimes: the existing
+recursive launch lock, worker stop/join order and relaunch flow are unchanged.
+Three installer atomics disappear with the unused type; no direct std::atomic
+usage remains in emulator.h/emulator.cc. Other modules still need migration.
+
+Validation:
+- Native MSVC /TC /O2 /W4 /WX C89 test: 200,000 unique concurrent request tickets,
+  monotonic observations, crossing INT64_MAX, UINT64 wrap and 50,000 payload/flag
+  handoffs, using common rthreads.
+- Strict GCC C89 ASan/UBSan passes the same tests. This is a control-record test,
+  not a complete emulator lifecycle or gameplay test.
+- Native MSVC compiles actual emulator.cc, config.cc, xam_content.cc, xam_info.cc
+  and libretro.cpp. The frontend compile check supplies its required version
+  macros through a test-only forced include; shipping Make supplies real values.
+- Full Windows static Make -j5 compiles/links the changed callers and consumers.
+- A complete source search confirms deleted callback APIs have no remaining
+  callers, and the live frontend disc registration is retained.
+- No game/frontend/GPU launch, installed DLL replacement, audio scheduling or
+  frame-delivery change. No speedup, allocation-free core or lock-free emulator
+  claim. The existing launch mutex, detached relaunch workers and guest parking
+  remain separate work; they are not made safe to delete by replacing atomics.
+- 168 textual std::function references remain in source/header files beneath
+  src/ and libretro/ at this checkpoint, down from 185.
+
+Reproduce the new primitive checks with tools/tests/run_launch_state_tests.sh
+(ASan/UBSan by default), or tools\tests\run_launch_state_tests.cmd from a Visual
+Studio x64 developer prompt. The full static Make build checks factory types and
+the actual frontend registration. Full reset/relaunch gameplay is not claimed.

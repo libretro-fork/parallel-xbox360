@@ -844,19 +844,11 @@ dword_result_t XamSwapDisc_entry(
         kernel_state()->emulator()->set_current_disc_number(
             exec_info.disc_number);
 
-        kernel_state()->emulator()->RecordDisc(info->title_id, new_disc_path);
-
         // Update the host_path in loader_data so title restarts use the new
         // disc
         auto xam = kernel_state()->GetKernelModule<XamModule>("xam.xex");
         if (xam) {
           xam->loader_data().host_path = xe::path_to_utf8(new_disc_path);
-        }
-
-        // Notify UI of disc swap for title bar update
-        auto on_disc_swap = kernel_state()->emulator()->on_disc_swap();
-        if (on_disc_swap) {
-          on_disc_swap(exec_info.disc_number);
         }
 
         // Success - break out of the loop
@@ -947,12 +939,6 @@ dword_result_t XamContentLaunchImageFromFileInternal_entry(
   }
 #endif  // !XE_PLATFORM_MAC
 
-  auto on_launch_new_title = kernel_state()->emulator()->on_launch_new_title();
-  if (on_launch_new_title) {
-    XELOGI("XamContentLaunchImageFromFileInternal: spawning new title process");
-    on_launch_new_title(xe::path_to_utf8(host_path), xex_name_, 0, "", "");
-  }
-
   kernel_state()->TerminateTitle();
   return X_ERROR_SUCCESS;
 }
@@ -1007,13 +993,6 @@ dword_result_t XamContentLaunchImageInternal_entry(lpvoid_t content_data_ptr,
     }
   }
 #endif  // !XE_PLATFORM_MAC
-
-  auto on_launch_new_title = kernel_state()->emulator()->on_launch_new_title();
-  if (on_launch_new_title) {
-    XELOGI("XamContentLaunchImageInternal: spawning new title process");
-    on_launch_new_title(xe::path_to_utf8(host_path), xex_path.value(), 0, "",
-                        "");
-  }
 
   kernel_state()->TerminateTitle();
   return X_ERROR_SUCCESS;
