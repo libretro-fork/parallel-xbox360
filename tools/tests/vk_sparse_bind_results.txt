@@ -1,0 +1,49 @@
+Vulkan sparse-bind final-record storage (0118)
+=============================================
+
+Before: each of three callers built one VkSparseMemoryBind on the stack. The
+command processor copied it into a vector, recorded buffer/offset/count in a
+second vector, then rebuilt a third vector of VkSparseBufferMemoryBindInfo at
+submission because the first vector could have moved. No callers used multi-bind
+records, nonzero memory offsets or flags.
+
+Now: those callers pass buffer, resource offset, size and memory scalars. A C89
+queue writes each final VkSparseMemoryBind once in retained nonmoving 128-record
+pages. Contiguous final VkSparseBufferMemoryBindInfo records immediately borrow
+those pages. No stack bind, staging-vector insertion, per-bind offset record,
+submission-time conversion loop or pointer-repair pass remains. Three vectors
+are removed. Existing queue acquisition, one vkQueueBindSparse per submission,
+semaphore/stage ordering and GPU memory ownership remain unchanged.
+
+Ownership / failure:
+- One command-processor owner; this is not a concurrent queue.
+- Native Vulkan submission borrows the records until vkQueueBindSparse returns,
+  exactly as before. Failed submission leaves records queued; success clears
+  counts and rewinds the cursor, retaining pages and native-info capacity.
+- Context setup warms 128 binds and 128 API infos. New high-water demand can
+  allocate; infos can move/copy on capacity growth, bind pages never move/copy.
+- Allocation failure preserves queued records, count and stage mask. Growth can
+  retain extra unused capacity after failure. The C++ wrapper throws bad_alloc
+  like the former vector operations; no new partial bind becomes visible.
+- Context teardown clears pending records at the old point. Destruction releases
+  CPU pages and infos; this store never frees or changes ownership of GPU memory.
+- On tested x64 types, old live payload was 88 bytes/bind across three arrays;
+  new live payload is 64 bytes/bind plus page links/owner and retained spare
+  capacity. This is a layout comparison, not a process-RSS measurement.
+
+Offline validation:
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror with ASan/UBSan, pointer and
+  integer Vulkan handle forms. Checks every field in 513,000 repeated records,
+  stable old bind addresses through growth, partial warm failure, info/page
+  growth failure rollback, overlarge reserve rejection, stage-mask accumulation,
+  capacity reuse with zero allocations after high-water warm, repeated destroy
+  and reuse after destroy, and allocation/release balance.
+- Native MSVC /TC /W4 /WX leaf fixture and actual Vulkan command processor,
+  shared-memory and texture-cache translation units. Windows static Make -j5.
+- No actual GPU, game, frontend or JIT is launched. Rendering, post-unload GPU
+  validation and gameplay/frame-time measurements remain unrun. No FPS claim,
+  whole-core allocation-free claim or elimination of hardware sparse binding.
+
+Reproduce: tools/tests/run_vk_sparse_bind_tests.sh (sanitizers by default) or
+run_vk_sparse_bind_tests.cmd from an x64 MSVC tools prompt. Define CC with
+-DVK_USE_64_BIT_PTR_DEFINES=0 to repeat the C test with integer handles.

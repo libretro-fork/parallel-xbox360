@@ -592,13 +592,6 @@ bool VulkanSharedMemory::AllocateSparseHostGpuMemoryRange(
   }
   buffer_memory_.push_back(memory);
 
-  VkSparseMemoryBind bind;
-  bind.resourceOffset = offset_allocations
-                        << host_gpu_memory_sparse_granularity_log2();
-  bind.size = memory_allocate_info.allocationSize;
-  bind.memory = memory;
-  bind.memoryOffset = 0;
-  bind.flags = 0;
   VkPipelineStageFlags bind_wait_stage_mask =
       VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
@@ -607,7 +600,9 @@ bool VulkanSharedMemory::AllocateSparseHostGpuMemoryRange(
     bind_wait_stage_mask |=
         VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
   }
-  command_processor_.SparseBindBuffer(buffer_, 1, &bind, bind_wait_stage_mask);
+  command_processor_.SparseBindBuffer(
+      buffer_, VkDeviceSize(offset_allocations) << host_gpu_memory_sparse_granularity_log2(),
+      memory_allocate_info.allocationSize, memory, bind_wait_stage_mask);
 
   return true;
 }

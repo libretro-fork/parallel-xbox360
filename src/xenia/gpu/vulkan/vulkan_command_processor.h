@@ -57,6 +57,7 @@
 #include "xenia/ui/vulkan/vulkan_provider.h"
 #include "xenia/ui/vulkan/vulkan_upload_buffer_pool.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
+#include "libretro/core_vk_sparse_bind.h"
 
 namespace xe {
 namespace gpu {
@@ -200,8 +201,8 @@ class VulkanCommandProcessor final : public CommandProcessor {
   // Thus, multiple sparse binds between the completed and the current
   // submission, and within one submission, must not touch any overlapping
   // memory regions.
-  void SparseBindBuffer(VkBuffer buffer, uint32_t bind_count,
-                        const VkSparseMemoryBind* binds,
+  void SparseBindBuffer(VkBuffer buffer, VkDeviceSize offset,
+                        VkDeviceSize size, VkDeviceMemory memory,
                         VkPipelineStageFlags wait_stage_mask);
 
   uint64_t GetCurrentFrame() const { return frame_current_; }
@@ -405,12 +406,6 @@ class VulkanCommandProcessor final : public CommandProcessor {
   struct CommandBuffer {
     VkCommandPool pool;
     VkCommandBuffer buffer;
-  };
-
-  struct SparseBufferBind {
-    VkBuffer buffer;
-    size_t bind_offset;
-    uint32_t bind_count;
   };
 
   union TextureDescriptorSetLayoutKey {
@@ -733,13 +728,8 @@ struct UsedTextureTransientDescriptorSet {
   std::deque<std::pair<uint64_t, CommandBuffer>> command_buffers_submitted_;
   DeferredCommandBuffer deferred_command_buffer_;
 
-  std::vector<VkSparseMemoryBind> sparse_memory_binds_;
-  std::vector<SparseBufferBind> sparse_buffer_binds_;
-  // SparseBufferBind converted to VkSparseBufferMemoryBindInfo to this buffer
-  // on submission (because pBinds should point to a place in std::vector, but
-  // it may be reallocated).
-  std::vector<VkSparseBufferMemoryBindInfo> sparse_buffer_bind_infos_temp_;
-  VkPipelineStageFlags sparse_bind_wait_stage_mask_ = 0;
+  // Final API records borrow nonmoving C89 bind pages through QueueBindSparse.
+  xe_sparse_bind_queue sparse_binds_{};
 
   // Temporary storage with reusable memory for creating descriptor set layouts.
   std::vector<VkDescriptorSetLayoutBinding> descriptor_set_layout_bindings_;

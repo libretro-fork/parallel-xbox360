@@ -3984,16 +3984,9 @@ void VulkanTextureCache::BindHeapToOverlappingBuffers(uint32_t heap_index,
     uint64_t offset_in_buffer =
         heap_address - (uint64_t(buffer_a) << 30);  // buffer_a * 1GB
 
-    VkSparseMemoryBind bind = {};
-    bind.resourceOffset = offset_in_buffer;
-    bind.size = kScaledResolveHeapSize;
-    bind.memory = heap;
-    bind.memoryOffset = 0;
-    bind.flags = 0;
-
     command_processor_.SparseBindBuffer(
-        scaled_resolve_sparse_buffers_[buffer_a]->buffer(), 1, &bind,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+        scaled_resolve_sparse_buffers_[buffer_a]->buffer(), offset_in_buffer,
+        kScaledResolveHeapSize, heap, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
   }
 
   // Bind to the second possible buffer (if different and valid)
@@ -4002,16 +3995,9 @@ void VulkanTextureCache::BindHeapToOverlappingBuffers(uint32_t heap_index,
     uint64_t offset_in_buffer =
         heap_address - (uint64_t(buffer_b) << 30);  // buffer_b * 1GB
 
-    VkSparseMemoryBind bind = {};
-    bind.resourceOffset = offset_in_buffer;
-    bind.size = kScaledResolveHeapSize;
-    bind.memory = heap;
-    bind.memoryOffset = 0;
-    bind.flags = 0;
-
     command_processor_.SparseBindBuffer(
-        scaled_resolve_sparse_buffers_[buffer_b]->buffer(), 1, &bind,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+        scaled_resolve_sparse_buffers_[buffer_b]->buffer(), offset_in_buffer,
+        kScaledResolveHeapSize, heap, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
   }
 }
 

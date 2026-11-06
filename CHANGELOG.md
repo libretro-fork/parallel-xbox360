@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan sparse binds now go directly into retained C89 storage with stable borrowed views for submission. Removed three vectors, stack-bind copies and submission-time record rebuilding while preserving queue/semaphore ordering. New high-water growth can still allocate; offline checks do not certify gameplay gains.
+
 - Vulkan descriptor reuse now retires completed frame batches by list splice instead of walking every handle. Per-handle records shrink from 24 to 16 bytes on tested 64-bit builds; the benchmark's warmed metadata request falls from 9,432 to 7,320 bytes including owners. Lease cancellation, exact free-list order and existing completion thresholds are preserved. No GPU/gameplay performance claim is made.
 
 - Vulkan single-layout and constant descriptor reuse replaces three free-list vectors and two pending deques with stable C89 records. Pending handles become reusable only after the existing completed-frame check; context setup warms metadata and pool resets retain its capacity. Native allocation failures and C++ exceptions release metadata leases safely. CPU metadata benchmarks improve on tested GCC/MinGW/MSVC builds; no gameplay speedup is claimed.

@@ -11,6 +11,7 @@
 #include "libretro/core_vk_descriptor_image.h"
 #include "libretro/core_gpu_downscale.h"
 
+#include <new>
 #include <cstdarg>
 #include <cstdint>
 #include <cstring>
@@ -128,6 +129,7 @@ VulkanCommandProcessor::~VulkanCommandProcessor() {
   xe_sampler_stage_free(&samplers_vertex_);
   xe_sampler_stage_free(&samplers_pixel_);
   xe_descriptor_scratch_free(&descriptor_write_image_info_);
+  xe_sparse_bind_destroy(&sparse_binds_);
   xe_descriptor_reuse_destroy(&constants_transient_descriptors_);
   for (auto& pool : single_transient_descriptors_) xe_descriptor_reuse_destroy(&pool);
 }
@@ -250,6 +252,7 @@ bool VulkanCommandProcessor::SetupContext() {
     return false;
   }
 
+  if (!xe_sparse_bind_warm(&sparse_binds_)) return false;
   if (!xe_descriptor_reuse_warm(&constants_transient_descriptors_)) return false;
   for (auto& pool : single_transient_descriptors_)
     if (!xe_descriptor_reuse_warm(&pool)) return false;
@@ -1588,9 +1591,7 @@ void VulkanCommandProcessor::ShutdownContext() {
 
   uniform_buffer_pool_.reset();
 
-  sparse_bind_wait_stage_mask_ = 0;
-  sparse_buffer_binds_.clear();
-  sparse_memory_binds_.clear();
+  xe_sparse_bind_clear(&sparse_binds_);
 
   deferred_command_buffer_.Reset();
   for (const auto& command_buffer_pair : command_buffers_submitted_) {
@@ -1711,19 +1712,11 @@ void VulkanCommandProcessor::WriteRegistersFromMem(uint32_t start_index,
   }
 }
 void VulkanCommandProcessor::SparseBindBuffer(
-    VkBuffer buffer, uint32_t bind_count, const VkSparseMemoryBind* binds,
+    VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size, VkDeviceMemory memory,
     VkPipelineStageFlags wait_stage_mask) {
-  if (!bind_count) {
-    return;
-  }
-  SparseBufferBind& buffer_bind = sparse_buffer_binds_.emplace_back();
-  buffer_bind.buffer = buffer;
-  buffer_bind.bind_offset = sparse_memory_binds_.size();
-  buffer_bind.bind_count = bind_count;
-  sparse_memory_binds_.reserve(sparse_memory_binds_.size() + bind_count);
-  sparse_memory_binds_.insert(sparse_memory_binds_.end(), binds,
-                              binds + bind_count);
-  sparse_bind_wait_stage_mask_ |= wait_stage_mask;
+  // Match the former vector growth exception, without publishing a partial bind.
+  if (!xe_sparse_bind_push(&sparse_binds_, buffer, offset, size, memory,
+                           wait_stage_mask)) throw std::bad_alloc();
 }
 
 void VulkanCommandProcessor::OnGammaRamp256EntryTableValueWritten() {
@@ -5618,7 +5611,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
 
   // Make sure everything needed for submitting exist.
   if (submission_open_) {
-    if (!sparse_memory_binds_.empty() && semaphores_free_.empty()) {
+    if (sparse_binds_.count != 0 && semaphores_free_.empty()) {
       VkSemaphoreCreateInfo semaphore_create_info;
       semaphore_create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
       semaphore_create_info.pNext = nullptr;
@@ -5683,17 +5676,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
 
     // Submit sparse binds earlier, before executing the deferred command
     // buffer, to reduce latency.
-    if (!sparse_memory_binds_.empty()) {
-      sparse_buffer_bind_infos_temp_.clear();
-      sparse_buffer_bind_infos_temp_.reserve(sparse_buffer_binds_.size());
-      for (const SparseBufferBind& sparse_buffer_bind : sparse_buffer_binds_) {
-        VkSparseBufferMemoryBindInfo& sparse_buffer_bind_info =
-            sparse_buffer_bind_infos_temp_.emplace_back();
-        sparse_buffer_bind_info.buffer = sparse_buffer_bind.buffer;
-        sparse_buffer_bind_info.bindCount = sparse_buffer_bind.bind_count;
-        sparse_buffer_bind_info.pBinds =
-            sparse_memory_binds_.data() + sparse_buffer_bind.bind_offset;
-      }
+    if (sparse_binds_.count != 0) {
       assert_false(semaphores_free_.empty());
       VkSemaphore bind_sparse_semaphore = semaphores_free_.back();
       VkBindSparseInfo bind_sparse_info;
@@ -5701,12 +5684,8 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
       bind_sparse_info.pNext = nullptr;
       bind_sparse_info.waitSemaphoreCount = 0;
       bind_sparse_info.pWaitSemaphores = nullptr;
-      bind_sparse_info.bufferBindCount =
-          uint32_t(sparse_buffer_bind_infos_temp_.size());
-      bind_sparse_info.pBufferBinds =
-          !sparse_buffer_bind_infos_temp_.empty()
-              ? sparse_buffer_bind_infos_temp_.data()
-              : nullptr;
+      bind_sparse_info.bufferBindCount = uint32_t(sparse_binds_.count);
+      bind_sparse_info.pBufferBinds = sparse_binds_.infos;
       bind_sparse_info.imageOpaqueBindCount = 0;
       bind_sparse_info.pImageOpaqueBinds = nullptr;
       bind_sparse_info.imageBindCount = 0;
@@ -5728,10 +5707,8 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
       current_submission_wait_semaphores_.push_back(bind_sparse_semaphore);
       semaphores_free_.pop_back();
       current_submission_wait_stage_masks_.push_back(
-          sparse_bind_wait_stage_mask_);
-      sparse_bind_wait_stage_mask_ = 0;
-      sparse_buffer_binds_.clear();
-      sparse_memory_binds_.clear();
+          sparse_binds_.wait_stages);
+      xe_sparse_bind_clear(&sparse_binds_);
     }
     // Can't cross command buffer boundaries. Close the active segment first.
     CloseQuerySegment();
