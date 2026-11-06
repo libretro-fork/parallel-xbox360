@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <vector>
+#include "libretro/core_command_stream.h"
 
 #include "xenia/base/assert.h"
 #include "xenia/base/literals.h"
@@ -30,13 +30,9 @@ class D3D12CommandProcessor;
 
 class DeferredCommandList {
  public:
-  static constexpr size_t MAX_SIZEOF_COMMANDLIST = 65536 * 128;  // around 8 mb
-  /*
-        chrispy: upped from 1_MiB to 4_MiB, m:durandal hits frequent resizes in
-     large open maps
-  */
+  static constexpr size_t kInitialCommandStreamSize = 65536 * 128;
   DeferredCommandList(const D3D12CommandProcessor& command_processor,
-                      size_t initial_size_bytes = MAX_SIZEOF_COMMANDLIST);
+                      size_t initial_size_bytes = kInitialCommandStreamSize);
 
   void Reset();
   void Execute(ID3D12GraphicsCommandList* command_list,
@@ -714,12 +710,17 @@ class DeferredCommandList {
   };
 
   void* WriteCommand(Command command, size_t arguments_size_bytes);
+  void ExecutePage(const xe_command_page* page,
+                   ID3D12GraphicsCommandList* command_list,
+                   ID3D12GraphicsCommandList1* command_list_1,
+                   ID3D12GraphicsCommandList2* command_list_2,
+                   ID3D12PipelineState*& current_pipeline_state);
 
   const D3D12CommandProcessor& command_processor_;
 
-  // uintmax_t to ensure uint64_t and pointer alignment of all structures.
-  // std::vector<uintmax_t> command_stream_;
-  FixedVMemVector<MAX_SIZEOF_COMMANDLIST> command_stream_;
+  // Stable uintmax_t-aligned packets, retained across submissions. Larger
+  // submissions grow by whole pages without moving earlier argument views.
+  xe_command_stream_owner command_stream_;
 };
 
 }  // namespace d3d12

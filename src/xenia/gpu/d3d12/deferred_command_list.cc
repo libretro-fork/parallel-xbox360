@@ -9,6 +9,8 @@
 
 #include "xenia/gpu/d3d12/deferred_command_list.h"
 
+#include <new>
+
 #include "xenia/base/assert.h"
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
@@ -22,10 +24,10 @@ namespace d3d12 {
 DeferredCommandList::DeferredCommandList(
     const D3D12CommandProcessor& command_processor, size_t initial_size)
     : command_processor_(command_processor) {
-  command_stream_.reserve(initial_size / sizeof(uintmax_t));
+  if (!xe_command_stream_init(&command_stream_, initial_size)) throw std::bad_alloc();
 }
 
-void DeferredCommandList::Reset() { command_stream_.clear(); }
+void DeferredCommandList::Reset() { xe_command_stream_reset(&command_stream_); }
 
 void DeferredCommandList::Execute(ID3D12GraphicsCommandList* command_list,
                                   ID3D12GraphicsCommandList1* command_list_1,
@@ -33,9 +35,20 @@ void DeferredCommandList::Execute(ID3D12GraphicsCommandList* command_list,
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
-  const uintmax_t* stream = (const uintmax_t*)command_stream_.data();
-  size_t stream_remaining = command_stream_.size() / sizeof(uintmax_t);
   ID3D12PipelineState* current_pipeline_state = nullptr;
+  for (const xe_command_page* page = command_stream_.first; page; page = page->next) {
+    ExecutePage(page, command_list, command_list_1, command_list_2,
+                current_pipeline_state);
+  }
+}
+
+void DeferredCommandList::ExecutePage(
+    const xe_command_page* page, ID3D12GraphicsCommandList* command_list,
+    ID3D12GraphicsCommandList1* command_list_1,
+    ID3D12GraphicsCommandList2* command_list_2,
+    ID3D12PipelineState*& current_pipeline_state) {
+  const uintmax_t* stream = reinterpret_cast<const uintmax_t*>(xe_command_page_const_data(page));
+  size_t stream_remaining = page->used / sizeof(uintmax_t);
   while (stream_remaining != 0) {
     const CommandHeader& header =
         *reinterpret_cast<const CommandHeader*>(stream);
@@ -347,20 +360,18 @@ void DeferredCommandList::Execute(ID3D12GraphicsCommandList* command_list,
 
 void* DeferredCommandList::WriteCommand(Command command,
                                         size_t arguments_size_bytes) {
-  size_t arguments_size_elements =
-      round_up(arguments_size_bytes, sizeof(uintmax_t), false);
-
-  size_t offset = command_stream_.size();
+  uint32_t argument_elements;
+  size_t packet_bytes;
   constexpr size_t kCommandHeaderSizeBytes =
       kCommandHeaderSizeElements * sizeof(uintmax_t);
-  command_stream_.resize(offset + kCommandHeaderSizeBytes +
-                         arguments_size_elements);
-  CommandHeader& header =
-      *reinterpret_cast<CommandHeader*>(command_stream_.data() + offset);
+  if (!xe_command_packet_layout(arguments_size_bytes, kCommandHeaderSizeBytes,
+                                &argument_elements, &packet_bytes)) throw std::bad_alloc();
+  uint8_t* packet = static_cast<uint8_t*>(xe_command_stream_append(&command_stream_, packet_bytes));
+  if (!packet) throw std::bad_alloc();
+  CommandHeader& header = *reinterpret_cast<CommandHeader*>(packet);
   header.command = command;
-  header.arguments_size_elements =
-      uint32_t(arguments_size_elements) / sizeof(uintmax_t);
-  return command_stream_.data() + (offset + kCommandHeaderSizeBytes);
+  header.arguments_size_elements = argument_elements;
+  return packet + kCommandHeaderSizeBytes;
 }
 
 }  // namespace d3d12

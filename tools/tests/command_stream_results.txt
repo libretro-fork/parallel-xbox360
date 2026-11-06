@@ -1,0 +1,93 @@
+D3D12 deferred command storage / stable C89 packet pages
+=======================================================
+
+Problem and change
+------------------
+The previous FixedVMemVector reserved/committed a fixed 8 MiB command buffer.
+Its resize updated the used size before an assertion of newsize < capacity.
+Release builds do not evaluate that assertion. A larger recorded submission
+could therefore write beyond the allocation. Native allocation failure was
+also not checked before writing. No observed game crash is attributed to this
+path; these are source-confirmed missing bounds, not a measured crash diagnosis.
+
+The command list now owns an MSVC C89 page stream, with a thin C++ lifetime
+wrapper. It starts with the same 8 MiB payload capacity. Recording checks size
+rounding, header addition, uint32 argument-count representation, total size and
+page-allocation overflow before publishing a packet. Failure leaves all earlier
+packets and the active page unchanged; the C++ bridge throws std::bad_alloc
+instead of writing through a null/undersized allocation. This does not establish
+whole-emulator recovery from host OOM.
+
+Each packet is contiguous and uintmax_t-aligned, and never straddles pages.
+Larger submissions add pages without reallocating or copying earlier packets.
+Existing caller-owned argument views remain stable until Reset/destruction.
+Packets may exceed the default page size with a checked larger allocation.
+Reset invalidates packet views and clears only page usage metadata. It retains
+all pages, without clearing payloads or allocating again at the warmed peak.
+New high-water demand can still allocate. Pages free on command-owner teardown.
+
+Replay visits page spans in recording order and borrows their native arguments
+directly. The native packet layout, individual switch cases, pipeline-state
+tracking across the entire submission, native command calls and GPU queue/fence
+ordering are unchanged. Unused retained pages are empty. Existing deferred
+argument/barrier copies from source arrays remain; this change does not make
+all command generation zero-copy or eliminate all mid-game allocation.
+
+Also removed four unused D3D12 texture/sampler snapshot vectors and four unused
+layout IDs. Repository searches found definitions only and native builds pass.
+They were empty metadata, so removing them does not prove a heap/RSS reduction
+or gameplay speedup. The other FixedVMemVector user, SharedMemory upload ranges,
+is unchanged and still requires its own bounds/storage audit.
+
+Offline verification
+--------------------
+tools/tests/run_command_stream_tests.sh: GCC -std=c89 -pedantic -Wall -Wextra
+-Werror, ASan/UBSan leaf; sanitized C++20 ownership-boundary test. PASS.
+tools/tests/run_command_stream_tests.cmd: native MSVC /TC /O2 /W4 /WX C89 leaf,
+C++20 lifetime test. PASS.
+
+- 65,536 argument sizes checked against an independent packet-size formula;
+  zero arguments, alignment, size_t rounding/addition overflow, uint32 argument
+  count overflow on 64-bit hosts, invalid/uninitialized storage and cold OOM.
+- Exact page fill, larger-than-page packet, retained undersized-page skipping,
+  failed-growth rollback and borrowed first-packet stability after growth.
+- 40,000 varied synthetic packets replay with exact headers, payload bytes and
+  recording order; second identical recording allocates no additional pages.
+- A submission exceeding the former 8 MiB bound keeps its first borrowed view
+  stable. No blanket payload zeroing is introduced. Reset preserves payload
+  bytes but invalidates their logical ownership, and double destruction is safe.
+- C++ owner releases every page after normal lifetime and constructor unwinding.
+
+Actual native MSVC DeferredCommandList, D3D12 and Vulkan command-processor
+translation units compile. Existing descriptor/submission-counter checks PASS.
+The full Windows GNU Make -j5 core build PASS. No GPU/gameplay/native COM replay,
+device loss, content-close or audio runtime test was run. The C fixture replays
+synthetic packet records; it is not a D3D12 device/replay implementation test.
+
+CPU recording cost (not a speedup claim)
+--------------------------------------
+tools/tests/core_command_stream_bench.c compares the old unchecked fixed-buffer
+recording shape within its valid capacity against the production C89 stream.
+The old overflow is never executed. Both start with 8 MiB, warm 1,000 batches,
+then record 500,000 batches of 64 packets (32M measured packets). Arguments are
+8..64 bytes, with the same header and endpoint writes. A separate noinline CPU
+consumer reads recorded fields after each batch so stores materialize in both
+paths. Timings include this checksum pass; checksums match. Median of three,
+run sequentially with owned builds finished:
+
+                       unchecked fixed       checked C89 pages
+GCC -O2                    49.677 ms               55.934 ms
+MinGW -O2                  47 ms                  48 ms
+MSVC /O2 /TC               52 ms                  66 ms
+
+Both versions allocate nothing during these warmed in-capacity iterations.
+Checked page recording costs more in this tight CPU fixture. The change removes
+an unchecked capacity limit while preserving stable direct-write storage;
+it is not claimed to improve in-capacity recording throughput or gameplay FPS.
+The initial requested payload remains 8 MiB, with a 32-byte page header on tested
+x64 hosts. Retained new pages add storage at new peaks. Actual allocator/OS
+committed/resident memory and native driver memory were not measured.
+
+Reproduce: compile the benchmark C file with -std=c89 -O2 -pedantic -Wall
+-Wextra -Werror (MSVC /TC /O2 /W4 /WX) and include libretro plus
+third_party/libretro-common/include. No GPU, shader compiler or frontend needed.

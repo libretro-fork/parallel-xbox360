@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- D3D12 deferred recording now checks packet sizes and grows with reusable C89 pages instead of relying on a release-disabled assertion around a fixed 8 MiB buffer. Larger submissions keep prior command views stable without copying recorded packets; warmed pages survive reset. Removed four unused descriptor snapshot vectors and their layout IDs. New peaks still allocate, and CPU fixtures show some cost for the added bounds checks; no gameplay speedup is claimed.
+
 - D3D12 bindless descriptor reuse replaces its free vector and pending deque with fixed C89 index links and batches attached to existing command allocators. Completed transient batches splice into reusable storage without copying their indices or allocating separate index metadata. Bounds and duplicate releases are checked, and CPU ownership is reserved before native allocator creation. This trades a cold 1 MiB reservation for reduced hot allocation; transient/mixed CPU fixtures improve, while persistent-only loops remain slower. Existing command-allocator growth, GPU lifetime and audio pacing are unchanged.
 
 - Vulkan texture descriptor reuse replaces its deque and layout-keyed free vectors with shared C89 records. Completed key/frame batches retire by splice, preserving exact per-layout handle order without per-handle copies or hash lookups. Native completion checks and reset boundaries are unchanged. Offline compiler benchmarks improve; retained metadata can be larger on GNU, and new peaks still allocate.

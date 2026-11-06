@@ -934,24 +934,6 @@ class D3D12CommandProcessor final : public CommandProcessor {
   bool bindful_textures_written_pixel_;
   bool bindful_samplers_written_vertex_;
   bool bindful_samplers_written_pixel_;
-  // Layout UIDs and last texture and sampler bindings written to the current
-  // descriptor heaps (for bindful) or descriptor index constant buffer (for
-  // bindless) with the last used descriptor layout. Valid only when:
-  // - For bindful, when bindful_#_written_#_ is true.
-  // - For bindless, when cbuffer_binding_descriptor_indices_#_.up_to_date is
-  //   true.
-  size_t current_texture_layout_uid_vertex_;
-  size_t current_texture_layout_uid_pixel_;
-  size_t current_sampler_layout_uid_vertex_;
-  size_t current_sampler_layout_uid_pixel_;
-  // Size of these should be ignored when checking whether these are up to date,
-  // layout UID should be checked first (they will be different for different
-  // binding counts).
-  std::vector<D3D12TextureCache::TextureSRVKey>
-      current_texture_srv_keys_vertex_;
-  std::vector<D3D12TextureCache::TextureSRVKey> current_texture_srv_keys_pixel_;
-  std::vector<uint32_t> current_sampler_bindless_indices_vertex_;
-  std::vector<uint32_t> current_sampler_bindless_indices_pixel_;
 
   // Latest bindful descriptor handles used for handling Xenos draw calls.
   D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle_shared_memory_srv_and_edram_;
