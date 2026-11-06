@@ -1,0 +1,92 @@
+XEX owned storage, checked image transforms and one compressed workspace
+======================================================================
+
+Header and XEXP payload vectors are replaced by xe_byte_storage: zero-initialized
+C89 owners with checked realloc growth, capacity reuse, shrink without copying,
+and explicit zero-new-tail patch growth. Initial headers/payloads copy directly
+into uninitialized final owned storage, avoiding vector zero-fill. Patches need
+OWNED mutable headers and persistent payloads; borrowing a caller's expired
+input would be incorrect. These ownership copies remain. Scratch is reused
+across retail/devkit key retries and freed by a scope lease on every Load exit.
+The module destructor retires all three C owners. Existing later member
+destructors were inspected: they do not access header/payload backing.
+
+The normal-compression path previously allocated a decrypted full image and a
+second full compress buffer, both zero-filled, then gathered chunks between them.
+It now uses one workspace. Encrypted input decrypts into it, then compacts in
+place; unencrypted input stays borrowed and chunks copy directly to workspace.
+No zero-fill of compressed workspace. Next-block size/hash is saved before
+compaction overwrites metadata. SHA1 is checked before touching each block's
+payload; block/chunk/terminator/output bounds and positive progress are checked.
+Failed compaction publishes zero output length; its private workspace may hold
+a partial prefix. Final LZX still needs contiguous compressed bytes, so chunk
+compaction remains. LZX output zeroing is deliberately retained until decoder
+full-write/error behavior has its own proof. No claim of complete zero-copy.
+
+C89 CBC saves a ciphertext block before output/XOR, preserving the IV in exact
+in-place and split-span use. The plain/basic/normal image paths use it with the
+existing Rijndael implementation. It rejects partial aliasing, non-block lengths
+and short destinations. Basic compression preflights all data/hole extents and
+encrypted block alignment before writes, copies/decrypts directly to guest, zeros
+holes and trailing image padding, and avoids zeroing file bytes before replacing
+them. Plain images also avoid their redundant initial memset. SHA1 comes from
+libretro-common. Legacy AES/delta-patch helpers still exist; this is not full
+crypto dependency removal or a general crypto API redesign.
+
+Front-door XEX1/XEX2/XEX% wire validation bounds fixed headers, optional table,
+security layouts/descriptors, generic optional records and format-info unions.
+Static assertions compare C security offsets to the actual C++ wire structs.
+Owned header copies are aligned; patched headers are checked again before
+publishing new security pointers, with format changes rejected. Patch growth
+preserves old bytes/zeroed expansion; patch application is still NOT transactional.
+Further error-path ownership and all indirect per-record payloads remain work.
+Page extents use checked wire counts within the selected heap; malformed sums
+cannot wrap to a smaller image. Non-patch heap pointers/zero base are checked.
+Input overlapping the heap about to be reset is rejected before reset, retaining
+borrowed source validity. Existing whole-heap reset and image allocation strategy
+are otherwise unchanged; they still need a separate ownership audit.
+
+Scope/limits:
+- Core loader changes, not frontend pacing/audio or renderer changes.
+- No new thread, lock, timer, runtime allocation logging or toolchain dependency.
+- One compressed workspace structurally replaces two encrypted-input buffers;
+  this is not a measured gameplay/FPS or allocation-free-core claim.
+- Header/payload/mapping/decoder/heap bookkeeping still allocate as required.
+- Static external GetOptHeader callers without a backing length remain a distinct
+  audit. PE/import parsing and legacy delta block/crypto code are not fully safe
+  merely because these outer bounds and normal-image checks pass.
+- Workspace compaction is synchronous. A streaming LZX input adapter could avoid
+  more gathering; encrypted block integrity and source lifetime must be retained.
+
+Validation:
+- Strict GCC -std=c89 -pedantic -Wall -Wextra -Werror and Linux ASan/UBSan.
+- Native MSVC /TC /O2 /W4 /WX for C leaf/full-fixture code; actual XexModule,
+  UserModule and C++ bridge compile with MSVC.
+- Owned-byte allocation failure preserves pointer/size/capacity/data; reused
+  storage does not allocate, patch growth zeroes only new tail, repeated free safe.
+- All three supported header/security layouts, truncations, descriptor overflow,
+  record offsets/lengths, enum/union sizes, image-page bounds and overlap checks.
+- Real Rijndael CBC against NIST SP800-38A F.2.2 first two blocks, disjoint,
+  in-place and split-span chaining; malformed lengths/partial overlap rejected.
+  https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf
+- Real common SHA1 two-block chains: separate output/in-place match; encrypted
+  -> decrypted -> in-place compacted output matches. Hash failure, malformed next
+  size, chunk overflow, missing terminator, short input/output publish no length.
+- Basic data/hole/padding bytes match; later invalid descriptors leave output
+  untouched. 10,000 deterministic authenticated first-block mutations run under
+  sanitizers, exercising malformed chunk/next-block state.
+- CPU-only real XexModule fixture builds synthetic plain/basic/normal images,
+  each encrypted and unencrypted. Session keys are constructed independently,
+  normal images carry a hand-encoded uncompressed LZX stream and real SHA1.
+  All 65,536 guest bytes compare for each of six cases; corrupted encrypted
+  chain is rejected. Empty/unloaded continuation and patch calls are rejected;
+  a loaded patch lacking its delta descriptor returns an error. Unload retires
+  header visibility. No valid LoadContinue, real
+  title, JIT/backend, frontend or GPU is launched. These are synthetic loader
+  fixtures, not signed retail executables or full PE/import/patch coverage.
+- Full Windows static Make -j5 compiles/links. Real core fixture is unsanitized;
+  C algorithms and mutation tests run with ASan/UBSan. Installed DLL untouched.
+
+Reproduce tools/tests/run_xex_image_tests.sh (sanitizers default), or
+ tools\tests\run_xex_image_tests.cmd in an x64 MSVC developer prompt.
+After Make, tools/tests/run_xex_image_bridge_tests.sh links real core objects.

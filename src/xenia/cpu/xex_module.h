@@ -14,6 +14,8 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include "libretro/core_byte_storage.h"
+#include "libretro/core_xex_image.h"
 #include "xenia/base/mapped_memory.h"
 #include "xenia/cpu/module.h"
 #include "xenia/kernel/util/xex2_info.h"
@@ -144,29 +146,24 @@ class XexModule : public xe::cpu::Module {
 
   bool loaded() const { return loaded_; }
   const xex2_header* xex_header() const {
-    return reinterpret_cast<const xex2_header*>(xex_header_mem_.data());
+    return xex_header_mem_.size >= 24 ?
+        reinterpret_cast<const xex2_header*>(xex_header_mem_.data) : nullptr;
   }
   const SecurityInfoContext* xex_security_info() const {
     return &security_info_;
   }
 
   uint32_t image_size() const {
-    assert_not_zero(base_address_);
-
-    // Calculate the new total size of the XEX image from its headers.
-    auto heap = memory()->LookupHeap(base_address_);
-    uint32_t total_size = 0;
-    for (uint32_t i = 0; i < xex_security_info()->page_descriptor_count; i++) {
-      // Byteswap the bitfield manually.
-      xex2_page_descriptor desc;
-      desc.value =
-          xe::byte_swap(xex_security_info()->page_descriptors[i].value);
-
-      total_size += desc.page_count * heap->page_size();
-    }
-    return total_size;
+    if (!loaded_) return 0;
+    auto* heap = base_address_ ? memory()->LookupHeap(base_address_) : nullptr;
+    uint32_t total = 0;
+    if (!heap || base_address_ < heap->heap_base() ||
+        base_address_ - heap->heap_base() >= heap->heap_size() ||
+        !xe_xex_page_bytes(reinterpret_cast<const uint8_t*>(security_info_.page_descriptors),
+            security_info_.page_descriptor_count, heap->page_size(),
+            heap->heap_size() - (base_address_ - heap->heap_base()), &total)) return 0;
+    return total;
   }
-
   const std::vector<ImportLibrary>* import_libraries() const {
     return &import_libs_;
   }
@@ -236,7 +233,7 @@ class XexModule : public xe::cpu::Module {
 
   const std::string& name() const override { return name_; }
   bool is_executable() const override {
-    return (xex_header()->module_flags & XEX_MODULE_TITLE) != 0;
+    return loaded_ && xex_header() && (xex_header()->module_flags & XEX_MODULE_TITLE) != 0;
   }
 
   bool is_valid_executable() const {
@@ -249,7 +246,6 @@ class XexModule : public xe::cpu::Module {
   }
 
   bool is_patch() const {
-    assert_not_null(xex_header());
     if (!xex_header()) {
       return false;
     }
@@ -294,8 +290,9 @@ class XexModule : public xe::cpu::Module {
   kernel::KernelState* kernel_state_ = nullptr;
   std::string name_;
   std::string path_;
-  std::vector<uint8_t> xex_header_mem_;  // Holds the xex header
-  std::vector<uint8_t> xexp_data_mem_;   // Holds XEXP patch data
+  xe_byte_storage xex_header_mem_{};  // Owned mutable header; patches retain pointers.
+  xe_byte_storage xexp_data_mem_{};   // Owned patch payload.
+  xe_byte_storage image_scratch_{};   // Reused across key retries, freed after Load.
 
   std::vector<ImportLibrary>
       import_libs_;  // pre-loaded import libraries for ease of use

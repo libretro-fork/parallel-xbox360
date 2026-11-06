@@ -8,6 +8,7 @@
  */
 
 #include "xenia/cpu/xex_module.h"
+#include "libretro/core_xex_image.h"
 
 #include <algorithm>
 #include <array>
@@ -91,15 +92,31 @@ void aes_decrypt_buffer(const uint8_t* session_key, const uint8_t* input_buffer,
   }
 }
 
+struct XexCipher {
+  uint32_t key[4 * (MAXNR + 1)];
+  int rounds;
+  uint8_t iv[16];
+};
+static void xex_decrypt_block(void* opaque, const uint8_t* from, uint8_t* to) {
+  XexCipher* cipher = static_cast<XexCipher*>(opaque);
+  rijndaelDecrypt(cipher->key, cipher->rounds, from, to);
+}
+static int xex_decrypt_span(void* opaque, const uint8_t* from, uint8_t* to, size_t size) {
+  XexCipher* cipher = static_cast<XexCipher*>(opaque);
+  return xe_xex_cbc(cipher, xex_decrypt_block, cipher->iv, from, size, to, size);
+}
 namespace xe {
 namespace cpu {
 
 using xe::kernel::KernelState;
+static_assert(offsetof(xex2_security_info, page_descriptors) == 0x184);
+static_assert(offsetof(xex1_security_info, page_descriptors) == 0x168);
+static_assert(offsetof(xex25_security_info, page_descriptors) == 0x154);
 
 XexModule::XexModule(Processor* processor, KernelState* kernel_state)
     : Module(processor), kernel_state_(kernel_state) {}
 
-XexModule::~XexModule() {}
+XexModule::~XexModule() { xe_bytes_free(&xex_header_mem_); xe_bytes_free(&xexp_data_mem_); xe_bytes_free(&image_scratch_); }
 
 bool XexModule::GetOptHeader(const xex2_header* header, xex2_header_keys key,
                              void** out_ptr) {
@@ -203,18 +220,21 @@ uint32_t XexModule::GetProcAddress(const std::string_view name) const {
 }
 
 int XexModule::ApplyPatch(XexModule* module) {
-  if (!is_patch()) {
+  if (!loaded_ || !module || module == this || !module->loaded_ ||
+      !module->xex_header() || !is_patch()) {
     // This isn't a XEX2 patch.
     return 1;
   }
 
   const uint32_t original_base_address = module->base_address();
+  const uint32_t original_magic = xe_xex_u32(module->xex_header_mem_.data);
 
   // Grab the delta descriptor and get to work.
   xex2_opt_delta_patch_descriptor* patch_header = nullptr;
-  GetOptHeader(XEX_HEADER_DELTA_PATCH_DESCRIPTOR,
-               reinterpret_cast<void**>(&patch_header));
-  assert_not_null(patch_header);
+  if (!GetOptHeader(XEX_HEADER_DELTA_PATCH_DESCRIPTOR,
+          reinterpret_cast<void**>(&patch_header)) || !patch_header ||
+      patch_header->size < offsetof(xex2_opt_delta_patch_descriptor, info) + 12)
+    return 2;
 
   uint32_t size = module->xex_header()->header_size;
   if (patch_header->delta_headers_source_offset > size) {
@@ -251,11 +271,12 @@ int XexModule::ApplyPatch(XexModule* module) {
                          patch_header->delta_headers_source_size;
   }
 
-  size_t mem_size = module->xex_header_mem_.size();
+  if (header_target_size < 24) return 2;
+  size_t mem_size = module->xex_header_mem_.size;
 
   // Increase xex header buffer length if needed
-  if (header_target_size > module->xex_header_mem_.size()) {
-    module->xex_header_mem_.resize(header_target_size);
+  if (header_target_size > module->xex_header_mem_.size) {
+    if (!xe_bytes_resize_zero(&module->xex_header_mem_, header_target_size)) return 2;
   }
 
   auto header_ptr = (uint8_t*)module->xex_header();
@@ -271,13 +292,13 @@ int XexModule::ApplyPatch(XexModule* module) {
   }
 
   // If new size is smaller than original, null out the difference
-  if (header_target_size < module->xex_header_mem_.size()) {
+  if (header_target_size < module->xex_header_mem_.size) {
     memset(header_ptr + header_target_size, 0,
-           module->xex_header_mem_.size() - header_target_size);
+           module->xex_header_mem_.size - header_target_size);
   }
 
   auto file_format_header = opt_file_format_info();
-  assert_not_null(file_format_header);
+  if (!file_format_header || file_format_header->info_size < 36) return 2;
 
   // Apply header patch...
   uint32_t headerpatch_size = patch_header->size;
@@ -291,9 +312,13 @@ int XexModule::ApplyPatch(XexModule* module) {
   }
 
   // Decrease xex header buffer length if needed (but only after patching)
-  if (module->xex_header_mem_.size() > header_target_size) {
-    module->xex_header_mem_.resize(header_target_size);
+  if (module->xex_header_mem_.size > header_target_size) {
+    if (!xe_bytes_resize_zero(&module->xex_header_mem_, header_target_size)) return 2;
   }
+
+  if (!xe_xex_header_valid(module->xex_header_mem_.data,
+          module->xex_header_mem_.size, nullptr) ||
+      xe_xex_u32(module->xex_header_mem_.data) != original_magic) return 2;
 
   // Update security info context with latest security info data
   module->ReadSecurityInfo();
@@ -380,8 +405,8 @@ int XexModule::ApplyPatch(XexModule* module) {
 
   // Decrypt (if needed).
   bool free_input = false;
-  const uint8_t* patch_buffer = xexp_data_mem_.data();
-  const size_t patch_length = xexp_data_mem_.size();
+  const uint8_t* patch_buffer = xexp_data_mem_.data;
+  const size_t patch_length = xexp_data_mem_.size;
 
   const uint8_t* input_buffer = patch_buffer;
 
@@ -506,13 +531,19 @@ int XexModule::ReadImage(const void* xex_addr, size_t xex_length,
     // Make a copy of patch data for other XEX's to use with ApplyPatch()
     const uint32_t data_len =
         static_cast<uint32_t>(xex_length - xex_header()->header_size);
-    xexp_data_mem_.resize(data_len);
-    std::memcpy(xexp_data_mem_.data(),
+    if (!xe_bytes_resize(&xexp_data_mem_, data_len)) return 1;
+    std::memcpy(xexp_data_mem_.data,
                 (uint8_t*)xex_addr + xex_header()->header_size, data_len);
     return 0;
   }
 
-  memory()->LookupHeap(base_address_)->Reset();
+  auto* target_heap = memory()->LookupHeap(base_address_);
+  const size_t header = xex_header()->header_size;
+  if (!base_address_ || !target_heap || header > xex_length ||
+      xe_xex_overlap(static_cast<const uint8_t*>(xex_addr) + header,
+          xex_length - header, target_heap->TranslateRelative(0), target_heap->heap_size()))
+    return 1;
+  target_heap->Reset();
 
   aes_decrypt_buffer(
       key, reinterpret_cast<const uint8_t*>(xex_security_info()->aes_key), 16,
@@ -530,7 +561,6 @@ int XexModule::ReadImage(const void* xex_addr, size_t xex_length,
       result_code = ReadImageCompressed(xex_addr, xex_length);
       break;
     default:
-      assert_always();
       return 2;
   }
 
@@ -547,256 +577,82 @@ int XexModule::ReadImage(const void* xex_addr, size_t xex_length,
 }
 
 int XexModule::ReadImageUncompressed(const void* xex_addr, size_t xex_length) {
-  // Allocate in-place the XEX memory.
-  const uint32_t exe_length =
-      static_cast<uint32_t>(xex_length - xex_header()->header_size);
-
-  uint32_t uncompressed_size = exe_length;
-  bool alloc_result =
-      memory()
-          ->LookupHeap(base_address_)
-          ->AllocFixed(
-              base_address_, uncompressed_size, 4096,
-              xe::kMemoryAllocationReserve | xe::kMemoryAllocationCommit,
-              xe::kMemoryProtectRead | xe::kMemoryProtectWrite);
-  if (!alloc_result) {
-    XELOGE("Unable to allocate XEX memory at {:08X}-{:08X}.", base_address_,
-           uncompressed_size);
-    return 2;
-  }
-  uint8_t* buffer = memory()->TranslateVirtual(base_address_);
-  std::memset(buffer, 0, uncompressed_size);
-
-  const uint8_t* p = (const uint8_t*)xex_addr + xex_header()->header_size;
-
-  switch (opt_file_format_info()->encryption_type) {
-    case XEX_ENCRYPTION_NONE:
-      if (exe_length > uncompressed_size) {
-        return 1;
-      }
-      memcpy(buffer, p, exe_length);
-      return 0;
-    case XEX_ENCRYPTION_NORMAL:
-      aes_decrypt_buffer(session_key_, p, exe_length, buffer,
-                         uncompressed_size);
-      return 0;
-    default:
-      assert_always();
-      return 1;
-  }
-
-  return 0;
+  const size_t header = xex_header()->header_size;
+  if (header > xex_length || xex_length - header > UINT32_MAX) return 1;
+  const uint32_t length = static_cast<uint32_t>(xex_length - header);
+  const auto* info = opt_file_format_info();
+  const bool encrypted = info->encryption_type == XEX_ENCRYPTION_NORMAL;
+  auto* heap = memory()->LookupHeap(base_address_);
+  if (length < 4 || !heap || base_address_ < heap->heap_base() ||
+      base_address_ - heap->heap_base() >= heap->heap_size() ||
+      length > heap->heap_size() - (base_address_ - heap->heap_base()) ||
+      (encrypted && (length & 15)) ||
+      (!encrypted && info->encryption_type != XEX_ENCRYPTION_NONE)) return 1;
+  if (!heap->AllocFixed(base_address_, length, 4096,
+          kMemoryAllocationReserve | kMemoryAllocationCommit,
+          kMemoryProtectRead | kMemoryProtectWrite)) return 2;
+  uint8_t* output = memory()->TranslateVirtual(base_address_);
+  const uint8_t* input = static_cast<const uint8_t*>(xex_addr) + header;
+  if (!encrypted) { std::memcpy(output, input, length); return 0; }
+  XexCipher cipher{};
+  cipher.rounds = rijndaelKeySetupDec(cipher.key, session_key_, 128);
+  return xex_decrypt_span(&cipher, input, output, length) ? 0 : 1;
 }
 
-int XexModule::ReadImageBasicCompressed(const void* xex_addr,
-                                        size_t xex_length) {
-  const uint32_t exe_length =
-      static_cast<uint32_t>(xex_length - xex_header()->header_size);
-  const uint8_t* source_buffer =
-      (const uint8_t*)xex_addr + xex_header()->header_size;
-  const uint8_t* p = source_buffer;
-
-  auto heap = memory()->LookupHeap(base_address_);
-
-  // Calculate uncompressed length.
-  uint32_t uncompressed_size = 0;
-
-  auto* file_info = opt_file_format_info();
-  auto& comp_info = file_info->compression_info.basic;
-
-  uint32_t block_count = (file_info->info_size - 8) / 8;
-  for (uint32_t n = 0; n < block_count; n++) {
-    const uint32_t data_size = comp_info.blocks[n].data_size;
-    const uint32_t zero_size = comp_info.blocks[n].zero_size;
-    uncompressed_size += data_size + zero_size;
-  }
-
-  // Calculate the total size of the XEX image from its headers.
-  uint32_t total_size = 0;
-  for (uint32_t i = 0; i < xex_security_info()->page_descriptor_count; i++) {
-    // Byteswap the bitfield manually.
-    xex2_page_descriptor desc;
-    desc.value = xe::byte_swap(xex_security_info()->page_descriptors[i].value);
-
-    total_size += desc.page_count * heap->page_size();
-  }
-
-  // Allocate in-place the XEX memory.
-  bool alloc_result = heap->AllocFixed(
-      base_address_, total_size, 4096,
-      xe::kMemoryAllocationReserve | xe::kMemoryAllocationCommit,
-      xe::kMemoryProtectRead | xe::kMemoryProtectWrite);
-  if (!alloc_result) {
-    XELOGE("Unable to allocate XEX memory at {:08X}-{:08X}.", base_address_,
-           uncompressed_size);
-    return 1;
-  }
-
-  uint8_t* buffer = memory()->TranslateVirtual(base_address_);
-  std::memset(buffer, 0, total_size);  // Quickly zero the contents.
-  uint8_t* d = buffer;
-
-  uint32_t rk[4 * (MAXNR + 1)];
-  uint8_t ivec[16] = {0};
-  int32_t Nr = rijndaelKeySetupDec(rk, session_key_, 128);
-
-  for (size_t n = 0; n < block_count; n++) {
-    const uint32_t data_size = comp_info.blocks[n].data_size;
-    const uint32_t zero_size = comp_info.blocks[n].zero_size;
-
-    switch (opt_file_format_info()->encryption_type) {
-      case XEX_ENCRYPTION_NONE:
-        if (data_size > uncompressed_size - (d - buffer)) {
-          // Overflow.
-          return 1;
-        }
-        memcpy(d, p, data_size);
-        break;
-      case XEX_ENCRYPTION_NORMAL: {
-        const uint8_t* ct = p;
-        uint8_t* pt = d;
-        for (size_t m = 0; m < data_size; m += 16, ct += 16, pt += 16) {
-          // Decrypt 16 uint8_ts from input -> output.
-          rijndaelDecrypt(rk, Nr, ct, pt);
-          for (size_t i = 0; i < 16; i++) {
-            // XOR with previous.
-            pt[i] ^= ivec[i];
-            // Set previous.
-            ivec[i] = ct[i];
-          }
-        }
-      } break;
-      default:
-        assert_always();
-        return 1;
-    }
-
-    p += data_size;
-    d += data_size + zero_size;
-  }
-
-  return 0;
+int XexModule::ReadImageBasicCompressed(const void* xex_addr, size_t xex_length) {
+  const size_t header = xex_header()->header_size;
+  if (header > xex_length || xex_length - header > UINT32_MAX) return 1;
+  const auto* info = opt_file_format_info();
+  const uint32_t total = image_size();
+  auto* heap = memory()->LookupHeap(base_address_);
+  if (!total || !heap || !heap->AllocFixed(base_address_, total, 4096,
+          kMemoryAllocationReserve | kMemoryAllocationCommit,
+          kMemoryProtectRead | kMemoryProtectWrite)) return 1;
+  XexCipher cipher{};
+  if (info->encryption_type == XEX_ENCRYPTION_NORMAL)
+    cipher.rounds = rijndaelKeySetupDec(cipher.key, session_key_, 128);
+  return xe_xex_basic_copy(reinterpret_cast<const uint8_t*>(info), info->info_size,
+      static_cast<const uint8_t*>(xex_addr) + header, xex_length - header,
+      memory()->TranslateVirtual(base_address_), total, xex_decrypt_span, &cipher) ? 0 : 1;
 }
-
 int XexModule::ReadImageCompressed(const void* xex_addr, size_t xex_length) {
-  const uint32_t exe_length =
-      static_cast<uint32_t>(xex_length - xex_header()->header_size);
-  const uint8_t* exe_buffer =
-      (const uint8_t*)xex_addr + xex_header()->header_size;
-
-  // src -> dest:
-  // - decrypt (if encrypted)
-  // - de-block:
-  //    4b total size of next block in uint8_ts
-  //   20b hash of entire next block (including size/hash)
-  //    Nb block uint8_ts
-  // - decompress block contents
-
-  uint8_t* compress_buffer = NULL;
-  const uint8_t* p = NULL;
-  uint8_t* d = NULL;
-
-  // Decrypt (if needed).
-  bool free_input = false;
-  const uint8_t* input_buffer = exe_buffer;
-  size_t input_size = exe_length;
-
-  switch (opt_file_format_info()->encryption_type) {
-    case XEX_ENCRYPTION_NONE:
-      // No-op.
-      break;
-    case XEX_ENCRYPTION_NORMAL:
-      // TODO: a way to do without a copy/alloc?
-      free_input = true;
-      input_buffer = (const uint8_t*)calloc(1, exe_length);
-      aes_decrypt_buffer(session_key_, exe_buffer, exe_length,
-                         (uint8_t*)input_buffer, exe_length);
-      break;
-    default:
-      assert_always();
-      return 1;
-  }
-
-  const auto* compression_info = &opt_file_format_info()->compression_info;
-  const xex2_compressed_block_info* cur_block =
-      &compression_info->normal.first_block;
-
-  compress_buffer = (uint8_t*)calloc(1, exe_length);
-
-  p = input_buffer;
-  d = compress_buffer;
-
-  // De-block.
-  int result_code = 0;
-
-  uint8_t block_calced_digest[0x14];
-  while (cur_block->block_size) {
-    const uint8_t* pnext = p + cur_block->block_size;
-    const auto* next_block = (const xex2_compressed_block_info*)p;
-
-    // Compare block hash, if no match we probably used wrong decrypt key
-    SHA1Digest(p, cur_block->block_size, block_calced_digest);
-    if (memcmp(block_calced_digest, cur_block->block_hash, 0x14) != 0) {
-      result_code = 2;
-      break;
-    }
-
-    // skip block info
-    p += 4;
-    p += 20;
-
-    while (true) {
-      const size_t chunk_size = (p[0] << 8) | p[1];
-      p += 2;
-      if (!chunk_size) {
-        break;
-      }
-
-      memcpy(d, p, chunk_size);
-      p += chunk_size;
-      d += chunk_size;
-    }
-
-    p = pnext;
-    cur_block = next_block;
-  }
-
-  if (!result_code) {
-    uint32_t uncompressed_size = image_size();
-
-    // Allocate in-place the XEX memory.
-    bool alloc_result =
-        memory()
-            ->LookupHeap(base_address_)
-            ->AllocFixed(
-                base_address_, uncompressed_size, 4096,
-                xe::kMemoryAllocationReserve | xe::kMemoryAllocationCommit,
-                xe::kMemoryProtectRead | xe::kMemoryProtectWrite);
-
-    if (alloc_result) {
-      uint8_t* buffer = memory()->TranslateVirtual(base_address_);
-      std::memset(buffer, 0, uncompressed_size);
-
-      // Decompress into XEX base
-      result_code = lzx_decompress(
-          compress_buffer, d - compress_buffer, buffer, uncompressed_size,
-          compression_info->normal.window_size, nullptr, 0);
-    } else {
-      XELOGE("Unable to allocate XEX memory at {:08X}-{:08X}.", base_address_,
-             uncompressed_size);
-      result_code = 3;
-    }
-  }
-
-  if (compress_buffer) {
-    free((void*)compress_buffer);
-  }
-  if (free_input) {
-    free((void*)input_buffer);
-  }
-  return result_code;
+  const size_t header_size = xex_header()->header_size;
+  if (header_size > xex_length || xex_length - header_size > UINT32_MAX) return 1;
+  const size_t input_size = xex_length - header_size;
+  const auto* file_info = opt_file_format_info();
+  if (!file_info || file_info->info_size < 36 || !input_size) return 1;
+  const auto& compression = file_info->compression_info.normal;
+  const uint32_t window = compression.window_size;
+  if (window < 32768 || window > 2097152 || (window & (window - 1))) return 1;
+  if (!xe_bytes_resize(&image_scratch_, input_size)) return 1;
+  const uint8_t* input = static_cast<const uint8_t*>(xex_addr) + header_size;
+  if (file_info->encryption_type == XEX_ENCRYPTION_NORMAL) {
+    XexCipher cipher{};
+    cipher.rounds = rijndaelKeySetupDec(cipher.key, session_key_, 128);
+    if (!xe_xex_cbc(&cipher, xex_decrypt_block, cipher.iv, input, input_size,
+          image_scratch_.data, image_scratch_.size)) return 1;
+    input = image_scratch_.data;
+  } else if (file_info->encryption_type != XEX_ENCRYPTION_NONE) return 1;
+  size_t compressed_size = 0;
+  if (!xe_xex_deblock(input, input_size, compression.first_block.block_size,
+        compression.first_block.block_hash,
+        [](void*, const uint8_t* data, size_t size, uint8_t* digest) {
+          SHA1Digest(data, size, digest);
+        }, nullptr, image_scratch_.data, image_scratch_.size, &compressed_size)) return 2;
+  const uint32_t output_size = image_size();
+  auto* heap = memory()->LookupHeap(base_address_);
+  if (!output_size || !heap || base_address_ < heap->heap_base() ||
+      output_size > heap->heap_size() - (base_address_ - heap->heap_base()) ||
+      !heap->AllocFixed(base_address_, output_size, 4096,
+          kMemoryAllocationReserve | kMemoryAllocationCommit,
+          kMemoryProtectRead | kMemoryProtectWrite)) return 3;
+  uint8_t* output = memory()->TranslateVirtual(base_address_);
+  // Keep decoder's existing zeroed-output contract until all LZX error/output
+  // paths have their own complete-write proof. Compressed input is not zeroed.
+  std::memset(output, 0, output_size);
+  return lzx_decompress(image_scratch_.data, compressed_size, output, output_size,
+      window, nullptr, 0);
 }
-
 int XexModule::ReadPEHeaders() {
   const uint8_t* p = memory()->TranslateVirtual(base_address_);
 
@@ -917,9 +773,12 @@ void XexModule::ReadSecurityInfo() {
 
 bool XexModule::Load(const std::string_view name, const std::string_view path,
                      const void* xex_addr, size_t xex_length) {
-  auto src_header = reinterpret_cast<const xex2_header*>(xex_addr);
+  uint32_t header_bytes = 0;
+  if (loaded_ || !xe_xex_header_valid(xex_addr, xex_length, &header_bytes) ||
+      xex_length - header_bytes > UINT32_MAX) return false;
+  const uint32_t source_magic = xe_xex_u32(static_cast<const uint8_t*>(xex_addr));
 
-  switch (src_header->magic) {
+  switch (source_magic) {
     case kXEX0Signature:
       XELOGE("XEX0 format not supported");
       return false;
@@ -948,11 +807,12 @@ bool XexModule::Load(const std::string_view name, const std::string_view path,
   }
 
   assert_false(loaded_);
-  loaded_ = true;
-
   // Read in XEX headers
-  xex_header_mem_.resize(src_header->header_size);
-  std::memcpy(xex_header_mem_.data(), src_header, src_header->header_size);
+  if (!xe_bytes_resize(&xex_header_mem_, header_bytes)) return false;
+  std::memmove(xex_header_mem_.data, xex_addr, header_bytes);
+
+  loaded_ = true;
+  struct ScratchLease { xe_byte_storage* bytes; ~ScratchLease() { xe_bytes_free(bytes); } } scratch{&image_scratch_};
 
   // Read/convert XEX1/XEX2 security info to a common format
   ReadSecurityInfo();
@@ -966,6 +826,8 @@ bool XexModule::Load(const std::string_view name, const std::string_view path,
   if (GetOptHeader(XEX_HEADER_IMAGE_BASE_ADDRESS, &base_addr_opt)) {
     base_address_ = *base_addr_opt;
   }
+
+  if (!is_patch() && (!base_address_ || !memory()->LookupHeap(base_address_))) return false;
 
   // Setup debug info.
   name_ = name;
@@ -1034,6 +896,7 @@ static std::vector<std::string> ImportLibraryNames(
 }
 
 bool XexModule::LoadContinue() {
+  if (!loaded_ || !xex_header()) return false;
   // Second part of image load
   // Split from Load() so that we can patch the XEX before loading this data
   assert_false(finished_load_);
@@ -1241,7 +1104,7 @@ bool XexModule::Unload() {
     memory()->LookupHeap(base_address_)->Release(base_address_);
   }
 
-  xex_header_mem_.resize(0);
+  xex_header_mem_.size = 0;
 
   return true;
 }
