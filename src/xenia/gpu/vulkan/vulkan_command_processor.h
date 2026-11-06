@@ -26,6 +26,7 @@
 #include <utility>
 #include <vector>
 
+#include "libretro/core_sampler_scratch.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/hash.h"
 #include "xenia/base/logging.h"
@@ -988,11 +989,9 @@ class VulkanCommandProcessor final : public CommandProcessor {
   bool dynamic_stencil_reference_front_update_needed_;
   bool dynamic_stencil_reference_back_update_needed_;
 
-  // Currently used samplers.
-  std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>
-      current_samplers_vertex_;
-  std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>
-      current_samplers_pixel_;
+  // Current and written snapshots rotate owned CPU storage; handles are borrowed.
+  xe_sampler_stage samplers_vertex_{};
+  xe_sampler_stage samplers_pixel_{};
 
   // Cache render pass currently started in the command buffer with the
   // framebuffer. For dynamic rendering, current_render_pass_ is VK_NULL_HANDLE
@@ -1050,10 +1049,7 @@ class VulkanCommandProcessor final : public CommandProcessor {
   // tracked separately via VulkanTextureCache::texture_bindings_changed).
   const VulkanShader* current_textures_vertex_shader_ = nullptr;
   const VulkanShader* current_textures_pixel_shader_ = nullptr;
-  std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>
-      current_written_samplers_vertex_;
-  std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>
-      current_written_samplers_pixel_;
+
 
   // Float constant usage masks of the last draw call.
   uint64_t current_float_constant_map_vertex_[4];

@@ -1,0 +1,66 @@
+Draw sampler scratch: rotating owned CPU snapshots
+=================================================
+
+Vulkan had two current vectors of (parameters, VkSampler) and two written vectors.
+Every descriptor snapshot copied a whole current list into its written vector.
+The C89 replacement keeps two owned buffers per stage: prepare uses the slot
+not referenced by the written snapshot; commit changes only the written index.
+The current index remains unchanged, preserving repeated UpdateBindings calls
+(including the same draw's ZPD/render-pass update) and sampler-overflow retries.
+If no descriptor write succeeds, the previous written slot stays immutable.
+
+Each parameter word decodes directly into its final scratch record, without a
+temporary pair insertion. Equality compares only parameters and handle fields,
+never padding. Commit does not copy or initialize record payloads. Peak capacity
+is retained and checked growth does not corrupt either snapshot on allocation
+failure. Counts follow actual shader binding lists, not an invented 32-sampler
+limit: specialized samplers need not map one-to-one to hardware fetch constants.
+
+Sampler handles remain borrowed from VulkanTextureCache; UseSampler calls still
+run on each overflow attempt to refresh submission usage. The C owner never
+destroys a Vulkan object. Destructor frees only CPU scratch, at the same owning
+command-processor destruction phase as the previous vectors. GPU completion,
+descriptor-set retirement, device-loss handling and shutdown order are retained.
+
+Async binding readiness guards remain. If readiness changes after collection,
+non-placeholder descriptor counts must agree with collected sampler records;
+otherwise UpdateBindings fails this draw before building invalid sampler writes.
+Zero counts used intentionally by placeholder shaders remain valid. The next
+draw can collect the newly published list. This is not a shader-worker wait.
+
+D3D12 audit found the two matching current_samplers_* vector members had no
+references beyond their declarations; they are removed. Active D3D12 bindings
+are unchanged. This is not a claim that all D3D12 vectors/allocations are gone.
+
+Validation:
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror; Linux ASan/UBSan.
+- Native MSVC /TC /W4 /WX C fixture, actual Vulkan and D3D12 command-processor
+  translation units, and native reference bridge compile/run.
+- Pointer-identical commits, repeated commits, immutable retained snapshots,
+  handle-only/parameter-only mismatches, empty lists, overflow-size rejection,
+  injected failed growth, repeated free and zero allocations in 10,000 warmed
+  fixed-count draws. Pending old-written records survive failed preparation.
+- Differential reference executes 10,000 randomized draw counts up to 256 using
+  the previous std::vector<pair<actual SamplerParameters,VkSampler>> snapshot
+  semantics. Descriptor success/failure and repeated commits match the C owner.
+  Actual Vulkan handles round-trip all 64 bits. The sanitized reference passes
+  both default pointer handles and VK_USE_64_BIT_PTR_DEFINES=0 integer handles.
+- Descriptor-count mismatch and intentional zero-placeholder cases are checked.
+- Full Windows static Make -j5 build/link, both renderer callers included.
+
+Limits:
+No game, frontend, JIT or GPU launch: the differential reference uses opaque fake
+handles and actual sampler parameter/handle types, not a real Vulkan device.
+GPU draw/output correctness is not certified by a CPU fixture. Native full-render
+validation remains work under the existing no-launch restriction.
+Warming either slot or growing beyond that slot's capacity can allocate (and
+fail); the whole core
+is not allocation-free. Shader binding vectors, descriptor write-info vectors,
+other std::function/mutex/atomic users and renderer allocations remain work.
+No measured FPS/latency claim, audio pacing changes or new runtime logging.
+
+Reproduce tools/tests/run_sampler_scratch_tests.sh (C leaf, sanitizers default)
+and tools/tests/run_sampler_scratch_bridge_tests.sh (sanitized reference).
+tools\tests\run_sampler_scratch_tests.cmd runs the MSVC C leaf in an x64 tools
+prompt. Build the actual renderer translation units/full core with its normal
+settings, including VULKAN_HPP_NO_TO_STRING for the existing owned header setup.

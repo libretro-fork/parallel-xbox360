@@ -950,8 +950,6 @@ class D3D12CommandProcessor final : public CommandProcessor {
   std::vector<D3D12TextureCache::TextureSRVKey>
       current_texture_srv_keys_vertex_;
   std::vector<D3D12TextureCache::TextureSRVKey> current_texture_srv_keys_pixel_;
-  std::vector<D3D12TextureCache::SamplerParameters> current_samplers_vertex_;
-  std::vector<D3D12TextureCache::SamplerParameters> current_samplers_pixel_;
   std::vector<uint32_t> current_sampler_bindless_indices_vertex_;
   std::vector<uint32_t> current_sampler_bindless_indices_pixel_;
 

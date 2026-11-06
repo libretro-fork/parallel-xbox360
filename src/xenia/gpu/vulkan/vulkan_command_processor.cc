@@ -122,7 +122,11 @@ VulkanCommandProcessor::VulkanCommandProcessor(
           uint32_t(xe::countof(kDescriptorPoolSizeTextures)),
           kLinkedTypeDescriptorPoolSetCount) {}
 
-VulkanCommandProcessor::~VulkanCommandProcessor() = default;
+static_assert(sizeof(VkSampler) == sizeof(uint64_t));
+VulkanCommandProcessor::~VulkanCommandProcessor() {
+  xe_sampler_stage_free(&samplers_vertex_);
+  xe_sampler_stage_free(&samplers_pixel_);
+}
 
 void VulkanCommandProcessor::UpdateDebugMarkersEnabled() {
   // Enable debug markers if the CVAR is set or RenderDoc is detected.
@@ -3648,12 +3652,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // submission.
     uint32_t samplers_overflowed_count = 0;
     for (uint32_t j = 0; j < 2; ++j) {
-      std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>&
-          shader_samplers =
-              j ? current_samplers_pixel_ : current_samplers_vertex_;
-      if (!i) {
-        shader_samplers.clear();
-      }
+      xe_sampler_stage& sampler_stage = j ? samplers_pixel_ : samplers_vertex_;
+      if (!i && !xe_sampler_begin(&sampler_stage, 0)) return false;
       const VulkanShader* shader = j ? pixel_shader : vertex_shader;
       if (!shader) {
         continue;
@@ -3661,33 +3661,30 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       // Don't read a shader's sampler bindings while a creation thread is still
       // populating them (async draws don't translate here). A placeholder draw
       // that ends up using this shader binds no samplers for it anyway.
-      if (!shader->bindings_ready()) {
-        if (!i) {
-          shader_samplers.clear();
-        }
-        continue;
-      }
+      if (!shader->bindings_ready()) continue;
       const std::vector<VulkanShader::SamplerBinding>& shader_sampler_bindings =
           shader->GetSamplerBindingsAfterTranslation();
       if (!i) {
-        shader_samplers.reserve(shader_sampler_bindings.size());
-        for (const VulkanShader::SamplerBinding& shader_sampler_binding :
-             shader_sampler_bindings) {
-          shader_samplers.emplace_back(
-              texture_cache_->GetSamplerParameters(shader_sampler_binding),
-              VK_NULL_HANDLE);
+        if (!xe_sampler_begin(&sampler_stage, shader_sampler_bindings.size())) return false;
+        xe_sampler_buffer* samplers = xe_sampler_current(&sampler_stage);
+        for (size_t index = 0; index < samplers->count; ++index) {
+          samplers->data[index].parameters =
+              texture_cache_->GetSamplerParameters(shader_sampler_bindings[index]).value;
+          samplers->data[index].sampler = 0;
         }
       }
-      for (std::pair<VulkanTextureCache::SamplerParameters, VkSampler>&
-               shader_sampler_pair : shader_samplers) {
+      xe_sampler_buffer* samplers = xe_sampler_current(&sampler_stage);
+      for (size_t index = 0; index < samplers->count; ++index) {
+        xe_sampler_record& sampler_record = samplers->data[index];
         // UseSampler calls are needed even on the second iteration in case the
         // submission was broken (and thus the last usage submission indices for
         // the used samplers need to be updated) due to an overflow within one
         // submission. Though sampler overflow is a very rare situation overall.
         bool sampler_overflowed;
-        VkSampler shader_sampler = texture_cache_->UseSampler(
-            shader_sampler_pair.first, sampler_overflowed);
-        shader_sampler_pair.second = shader_sampler;
+        VulkanTextureCache::SamplerParameters parameters;
+        parameters.value = sampler_record.parameters;
+        VkSampler shader_sampler = texture_cache_->UseSampler(parameters, sampler_overflowed);
+        sampler_record.sampler = (uint64_t)shader_sampler;
         if (shader_sampler == VK_NULL_HANDLE) {
           if (!sampler_overflowed || i) {
             // If !sampler_overflowed, just failed to create a sampler for some
@@ -6881,6 +6878,10 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
     sampler_count_vertex = 0;
     texture_count_vertex = 0;
   }
+  // Async publication after sampler collection must not expose an uncollected
+  // non-placeholder sampler list to vkUpdateDescriptorSets. Retry next draw.
+  if (!xe_sampler_descriptor_count_valid(&samplers_vertex_, sampler_count_vertex) ||
+      !xe_sampler_descriptor_count_valid(&samplers_pixel_, sampler_count_pixel)) return false;
   // Reuse the texture and sampler descriptor sets across draws while their
   // contents stay valid. A set becomes stale when the shader (and thus its
   // binding list) changes, when a used texture's host image view changes, or
@@ -6900,7 +6901,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
        (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex)) &&
       (current_textures_vertex_shader_ != vertex_shader ||
        (textures_changed & used_texture_mask_vertex) ||
-       current_written_samplers_vertex_ != current_samplers_vertex_)) {
+       !xe_sampler_matches(&samplers_vertex_))) {
     current_graphics_descriptor_set_values_up_to_date_ &=
         ~(UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex);
   }
@@ -6908,7 +6909,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
        (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel)) &&
       (current_textures_pixel_shader_ != pixel_shader ||
        (textures_changed & used_texture_mask_pixel) ||
-       current_written_samplers_pixel_ != current_samplers_pixel_)) {
+       !xe_sampler_matches(&samplers_pixel_))) {
     current_graphics_descriptor_set_values_up_to_date_ &=
         ~(UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel);
   }
@@ -6951,11 +6952,11 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   }
   size_t vertex_sampler_image_info_offset = descriptor_write_image_info_.size();
   if (write_vertex_textures && sampler_count_vertex) {
-    for (const std::pair<VulkanTextureCache::SamplerParameters, VkSampler>&
-             sampler_pair : current_samplers_vertex_) {
+    const xe_sampler_buffer* samplers = xe_sampler_current(&samplers_vertex_);
+    for (size_t index = 0; index < samplers->count; ++index) {
       VkDescriptorImageInfo& descriptor_image_info =
           descriptor_write_image_info_.emplace_back();
-      descriptor_image_info.sampler = sampler_pair.second;
+      descriptor_image_info.sampler = (VkSampler)samplers->data[index].sampler;
     }
   }
   size_t pixel_texture_image_info_offset = descriptor_write_image_info_.size();
@@ -6974,11 +6975,11 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   }
   size_t pixel_sampler_image_info_offset = descriptor_write_image_info_.size();
   if (write_pixel_textures && sampler_count_pixel) {
-    for (const std::pair<VulkanTextureCache::SamplerParameters, VkSampler>&
-             sampler_pair : current_samplers_pixel_) {
+    const xe_sampler_buffer* samplers = xe_sampler_current(&samplers_pixel_);
+    for (size_t index = 0; index < samplers->count; ++index) {
       VkDescriptorImageInfo& descriptor_image_info =
           descriptor_write_image_info_.emplace_back();
-      descriptor_image_info.sampler = sampler_pair.second;
+      descriptor_image_info.sampler = (VkSampler)samplers->data[index].sampler;
     }
   }
 
@@ -7063,7 +7064,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
             write_textures[0].dstSet;
     // Remember what this set was written for, to reuse it in later draws.
     current_textures_vertex_shader_ = vertex_shader;
-    current_written_samplers_vertex_ = current_samplers_vertex_;
+    xe_sampler_commit(&samplers_vertex_);
   }
   // Pixel shader textures and samplers.
   if (write_pixel_textures) {
@@ -7087,7 +7088,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
             write_textures[0].dstSet;
     // Remember what this set was written for, to reuse it in later draws.
     current_textures_pixel_shader_ = pixel_shader;
-    current_written_samplers_pixel_ = current_samplers_pixel_;
+    xe_sampler_commit(&samplers_pixel_);
   }
   // Write.
   if (write_descriptor_set_count) {
