@@ -1,0 +1,116 @@
+Bounded resolve-owner rows and age selection
+==========================================
+
+The shared Vulkan/D3D12 readwatch path replaces its unordered_map of ResolveOwner
+nodes and temporary age vector with MSVC C89 storage. The registry has 4096 stable
+payload rows, 8192 16-bit hash buckets, 16-bit free/index links, an occupancy bitmap
+and retained 4096-word age scratch. Tested x64 size is 213512 bytes. New rows alone
+are zeroed; reset clears index/occupancy/free links without clearing dead payloads.
+
+The existing cap is a proved bound, not a new guessed limit: NoteResolveForReadback
+prunes whenever count is already 4096 before insertion, including an existing-key
+update. Pruning removes copied rows or rows with neither edge still owned. If
+still full, it removes every row whose unsigned age is >= the 75th-percentile
+age. At least 1024 rows must then be released, including all ties at the threshold.
+Thus the next get has space. The C89 API independently rejects new insertion into
+a full table without mutating it; the frontend boundary retains a defensive check.
+
+The index uses exact 64-bit key comparisons after mixing. Backshift deletion
+moves only bucket links and updates their row locations; payloads and keys of
+surviving rows stay at fixed addresses. Occupancy-word iteration borrows live rows
+without collecting a separate list. A borrowed fault owner remains stable during
+the existing native copy/wait. Erase/reset ends that borrow. Derived ages write
+directly into retained scratch because selection reorders input; live rows are
+not reordered/copied to select ages. Three-way unsigned selection handles ties,
+with a bounded partition depth and allocation-free heapsort fallback.
+
+Owner field meanings, unsigned frame wrap, selected eviction keys and submission
+rearm clearing match the old implementation. The C++ include supplies thin typed
+lookups/native calls only. All registry algorithms and storage are C89. Existing
+resolve_read_mutex_ serialization is still required for owner maps/read keys and
+fault leases; this is not a lock-free registry claim. Native queue/barrier/fence,
+callback unregister/drain, reset/shutdown ordering and audio/pacing are unchanged.
+
+Tradeoffs / remaining work
+--------------------------
+This removes owner-node/rehash and age-scratch allocations during play. Every
+command processor reserves 213512 inline bytes even at low occupancy. At full
+occupancy this is less requested metadata than the measured legacy map plus
+age scratch, but at low occupancy or after mass eviction the old map can retain
+less. Requested sizes exclude allocator overhead; no RSS or residency claim is
+made. Other read-key/read-frame maps, rearm vectors, native resources and staging
+still allocate. The existing 1 MiB atomic page-key table and copy-record storage
+from the preceding release are unchanged. No logging, clocks, sleeps, callbacks
+or synchronization primitives are added by the registry.
+
+Correctness evidence
+--------------------
+- C89 leaf tests: a wrapping 4096-key single-bucket collision cluster, exact
+  full-table rejection, stable surviving row addresses after backshift deletion,
+  reuse, free-list/index/occupancy consistency, zero/new rows and all-bit keys.
+- 10156 exact unsigned order statistics against qsort plus direct heapsort tests:
+  sorted/reverse/equal/sawtooth/high-bit/random arrays up to 4096, with invalid
+  size/rank guards. Selection scratch does not escape its registry owner.
+- Legacy unordered_map/std::nth_element reference: 100000 update events, 126
+  pruning cases and 532 exact key/field snapshots. Includes all-equal threshold
+  ties, one/both overwritten edges, copied rows, unsigned frame wrap, rearm clear
+  and stable surviving leases. The initial trace generator did not reach the cap
+  often enough; the shipped xorshift trace does. Reference code is test-only C++.
+- MSVC 19.44 /TC /O2 /W4 /WX and MinGW GCC 16.2 C89 leaf tests pass. MSVC Address
+  Sanitizer passes both leaf and complete reference in --check mode. No Linux
+  sanitizer result is claimed for this release: WSL reports no installed distro
+  in the current environment. Earlier pre-pause leaf checks do not substitute
+  for the current complete-reference sanitizer run.
+- Native MSVC compiles actual Vulkan/D3D12 command processors and shared/deferred
+  units. Prior upload/copy/descriptor/submission fixtures pass. Static Windows
+  Make -j5 rebuild/link passes. No emulator/game/GPU/JIT launch or installed-core
+  replacement is performed; native gameplay timing and whole-core races remain
+  outside these fixtures.
+
+Leaf and reference --check fixtures are wired before core builds in GitHub
+Linux/Windows and GitLab Linux jobs. Remote CI results are not claimed here.
+
+Reproduce
+---------
+sh tools/tests/run_resolve_owners_tests.sh
+sh tools/tests/run_resolve_owners_reference_tests.sh --check
+Developer Command Prompt:
+  tools\tests\run_resolve_owners_tests.cmd
+  tools\tests\run_resolve_owners_reference_tests.cmd --check
+For MSVC ASan add /fsanitize=address /Zi with /MD to the corresponding C/C++
+compilations and run leaf/reference --check; the optional sanitizer is not a core
+build dependency. For offline CPU timings run the reference script without
+--check. WSL is not required for the core or Windows checks.
+
+Performance fixture
+-------------------
+Seven interleaved paired samples, median elapsed ms; identical checksums. Timings
+use standard allocators, with an independent untimed counting-allocator trace for
+allocation/retained/peak figures. Initial registry/map and key-table setup is not
+timed. Hot find/update mutates a frame field across 4096 keys; churn performs
+50000 sequential notes over 6000 destinations with the real cap/prune policy.
+The all-tied case repeatedly fills/evicts 4096 rows 100 times after warming bucket
+capacity, including the initial warm-table prune. Each model reprimes key ownership
+before timing so the preceding paired run cannot change eviction decisions.
+CPU timing includes registry operations and simulated key stores, not emulated
+register gathering, native command recording, fault waits, driver cost or frames.
+Legacy vectors/containers and steady_clock occur only in the offline reference.
+core_resolve_owners_test.c
+Owner age selection: 10156 exact unsigned ranks plus sorted/reverse/ties/high-bit/heapsort cases pass
+Resolve owner C89: wrapping 4096-key collision cluster, stable borrowed rows, bounded full insert, backshift/reuse/free-list checks pass; storage=213512 bytes
+core_resolve_owners_reference.cc
+Owner reference: 100,000 updates, 126 full/edge/tie/frame-wrap prunes, 532 exact key/field snapshots and stable surviving leases pass
+MSVC 1944 /O2; 7 interleaved medians; standard allocators in timing, separately counted allocation trace; CPU only
+hot-find-update: 1000000 operations, map 2.426 ms, C89 0.965 ms (2.51x); separate untimed legacy operation allocations 0, retained 294968, peak 294968; fixed C89 213512 bytes, no operation allocation
+owner-churn: 50000 operations, map 3.449 ms, C89 2.334 ms (1.48x); separate untimed legacy operation allocations 50046, retained 285112, peak 311352; fixed C89 213512 bytes, no operation allocation
+all-tied-full-prune: 100 operations, map 20.937 ms, C89 4.287 ms (4.88x); separate untimed legacy operation allocations 409701, retained 65592, peak 311352; fixed C89 213512 bytes, no operation allocation
+
+Owner reference: 100,000 updates, 126 full/edge/tie/frame-wrap prunes, 532 exact key/field snapshots and stable surviving leases pass
+GCC 16.2.0 -O2; 7 interleaved medians; standard allocators in timing, separately counted allocation trace; CPU only
+hot-find-update: 1000000 operations, map 1.755 ms, C89 0.858 ms (2.05x); separate untimed legacy operation allocations 0, retained 237304, peak 237304; fixed C89 213512 bytes, no operation allocation
+owner-churn: 50000 operations, map 2.322 ms, C89 2.184 ms (1.06x); separate untimed legacy operation allocations 50046, retained 228856, peak 253688; fixed C89 213512 bytes, no operation allocation
+all-tied-full-prune: 100 operations, map 17.618 ms, C89 5.579 ms (3.16x); separate untimed legacy operation allocations 409701, retained 40696, peak 253688; fixed C89 213512 bytes, no operation allocation
+
+These measurements support lower CPU work/allocation for the tested traces,
+not universal workload improvement, FPS gains or a claim that all core storage
+is fixed or lock-free. Full live gameplay remains unmeasured.

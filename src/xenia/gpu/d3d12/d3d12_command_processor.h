@@ -15,6 +15,7 @@
 #include "libretro/core_submission_counter.h"
 #include "libretro/core_memexport.h"
 #include "libretro/core_resolve_readback.h"
+#include "libretro/core_resolve_owners.h"
 #include "libretro/core_snapshot_pair.h"
 #include "libretro/core_descriptor_indices.h"
 #include <cstdint>

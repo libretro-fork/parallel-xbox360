@@ -20,7 +20,7 @@
 // memory_ (Memory*), texture_cache_, xenia/memory.h (VirtualHeap,
 // IsWritableProtect), xenia/base/assert.h, xenia/base/logging.h,
 // xenia/gpu/draw_util.h, xenia/gpu/registers.h, the C89
-// core_resolve_readback.h declarations, and <algorithm>
+// core_resolve_readback.h/core_resolve_owners.h declarations, and <algorithm>
 // <cstring> <memory> <mutex> <unordered_map> <unordered_set> <vector>. No
 // include guard: injected into a class body.
 //
@@ -141,10 +141,9 @@ bool HasUnsubmittedResolveOutput(uint32_t address, uint32_t length) {
       continue;
     }
     last_owner_key = owner_key;
-    auto owner_it = resolve_owners_.find(owner_key);
-    if (owner_it != resolve_owners_.end() && owner_it->second.copyable &&
-        !owner_it->second.in_guest_ram &&
-        owner_it->second.submission > submitted) {
+    const ResolveOwner* owner = xe_resolve_owners_find(&resolve_owners_, owner_key);
+    if (owner && owner->copyable && !owner->in_guest_ram &&
+        owner->submission > submitted) {
       return true;
     }
   }
@@ -187,11 +186,9 @@ void ProvideResolveOutput(uint32_t address, uint32_t length, bool write) {
       continue;
     }
     last_owner_key = owner_key;
-    auto owner_it = resolve_owners_.find(owner_key);
-    if (owner_it == resolve_owners_.end()) {
-      continue;
-    }
-    ResolveOwner& owner = owner_it->second;
+    ResolveOwner* owner_ptr = xe_resolve_owners_find(&resolve_owners_, owner_key);
+    if (!owner_ptr) continue;
+    ResolveOwner& owner = *owner_ptr;
     if (owner.in_guest_ram || !owner.copyable) {
       continue;
     }
@@ -265,10 +262,13 @@ void NoteResolveForReadback(uint32_t address, uint32_t length, bool is_scaled) {
   SetResolvePageOwner(address, length, resolve_key);
   {
     std::lock_guard<std::mutex> lock(resolve_read_mutex_);
-    if (resolve_owners_.size() >= kMaxResolveOwners) {
+    if (resolve_owners_.count >= XE_RESOLVE_OWNER_CAPACITY) {
       PruneResolveOwners();
     }
-    ResolveOwner& owner = resolve_owners_[resolve_key];
+    ResolveOwner* owner_ptr = xe_resolve_owners_get(&resolve_owners_, resolve_key);
+    assert_not_null(owner_ptr);
+    if (!owner_ptr) return;
+    ResolveOwner& owner = *owner_ptr;
     owner.address = address;
     owner.length = length;
     owner.submission = GetCurrentSubmission();
@@ -308,9 +308,8 @@ bool PullMemexportEdgeBytes(uint32_t start, uint32_t end) {
         xe_resolve_owner_load(&resolve_pages_, start >> 12);
     if (owner_key) {
       std::lock_guard<std::mutex> lock(resolve_read_mutex_);
-      auto owner_it = resolve_owners_.find(owner_key);
-      if (owner_it != resolve_owners_.end() && owner_it->second.copyable &&
-          !owner_it->second.in_guest_ram) {
+      const ResolveOwner* owner = xe_resolve_owners_find(&resolve_owners_, owner_key);
+      if (owner && owner->copyable && !owner->in_guest_ram) {
         return false;
       }
     }
@@ -323,38 +322,7 @@ bool PullMemexportEdgeBytes(uint32_t start, uint32_t end) {
 // output nothing has copied loses its oldest quarter, whose later reads get
 // what guest RAM has.
 void PruneResolveOwners() {
-  for (auto it = resolve_owners_.begin(); it != resolve_owners_.end();) {
-    const ResolveOwner& owner = it->second;
-    uint32_t last_page = std::min((owner.address + owner.length - 1) >> 12,
-                                  (SharedMemory::kBufferSize >> 12) - 1);
-    bool owns_first =
-        xe_resolve_owner_load(&resolve_pages_, owner.address >> 12) == it->first;
-    bool owns_last =
-        xe_resolve_owner_load(&resolve_pages_, last_page) == it->first;
-    if (owner.in_guest_ram || (!owns_first && !owns_last)) {
-      it = resolve_owners_.erase(it);
-    } else {
-      ++it;
-    }
-  }
-  if (resolve_owners_.size() < kMaxResolveOwners) {
-    return;
-  }
-  std::vector<uint32_t> ages;
-  ages.reserve(resolve_owners_.size());
-  for (const auto& owner : resolve_owners_) {
-    ages.push_back(resolve_frame_index_ - owner.second.frame);
-  }
-  auto oldest = ages.begin() + ages.size() * 3 / 4;
-  std::nth_element(ages.begin(), oldest, ages.end());
-  uint32_t min_age = *oldest;
-  for (auto it = resolve_owners_.begin(); it != resolve_owners_.end();) {
-    if (resolve_frame_index_ - it->second.frame >= min_age) {
-      it = resolve_owners_.erase(it);
-    } else {
-      ++it;
-    }
-  }
+  xe_resolve_owners_prune(&resolve_owners_, &resolve_pages_, resolve_frame_index_);
 }
 
 // On the GPU thread, once IssueCopy is done.
@@ -377,9 +345,7 @@ void OnResolveSubmissionEnded() {
       return;
     }
     resolve_rearm_ranges_.swap(resolve_rearming_ranges_);
-    for (auto& owner : resolve_owners_) {
-      owner.second.rearm_pending = false;
-    }
+    xe_resolve_owners_clear_rearm(&resolve_owners_);
   }
   // Outside resolve_read_mutex_, as this takes the global lock.
   for (const auto& range : resolve_rearming_ranges_) {
@@ -537,7 +503,7 @@ void ResetResolveReadWatch() {
   {
     std::lock_guard<std::mutex> lock(resolve_read_mutex_);
     resolve_read_keys_.clear();
-    resolve_owners_.clear();
+    xe_resolve_owners_reset(&resolve_owners_);
   }
   resolve_unsubmitted_owner_ = false;
   resolve_submit_requested_ = false;
@@ -558,23 +524,8 @@ std::mutex resolve_read_mutex_;
 std::unordered_set<uint64_t> resolve_read_keys_;
 // Resolve output by destination key, for ProvideResolveOutput. Under
 // resolve_read_mutex_.
-struct ResolveOwner {
-  uint32_t address = 0;
-  uint32_t length = 0;
-  // Submission the resolve was recorded in.
-  uint64_t submission = 0;
-  uint32_t frame = 0;
-  bool copyable = false;
-  bool in_guest_ram = false;
-  // In resolve_rearm_ranges_ already.
-  bool rearm_pending = false;
-  // The CPU wrote this edge page before the output could be copied, so only
-  // the resolve's bytes in it are copied.
-  bool clip_first_page = false;
-  bool clip_last_page = false;
-};
-std::unordered_map<uint64_t, ResolveOwner> resolve_owners_;
-static constexpr size_t kMaxResolveOwners = 4096;
+using ResolveOwner = xe_resolve_owner_state;
+xe_resolve_owners_storage resolve_owners_;
 // Under resolve_read_mutex_.
 void RearmResolveAfterSubmission(ResolveOwner& owner) {
   if (!owner.rearm_pending) {
