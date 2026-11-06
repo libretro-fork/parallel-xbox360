@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fixed a Vulkan descriptor-pool ownership leak when a C++ allocation fails after native pool creation. A retained C89 registry reserves ownership before creation, removes the full-pool vector and releases every pool at the existing reset boundary. Failure-injection fixtures reproduce the old leak and pass with the fix. Static descriptor-size tables are borrowed directly instead of allocated and copied. Search-map allocations remain.
+
 - Vulkan sparse binds now go directly into retained C89 storage with stable borrowed views for submission. Removed three vectors, stack-bind copies and submission-time record rebuilding while preserving queue/semaphore ordering. New high-water growth can still allocate; offline checks do not certify gameplay gains.
 
 - Vulkan descriptor reuse now retires completed frame batches by list splice instead of walking every handle. Per-handle records shrink from 24 to 16 bytes on tested 64-bit builds; the benchmark's warmed metadata request falls from 9,432 to 7,320 bytes including owners. Lease cancellation, exact free-list order and existing completion thresholds are preserved. No GPU/gameplay performance claim is made.

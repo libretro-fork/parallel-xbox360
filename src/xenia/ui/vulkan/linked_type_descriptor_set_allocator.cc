@@ -11,7 +11,7 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/logging.h"
-#include "xenia/ui/vulkan/vulkan_util.h"
+#include <new>
 
 namespace xe {
 namespace ui {
@@ -20,17 +20,10 @@ namespace vulkan {
 void LinkedTypeDescriptorSetAllocator::Reset() {
   const VulkanDevice::Functions& dfn = vulkan_device_->functions();
   const VkDevice device = vulkan_device_->device();
-  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorPool, device,
-                                         page_usable_latest_.pool);
+  xe_vk_pool_owner_reset(&pool_owner_, device, dfn.vkDestroyDescriptorPool);
+  page_usable_latest_.pool = VK_NULL_HANDLE;
   page_usable_latest_.descriptors_remaining.reset();
-  for (const std::pair<const uint32_t, Page>& page_pair : pages_usable_) {
-    dfn.vkDestroyDescriptorPool(device, page_pair.second.pool, nullptr);
-  }
   pages_usable_.clear();
-  for (VkDescriptorPool pool : pages_full_) {
-    dfn.vkDestroyDescriptorPool(device, pool, nullptr);
-  }
-  pages_full_.clear();
 }
 
 VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
@@ -101,10 +94,13 @@ VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
     dedicated_descriptor_pool_create_info.maxSets = 1;
     dedicated_descriptor_pool_create_info.poolSizeCount = descriptor_type_count;
     dedicated_descriptor_pool_create_info.pPoolSizes = descriptor_counts;
+    xe_vk_pool_record* owner = xe_vk_pool_owner_acquire(&pool_owner_);
+    if (!owner) throw std::bad_alloc();
     VkDescriptorPool dedicated_descriptor_pool;
     if (dfn.vkCreateDescriptorPool(
             device, &dedicated_descriptor_pool_create_info, nullptr,
             &dedicated_descriptor_pool) != VK_SUCCESS) {
+      xe_vk_pool_owner_cancel(&pool_owner_);
       XELOGE(
           "LinkedTypeDescriptorSetAllocator: Failed to create a dedicated "
           "descriptor pool for a descriptor set that is too large for a pool "
@@ -114,13 +110,15 @@ VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
     descriptor_set_allocate_info.descriptorPool = dedicated_descriptor_pool;
     if (dfn.vkAllocateDescriptorSets(device, &descriptor_set_allocate_info,
                                      &descriptor_set) != VK_SUCCESS) {
+      dfn.vkDestroyDescriptorPool(device, dedicated_descriptor_pool, nullptr);
+      xe_vk_pool_owner_cancel(&pool_owner_);
       XELOGE(
           "LinkedTypeDescriptorSetAllocator: Failed to allocate descriptors in "
           "a dedicated pool");
-      dfn.vkDestroyDescriptorPool(device, dedicated_descriptor_pool, nullptr);
       return VK_NULL_HANDLE;
     }
-    pages_full_.push_back(dedicated_descriptor_pool);
+    owner->pool = dedicated_descriptor_pool;
+    xe_vk_pool_owner_commit(&pool_owner_);
     return descriptor_set;
   }
 
@@ -165,7 +163,6 @@ VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
         latest_page_becomes_full = true;
       }
       if (latest_page_becomes_full) {
-        pages_full_.push_back(page_usable_latest_.pool);
         page_usable_latest_.pool = VK_NULL_HANDLE;
         page_usable_latest_.descriptors_remaining.reset();
       } else {
@@ -266,7 +263,6 @@ VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
     }
     if (map_page_becomes_full) {
       map_page.descriptors_remaining.reset();
-      pages_full_.push_back(map_page.pool);
     } else {
       --map_page.descriptor_sets_remaining;
       for (uint32_t i = 0; i < descriptor_type_count; ++i) {
@@ -344,11 +340,17 @@ VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
   } else {
     new_descriptor_pool_create_info.maxSets = descriptor_sets_per_page_;
     new_descriptor_pool_create_info.poolSizeCount = descriptor_pool_size_count_;
-    new_descriptor_pool_create_info.pPoolSizes = descriptor_pool_sizes_.get();
+    new_descriptor_pool_create_info.pPoolSizes = descriptor_pool_sizes_;
   }
+  // All throwing per-page count storage is acquired before native creation.
+  std::unique_ptr<VkDescriptorPoolSize[]> new_remaining;
+  if (!new_page_becomes_full) new_remaining.reset(new VkDescriptorPoolSize[descriptor_pool_size_count_]);
+  xe_vk_pool_record* owner = xe_vk_pool_owner_acquire(&pool_owner_);
+  if (!owner) throw std::bad_alloc();
   VkDescriptorPool new_descriptor_pool;
   if (dfn.vkCreateDescriptorPool(device, &new_descriptor_pool_create_info,
                                  nullptr, &new_descriptor_pool) != VK_SUCCESS) {
+    xe_vk_pool_owner_cancel(&pool_owner_);
     XELOGE(
         "LinkedTypeDescriptorSetAllocator: Failed to create a descriptor pool");
     return VK_NULL_HANDLE;
@@ -356,13 +358,14 @@ VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
   descriptor_set_allocate_info.descriptorPool = new_descriptor_pool;
   if (dfn.vkAllocateDescriptorSets(device, &descriptor_set_allocate_info,
                                    &descriptor_set) != VK_SUCCESS) {
-    XELOGE("LinkedTypeDescriptorSetAllocator: Failed to allocate descriptors");
     dfn.vkDestroyDescriptorPool(device, new_descriptor_pool, nullptr);
+    xe_vk_pool_owner_cancel(&pool_owner_);
+    XELOGE("LinkedTypeDescriptorSetAllocator: Failed to allocate descriptors");
     return VK_NULL_HANDLE;
   }
-  if (new_page_becomes_full) {
-    pages_full_.push_back(new_descriptor_pool);
-  } else {
+  owner->pool = new_descriptor_pool;
+  xe_vk_pool_owner_commit(&pool_owner_);
+  if (!new_page_becomes_full) {
     // Move the latest page that allocation couldn't be done in to the usable
     // pages to replace it with the new one.
     if (page_usable_latest_.pool != VK_NULL_HANDLE) {
@@ -380,9 +383,7 @@ VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
                             std::move(page_usable_latest_));
     }
     page_usable_latest_.pool = new_descriptor_pool;
-    page_usable_latest_.descriptors_remaining =
-        std::unique_ptr<VkDescriptorPoolSize[]>(
-            new VkDescriptorPoolSize[descriptor_pool_size_count_]);
+    page_usable_latest_.descriptors_remaining = std::move(new_remaining);
     for (uint32_t i = 0; i < descriptor_pool_size_count_; ++i) {
       const VkDescriptorPoolSize& descriptor_pool_size_for_type =
           descriptor_pool_sizes_[i];

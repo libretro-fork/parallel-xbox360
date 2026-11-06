@@ -12,13 +12,13 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <map>
 #include <memory>
-#include <vector>
+#include <new>
 
 #include "xenia/base/assert.h"
 #include "xenia/ui/vulkan/vulkan_device.h"
+#include "libretro/core_vk_pool_owner.h"
 
 namespace xe {
 namespace ui {
@@ -52,14 +52,15 @@ namespace vulkan {
 class LinkedTypeDescriptorSetAllocator {
  public:
   // Multiple descriptor sizes for the same descriptor type, and zero sizes, are
-  // not allowed.
+  // not allowed. The sizes are borrowed and must outlive this allocator;
+  // the core passes static descriptor tables.
   explicit LinkedTypeDescriptorSetAllocator(
       const VulkanDevice* const vulkan_device,
       const VkDescriptorPoolSize* const descriptor_sizes,
       const uint32_t descriptor_size_count,
       const uint32_t descriptor_sets_per_page)
       : vulkan_device_(vulkan_device),
-        descriptor_pool_sizes_(new VkDescriptorPoolSize[descriptor_size_count]),
+        descriptor_pool_sizes_(descriptor_sizes),
         descriptor_pool_size_count_(descriptor_size_count),
         descriptor_sets_per_page_(descriptor_sets_per_page) {
     assert_not_null(vulkan_device);
@@ -74,14 +75,13 @@ class LinkedTypeDescriptorSetAllocator {
       }
     }
 #endif
-    std::memcpy(descriptor_pool_sizes_.get(), descriptor_sizes,
-                sizeof(VkDescriptorPoolSize) * descriptor_size_count);
+    if (!xe_vk_pool_owner_warm(&pool_owner_)) throw std::bad_alloc();
   }
   LinkedTypeDescriptorSetAllocator(
       const LinkedTypeDescriptorSetAllocator& allocator) = delete;
   LinkedTypeDescriptorSetAllocator& operator=(
       const LinkedTypeDescriptorSetAllocator& allocator) = delete;
-  ~LinkedTypeDescriptorSetAllocator() { Reset(); }
+  ~LinkedTypeDescriptorSetAllocator() { Reset(); xe_vk_pool_owner_destroy(&pool_owner_); }
 
   void Reset();
 
@@ -98,11 +98,12 @@ class LinkedTypeDescriptorSetAllocator {
 
   const VulkanDevice* vulkan_device_;
 
-  std::unique_ptr<VkDescriptorPoolSize[]> descriptor_pool_sizes_;
+  const VkDescriptorPoolSize* descriptor_pool_sizes_;
   uint32_t descriptor_pool_size_count_;
   uint32_t descriptor_sets_per_page_;
 
-  std::vector<VkDescriptorPool> pages_full_;
+  // Native ownership survives search-map allocation exceptions.
+  xe_vk_pool_owner pool_owner_{};
   // Because allocations must be contiguous, overflow may happen even if a page
   // still has free descriptors, so multiple pages may have free space.
   // To avoid removing and re-adding the page to the map that keeps them sorted

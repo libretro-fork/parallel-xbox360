@@ -1,0 +1,59 @@
+Vulkan native descriptor-pool ownership (0119)
+============================================
+
+Problem proven with the previous allocator sources at 55b9da126:
+A dedicated native descriptor pool was created and a set allocated, then a
+pages_full_ vector allocation threw. The fake-dispatch regression reported
+created=1, destroyed=0 at injected C++ allocation #2. The extracted header and
+source Git hashes matched their committed blobs. Other paths could also lose
+native ownership after removing a page from the usable map or after creating a
+new native pool, if later map/count-storage allocation threw.
+
+Change:
+- Remove the full-pool vector. All native descriptor pools have an independent
+  C89 owner, regardless of latest/usable/full search state.
+- Warm 64 eight-byte ownership records in a nonmoving page at construction.
+  Acquire a CPU slot before vkCreateDescriptorPool. On native create failure,
+  cancel the slot; on initial set-allocation failure, destroy then cancel before
+  invoking the logger. On success, commit without any CPU allocation.
+- Borrow the static descriptor-size tables supplied by all four core callers,
+  eliminating one heap allocation and table copy per allocator. The table must
+  outlive the allocator; the fixture also provides that lifetime.
+- Acquire per-page remaining-count array storage before native pool creation.
+- Any subsequent search-map exception cannot discard native pool ownership.
+  A pool that has prior GPU users cannot simply be destroyed in an exception
+  handler; the independent owner retains it until the existing Reset boundary.
+- Reset destroys each committed native pool once, clears the old search maps,
+  and rewinds retained CPU ownership pages. Destruction releases those pages.
+  Existing pool selection, descriptor counts, native allocation sizes and GPU
+  completion/stop/join boundaries are unchanged. Independent pools are now
+  destroyed in creation order rather than latest/map/full container order.
+- New high-water demand may allocate an additional 64-record page. Full-pool
+  vector reallocation/copy is gone, but the usable multimap and per-page count
+  arrays remain C++ and can still allocate. No whole-allocator allocation-free
+  or whole-core leak-free claim. Ownership metadata also covers usable pools;
+  no measured RSS reduction is claimed.
+
+Offline tests:
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror, ASan/UBSan: 257,000 retained
+  pool lifetimes, failed warm/page growth, canceled slot reuse, active-lease
+  reset/destroy rejection, null-handle commit rejection, stable addresses,
+  no allocations after high-water warm, balanced page frees and exact-once
+  native destruction over repeated epochs. Pointer/integer Vulkan handles.
+- Compile the actual allocator translation unit with test-only device dispatch
+  and logging headers, no native loader/device/GPU. Baseline allocation sequence
+  spans 1,500 calls, three resets, dedicated/unsupported-type pools, latest/map
+  reuse, full transitions, simulated native create failures every 11 calls and
+  simulated native set-allocation failures every seven calls.
+- Sweep every C++ allocation in that sequence: GCC 1,389 and MSVC 1,390 injected
+  failures. Sweep all 233 logger failures. Every successful fake native creation
+  is destroyed once; failed-native initial allocation is destroyed immediately.
+  ASan/UBSan and native MSVC pass. These shims do not prove driver behavior.
+- Native MSVC /TC /W4 /WX C leaf, actual production allocator and Vulkan command
+  processor with real project headers compile. Full Windows static Make -j5.
+- Actual device, rendering and post-unload GPU checks remain unrun under the
+  no-game/frontend/GPU/JIT launch restriction. No frame-time/FPS claim.
+
+Reproduce tools/tests/run_vk_pool_owner_tests.sh (sanitizers default) or the
+matching .cmd from an x64 MSVC tools prompt. Test-only stubs are restricted to
+that fixture's include paths; production builds do not include them.
