@@ -32,10 +32,10 @@ source records after UploadRanges returns. On later retry it regenerates ranges
 from page validity, rather than relying on an unmodified old scratch list.
 No locks, clocks, pacing, audio or shutdown behavior changed.
 
-The source FixedVMemVector scratch, bitmap scanner and synchronization remain.
-Their fixed-capacity boundary, modular-shift and unlocked flag-access audit is
-separate work; removing these two vectors does not prove those paths correct
-or make all renderer allocation/copying disappear.
+This filtering checkpoint initially retained the source FixedVMemVector scratch
+and bitmap scanner. The subsequent C89 scan/atomic-validity migration and its
+coverage are recorded in upload_scan_results.txt. Other renderer allocations,
+payload copies and required synchronization still remain.
 
 Verification
 ------------

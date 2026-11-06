@@ -36,8 +36,9 @@ all command generation zero-copy or eliminate all mid-game allocation.
 Also removed four unused D3D12 texture/sampler snapshot vectors and four unused
 layout IDs. Repository searches found definitions only and native builds pass.
 They were empty metadata, so removing them does not prove a heap/RSS reduction
-or gameplay speedup. The other FixedVMemVector user, SharedMemory upload ranges,
-is unchanged and still requires its own bounds/storage audit.
+or gameplay speedup. The subsequent SharedMemory range migration removed the
+last FixedVMemVector use and template; see upload_scan_results.txt for that
+separate bounds/storage/concurrency work and its verification limits.
 
 Offline verification
 --------------------

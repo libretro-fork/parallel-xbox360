@@ -11,7 +11,7 @@
 #define XENIA_GPU_SHARED_MEMORY_H_
 
 #include "xenia/memory.h"
-#include "libretro/core_upload_ranges.h"
+#include "libretro/core_upload_scan.h"
 
 namespace xe {
 namespace gpu {
@@ -80,18 +80,6 @@ class SharedMemory {
   // memory copy. Hold the global critical region if relying on this for state
   // transitions such as watch installation.
   bool IsRangeValid(uint32_t start, uint32_t length) const;
-
-  void TryFindUploadRange(const uint32_t& block_first,
-                          const uint32_t& block_last,
-                          const uint32_t& page_first, const uint32_t& page_last,
-                          uint32_t& range_start,
-                          unsigned int& current_upload_range,
-                          xe_upload_range* uploads);
-
-  void TryGetNextUploadRange(uint32_t& range_start, uint64_t& block_valid,
-                             const uint32_t& i,
-                             unsigned int& current_upload_range,
-                             xe_upload_range* uploads);
 
   // Marks the range and, if not exact_range, potentially its surroundings
   // (to up to the first GPU-written page, as an access violation exception
@@ -193,12 +181,9 @@ class SharedMemory {
 
   void* memory_invalidation_callback_handle_ = nullptr;
   void* memory_data_provider_handle_ = nullptr;
-  static constexpr unsigned int MAX_UPLOAD_RANGES = 65536;
-
   // GPU-thread range scratch, borrowed exclusively by the synchronous backend
   // upload call. Filtering reuses this storage; no second range array is needed.
-  FixedVMemVector<MAX_UPLOAD_RANGES * sizeof(xe_upload_range)>
-      upload_ranges_;
+  xe_upload_scan_owner upload_ranges_;
 
   // Mutex between the guest memory subsystem and the command processor, to be
   // locked when checking or updating validity of pages/ranges and when firing
@@ -206,23 +191,13 @@ class SharedMemory {
   static constexpr xe::global_critical_region global_critical_region_{};
 
   // ***************************************************************************
-  // Things below should be fully protected by global_critical_region.
+  // Writers and watches below are protected by global_critical_region. Only
+  // atomic validity-word readers may bypass it; they do not read GPU ownership.
   // ***************************************************************************
 
-  struct SystemPageFlagsBlock {
-    // Whether each page is up to date in the GPU buffer.
-    uint64_t valid;
-    // Subset of valid pages - whether each page in the GPU buffer contains data
-    // that was written on the GPU, thus should not be invalidated spuriously.
-    uint64_t valid_and_gpu_written;
-  };
-
-  // chrispy: todo, systempageflagsblock should be 3 different arrays
-  //  Flags for each 64 system pages, interleaved as blocks, so bit scan can be
-  //  used to quickly extract ranges.
-  // std::vector<SystemPageFlagsBlock> system_page_flags_;
-
-  uint64_t* system_page_flags_valid_ = nullptr;
+  // Validity readers may use atomic loads outside the critical region. Every
+  // writer, including bulk reset/trace paths, uses common atomic stores.
+  xe_page_valid_word* system_page_flags_valid_ = nullptr;
   uint64_t* system_page_flags_valid_and_gpu_written_ = nullptr;
 
   // Set when GPU-written flags change, so an unchanged frame skips the copy.

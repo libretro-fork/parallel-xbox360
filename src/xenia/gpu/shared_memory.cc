@@ -24,6 +24,12 @@ SharedMemory::SharedMemory(Memory& memory) : memory_(memory) {
 SharedMemory::~SharedMemory() { ShutdownCommon(); }
 
 bool SharedMemory::InitializeCommon() {
+  // The existing 32 dirty chunks each cover 64 validity words (4 KiB minimum
+  // host pages for the 512 MiB guest aperture). Reject unsupported geometry.
+  if (page_size_log2_ < 12 || page_size_log2_ > kBufferSizeLog2 ||
+      !xe_upload_scan_init(&upload_ranges_, kBufferSize >> page_size_log2_)) {
+    return false;
+  }
   size_t num_system_page_flags_entries =
       ((kBufferSize >> page_size_log2_) + 63) / 64;
   num_system_page_flags_ = static_cast<uint32_t>(num_system_page_flags_entries);
@@ -38,11 +44,11 @@ bool SharedMemory::InitializeCommon() {
     return false;
   }
 
-  system_page_flags_valid_ = system_page_flags_base;
+  system_page_flags_valid_ = (xe_page_valid_word*)system_page_flags_base;
   system_page_flags_valid_and_gpu_written_ =
       system_page_flags_base + num_system_page_flags_;
 
-  memset(system_page_flags_valid_, 0, 8 * num_system_page_flags_entries);
+  xe_page_valid_clear(system_page_flags_valid_, num_system_page_flags_);
   memset(system_page_flags_valid_and_gpu_written_, 0,
          8 * num_system_page_flags_entries);
 
@@ -102,22 +108,24 @@ void SharedMemory::ShutdownCommon() {
 
   // One AllocFixed backs both flag arrays; valid_ is its base pointer.
   if (system_page_flags_valid_) {
-    memory::DeallocFixed(system_page_flags_valid_, 0,
+    memory::DeallocFixed((void*)system_page_flags_valid_, 0,
                          memory::DeallocationType::kRelease);
     system_page_flags_valid_ = nullptr;
   }
 
   system_page_flags_valid_and_gpu_written_ = nullptr;
   num_system_page_flags_ = 0;
+  xe_upload_scan_destroy(&upload_ranges_);
 }
 
 void SharedMemory::InvalidateAllPages() {
   auto global_lock = global_critical_region_.Acquire();
 
-  std::memset(system_page_flags_valid_, 0,
-              num_system_page_flags_ * sizeof(uint64_t));
-  std::memset(system_page_flags_valid_and_gpu_written_, 0,
-              num_system_page_flags_ * sizeof(uint64_t));
+  xe_page_valid_clear(system_page_flags_valid_, num_system_page_flags_);
+  if (system_page_flags_valid_and_gpu_written_) {
+    std::memset(system_page_flags_valid_and_gpu_written_, 0,
+                num_system_page_flags_ * sizeof(uint64_t));
+  }
 
   // Mark all chunks dirty so the next copy refreshes everything.
   dirty_blocks_ = 0xFFFFFFFF;
@@ -155,12 +163,12 @@ void SharedMemory::SetSystemPageBlocksValidWithGpuDataWritten() {
 
     uint32_t dirty_count = xe::bit_count(dirty_mask);
 
-    // Past ~50% dirty the per-chunk bookkeeping costs more than a straight
-    // copy.
+    // Past ~50% dirty, refresh the full array without per-chunk bookkeeping.
+    // Stores remain atomic because the resident-page fast path is lock-free.
     if (dirty_count == 0 || dirty_count > 16) {
-      std::memcpy(system_page_flags_valid_,
-                  system_page_flags_valid_and_gpu_written_,
-                  num_system_page_flags_ * sizeof(uint64_t));
+      xe_page_valid_copy(system_page_flags_valid_,
+                          system_page_flags_valid_and_gpu_written_,
+                          num_system_page_flags_, 0, num_system_page_flags_);
     } else {
       while (dirty_mask) {
         uint32_t block_index;
@@ -169,9 +177,9 @@ void SharedMemory::SetSystemPageBlocksValidWithGpuDataWritten() {
 
         // Each chunk is 64 entries of 8 bytes.
         uint32_t entry_offset = block_index * 64;
-        std::memcpy(&system_page_flags_valid_[entry_offset],
-                    &system_page_flags_valid_and_gpu_written_[entry_offset],
-                    64 * sizeof(uint64_t));
+        xe_page_valid_copy(system_page_flags_valid_,
+                            system_page_flags_valid_and_gpu_written_,
+                            num_system_page_flags_, entry_offset, 64);
       }
     }
   }
@@ -381,8 +389,7 @@ void SharedMemory::MakeRangeValid(uint32_t start, uint32_t length,
       if (i == valid_block_last && (valid_page_last & 63) != 63) {
         valid_bits &= (uint64_t(1) << ((valid_page_last & 63) + 1)) - 1;
       }
-      // SystemPageFlagsBlock& block = system_page_flags_[i];
-      system_page_flags_valid_[i] |= valid_bits;
+      xe_page_valid_or(system_page_flags_valid_ + i, valid_bits);
       if (written_by_gpu) {
         system_page_flags_valid_and_gpu_written_[i] |= valid_bits;
         // Mark the touched chunk dirty so the next copy picks it up.
@@ -428,7 +435,6 @@ void SharedMemory::UnlinkWatchRange(WatchRange* range) {
   watch_range_first_free_ = range;
 }
 
-// todo: optimize, an enormous amount of cpu time (1.34%) is spent here.
 bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
   if (!length) {
     // Some texture or buffer is empty, for example - safe to draw in this case.
@@ -444,63 +450,23 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
     return false;
   }
 
-  unsigned int current_upload_range = 0;
   uint32_t page_first = start >> page_size_log2_;
   uint32_t page_last = (start + length - 1) >> page_size_log2_;
-
-  uint32_t block_first = page_first >> 6;
-  uint32_t block_last = page_last >> 6;
-
-  // Lockless fast-path: check if all pages are already valid.
-  // This avoids lock acquisition for the common case where pages are resident.
-  uint64_t* valid_flags = system_page_flags_valid_;
-  if (valid_flags) {
-    bool all_valid = true;
-    for (uint32_t i = block_first; i <= block_last && all_valid; ++i) {
-      uint64_t block_valid = valid_flags[i];
-      if (i == block_first) {
-        // Mask out pages before page_first
-        uint64_t block_before = (uint64_t(1) << (page_first & 63)) - 1;
-        block_valid |= block_before;
-      }
-      if (i == block_last && (page_last & 63) != 63) {
-        // Mask out pages after page_last
-        uint64_t block_after = ~((uint64_t(1) << ((page_last & 63) + 1)) - 1);
-        block_valid |= block_after;
-      }
-      if (block_valid != ~uint64_t(0)) {
-        all_valid = false;
-      }
-    }
-    if (all_valid) {
-      // All pages already valid, nothing to upload
-      return true;
-    }
-  }
-
-  upload_ranges_.clear();
-
-  xe_upload_range* uploads =
-      reinterpret_cast<xe_upload_range*>(upload_ranges_.data());
-
-  // swcache::PrefetchL1(&system_page_flags_[block_first]);
-  uint32_t range_start = UINT32_MAX;
-
-  {
-    auto global_lock = global_critical_region_.Acquire();
-    TryFindUploadRange(block_first, block_last, page_first, page_last,
-                       range_start, current_upload_range, uploads);
-  }
-  if (range_start != UINT32_MAX) {
-    uploads[current_upload_range].first = range_start;
-    uploads[current_upload_range].second = page_last + 1 - range_start;
-    ++current_upload_range;
-  }
-  if (!current_upload_range) {
+  // Resident requests avoid the critical region. All live accesses to these
+  // hint words are atomic, including bulk refresh/reset writers.
+  if (system_page_flags_valid_ && xe_upload_all_valid_unchecked(
+          system_page_flags_valid_, page_first, page_last)) {
     return true;
   }
-
-  return UploadRanges(uploads, current_upload_range);
+  {
+    auto global_lock = global_critical_region_.Acquire();
+    if (!xe_upload_scan_collect(&upload_ranges_, system_page_flags_valid_,
+                                 page_first, page_last)) return false;
+  }
+  if (!upload_ranges_.count) {
+    return true;
+  }
+  return UploadRanges(upload_ranges_.data, upload_ranges_.count);
 }
 
 bool SharedMemory::IsRangeValid(uint32_t start, uint32_t length) const {
@@ -513,111 +479,8 @@ bool SharedMemory::IsRangeValid(uint32_t start, uint32_t length) const {
 
   const uint32_t page_first = start >> page_size_log2_;
   const uint32_t page_last = (start + length - 1) >> page_size_log2_;
-  const uint32_t block_first = page_first >> 6;
-  const uint32_t block_last = page_last >> 6;
-
-  for (uint32_t i = block_first; i <= block_last; ++i) {
-    uint64_t valid_mask = UINT64_MAX;
-    if (i == block_first) {
-      valid_mask &= ~((uint64_t(1) << (page_first & 63)) - 1);
-    }
-    if (i == block_last && (page_last & 63) != 63) {
-      valid_mask &= (uint64_t(1) << ((page_last & 63) + 1)) - 1;
-    }
-    if ((system_page_flags_valid_[i] & valid_mask) != valid_mask) {
-      return false;
-    }
-  }
-  return true;
-}
-
-template <typename T>
-XE_FORCEINLINE XE_NOALIAS static T mod_shift_left(T value, uint32_t by) {
-#if XE_ARCH_AMD64 == 1
-  // arch has modular shifts
-  return value << by;
-#else
-  return value << (by % (sizeof(T) * CHAR_BIT));
-#endif
-}
-void SharedMemory::TryFindUploadRange(const uint32_t& block_first,
-                                      const uint32_t& block_last,
-                                      const uint32_t& page_first,
-                                      const uint32_t& page_last,
-                                      uint32_t& range_start,
-                                      unsigned int& current_upload_range,
-                                      xe_upload_range* uploads) {
-  for (uint32_t i = block_first; i <= block_last; ++i) {
-    uint64_t block_valid = system_page_flags_valid_[i];
-    if (i == block_first) {
-      uint64_t block_before = mod_shift_left(uint64_t(1), page_first) - 1;
-      block_valid |= block_before;
-    }
-    if (i == block_last && (page_last & 63) != 63) {
-      uint64_t block_inside = mod_shift_left(uint64_t(1), page_last + 1) - 1;
-      block_valid |= ~block_inside;
-    }
-    TryGetNextUploadRange(range_start, block_valid, i, current_upload_range,
-                          uploads);
-  }
-}
-
-static bool UploadRange_DoBestScanForward(uint64_t v, uint32_t* out) {
-#if XE_ARCH_AMD64 == 1 && XE_PLATFORM_WIN32 && !defined(__GNUC__)
-  if (!v) {
-    return false;
-  }
-  if (amd64::GetFeatureFlags() & amd64::kX64EmitBMI1) {
-    *out = static_cast<uint32_t>(_tzcnt_u64(v));
-  } else {
-    unsigned char bsfres = _BitScanForward64((unsigned long*)out, v);
-
-    XE_MSVC_ASSUME(bsfres == 1);
-  }
-  return true;
-#else
-  return xe::bit_scan_forward(v, out);
-#endif
-}
-
-void SharedMemory::TryGetNextUploadRange(
-    uint32_t& range_start, uint64_t& block_valid, const uint32_t& i,
-    unsigned int& current_upload_range,
-    xe_upload_range* uploads) {
-  while (true) {
-    uint32_t block_page = 0;
-    if (range_start == UINT32_MAX) {
-      // Check if need to open a new range.
-      if (!UploadRange_DoBestScanForward(~block_valid, &block_page)) {
-        break;
-      }
-      range_start = (i << 6) + block_page;
-    } else {
-      // Check if need to close the range.
-      // Ignore the valid pages before the beginning of the range.
-      uint64_t block_valid_from_start = block_valid;
-      if (i == (range_start >> 6)) {
-        block_valid_from_start &=
-            ~(mod_shift_left(uint64_t(1), range_start) - 1);
-      }
-      if (!UploadRange_DoBestScanForward(block_valid_from_start, &block_page)) {
-        break;
-      }
-      if (current_upload_range + 1 < MAX_UPLOAD_RANGES) {
-        uploads[current_upload_range].first = range_start;
-        uploads[current_upload_range].second = (i << 6) + block_page - range_start;
-        ++current_upload_range;
-        // In the next iteration within this block, consider this range valid
-        // since it has been queued for upload.
-        block_valid |= (uint64_t(1) << block_page) - 1;
-        range_start = UINT32_MAX;
-      } else {
-        xe::FatalError(
-            "Hit max upload ranges in shared_memory.cc, tell a dev to "
-            "raise the limit!");
-      }
-    }
-  }
+  return system_page_flags_valid_ && xe_upload_all_valid_unchecked(
+      system_page_flags_valid_, page_first, page_last);
 }
 
 std::pair<uint32_t, uint32_t> SharedMemory::MemoryInvalidationCallbackThunk(
@@ -676,7 +539,7 @@ std::pair<uint32_t, uint32_t> SharedMemory::MemoryInvalidationCallback(
     if (i == block_last && (page_last & 63) != 63) {
       invalidate_bits &= (uint64_t(1) << ((page_last & 63) + 1)) - 1;
     }
-    system_page_flags_valid_[i] &= ~invalidate_bits;
+    xe_page_valid_and(system_page_flags_valid_ + i, ~invalidate_bits);
     system_page_flags_valid_and_gpu_written_[i] &= ~invalidate_bits;
     // Track which chunks changed for partial copying.
     dirty_blocks_mask |= (1u << (i >> 6));
@@ -705,10 +568,9 @@ void SharedMemory::PrepareForTraceDownload() {
   uint32_t gpu_written_range_start = UINT32_MAX;
   auto global_lock = global_critical_region_.Acquire();
   for (uint32_t i = 0; i < num_system_page_flags_; ++i) {
-    // SystemPageFlagsBlock& page_flags_block = system_page_flags_[i];
-    uint64_t previously_valid_block = system_page_flags_valid_[i];
+    uint64_t previously_valid_block = xe_page_valid_load(system_page_flags_valid_ + i);
     uint64_t gpu_written_block = system_page_flags_valid_and_gpu_written_[i];
-    system_page_flags_valid_[i] = gpu_written_block;
+    xe_page_valid_store(system_page_flags_valid_ + i, gpu_written_block);
 
     // Fire watches on the invalidated pages.
     uint64_t fire_watches_block = previously_valid_block & ~gpu_written_block;

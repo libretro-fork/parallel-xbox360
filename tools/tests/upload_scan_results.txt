@@ -1,0 +1,125 @@
+Shared-memory upload scan / bounded C89 storage and atomic validity hints
+=======================================================================
+
+Capacity and direct storage
+---------------------------
+SharedMemory now allocates its upload records once in InitializeCommon, using
+the mathematical maximum ceil(page_count/2) disjoint nonempty invalid runs in
+the 512 MiB guest aperture. Four-KiB host pages need 65,536 eight-byte records
+(512 KiB, same payload capacity as before); 16 KiB host pages need 16,384 records
+(128 KiB instead of the previous unconditional 512 KiB). These are requested
+payload sizes, not measured RSS/committed-memory savings. Allocation failure
+returns false before registering the invalidation callback. Existing shutdown
+and a thin C++ member owner release the storage, including partial setup.
+
+The C89 collector writes final records directly into this stable owner span.
+Both renderers continue borrowing/compacting it synchronously. Range-record
+storage never grows after setup; GPU refresh helpers and other upload processing
+may still allocate. One preflight checks query geometry and
+the worst-case output count before the first record store, removing per-run
+capacity branches; the visible count is committed once after collection.
+All-valid/invalid words have fast paths, and endpoints use defined 0..63 shifts.
+The resident-word query validates byte geometry in RequestRange/IsRangeValid
+and then calls the internal prevalidated helper; a checked C wrapper is also
+tested. No validation is dropped at the actual public byte-range boundary.
+
+The old guard current_upload_range + 1 < 65536 rejected a legitimate last
+closed run in a full alternating invalid/valid aperture. The reference fixture
+reproduces rejection after 65,535 closed runs; the new collector returns all
+65,536, including page 131070 length 1. An open final run is also supported.
+The old scanner's AMD64 helper used global page indices as C++ shift counts;
+hardware modular shifts do not make those >=64 C++ shifts defined. That helper,
+per-run BMI feature dispatch, two C++ scanner methods and the now-unused
+FixedVMemVector template are removed. Invalid geometry/capacity fails before
+output stores instead of reaching the old FatalError path.
+
+The existing 32-bit dirty-chunk map supports host pages of at least 4 KiB for
+this aperture. Setup now rejects smaller pages or pages larger than the guest
+aperture, rather than risking unsupported bitmap geometry. Supported 4/16 KiB
+hosts retain their existing paging semantics. Partial dirty-copy chunks clamp
+to the actual remaining word count, rather than copying 64 words unconditionally.
+
+Concurrency / lifetimes
+-----------------------
+Every live access to system_page_flags_valid_ uses libretro-common 64-bit
+relaxed loads/stores, including reset, dirty refresh, invalidation and trace
+preparation. The previous unlocked reader mixed plain reads with plain writes
+from other threads; changing only the reader would not fix that formal race.
+The resident fast path stays lock-free. Writers are serialized by the existing
+global critical region, so load/modify/store needs no locked atomic RMW.
+GPU-written ownership flags remain protected by that region. Watches and range
+collection retain their required synchronization; no naive lock removal occurs.
+
+These atomics publish only bookkeeping hints, not completed CPU/GPU payloads
+or a coherent multiword snapshot. MakeRangeValid intentionally still precedes
+the CPU upload copy so concurrent invalidation is not lost. Native GPU barriers,
+payload copies, imported-memory paths, queue/fence completion and stop/join
+ordering are unchanged. No audio or pacing code changes.
+
+Verification
+------------
+tools/tests/run_upload_scan_tests.sh: GCC strict C89/pedantic/Wextra/Werror with
+ASan/UBSan, plus sanitized C++ ownership boundary. PASS.
+tools/tests/run_upload_scan_tests.cmd: native MSVC /TC /O2 /W4 /WX leaf and C++
+owner. PASS. Nonsanitized MinGW leaf/owner also PASS; LLP64 stdint's UINT64_C
+suffixes use its C89 64-bit extension, with -Wno-long-long only on that toolchain.
+
+- 553,190 exact comparisons against an independent per-page bitmap reference:
+  all masks/all query intervals for 1..12 pages; 1/2/63/64/65/127/128/129-page,
+  16 KiB-host and full 4 KiB-host apertures; all-valid, all-invalid, alternating,
+  random words, cross-word ranges and partial endpoints.
+- Full 65,536-run output, checked insufficient-capacity rejection before stores,
+  invalid inputs, cold OOM, repeated init/destroy, unchanged validity words and
+  allocation canaries; repeated collection performs no allocation.
+- Unused range capacity is not cleared. Partial-copy guards remain untouched.
+- Thin C++ owner frees storage after normal life and constructor unwinding.
+
+tools/tests/run_upload_scan_threads_tests.sh: real libretro-common rthreads,
+ASan/UBSan, one serialized writer (50,000 update/reset/copy cycles), one unlocked
+reader (at least 50,000 samples; scheduling-dependent millions observed), and
+20,000 exact collections under the writer lock. PASS. Native MSVC rthreads test
+also PASS. Source/raw snapshot accesses in this fixture are lock-protected;
+the unlocked reader only uses common atomics and assumes no whole-array epoch.
+
+GCC ThreadSanitizer binaries compile, but PIE and non-PIE attempts both fail at
+startup with 'unexpected memory mapping' before the fixture executes. TSan is
+UNRUN, not a pass. No broader race-free-emulator claim is made.
+
+Actual MSVC common SharedMemory, VulkanSharedMemory, D3D12SharedMemory, both
+command processors and D3D12 deferred-list units compile. Shared descriptor,
+counter and storage regressions PASS. Full Windows GNU Make -j5 build PASS.
+No game, GPU device, content-close, native callback-failure or audio runtime
+test was run. CPU fixtures do not certify gameplay/FPS or native device behavior.
+
+CPU reference benchmark
+-----------------------
+tools/tests/core_upload_scan_bench.c models the old scan with explicitly masked
+shifts, and returns failure instead of invoking FatalError at its old capacity
+guard. The undefined original shifts are never executed. Native BMI feature
+dispatch, locks, upload callbacks and GPU work are excluded. Both record final
+tuples into warmed storage; a noinline consumer reads them and checksums match.
+Query wrappers preserve the out-of-line RequestRange-like boundary (GCC noipa
+prevents folding repeated immutable raw snapshots while retaining atomic reads).
+
+Median of three, 32 warm queries then measured cases: 20,000,000 resident
+64-page queries; 65,536 near-full contiguous-invalid queries; 2,048 near-full
+fragmented queries within the old supported limit; 131,072 sparse-invalid
+queries (one invalid page per 128 pages). First/last endpoints vary each query.
+No allocations occur inside either version's timed queries.
+
+Milliseconds, defined legacy -> C89/common atomics:
+case                     GCC               MinGW          MSVC
+resident 64 pages        39.186/27.631       33/31          38/27
+contiguous invalid       78.200/68.754       57/74          74/73
+fragmented partial      259.038/239.309     257/235        315/271
+sparse invalid          281.074/276.555     285/268        285/266
+
+The resident and fragmented fixtures improve on these compilers; contiguous
+invalid scanning regresses on MinGW. This is not an across-the-board throughput
+win. Source-level atomic correctness and the full-capacity fix do not depend on
+these timing differences, and they do not prove gameplay gains.
+
+Compiler flags: GCC/MinGW -std=c89 -O2 -pedantic -Wall -Wextra -Werror and common
+GCC atomics; MinGW also -Wno-long-long for stdint. MSVC /TC /O2 /W4 /WX and common
+MSVC atomics. Run sequentially without owned builds. Timings include checksum
+consumption, do not isolate hardware counters and do not establish gameplay gains.
