@@ -59,7 +59,7 @@ static int failures(void) {
    for (i = 0; i < 65533; ++i) values[i] = (uint32_t)i;
    xe_spv_decoration_key_init(&key,71,77,3); key.values = xe_spv_words_view(values,65532);
    fail_at = calls; CHECK(!xe_spv_arena_add_decoration(&arena,&key)); fail_at = (size_t)-1;
-   view = xe_spv_arena_decorations(&arena); CHECK(view.count == 5 && view.records[0] == saved && saved->active);
+   view = xe_spv_arena_decorations(&arena); CHECK(view.count == 5 && view.records[0] == saved && xe_spv_decoration_words(saved)[1] == 0);
    CHECK(xe_spv_arena_add_decoration(&arena,&key));
    CHECK(xe_spv_decoration_view((const xe_spv_decoration *)xe_spv_arena_decorations(&arena).records[5]).count == 65535);
    key.values.count = 65533; before = calls;
@@ -108,14 +108,6 @@ int main(int argc, char **argv) {
          CHECK(xe_spv_arena_add_decoration(&arena,&key));
       }
       CHECK(calls == before && xe_spv_arena_decorations(&arena).count == 1024);
-      xe_spv_decorations_remove_target(view,0);
-      for (i = 0; i < view.count; ++i) CHECK((((const xe_spv_decoration *)view.records[i])->active != 0) == (xe_spv_decoration_words((const xe_spv_decoration *)view.records[i])[1] != 0));
-      xe_spv_decoration_key_init(&key,71,0,0); values[0] = 0; values[1] = UINT32_C(0x80000000);
-      key.values = xe_spv_words_view(values,2); key.values_are_ids = 1;
-      CHECK(xe_spv_arena_add_decoration(&arena,&key) && calls == before);
-      CHECK(xe_spv_decoration_measure(&key,&count));
-      slot = xe_spv_decorations_locate(view,&key,count,&found);
-      CHECK(found && ((const xe_spv_decoration *)view.records[slot])->active);
       /* Counted, unaligned, embedded-zero text preserves literal word identity.
        * ID flags distinguish otherwise equal wire encodings. */
       for (bytes = 0; bytes < 130; ++bytes) {
@@ -133,19 +125,12 @@ int main(int argc, char **argv) {
          }
          memset(input,'X',sizeof(input));
       }
-      CHECK(add_value(&arena,950,72,35,16,2,1) && add_value(&arena,950,72,7,32,2,1));
-      CHECK(add_value(&arena,950,72,35,64,3,1) && add_value(&arena,950,71,6,8,0,0));
-      CHECK(add_value(&arena,951,71,5355,0,0,0)); view = xe_spv_arena_decorations(&arena);
-      CHECK(xe_spv_decorations_alignment(view,950,2,1) == 48 && xe_spv_decorations_alignment(view,950,3,1) == 64);
-      CHECK(xe_spv_decorations_alignment(view,950,0,0) == 8 && xe_spv_decorations_has_alias(view,951));
-      xe_spv_decorations_remove_target(view,950); xe_spv_decorations_remove_target(view,951);
-      CHECK(!xe_spv_decorations_alignment(view,950,2,1) && !xe_spv_decorations_has_alias(view,951));
       CHECK(xe_spv_arena_end(&arena,NULL)); CHECK(!xe_spv_arena_decorations(&arena).count);
-      if (argc > 1 && !strcmp(argv[1],"uaf")) { stale = saved->active; return (int)stale; }
+      if (argc > 1 && !strcmp(argv[1],"uaf")) { stale = saved->id_begin; return (int)stale; }
       if (!round) warmed = calls;
       CHECK(calls == warmed);
    }
    CHECK(xe_spv_arena_close(&arena) && !live);
-   puts("PASS: C89 decoration wire/order oracle, borrowed keys, reuse, alignment/alias queries, faults, limits and lifetime");
+   puts("PASS: C89 decoration wire/order oracle, borrowed keys, reuse, faults, limits and lifetime");
    return 0;
 }

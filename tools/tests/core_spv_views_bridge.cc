@@ -139,7 +139,6 @@ int main(int argc, char** argv) {
   builder.setBuildPoint(loop_merge);
   builder.makeReturn(true);
   builder.leaveFunction();
-  builder.postProcess(false);
   std::vector<unsigned> words;
   builder.dump(words);
   FILE* file = std::fopen(argv[1], "wb");

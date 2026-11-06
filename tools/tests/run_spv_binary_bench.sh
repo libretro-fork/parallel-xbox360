@@ -28,14 +28,14 @@ for revision in $revisions; do
   -c "$src/libretro/core_spv_binary.c" -o "$obj/binary.o"
  ${CC:-cc} -std=c89 -O2 $operand_flags -I"$src/third_party/libretro-common/include" -c "$(spv_storage_source "$src")" -o "$obj/operands.o"
  ${CC:-cc} -std=c89 -O2 -include "$src/tools/tests/core_pipeline_bench_profile.h" -DXE_SPV_INDEX_REALLOC=xe_bench_realloc -DXE_SPV_INDEX_FREE=xe_bench_free -DXE_SPV_ARENA_ALLOC=xe_bench_malloc -DXE_SPV_ARENA_FREE=xe_bench_free -I"$src/third_party/libretro-common/include" -c "$src/libretro/core_spv_arena.c" -o "$obj/arena.o"
- ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DXE_SPV_BINARY_CHECK -DXE_SPV_BYTE_BENCH ${EXTRA_CXXFLAGS:-} \
+ spv_compile_revision "$src" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DXE_SPV_BINARY_CHECK -DXE_SPV_BYTE_BENCH ${EXTRA_CXXFLAGS:-} \
   -include "$src/tools/tests/core_pipeline_bench_profile.h" \
   -DXE_SPV_WALK_ALLOC=xe_bench_malloc -DXE_SPV_WALK_FREE=xe_bench_free \
   -DXE_SPV_PLAN_ALLOC=xe_bench_malloc -DXE_SPV_PLAN_FREE=xe_bench_free \
   -DXE_SPV_INDEX_REALLOC=xe_bench_realloc -DXE_SPV_INDEX_FREE=xe_bench_free \
   -static-libstdc++ -static-libgcc -I"$src" -I"$src/src/xenia/gpu/spirv" -I"$src/third_party/libretro-common/include" \
   "$fixture" "$src/src/xenia/gpu/spirv/SpvBuilder.cpp" \
-  "$src/src/xenia/gpu/spirv/SpvPostProcess.cpp" "$src/src/xenia/gpu/spirv/InReadableOrder.cpp" \
+  "$src/src/xenia/gpu/spirv/InReadableOrder.cpp" \
   "$src/src/xenia/gpu/spirv/Logger.cpp" "$obj/binary.o" "$obj/operands.o" \
   "$obj/arena.o" "$obj/size.o" "$obj/profile.o" -o "$obj/test"
  echo "revision=$revision"

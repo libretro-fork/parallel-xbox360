@@ -74,7 +74,7 @@ void xe_spv_arena_remove_extension(xe_spv_arena *arena, const char *name);
 xe_spv_record_view xe_spv_arena_extensions(const xe_spv_arena *arena);
 int xe_spv_arena_reserve_decorations(xe_spv_arena *arena, size_t count);
 int xe_spv_arena_add_decoration(xe_spv_arena *arena, const xe_spv_decoration_key *key);
-/* Same lease/metadata invalidation as extension views. Includes inactive keys. */
+/* Same lease/metadata invalidation as extension views. All records are emitted. */
 xe_spv_record_view xe_spv_arena_decorations(const xe_spv_arena *arena);
 enum { XE_SPV_STACK_SCOPE = 0, XE_SPV_STACK_SWITCH = 1, XE_SPV_STACK_LOOP = 2, XE_SPV_STACK_COUNT = 3 };
 int xe_spv_arena_reserve_stacks(xe_spv_arena *arena, size_t loop_bytes);

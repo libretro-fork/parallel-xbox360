@@ -144,7 +144,6 @@ int main(int argc, char **argv) {
       builder.leaveFunction();
     }
   }
-  builder.postProcess(false);
 #ifdef XE_SPV_BINARY_CHECK
   size_t chain_count = 0;
   for (spv::Block* block = main->getEntryBlock(); block; block = block->getNextBlock()) {
@@ -153,8 +152,13 @@ int main(int argc, char **argv) {
   if (chain_count != main->getBlockCount() || chain_count != (variant == 5 ? 513u : 1u)) return 40;
   bool callback_failed = false;
   try {
+#ifdef XE_SPV_BORROWED_VISITOR
+    spv::inReadableOrder(main->getEntryBlock(), nullptr,
+        [](void*, spv::Block*, spv::ReachReason, spv::Block*) { throw std::bad_alloc(); });
+#else
     spv::inReadableOrder(main->getEntryBlock(),
         [](spv::Block*, spv::ReachReason, spv::Block*) { throw std::bad_alloc(); });
+#endif
   } catch (const std::bad_alloc&) { callback_failed = true; }
   if (!callback_failed) return 18;
 #endif

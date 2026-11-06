@@ -1,31 +1,33 @@
 #!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-out=${TEST_BUILD_DIR:-"$root/build/tests/spv-module-compare-$(uname -s)"}
-mkdir -p "$out/base"
-baseline=$(git -C "$root" rev-parse --verify "${BASELINE_COMMIT:-7e088a41}^{commit}")
-git -C "$root" archive "$baseline" src/xenia/gpu/spirv > "$out/base.tar"
-tar -xf "$out/base.tar" -C "$out/base"
+. "$root/tools/tests/spv_storage_source.sh"
+out=${TEST_BUILD_DIR:-"$root/build/tests/spv-module-compare"}
+mkdir -p "$out"
+out=$(CDPATH= cd -- "$out" && pwd)
+baseline=${BASELINE_ROOT:-}
+if test -z "$baseline"; then
+ mkdir -p "$out/base"
+ git -C "$root" archive "${BASELINE_COMMIT:-56220d16e}" > "$out/base.tar"
+ tar -xf "$out/base.tar" -C "$out/base"
+ baseline="$out/base"
+fi
+baseline=$(CDPATH= cd -- "$baseline" && pwd)
 san=${SANITIZER-}
-${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" \
- -c "$root/libretro/core_spv_packet.c" -o "$out/storage.o"
-${CC:-cc} -std=c89 -O2 $san -c "$root/libretro/core_spv_binary.c" -o "$out/binary.o"
-${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_arena.c" -o "$out/arena.o"
-${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_size.c" -o "$out/size.o"
-for mode in baseline current; do
- src="$root/src/xenia/gpu/spirv"
- if test "$mode" = baseline; then src="$out/base/src/xenia/gpu/spirv"; fi
- ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$src" -I"$root" \
-  -I"$root/third_party/libretro-common/include" \
-  "$root/tools/tests/core_spv_module_bridge.cc" "$src/SpvBuilder.cpp" \
-  "$src/SpvPostProcess.cpp" "$src/InReadableOrder.cpp" "$src/Logger.cpp" \
-  "$out/storage.o" "$out/binary.o" "$out/arena.o" "$out/size.o" -o "$out/$mode.exe"
- for variant in 0 1 2 3 4; do
-  "$out/$mode.exe" "$out/$mode-$variant.spv" "$variant"
+fixture=${TEST_SOURCE:-"$root/tools/tests/core_spv_module_bridge.cc"}
+for revision in parent current; do
+ src="$root"; if test "$revision" = parent; then src="$baseline"; fi
+ obj="$out/$revision"; mkdir -p "$obj"
+ for unit in size binary operands arena; do
+  unit_source="$src/libretro/core_spv_$unit.c"
+  if test "$unit" = operands; then unit_source=$(spv_storage_source "$src"); fi
+  ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$src/third_party/libretro-common/include" -c "$unit_source" -o "$obj/$unit.o"
  done
+ spv_compile_revision "$src" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$src" -I"$src/src/xenia/gpu/spirv" -I"$src/third_party/libretro-common/include" \
+  "$fixture" "$src/src/xenia/gpu/spirv/SpvBuilder.cpp" "$src/src/xenia/gpu/spirv/InReadableOrder.cpp" "$src/src/xenia/gpu/spirv/Logger.cpp" \
+  "$obj/size.o" "$obj/binary.o" "$obj/operands.o" "$obj/arena.o" -o "$obj/test"
+ for variant in 0 1 2 3 4 5 6 7; do "$obj/test" "$obj/snapshots-$variant.bin" "$variant"; done
 done
-for variant in 0 1 2 3 4; do
- cmp "$out/baseline-$variant.spv" "$out/current-$variant.spv"
- if test -n "${SPIRV_VALIDATOR:-}"; then "$SPIRV_VALIDATOR" "$out/current-$variant.spv"; fi
-done
-echo "PASS: five production builder modules match baseline byte-for-byte"
+for variant in 0 1 2 3 4 5 6 7; do cmp "$out/parent/snapshots-$variant.bin" "$out/current/snapshots-$variant.bin"; done
+if test -n "${SPIRV_VALIDATOR:-}"; then "$SPIRV_VALIDATOR" "$out/current/snapshots-0.bin"; fi
+echo 'PASS: all eight raw-construction modules match complete parent bytes'

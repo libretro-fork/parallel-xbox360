@@ -1,5 +1,5 @@
-/* Typed builder interop only: cross-block sampled-image rewrites must preserve
- * output against the archived vector owner. No frontend, renderer or GLSL. */
+/* Core construction creates sampled images in each consuming block.
+ * No standalone late-cloning pass or shader source parser is involved. */
 #include "SpvBuilder.h"
 #include <cstdio>
 #include <cstdlib>
@@ -36,21 +36,20 @@ int main(int argc, char** argv) {
   auto* consumer = &builder.makeNewBlock();
   builder.createBranch(false, consumer);
   builder.setBuildPoint(consumer);
+  auto consumerCombined = builder.createBinOp(spv::Op::OpSampledImage, sampled, imageValue, samplerValue);
   auto zero = builder.makeFloatConstant(0.0f);
   auto coords = builder.makeCompositeConstant(vec2, {zero, zero});
   // First body node, repeated consumers and ordinary nodes between them.
   auto first = builder.createOp(spv::Op::OpImageSampleExplicitLod, vec4,
-      std::vector<spv::IdImmediate>{{true, combined}, {true, coords},
+      std::vector<spv::IdImmediate>{{true, consumerCombined}, {true, coords},
       {false, spv::ImageOperandsMask::Lod}, {true, zero}});
-  auto second = builder.createUnaryOp(spv::Op::OpImage, image, combined);
+  auto second = builder.createUnaryOp(spv::Op::OpImage, image, consumerCombined);
   builder.makeReturn(true);
   builder.leaveFunction();
-  builder.postProcess(false);
-  CHECK(builder.getIdOperand(first, 0) != combined && builder.getIdOperand(second, 0) != combined);
-  CHECK(builder.getIdOperand(first, 0) != builder.getIdOperand(second, 0));
+  CHECK(builder.getIdOperand(first, 0) == consumerCombined && builder.getIdOperand(second, 0) == consumerCombined);
   std::vector<unsigned> words;
   builder.dump(words);
-  // Count clones in wire output independently of the owner representation.
+  // Count block-local sampled images in wire output independently of the owner representation.
   unsigned combinedCount = 0;
   for (size_t i = 5; i < words.size();) {
     unsigned count = words[i] >> spv::WordCountShift;
@@ -58,11 +57,11 @@ int main(int argc, char** argv) {
     if ((words[i] & 0xffff) == unsigned(spv::Op::OpSampledImage)) ++combinedCount;
     i += count;
   }
-  CHECK(combinedCount == 3);
+  CHECK(combinedCount == 2);
   FILE* file = std::fopen(argv[1], "wb");
   if (!file) return 2;
   bool ok = std::fwrite(words.data(), sizeof(unsigned), words.size(), file) == words.size();
   if (std::fclose(file)) ok = false;
-  std::puts("PASS: cross-block sampled-image cloning, same-block identity and repeated consumers");
+  std::puts("PASS: block-local sampled images and repeated consumers without a late rewrite");
   return ok ? 0 : 3;
 }

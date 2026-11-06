@@ -60,7 +60,8 @@ int main(int argc, char** argv)
             builder.createUnaryOp(spv::Op::OpFConvert,builder.makeFloatType(16),builder.makeFloatConstant(1.0f));
             builder.createUnaryOp(spv::Op::OpSConvert,builder.makeIntType(8),builder.makeIntConstant(1));
             builder.makeReturn(true); builder.leaveFunction();
-            builder.postProcess(false);
+            // The core declares required features while emitting, without inference.
+            if(variant==2) { builder.addCapability(spv::Capability::Float16); builder.addCapability(spv::Capability::Int8); }
         }
         std::vector<unsigned> words; builder.dump(words);
         if(variant) {
@@ -76,6 +77,6 @@ int main(int argc, char** argv)
         CHECK(std::fwrite(words.data(),sizeof(unsigned),words.size(),file)==words.size());
     }
     CHECK(!std::fclose(file));
-    std::puts("PASS: capability ordering/dedup/storage inference and direct probe byte equivalence");
+    std::puts("PASS: capability ordering/dedup/explicit features and direct probe byte equivalence");
     return 0;
 }

@@ -199,17 +199,12 @@ int xe_spv_arena_add_decoration(xe_spv_arena *arena, const xe_spv_decoration_key
    if (!group) return 0;
    view.records = group->records; view.count = group->count;
    slot = xe_spv_decorations_locate(view, key, count, &found);
-   if (found) {
-      record = (xe_spv_decoration *)group->records[slot];
-      if (!record->active) record->active = 1;
-      return 1;
-   }
+   if (found) return 1;
    if (group->count == (size_t)-1 ||
        !xe_spv_group_reserve(group, group->count + 1, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE)) return 0;
    record = (xe_spv_decoration *)xe_spv_arena_payload_realloc(arena, NULL, 0,
          sizeof(*record) + count * sizeof(uint32_t));
    if (!record) return 0;
-   record->active = 1;
    record->id_begin = key->values_are_ids ? (uint32_t)(1 + key->prefix_count) : 0;
    record->id_end = record->id_begin + (key->values_are_ids ? (uint32_t)key->values.count : 0);
    words = (uint32_t *)(record + 1);

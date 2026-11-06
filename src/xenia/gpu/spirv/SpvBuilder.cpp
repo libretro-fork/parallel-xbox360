@@ -4578,7 +4578,7 @@ template <class Output> void Builder::dumpInternal(Output& out, xe_spv_plan* pla
     const xe_spv_record_view decorationRecords = module.decorationRecords();
     for (size_t d = 0; d < decorationRecords.count; ++d) {
         const auto* decoration = static_cast<const xe_spv_decoration*>(decorationRecords.records[d]);
-        if (decoration->active) appendEncodedWords(out, xe_spv_decoration_view(decoration));
+        appendEncodedWords(out, xe_spv_decoration_view(decoration));
     }
 
     dumpInstructions(out, constantsTypesGlobals);

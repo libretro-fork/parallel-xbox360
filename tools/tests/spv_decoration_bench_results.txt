@@ -1,3 +1,7 @@
+Historical measurements at release 56220d1. Reproduce at that commit; later
+core-only cleanup removes the unused postprocessing/query fixture. Current
+layout and coverage are described in spv_core_walk_bench_results.txt.
+
 C89 direct decoration records, 2026-11-06
 Parent: complete 1492903dc2b50e08c3f312bca121091d2ab55f6d sources.
 

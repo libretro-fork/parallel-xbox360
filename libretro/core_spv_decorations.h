@@ -9,11 +9,9 @@
 enum { XE_SPV_DECORATION_COLD_CAPACITY = 128,
    XE_SPV_DECORATE = 71, XE_SPV_MEMBER_DECORATE = 72,
    XE_SPV_DECORATE_ID = 332, XE_SPV_DECORATE_STRING = 5632,
-   XE_SPV_MEMBER_DECORATE_STRING = 5633,
-   XE_SPV_ARRAY_STRIDE = 6, XE_SPV_MATRIX_STRIDE = 7, XE_SPV_OFFSET = 35,
-   XE_SPV_RESTRICT_POINTER = 5355, XE_SPV_ALIASED_POINTER = 5356 };
+   XE_SPV_MEMBER_DECORATE_STRING = 5633 };
 typedef struct xe_spv_decoration {
-   uint32_t active, id_begin, id_end;
+   uint32_t id_begin, id_end;
    /* Header, target ID and remaining words follow. Only the contiguous value
     * range can carry ID flags; prefixes, strings and optional suffix are literal. */
 } xe_spv_decoration;
@@ -133,55 +131,5 @@ static INLINE size_t xe_spv_decorations_locate(xe_spv_record_view view,
       else last = middle;
    }
    return first;
-}
-static INLINE size_t xe_spv_decorations_target_begin(xe_spv_record_view view, uint32_t target) {
-   size_t first = 0, last = view.count, middle;
-   while (first < last) {
-      middle = first + (last - first) / 2;
-      if (xe_spv_decoration_words((const xe_spv_decoration *)view.records[middle])[1] < target)
-         first = middle + 1;
-      else last = middle;
-   }
-   return first;
-}
-static INLINE void xe_spv_decorations_remove_target(xe_spv_record_view view, uint32_t target) {
-   size_t i = xe_spv_decorations_target_begin(view, target);
-   xe_spv_decoration *record;
-   for (; i < view.count; ++i) {
-      record = (xe_spv_decoration *)view.records[i];
-      if (xe_spv_decoration_words(record)[1] != target) break;
-      record->active = 0;
-   }
-}
-static INLINE uint32_t xe_spv_decorations_alignment(xe_spv_record_view view,
-      uint32_t target, uint32_t member, int structure) {
-   size_t i = xe_spv_decorations_target_begin(view, target), count;
-   const xe_spv_decoration *record;
-   const uint32_t *words;
-   uint32_t alignment = 0, opcode;
-   for (; i < view.count; ++i) {
-      record = (const xe_spv_decoration *)view.records[i];
-      words = xe_spv_decoration_words(record);
-      if (words[1] != target) break;
-      if (!record->active) continue;
-      count = words[0] >> 16; opcode = words[0] & 65535;
-      if (structure) {
-         if (opcode == XE_SPV_MEMBER_DECORATE && count >= 5 && words[2] == member &&
-             (words[3] == XE_SPV_OFFSET || words[3] == XE_SPV_MATRIX_STRIDE)) alignment |= words[4];
-      } else if (opcode == XE_SPV_DECORATE && count >= 4 && words[2] == XE_SPV_ARRAY_STRIDE) alignment |= words[3];
-   }
-   return alignment;
-}
-static INLINE int xe_spv_decorations_has_alias(xe_spv_record_view view, uint32_t target) {
-   size_t i = xe_spv_decorations_target_begin(view, target);
-   const xe_spv_decoration *record;
-   const uint32_t *words;
-   for (; i < view.count; ++i) {
-      record = (const xe_spv_decoration *)view.records[i]; words = xe_spv_decoration_words(record);
-      if (words[1] != target) break;
-      if (record->active && (words[0] & 65535) == XE_SPV_DECORATE && words[0] >> 16 >= 3 &&
-          (words[2] == XE_SPV_RESTRICT_POINTER || words[2] == XE_SPV_ALIASED_POINTER)) return 1;
-   }
-   return 0;
 }
 #endif

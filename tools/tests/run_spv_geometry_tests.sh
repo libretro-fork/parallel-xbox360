@@ -42,11 +42,11 @@ for revision in parent current; do
   profile_object="$obj/profile.o"
   ${CC:-cc} -std=c89 -D_POSIX_C_SOURCE=200809L -O2 -c "$root/tools/tests/core_pipeline_bench_profile.c" -o "$profile_object"
  fi
- ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DFMT_HEADER_ONLY -DXENIA_LIBRETRO -DVULKAN_HPP_NO_TO_STRING -Wno-attributes $san $profile $profile_flags $legacy \
+ spv_compile_revision "$src" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DFMT_HEADER_ONLY -DXENIA_LIBRETRO -DVULKAN_HPP_NO_TO_STRING -Wno-attributes $san $profile $profile_flags $legacy \
   -I"$src/src" -I"$src" -I"$src/third_party/libretro-common/include" -I"$src/third_party/fmt/include" -I"$src/third_party/Vulkan-Headers/include" \
   "$root/tools/tests/core_spv_geometry_bridge.cc" "$src/src/xenia/gpu/spirv_builtin_geometry_shader.cc" \
   "$src/src/xenia/gpu/spirv_builder.cc" "$src/src/xenia/gpu/spirv/SpvBuilder.cpp" \
-  "$src/src/xenia/gpu/spirv/SpvPostProcess.cpp" "$src/src/xenia/gpu/spirv/InReadableOrder.cpp" "$src/src/xenia/gpu/spirv/Logger.cpp" \
+  "$src/src/xenia/gpu/spirv/InReadableOrder.cpp" "$src/src/xenia/gpu/spirv/Logger.cpp" \
   "$obj/size.o" "$obj/binary.o" "$obj/operands.o" "$obj/arena.o" $profile_object -o "$obj/test"
  if test "${PROFILE:-0}" = 1; then
   "$obj/test" "$obj/geometry.bin" bench

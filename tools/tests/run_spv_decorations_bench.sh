@@ -26,8 +26,8 @@ for revision in parent current; do
   if test "$unit" = operands; then unit_source=$(spv_storage_source "$src"); fi
   ${CC:-cc} -std=c89 -pedantic -O2 $san $profile_flags -Wall -Wextra -Werror -I"$src/third_party/libretro-common/include" -c "$unit_source" -o "$obj/$unit.o"
  done
- ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DFMT_HEADER_ONLY -static-libstdc++ -static-libgcc $san $profile_flags -I"$src" -I"$src/src" -I"$src/src/xenia/gpu/spirv" -I"$src/third_party/libretro-common/include" -I"$src/third_party/fmt/include" \
-  "$fixture" "$src/src/xenia/gpu/spirv/SpvBuilder.cpp" "$src/src/xenia/gpu/spirv/SpvPostProcess.cpp" "$src/src/xenia/gpu/spirv/InReadableOrder.cpp" "$src/src/xenia/gpu/spirv/Logger.cpp" \
+ spv_compile_revision "$src" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DFMT_HEADER_ONLY -static-libstdc++ -static-libgcc $san $profile_flags -I"$src" -I"$src/src" -I"$src/src/xenia/gpu/spirv" -I"$src/third_party/libretro-common/include" -I"$src/third_party/fmt/include" \
+  "$fixture" "$src/src/xenia/gpu/spirv/SpvBuilder.cpp" "$src/src/xenia/gpu/spirv/InReadableOrder.cpp" "$src/src/xenia/gpu/spirv/Logger.cpp" \
   "$obj/size.o" "$obj/binary.o" "$obj/operands.o" "$obj/arena.o" $profile_object -o "$obj/test"
  for variant in 0 1 2 3 4 5; do "$obj/test" "$obj/module-$variant.spv" "$variant"; done
 done

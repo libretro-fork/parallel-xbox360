@@ -99,39 +99,39 @@ cl /nologo /TC /MD /O2 /W4 /WX /I. /FItools/tests/core_spv_arena_test_alloc.h /c
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /c tools/tests/core_spv_arena_test_alloc.c /Fo%OUT%\fault.obj
 if errorlevel 1 goto fail
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /DXE_SPV_BINARY_CHECK /FItools/tests/core_spv_arena_test_alloc.h /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_module_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\bridge.exe /link %OUT%\fault.obj %OUT%\size.obj %OUT%\binary-fault.obj %OUT%\operands.obj %OUT%\arena.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /DXE_SPV_BINARY_CHECK /FItools/tests/core_spv_arena_test_alloc.h /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_module_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\bridge.exe /link %OUT%\fault.obj %OUT%\size.obj %OUT%\binary-fault.obj %OUT%\operands.obj %OUT%\arena.obj
 if errorlevel 1 goto fail
 for %%V in (0 1 2 3 4 5 6 7) do (
  %OUT%\bridge.exe %OUT%\debug-%%V.spv %%V
  if errorlevel 1 goto fail
 )
 echo PASS: native MSVC builder vector/C89 output, source chunks and failure recovery
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc /Ithird_party/libretro-common/include tools/tests/core_spv_views_bridge.cc src/xenia/gpu/spirv_builder.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\views.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc /Ithird_party/libretro-common/include tools/tests/core_spv_views_bridge.cc src/xenia/gpu/spirv_builder.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\views.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
 if errorlevel 1 goto fail
 for %%V in (0 1 2 3 4 5 6 7) do (
  %OUT%\views.exe %OUT%\views-%%V.spv %%V
  if errorlevel 1 goto fail
 )
 echo PASS: native MSVC borrowed inputs and unrelated access-chain state
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_metadata_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\metadata.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj %OUT%\probe.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_metadata_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\metadata.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj %OUT%\probe.obj
 if errorlevel 1 goto fail
 for %%V in (0 1 2 3) do (
  %OUT%\metadata.exe %OUT%\metadata-%%V.bin %%V
  if errorlevel 1 goto fail
 )
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_stack_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\stack.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_stack_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\stack.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
 if errorlevel 1 goto fail
 %OUT%\stack.exe %OUT%\stack.bin
 if errorlevel 1 goto fail
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_linkage_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\linkage.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_linkage_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\linkage.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
 if errorlevel 1 goto fail
 %OUT%\linkage.exe %OUT%\linkage.bin
 if errorlevel 1 goto fail
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_constant_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\constant.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_constant_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\constant.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
 if errorlevel 1 goto fail
 %OUT%\constant.exe %OUT%\constant.bin 1
 if errorlevel 1 goto fail
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_types_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\types.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_types_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\types.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
 if errorlevel 1 goto fail
 for %%V in (0 1) do (
  %OUT%\types.exe %OUT%\types-%%V.bin %%V
@@ -141,36 +141,32 @@ cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /I. /FItool
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /I. /FItools/tests/core_spv_arena_test_alloc.h /c libretro/core_spv_arena.c /Fo%OUT%\arena-fault.obj
 if errorlevel 1 goto fail
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /FItools/tests/core_spv_arena_test_alloc.h /I. /Isrc /Ithird_party/libretro-common/include tools/tests/core_spv_arena_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\arena-bridge.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\arena-fault.obj %OUT%\operands-fault.obj %OUT%\fault.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /FItools/tests/core_spv_arena_test_alloc.h /I. /Isrc /Ithird_party/libretro-common/include tools/tests/core_spv_arena_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\arena-bridge.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\arena-fault.obj %OUT%\operands-fault.obj %OUT%\fault.obj
 if errorlevel 1 goto fail
 %OUT%\arena-bridge.exe
 if errorlevel 1 goto fail
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_sampler_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\sampler-bridge.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\arena.obj %OUT%\operands.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_sampler_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\sampler-bridge.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\arena.obj %OUT%\operands.obj
 if errorlevel 1 goto fail
 %OUT%\sampler-bridge.exe %OUT%\sampler.spv
 if errorlevel 1 goto fail
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /DFMT_HEADER_ONLY /I. /Isrc /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include /Ithird_party/fmt/include tools/tests/core_spv_repeat_bridge.cc src/xenia/gpu/spirv_builder.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\repeat.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /DFMT_HEADER_ONLY /I. /Isrc /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include /Ithird_party/fmt/include tools/tests/core_spv_repeat_bridge.cc src/xenia/gpu/spirv_builder.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\repeat.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
 if errorlevel 1 goto fail
 for %%V in (0 1 2 3) do (
  %OUT%\repeat.exe %OUT%\repeat-%%V.spv %%V
  if errorlevel 1 goto fail
 )
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_extensions_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\extensions.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_extensions_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\extensions.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
 if errorlevel 1 goto fail
 for %%V in (0 1) do (
  %OUT%\extensions.exe %OUT%\extensions-%%V.bin %%V
  if errorlevel 1 goto fail
 )
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_decorations_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\decorations.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_decorations_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\decorations.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
 if errorlevel 1 goto fail
 for %%V in (0 1) do (
  %OUT%\decorations.exe %OUT%\decorations-%%V.bin %%V
  if errorlevel 1 goto fail
 )
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_decoration_queries_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\decoration-queries.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
-if errorlevel 1 goto fail
-%OUT%\decoration-queries.exe %OUT%\decoration-queries.spv 0
-if errorlevel 1 goto fail
 popd
 exit /b 0
 :fail

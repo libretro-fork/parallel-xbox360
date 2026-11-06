@@ -6,12 +6,19 @@ its classes does not satisfy this requirement. This migration is incomplete.
 
 ## Current cuts
 
+- Live readable-order serialization uses a callback pointer and borrowed context
+  rather than `std::function`. Exception containment remains at the C++ bridge.
+- The unused standalone postprocessor and typed canonical-rewrite helpers are
+  removed from source/build entries. Raw-construction tests replace dormant-pass
+  tests; actual helper/geometry/guest outputs remain the runtime byte oracle.
+
 - All eleven decoration factories bypass typed instructions and the set
   owner. C89 borrowed keys compare target ID, opcode, operand flags and words
   before allocating; unique records encode directly into module-owned payloads.
-  Output borrows raw words. Alignment/alias queries use sorted target ranges,
-  and CFG pruning deactivates targets without retiring typed instructions.
-  Pruned keys remain cached until reset; metadata/payload growth is checked.
+  Output borrows raw words. The dormant standalone postprocessor and its
+  pruning/alignment/alias APIs are removed after a whole-runtime caller audit.
+  Records retain only an eight-byte ID-interval prefix plus wire words.
+  Metadata/payload growth is checked.
 
 - Uniform composite constants borrow one scalar ID through a C89 logical source.
   Repeated hashing, exact-key matching and packet emission need no intermediary
@@ -47,8 +54,11 @@ These cuts do not remove the guest translator's legacy instruction graph.
 `SpirvBuilder` derives from the legacy builder; guest translation, EDRAM helpers
 and geometry generation still construct typed instruction/function/block IR.
 That graph supplies type/constant queries, branch targets, Phi/Switch fixups,
-reachable structured block order and late feature/sample-image processing.
-Deleting it before replacing these duties would break shader generation.
+reachable structured block order. Core generators already emit required
+features and block-local sampled images; no runtime caller used the deleted
+standalone postprocessor.
+Removing the remaining instruction/function/block graph before replacing its
+live duties would break shader generation.
 
 The enum headers describe SPIR-V and its extended instructions. In particular,
 `GLSL.std.450` is a SPIR-V extended-instruction set, not a GLSL source compiler.
@@ -64,10 +74,10 @@ The replacement must retain required opcode information without a language parse
    spans. Preserve outer-loop references or migrate all their callers before
    changing that interface. Forward labels, Phi inputs and Switch operands need
    checked offset fixups whose backing storage cannot move underneath borrowers.
-3. Collect capabilities, decorations and required extensions during emission.
-   Replace full-instruction late scans with explicit fixup records where a
-   decision genuinely requires completed control flow. Sampled-image cloning
-   must preserve same-block use rules; it cannot simply be deleted.
+3. Preserve explicit feature selection by the core generators. Capabilities,
+   decorations and extensions already use C89 owned records during emission.
+   Preserve block-local sampled-image construction; the unused standalone late
+   inference/cloning passes have been removed and must not be reintroduced.
 4. Finalize logical module sections and reachable structured block order with
    one final ownership handoff. Vulkan requires contiguous module words: do not
    claim zero copies by hiding a section-flattening buffer. Count and measure

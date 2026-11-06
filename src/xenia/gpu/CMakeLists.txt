@@ -2,7 +2,6 @@
 add_library(xenia-spirv-writer STATIC
   spirv/Logger.cpp
   spirv/SpvBuilder.cpp
-  spirv/SpvPostProcess.cpp
   spirv/InReadableOrder.cpp
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_packet.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_binary.c"

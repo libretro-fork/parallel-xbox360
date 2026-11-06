@@ -401,12 +401,6 @@ int main(int argc, char** argv) {
     auto beforeTail = builder.makeInstruction(spv::Op::OpNop);
     block->insertInstruction(mergeRaw, mergeRaw->getNextInstruction(), std::move(beforeTail));
     CHECK(!block->getMergeInstruction() && block->isTerminated());
-    block->rewriteAsCanonicalUnreachableMerge();
-    CHECK(block->getFirstInstruction() == label && block->getNextInstruction(label)->getOpCode() == spv::Op::OpUnreachable);
-    CHECK(!block->getMergeInstruction() && block->isTerminated());
-    block->rewriteAsCanonicalUnreachableContinue(block);
-    CHECK(block->getNextInstruction(label)->getOpCode() == spv::Op::OpBranch);
-    CHECK(!block->getNextInstruction(block->getNextInstruction(label)));
     auto* local = builder.createInstruction(spv::Op::OpVariable);
     block->addLocalVariable(std::unique_ptr<spv::Instruction>(local));
     CHECK(block->getFirstLocalVariable() == local && !local->getNextInstruction());
@@ -583,7 +577,7 @@ int main(int argc, char** argv) {
   std::puts("PASS: borrowed/null function names, owned export spelling and failed/retired inline-ID unpublication");
   std::puts("PASS: pooled function/block growth faults, unpublished state, failed constructor and detached-block cleanup");
   std::puts("PASS: separate borrowed global lists, stable order and arena-owned typed operand unwind");
-  std::puts("PASS: typed instruction ownership, label identity, splice and canonical rewrites");
+  std::puts("PASS: typed instruction ownership, label identity, splice and body cleanup");
   std::puts("PASS: typed block-chain adoption, duplicate/foreign rejection and creation order");
   std::puts("PASS: 0/1/4/9/70 parameters and partial-parameter construction cleanup");
   std::puts("PASS: 50000 typed ID mappings across module resets without warm index growth");

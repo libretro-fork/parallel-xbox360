@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed the standalone SPIR-V postprocessor and its dormant feature-inference, dead-block rewriting and sampled-image-cloning APIs after verifying the core has no callers. Shader output now borrows a function pointer and context instead of `std::function`. Decoration records shed their unused active flag and queries. Core-generated shader bytes and callback failure propagation remain checked; other subsystems still need callback conversion.
+
 - All shader decoration factories now emit owned C89 wire records without typed instruction or set-node allocation. Duplicate checks borrow values and text before allocating, avoiding retained arena growth from discarded duplicates. Serialization borrows the stored words. Sorted target-ID queries replace full alignment/alias scans, and unreachable decorations are deactivated for this module lease. Ordering, ID/literal identity and raw shader bytes are preserved; cold metadata and checked high-water growth remain.
 
 - Shader extension metadata now uses owned C89 wire words instead of a string/set node per name. Duplicate lookups and disable/re-add operations reuse the same encoding; output borrows it without a temporary string buffer. Ordering, promotion and emitted bytes are preserved. Unique names remain cached until module reset, with checked registry/payload growth.

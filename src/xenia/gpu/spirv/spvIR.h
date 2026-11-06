@@ -66,7 +66,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <functional>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -382,33 +381,6 @@ public:
         return nullptr;
     }
 
-    // Change this block into a canonical dead merge block.  Delete instructions
-    // as necessary.  A canonical dead merge block has only an OpLabel and an
-    // OpUnreachable.
-    void rewriteAsCanonicalUnreachableMerge() {
-        assert(!localVariables.head);
-        // Delete all instructions except for the label.
-        clearBody();
-        successors.clear();
-        addInstruction(std::unique_ptr<Instruction>(createInstruction(Op::OpUnreachable)));
-    }
-    // Change this block into a canonical dead continue target branching to the
-    // given header ID.  Delete instructions as necessary.  A canonical dead continue
-    // target has only an OpLabel and an unconditional branch back to the corresponding
-    // header.
-    void rewriteAsCanonicalUnreachableContinue(Block* header) {
-        assert(!localVariables.head);
-        // Delete all instructions except for the label.
-        clearBody();
-        successors.clear();
-        // Add OpBranch back to the header.
-        assert(header != nullptr);
-        Instruction* branch = createInstruction(Op::OpBranch);
-        branch->addIdOperand(header->getId());
-        addInstruction(std::unique_ptr<Instruction>(branch));
-        successors.push_back(header);
-    }
-
     bool isTerminated() const
     {
         switch ((body.chain.tail ? static_cast<Instruction*>(body.chain.tail) : label.get())->getOpCode()) {
@@ -453,11 +425,6 @@ protected:
     std::vector<Block*> predecessors;
     xe_spv_instruction_chain localVariables = {};
 
-    void clearBody() noexcept {
-        xe_spv_instruction_destroy(body.chain.head, Instruction::nextSlot, Instruction::destroyLinked);
-        body = {};
-    }
-
     // Read only when the corresponding valid bit is present in stateFlags.
     xe_spv_block_debug debugState;
 
@@ -481,7 +448,9 @@ enum ReachReason {
 // - the reason we reached the block,
 // - if the reason was that block is an unreachable continue or unreachable merge block
 //   then the last parameter is the corresponding header block.
-void inReadableOrder(Block* root, std::function<void(Block*, ReachReason, Block* header)> callback, xe_spv_plan* workspace = nullptr);
+#define XE_SPV_BORROWED_VISITOR 1
+using ReadableOrderVisit = void (*)(void*, Block*, ReachReason, Block*);
+void inReadableOrder(Block* root, void* context, ReadableOrderVisit callback, xe_spv_plan* workspace = nullptr);
 
 //
 // SPIR-V IR Function.
@@ -573,9 +542,11 @@ public:
             }
         } else {
             if (plan && !xe_spv_plan_function(plan, blocks.count)) throw std::bad_alloc();
-            inReadableOrder(getEntryBlock(), [&](const Block* b, ReachReason, Block*) {
-                if (plan && !xe_spv_plan_push(plan, b)) throw std::bad_alloc();
-                b->dump(out);
+            struct VisitContext { Output* out; xe_spv_plan* plan; } context = {&out, plan};
+            inReadableOrder(getEntryBlock(), &context, [](void* opaque, Block* b, ReachReason, Block*) {
+                auto& visit = *static_cast<VisitContext*>(opaque);
+                if (visit.plan && !xe_spv_plan_push(visit.plan, b)) throw std::bad_alloc();
+                b->dump(*visit.out);
             }, plan);
             if (plan && !xe_spv_plan_push(plan, nullptr)) throw std::bad_alloc();
         }

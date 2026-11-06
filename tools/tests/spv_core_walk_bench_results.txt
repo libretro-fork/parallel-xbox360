@@ -1,0 +1,89 @@
+Core-only shader walk cleanup, 2026-11-06
+Parent: complete 56220d16ef8c16a7d88b7b8a6cd87495a4250c00 sources.
+
+A whole-runtime reference audit found no calls to the standalone postprocessor
+outside its own definitions/declarations. The libretro generators already emit
+required capabilities, extensions and same-block sampled images themselves.
+Remove SpvPostProcess.cpp, its public APIs and typed canonical-dead-block rewrite
+helpers, rather than optimizing their temporary hash containers. Remove the
+postprocessor-only decoration alignment/alias/pruning helpers, their fixture,
+and the unused active field. C89 decoration prefixes shrink 12 -> 8 bytes;
+serialization unconditionally borrows every stored decoration. Eight-byte
+payload alignment means even wire lengths save eight padded bytes per record;
+odd wire lengths retain the same padded size. No global RSS reduction is inferred.
+
+Live Function::dump no longer constructs/passes std::function. A plain function
+pointer borrows a two-pointer output/plan context for synchronous readable-order
+serialization. The typed visit bridge catches exceptions, returns failure to
+the C89 walk and rethrows afterwards, retaining output recovery behavior. The
+context never escapes the call. Graph, words and plan nodes are borrowed;
+there is no new copy of labels, graph edges, packet data or a callback owner.
+C89 traversal algorithms and encoded packet layouts remain unchanged. Final
+module assembly still copies packet spans into the required contiguous buffer.
+
+The deleted postprocessor is excluded from upstream merges and removed from
+CMake sources; static Make source discovery excludes the absent file. The Make
+archive is rebuilt from its response list, so no stale removed member remains.
+Historical complete-revision tests optionally compile their own postprocessor
+through spv_compile_revision; its source/header always belong to that baseline.
+This harness compatibility does not add the file to the current core build.
+Raw-construction fixtures replace dormant inference/pruning/cloning fixtures.
+The sampled-image test explicitly constructs a sampled image in each consumer
+block. The obsolete partial-source module comparison is now a complete-revision
+comparison, avoiding a mixture of historical IR and current C storage layouts.
+
+Measurements: GCC16.2 Windows x64 -O2, same fixture against own-revision sources,
+all C/plan/walk allocator hooks plus C++ new/delete. Each executable constructs
+its graph and warms output/plan storage before timing repeated dumpSized calls.
+Seven alternating pairs run after compiler jobs are terminal. Output bytes are
+compared independently, outside timing. Medians/ranges below are milliseconds:
+
+                                parent                 current
+100000 one-block modules       8.008 (7.967..8.130)    8.095 (7.963..8.635)
+10000 64-block modules        10.917 (10.766..10.993)  10.345 (10.304..10.364)
+1000 513-block modules         8.355 (8.256..8.386)    7.861 (7.669..8.101)
+1000 257-function modules      8.233 (8.166..8.320)    7.735 (7.700..7.800)
+
+The larger fixtures improve approximately 5.2..6.1% in these measurements; the
+one-block control varies about 1.1% with overlapping ranges. Both revisions
+already allocate zero bytes during these warmed serialization loops: the old
+callback fits this standard library's small-object buffer. Removing type erasure
+is not presented as an allocation improvement on the measured build. Tracked
+retained bytes match exactly: 193014 / 196182 / 301102 / 298314 respectively.
+Builder1408, Instruction64, Block136, Function136 and Module88 remain unchanged.
+Other C++ libraries and cold/high-water growth are not measured by this timing.
+Cold graph construction/output can still allocate. No FPS/gameplay gain claimed.
+
+Validation:
+- Full Make -j5 and native MSVC C89/output suites pass. Callback exception
+  propagation and C output recovery remain exercised in the real builder.
+- Full GCC13 WSL ASan/UBSan suite passes (C -O2, C++ -O1), including poisoned
+  retired decoration/instruction/stack/payload access and ownership/fault tests.
+- Eight raw-construction module variants match the complete parent. The
+  standard module passes spirv-val. Capability fixtures declare required
+  features explicitly, following the core's existing construction contract.
+- Existing production EDRAM dump/transfer helpers match parent bytes for both
+  standard/wide scale; raw emission and block-local sampler fixtures validate.
+- Native geometry: 18432 modules, 109668864 bytes, same SHA256
+  427B071C7E7868566596FF55270BBCA9AAB31F54C714CA552E928DFE349E69E0.
+- Actual rebuilt core objects: 1410 Tekken + 210 Tomb Raider cached guest
+  translations match reference bytes across host-RT/interlock profiles,
+  with 2 + 96 control-flow-containing translations respectively.
+- Source audit: no std::function, postProcess or canonical rewrite remains
+  under src/xenia/gpu/spirv. There are still 199 textual std::function references
+  elsewhere under src/ and libretro/ at this checkpoint. Their removal is
+  unfinished; async owners must not become dangling borrowed contexts.
+
+No frontend/game/GPU launch, installed-DLL replacement, audio pacing change,
+resource-retirement change, thread-join change or release logging. The remaining
+legacy type/function/block graph still needs migration before directory removal.
+Removing unused source is not credited with removing runtime work it never did;
+only the live callback and decoration changes are measured above.
+
+Reproduce: sh tools/tests/run_spv_module_compare.sh with a complete parent
+BASELINE_ROOT and optional SPIRV_VALIDATOR; sh tools/tests/run_spv_walk_bench.sh
+with the same baseline. After compilation, alternate parent/current modes0..3
+for seven pairs and compare module files. In PowerShell put
+C:/msys64/mingw64/bin first on PATH for the correct 64-bit runtime DLLs.
+Full suites: tools/tests/run_spv_output_tests.cmd / .sh. Set SANITIZER and
+SPIRV_VALIDATOR as needed; baseline archive must contain a complete revision.

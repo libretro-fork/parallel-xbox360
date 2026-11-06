@@ -55,7 +55,8 @@
 namespace {
 struct WalkContext {
     const spv::Function* function;
-    const std::function<void(spv::Block*, spv::ReachReason, spv::Block*)>* callback;
+    void* caller;
+    spv::ReadableOrderVisit callback;
     std::exception_ptr exception;
 };
 static size_t nodeIndex(void* opaque, const void* node) {
@@ -89,7 +90,7 @@ static int targets(const void* node, const void** merge, const void** continuati
 static int visit(void* opaque, const void* node, int reason, const void* header) noexcept {
     auto& context = *static_cast<WalkContext*>(opaque);
     try {
-        (*context.callback)(const_cast<spv::Block*>(static_cast<const spv::Block*>(node)),
+        context.callback(context.caller, const_cast<spv::Block*>(static_cast<const spv::Block*>(node)),
             static_cast<spv::ReachReason>(reason),
             const_cast<spv::Block*>(static_cast<const spv::Block*>(header)));
     } catch (...) {
@@ -100,13 +101,13 @@ static int visit(void* opaque, const void* node, int reason, const void* header)
 }
 }
 
-void spv::inReadableOrder(Block* root, std::function<void(Block*, ReachReason, Block*)> callback, xe_spv_plan* workspace)
+void spv::inReadableOrder(Block* root, void* caller, ReadableOrderVisit callback, xe_spv_plan* workspace)
 {
     static_assert(int(ReachViaControlFlow) == XE_SPV_WALK_CONTROL &&
                   int(ReachDeadContinue) == XE_SPV_WALK_DEAD_CONTINUE &&
                   int(ReachDeadMerge) == XE_SPV_WALK_DEAD_MERGE);
-    if (!root) throw std::bad_alloc();
-    WalkContext context = {&root->getParent(), &callback, {}};
+    if (!root || !callback) throw std::bad_alloc();
+    WalkContext context = {&root->getParent(), caller, callback, {}};
     const xe_spv_walk_ops operations = {nodeIndex, successorCount, successor, targets, visit};
     const size_t count = context.function->getBlockCount();
     int success;

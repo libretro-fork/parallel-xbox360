@@ -28,16 +28,12 @@ int main(int argc,char** argv) {
     spv::Id f32=builder.makeFloatType(32), value=builder.makeFloatConstant(0.5f);
     builder.addDecoration(value,spv::Decoration::RelaxedPrecision);
     builder.makeReturn(true);
-    auto& dead=builder.makeNewBlock(); builder.setBuildPoint(&dead);
-    spv::Id deadValue=builder.createUnaryOp(spv::Op::OpCopyObject,f32,value);
-    builder.addDecoration(deadValue,spv::Decoration::RelaxedPrecision);
-    builder.makeReturn(true); builder.leaveFunction();
+    builder.leaveFunction();
     FILE* output=std::fopen(argv[1],"wb"); CHECK(output);
     CHECK(snapshot(builder,output,nullptr));
     for(unsigned i=0;i<10000;++i) builder.addDecoration(value,spv::Decoration::RelaxedPrecision);
     builder.addDecoration(value,spv::Decoration::Max,(const char*)nullptr);
     CHECK(snapshot(builder,output,nullptr));
-    builder.postProcessCFG();
     CHECK(snapshot(builder,output,nullptr));
     if(arbitrary) {
         char text[300]; const char* texts[3]={"one","", "high_\x80\xff"};
@@ -66,10 +62,10 @@ int main(int argc,char** argv) {
         builder.addDecoration(9001,spv::Decoration::Location);
         builder.addDecorationId(9002,spv::Decoration::AlignmentId,std::vector<spv::Id>());
         builder.addMemberDecoration(9003,4,spv::Decoration::UserSemantic,std::vector<const char*>());
-        CHECK(snapshot(builder,output,nullptr)); builder.postProcessCFG();
+        CHECK(snapshot(builder,output,nullptr));
     }
     char last[2048]; CHECK(std::snprintf(last,sizeof(last),"%s.last.spv",argv[1])>0);
     CHECK(snapshot(builder,output,last)); CHECK(!std::fclose(output));
-    std::puts("PASS: eleven decoration factories, repeated keys, owned strings/values, counted text, sorted output and unreachable pruning");
+    std::puts("PASS: eleven decoration factories, repeated keys, owned strings/values, counted text, sorted output without standalone postprocessing");
     return 0;
 }
