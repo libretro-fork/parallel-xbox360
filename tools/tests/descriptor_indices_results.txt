@@ -1,0 +1,96 @@
+D3D12 bindless descriptor indices / existing command-allocator batches
+=====================================================================
+
+Runtime change
+--------------
+The native heap still contains 262,144 view descriptors. Context setup reserves
+one uninitialized 1 MiB link array, indexed by native descriptor identity; only
+issued indices are initialized. Reserved system descriptors never enter it.
+The bindful path does not allocate this storage. No new native descriptor heap,
+submission, fence wait, queue lock or completion threshold is introduced.
+
+The free vector and pending pair<index,submission> deque are gone. Transient
+indices link directly into an inline current-submission batch. Its three scalar
+fields move into the existing CommandAllocator after native submission. That
+owner's existing completed-submission predicate retires the batch by splice,
+without walking or copying its indices. Recent immediate frees use a fixed
+64-index hot stack; overflow or batch retirement spills at most 64 IDs into the
+intrusive list to preserve exact shared LIFO order. This is metadata movement,
+not a descriptor payload copy. There is no separately allocated batch queue.
+
+CPU CommandAllocator metadata grows from 24 to 40 bytes on tested x64 hosts.
+Existing native command-allocator high-water creation remains. The CPU owner
+is now malloc'd before native COM creation, and freed on native creation failure,
+avoiding a native-object leak if CPU ownership allocation fails. This native
+failure ordering is source-reviewed/compiled, not device-failure-injected.
+
+Explicit shutdown retains the existing drain/texture-destruction/heap-release
+order. A thin C++ member destructor also preserves fallback member lifetime:
+later-declared texture owners may release indices before the link storage dies.
+No audio, guest timing, frame pacing or thread shutdown code changes.
+
+Offline correctness
+-------------------
+tools/tests/run_descriptor_indices_tests.sh: GCC strict -std=c89 -pedantic
+-Wall -Wextra -Werror and ASan/UBSan C leaf; C++20 legacy reference with the same
+sanitizers. Both PASS. C leaf also passes native MSVC /TC /O2 /W4 /WX.
+
+- 320,000 repeated transient indices without allocations after setup.
+- Exact legacy free order, persistent/transient overlap, zero/full reserved
+  prefix, uninitialized pool, full 262,144 capacity and exhaustion.
+- Immediate-cache overflow/spill and batch splice preserve order. Reserved,
+  unissued, out-of-range, double and premature pending releases are refused.
+- Cold allocation failure, double initialization/destruction, invalid batch
+  bounds, self-transfer/nonempty destination, retry and balanced ownership.
+- 1,028,488 randomized persistent/transient reference events; 20 context resets
+  and 540 simulated failed-submission-owner retries preserve pending ownership.
+- Synthetic texture destruction releases its index before the pool destructor.
+  This exercises the actual thin C++ owner, not a native D3D12 context.
+
+Native MSVC compiles of actual Vulkan and D3D12 command processors PASS, as do
+shared descriptor reuse/submission-counter tests and the full Windows GNU Make
+-j5 core build. No actual GPU device, gameplay, content close or native COM OOM
+test was run. These CPU checks do not certify gameplay behavior or FPS gains.
+
+CPU benchmark
+-------------
+tools/tests/descriptor_indices_bench.cc uses legacy instrumented vector/deque
+containers versus the production C89 pool, with four caller-owned batch headers
+standing in for existing native allocator owners. Actual heap capacity 262,144,
+synthetic reserved prefix 8, two pending submissions, 1,000 warm submissions,
+500,000 measured submissions, median of three runs. Transient mode requests 64
+one-use indices/submission; mixed also takes/releases 64 persistent indices;
+persistent mode takes/releases only 64 persistent indices. Checksums match and
+all requested storage is freed. Timings include allocation-accounting hooks.
+
+Compiler/flags: GCC and MinGW g++ -std=c++20 -O2; MSVC /O2 /std:c++20 /EHsc.
+GCC/MinGW compile with -Wall -Wextra -Werror. C++ is used only for the legacy
+reference and measurement harness; the production allocation/reuse algorithm
+is MSVC C89-compatible.
+
+Median milliseconds, old -> C89:
+                         GCC           MinGW          MSVC
+transient             118.062/36.541    62/34          133/46
+mixed                 138.071/76.790    92/79          160/109
+persistent             21.521/33.668    16/32           29/62
+
+GNU transient/mixed timed metadata allocations: 1,000,000 -> 0.
+GNU persistent and MSVC all cases: already 0 -> 0 (MSVC deque retains storage).
+Persistent-only tight loops remain slower: indexed state checks/link fallback
+are more expensive than the old compact stack. This is not an across-the-board
+throughput win. Mixed/transient fixtures improve while removing separate index
+metadata heap growth; existing native command-owner growth remains. No claim is made
+that this path was a measured gameplay bottleneck.
+
+Warm requested bytes, including measured pool/container/header objects:
+GNU transient/mixed 3,068 -> 1,048,924; persistent 940 -> 1,048,924.
+MSVC transient/mixed 6,604 -> 1,048,924; persistent 460 -> 1,048,924.
+This deliberately exchanges a cold fixed-capacity metadata reservation for
+removal of hot growth. It is not an RSS reduction. No full link-array clear is
+performed, but resident/committed pages and actual driver memory were not
+measured. Allocator bookkeeping, existing native command-owner fields/padding,
+native GPU heap memory and stack locals are excluded from these byte totals.
+
+Reproduce the benchmark separately from sanitizer tests by compiling the .cc
+with the flags above and -Ilibretro -Ithird_party/libretro-common/include (or
+MSVC /I equivalents). Do not run timing fixtures concurrently with builds.

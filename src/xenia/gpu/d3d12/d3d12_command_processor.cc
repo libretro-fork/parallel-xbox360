@@ -234,21 +234,14 @@ uint64_t D3D12CommandProcessor::RequestViewBindfulDescriptors(
 
 uint32_t D3D12CommandProcessor::RequestPersistentViewBindlessDescriptor() {
   assert_true(bindless_resources_used_);
-  if (!view_bindless_heap_free_.empty()) {
-    uint32_t descriptor_index = view_bindless_heap_free_.back();
-    view_bindless_heap_free_.pop_back();
-    return descriptor_index;
-  }
-  if (view_bindless_heap_allocated_ >= kViewBindlessHeapSize) {
-    return UINT32_MAX;
-  }
-  return view_bindless_heap_allocated_++;
+  return xe_descriptor_index_take(&view_bindless_indices_);
 }
 
 void D3D12CommandProcessor::ReleaseViewBindlessDescriptorImmediately(
     uint32_t descriptor_index) {
   assert_true(bindless_resources_used_);
-  view_bindless_heap_free_.push_back(descriptor_index);
+  bool released = xe_descriptor_index_release(&view_bindless_indices_, descriptor_index) != 0;
+  assert_true(released);
 }
 
 bool D3D12CommandProcessor::RequestOneUseSingleViewDescriptors(
@@ -262,25 +255,12 @@ bool D3D12CommandProcessor::RequestOneUseSingleViewDescriptors(
   if (bindless_resources_used_) {
     // Request separate bindless descriptors that will be freed when this
     // submission is completed by the GPU.
-    if (count > kViewBindlessHeapSize - view_bindless_heap_allocated_ +
-                    view_bindless_heap_free_.size()) {
-      return false;
-    }
+    if (count > xe_descriptor_indices_available(&view_bindless_indices_)) return false;
     for (uint32_t i = 0; i < count; ++i) {
-      uint32_t descriptor_index;
-      if (!view_bindless_heap_free_.empty()) {
-        descriptor_index = view_bindless_heap_free_.back();
-        view_bindless_heap_free_.pop_back();
-      } else {
-        descriptor_index = view_bindless_heap_allocated_++;
-      }
-      view_bindless_one_use_descriptors_.emplace_back(descriptor_index,
-                                                      GetCurrentSubmission());
-      handles_out[i] =
-          std::make_pair(provider.OffsetViewDescriptor(
-                             view_bindless_heap_cpu_start_, descriptor_index),
-                         provider.OffsetViewDescriptor(
-                             view_bindless_heap_gpu_start_, descriptor_index));
+      uint32_t descriptor_index = xe_descriptor_index_take_one_use(
+          &view_bindless_indices_, &view_bindless_pending_);
+      handles_out[i].first = provider.OffsetViewDescriptor(view_bindless_heap_cpu_start_, descriptor_index);
+      handles_out[i].second = provider.OffsetViewDescriptor(view_bindless_heap_gpu_start_, descriptor_index);
     }
   } else {
     // Request a range within the current heap for bindful resources path.
@@ -589,17 +569,8 @@ bool D3D12CommandProcessor::SetupContext() {
 
   // Create the command list and one allocator because it's needed for a command
   // list.
-  ID3D12CommandAllocator* command_allocator;
-  if (FAILED(device->CreateCommandAllocator(
-          D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&command_allocator)))) {
-    XELOGE("Failed to create a command allocator");
-    return false;
-  }
-  command_allocator_writable_first_ = new CommandAllocator;
-  command_allocator_writable_first_->command_allocator = command_allocator;
-  command_allocator_writable_first_->last_usage_submission = 0;
-  command_allocator_writable_first_->next = nullptr;
-  command_allocator_writable_last_ = command_allocator_writable_first_;
+  if (!EnsureWritableCommandAllocator()) return false;
+  ID3D12CommandAllocator* command_allocator = command_allocator_writable_first_->command_allocator;
   if (FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
                                        command_allocator, nullptr,
                                        IID_PPV_ARGS(&command_list_)))) {
@@ -681,6 +652,9 @@ bool D3D12CommandProcessor::SetupContext() {
       std::max(ui::d3d12::D3D12UploadBufferPool::kDefaultPageSize,
                sizeof(float) * 4 * D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT));
   if (bindless_resources_used_) {
+    if (!xe_descriptor_indices_init(&view_bindless_indices_, kViewBindlessHeapSize,
+                                    uint32_t(SystemBindlessView::kCount))) return false;
+    xe_descriptor_index_batch_clear(&view_bindless_pending_);
     D3D12_DESCRIPTOR_HEAP_DESC view_bindless_heap_desc;
     view_bindless_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     view_bindless_heap_desc.NumDescriptors = kViewBindlessHeapSize;
@@ -695,7 +669,6 @@ bool D3D12CommandProcessor::SetupContext() {
         xe_d3d12_heap_cpu(view_bindless_heap_);
     view_bindless_heap_gpu_start_ =
         xe_d3d12_heap_gpu(view_bindless_heap_);
-    view_bindless_heap_allocated_ = uint32_t(SystemBindlessView::kCount);
 
     D3D12_DESCRIPTOR_HEAP_DESC sampler_bindless_heap_desc;
     sampler_bindless_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
@@ -1488,8 +1461,8 @@ void D3D12CommandProcessor::ShutdownContext() {
     sampler_bindless_heaps_overflowed_.clear();
     sampler_bindless_heap_allocated_ = 0;
     ui::d3d12::util::ReleaseAndNull(sampler_bindless_heap_current_);
-    view_bindless_one_use_descriptors_.clear();
-    view_bindless_heap_free_.clear();
+    xe_descriptor_index_batch_clear(&view_bindless_pending_);
+    xe_descriptor_indices_destroy(&view_bindless_indices_);
     ui::d3d12::util::ReleaseAndNull(view_bindless_heap_);
   } else {
     sampler_bindful_heap_pool_.reset();
@@ -3680,6 +3653,8 @@ void D3D12CommandProcessor::CheckSubmissionCompletion(
         completed_submission) {
       break;
     }
+    if (!xe_descriptor_index_batch_recycle(&view_bindless_indices_,
+        &command_allocator_submitted_first_->one_use_descriptors)) break;
     if (command_allocator_writable_last_) {
       command_allocator_writable_last_->next =
           command_allocator_submitted_first_;
@@ -3693,17 +3668,6 @@ void D3D12CommandProcessor::CheckSubmissionCompletion(
   }
   if (!command_allocator_submitted_first_) {
     command_allocator_submitted_last_ = nullptr;
-  }
-
-  // Release single-use bindless descriptors.
-  while (!view_bindless_one_use_descriptors_.empty()) {
-    if (view_bindless_one_use_descriptors_.front().second >
-        completed_submission) {
-      break;
-    }
-    ReleaseViewBindlessDescriptorImmediately(
-        view_bindless_one_use_descriptors_.front().first);
-    view_bindless_one_use_descriptors_.pop_front();
   }
 
   // Delete transient resources marked for deletion.
@@ -3897,21 +3861,9 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
   const ui::d3d12::D3D12Provider& provider = GetD3D12Provider();
 
   // Make sure there is a command allocator to write commands to.
-  if (submission_open_ && !command_allocator_writable_first_) {
-    ID3D12CommandAllocator* command_allocator;
-    if (FAILED(provider.GetDevice()->CreateCommandAllocator(
-            D3D12_COMMAND_LIST_TYPE_DIRECT,
-            IID_PPV_ARGS(&command_allocator)))) {
-      XELOGE("Failed to create a command allocator");
-      // Try to submit later. Completely dropping the submission is not
-      // permitted because resources would be left in an undefined state.
-      return false;
-    }
-    command_allocator_writable_first_ = new CommandAllocator;
-    command_allocator_writable_first_->command_allocator = command_allocator;
-    command_allocator_writable_first_->last_usage_submission = 0;
-    command_allocator_writable_first_->next = nullptr;
-    command_allocator_writable_last_ = command_allocator_writable_first_;
+  if (submission_open_ && !EnsureWritableCommandAllocator()) {
+    // Keep the deferred submission and its descriptor batch intact for retry.
+    return false;
   }
 
   bool is_closing_frame = is_swap && frame_open_;
@@ -3956,6 +3908,11 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
     command_list_->Close();
     ID3D12CommandList* execute_command_lists[] = {command_list_};
     direct_queue->ExecuteCommandLists(1, execute_command_lists);
+    if (view_bindless_pending_.count) {
+      bool moved = xe_descriptor_index_batch_move(
+          &command_allocator_writable_first_->one_use_descriptors, &view_bindless_pending_) != 0;
+      assert_true(moved);
+    }
     command_allocator_writable_first_->last_usage_submission =
         GetCurrentSubmission();
     if (command_allocator_submitted_last_) {
@@ -4055,18 +4012,37 @@ bool D3D12CommandProcessor::CanEndSubmissionImmediately() const {
   return !submission_open_ || !pipeline_cache_->IsCreatingPipelines();
 }
 
+bool D3D12CommandProcessor::EnsureWritableCommandAllocator() {
+  CommandAllocator* owner;
+  ID3D12CommandAllocator* command_allocator;
+  if (command_allocator_writable_first_) return true;
+  // Reserve the POD owner before native creation so host OOM cannot leak COM.
+  owner = (CommandAllocator*)malloc(sizeof(CommandAllocator));
+  if (!owner) return false;
+  if (FAILED(GetD3D12Provider().GetDevice()->CreateCommandAllocator(
+          D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&command_allocator)))) {
+    free(owner);
+    XELOGE("Failed to create a command allocator");
+    return false;
+  }
+  owner->command_allocator = command_allocator; owner->last_usage_submission = 0;
+  owner->next = nullptr; xe_descriptor_index_batch_clear(&owner->one_use_descriptors);
+  command_allocator_writable_first_ = command_allocator_writable_last_ = owner;
+  return true;
+}
+
 void D3D12CommandProcessor::ClearCommandAllocatorCache() {
   while (command_allocator_submitted_first_) {
     auto next = command_allocator_submitted_first_->next;
     command_allocator_submitted_first_->command_allocator->Release();
-    delete command_allocator_submitted_first_;
+    free(command_allocator_submitted_first_);
     command_allocator_submitted_first_ = next;
   }
   command_allocator_submitted_last_ = nullptr;
   while (command_allocator_writable_first_) {
     auto next = command_allocator_writable_first_->next;
     command_allocator_writable_first_->command_allocator->Release();
-    delete command_allocator_writable_first_;
+    free(command_allocator_writable_first_);
     command_allocator_writable_first_ = next;
   }
   command_allocator_writable_last_ = nullptr;

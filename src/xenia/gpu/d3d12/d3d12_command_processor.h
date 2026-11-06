@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include "libretro/core_submission_counter.h"
+#include "libretro/core_descriptor_indices.h"
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -514,6 +515,7 @@ class D3D12CommandProcessor final : public CommandProcessor {
   }
   // Need to await submission completion before calling.
   void ClearCommandAllocatorCache();
+  bool EnsureWritableCommandAllocator();
 
   // Request descriptors and automatically rebind the descriptor heap on the
   // draw command list. Refer to D3D12DescriptorHeapPool::Request for partial /
@@ -656,6 +658,7 @@ class D3D12CommandProcessor final : public CommandProcessor {
     ID3D12CommandAllocator* command_allocator;
     uint64_t last_usage_submission;
     CommandAllocator* next;
+    xe_descriptor_index_batch one_use_descriptors;
   };
   CommandAllocator* command_allocator_writable_first_ = nullptr;
   CommandAllocator* command_allocator_writable_last_ = nullptr;
@@ -710,11 +713,8 @@ class D3D12CommandProcessor final : public CommandProcessor {
   ID3D12DescriptorHeap* view_bindless_heap_ = nullptr;
   D3D12_CPU_DESCRIPTOR_HANDLE view_bindless_heap_cpu_start_;
   D3D12_GPU_DESCRIPTOR_HANDLE view_bindless_heap_gpu_start_;
-  uint32_t view_bindless_heap_allocated_ = 0;
-  std::vector<uint32_t> view_bindless_heap_free_;
-  // <Descriptor index, submission where requested>, sorted by the submission
-  // number.
-  std::deque<std::pair<uint32_t, uint64_t>> view_bindless_one_use_descriptors_;
+  xe_descriptor_indices_owner view_bindless_indices_{};
+  xe_descriptor_index_batch view_bindless_pending_{};
 
   // Direct3D 12 only allows shader-visible heaps with no more than 2048
   // samplers (due to Nvidia addressing). However, there's also possibly a weird
