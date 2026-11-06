@@ -170,6 +170,59 @@ void xe_spv_arena_remove_extension(xe_spv_arena *arena, const char *name)
    xe_spv_extension *extension = xe_spv_extensions_find(xe_spv_arena_extensions(arena), name);
    if (extension) extension->active = 0;
 }
+int xe_spv_arena_reserve_decorations(xe_spv_arena *arena, size_t count)
+{
+   xe_spv_object_state *state = object_state(arena);
+   xe_spv_group *group;
+   if (!state) return 0;
+   group = xe_spv_groups_get(&state->groups, XE_SPV_DECORATION_GROUP_KEY,
+         XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
+   return group && xe_spv_group_reserve(group, count, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
+}
+xe_spv_record_view xe_spv_arena_decorations(const xe_spv_arena *arena)
+{
+   return xe_spv_arena_group_view(arena, XE_SPV_DECORATION_GROUP_KEY);
+}
+int xe_spv_arena_add_decoration(xe_spv_arena *arena, const xe_spv_decoration_key *key)
+{
+   xe_spv_object_state *state;
+   xe_spv_group *group;
+   xe_spv_record_view view;
+   xe_spv_decoration *record;
+   xe_spv_decoration_cursor cursor;
+   uint32_t *words, word;
+   size_t count, slot, i;
+   int found, id;
+   if (!arena->in_use || !key || !xe_spv_decoration_measure(key, &count) || !(state = object_state(arena))) return 0;
+   group = xe_spv_groups_get(&state->groups, XE_SPV_DECORATION_GROUP_KEY,
+         XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
+   if (!group) return 0;
+   view.records = group->records; view.count = group->count;
+   slot = xe_spv_decorations_locate(view, key, count, &found);
+   if (found) {
+      record = (xe_spv_decoration *)group->records[slot];
+      if (!record->active) record->active = 1;
+      return 1;
+   }
+   if (group->count == (size_t)-1 ||
+       !xe_spv_group_reserve(group, group->count + 1, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE)) return 0;
+   record = (xe_spv_decoration *)xe_spv_arena_payload_realloc(arena, NULL, 0,
+         sizeof(*record) + count * sizeof(uint32_t));
+   if (!record) return 0;
+   record->active = 1;
+   record->id_begin = key->values_are_ids ? (uint32_t)(1 + key->prefix_count) : 0;
+   record->id_end = record->id_begin + (key->values_are_ids ? (uint32_t)key->values.count : 0);
+   words = (uint32_t *)(record + 1);
+   words[0] = ((uint32_t)count << 16) | key->opcode; words[1] = key->target;
+   xe_spv_decoration_cursor_init(&cursor, key);
+   for (i = 2; i < count; ++i) {
+      xe_spv_decoration_next(&cursor, &word, &id); words[i] = word;
+   }
+   if (slot < group->count) memmove(group->records + slot + 1, group->records + slot,
+         (group->count - slot) * sizeof(*group->records));
+   group->records[slot] = record; ++group->count;
+   return 1;
+}
 int xe_spv_arena_reserve_stacks(xe_spv_arena *arena, size_t loop_bytes)
 {
    xe_spv_object_state *state = object_state(arena);

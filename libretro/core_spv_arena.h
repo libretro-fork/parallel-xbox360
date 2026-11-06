@@ -11,6 +11,7 @@
 #include "core_spv_stack.h"
 #include "core_spv_u32_set.h"
 #include "core_spv_extensions.h"
+#include "core_spv_decorations.h"
 #if defined(__SANITIZE_ADDRESS__)
 #define XE_SPV_ARENA_ASAN 1
 #elif defined(__has_feature)
@@ -71,6 +72,10 @@ void xe_spv_arena_remove_extension(xe_spv_arena *arena, const char *name);
 /* View includes disabled cached names; only active entries are emitted.
  * All records/word spans expire at lease reset/close; metadata view also on add. */
 xe_spv_record_view xe_spv_arena_extensions(const xe_spv_arena *arena);
+int xe_spv_arena_reserve_decorations(xe_spv_arena *arena, size_t count);
+int xe_spv_arena_add_decoration(xe_spv_arena *arena, const xe_spv_decoration_key *key);
+/* Same lease/metadata invalidation as extension views. Includes inactive keys. */
+xe_spv_record_view xe_spv_arena_decorations(const xe_spv_arena *arena);
 enum { XE_SPV_STACK_SCOPE = 0, XE_SPV_STACK_SWITCH = 1, XE_SPV_STACK_LOOP = 2, XE_SPV_STACK_COUNT = 3 };
 int xe_spv_arena_reserve_stacks(xe_spv_arena *arena, size_t loop_bytes);
 void *xe_spv_arena_stack_push(xe_spv_arena *arena, unsigned kind, size_t bytes);

@@ -17,6 +17,7 @@ class InstructionArena final {
         !xe_spv_arena_reserve_constants(&arena_, 128) ||
         !xe_spv_arena_reserve_type_groups(&arena_) ||
         !xe_spv_arena_reserve_extensions(&arena_, XE_SPV_EXTENSION_COLD_CAPACITY) ||
+        !xe_spv_arena_reserve_decorations(&arena_, XE_SPV_DECORATION_COLD_CAPACITY) ||
         !xe_spv_arena_reserve_stacks(&arena_, sizeof(void*) * 4) ||
         !xe_spv_arena_reserve_capabilities(&arena_, 64) ||
         ((block_bytes || function_bytes) &&

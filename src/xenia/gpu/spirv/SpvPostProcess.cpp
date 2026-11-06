@@ -48,6 +48,17 @@
 #include "spvUtil.h"
 
 namespace spv {
+static_assert(static_cast<uint32_t>(Op::OpDecorate) == XE_SPV_DECORATE);
+static_assert(static_cast<uint32_t>(Op::OpMemberDecorate) == XE_SPV_MEMBER_DECORATE);
+static_assert(static_cast<uint32_t>(Op::OpDecorateId) == XE_SPV_DECORATE_ID);
+static_assert(static_cast<uint32_t>(Op::OpDecorateString) == XE_SPV_DECORATE_STRING);
+static_assert(static_cast<uint32_t>(Op::OpMemberDecorateString) == XE_SPV_MEMBER_DECORATE_STRING);
+static_assert(static_cast<uint32_t>(Decoration::ArrayStride) == XE_SPV_ARRAY_STRIDE);
+static_assert(static_cast<uint32_t>(Decoration::MatrixStride) == XE_SPV_MATRIX_STRIDE);
+static_assert(static_cast<uint32_t>(Decoration::Offset) == XE_SPV_OFFSET);
+static_assert(static_cast<uint32_t>(Decoration::RestrictPointerEXT) == XE_SPV_RESTRICT_POINTER);
+static_assert(static_cast<uint32_t>(Decoration::AliasedPointerEXT) == XE_SPV_ALIASED_POINTER);
+
     #include "GLSL.std.450.h"
     #include "GLSL.ext.KHR.h"
     #include "GLSL.ext.EXT.h"
@@ -273,29 +284,13 @@ void Builder::postProcess(Instruction& inst)
                         assert(idx->getOpCode() == Op::OpConstant);
                         unsigned int c = idx->getImmediateOperand(0);
 
-                        const auto function = [&](const std::unique_ptr<Instruction>& decoration) {
-                            if (decoration.get()->getOpCode() == Op::OpMemberDecorate &&
-                                decoration.get()->getIdOperand(0) == typeId &&
-                                decoration.get()->getImmediateOperand(1) == c &&
-                                (decoration.get()->getImmediateOperand(2) == Decoration::Offset ||
-                                 decoration.get()->getImmediateOperand(2) == Decoration::MatrixStride)) {
-                                alignment |= decoration.get()->getImmediateOperand(3);
-                            }
-                        };
-                        std::for_each(decorations.begin(), decorations.end(), function);
+                        alignment |= xe_spv_decorations_alignment(module.decorationRecords(), typeId, c, 1);
                         // get the next member type
                         typeId = type->getIdOperand(c);
                         type = module.getInstruction(typeId);
                     } else if (type->getOpCode() == Op::OpTypeArray ||
                                type->getOpCode() == Op::OpTypeRuntimeArray) {
-                        const auto function = [&](const std::unique_ptr<Instruction>& decoration) {
-                            if (decoration.get()->getOpCode() == Op::OpDecorate &&
-                                decoration.get()->getIdOperand(0) == typeId &&
-                                decoration.get()->getImmediateOperand(1) == Decoration::ArrayStride) {
-                                alignment |= decoration.get()->getImmediateOperand(2);
-                            }
-                        };
-                        std::for_each(decorations.begin(), decorations.end(), function);
+                        alignment |= xe_spv_decorations_alignment(module.decorationRecords(), typeId, 0, 0);
                         // Get the element type
                         typeId = type->getIdOperand(0);
                         type = module.getInstruction(typeId);
@@ -386,15 +381,11 @@ void Builder::postProcessCFG()
         continue_target->rewriteAsCanonicalUnreachableContinue(header);
     }
 
-    // Remove unneeded decorations, for unreachable instructions
-    for (auto decorationIter = decorations.begin(); decorationIter != decorations.end();) {
-        Id decorationId = (*decorationIter)->getIdOperand(0);
-        if (unreachableDefinitions.count(decorationId) != 0) {
-            decorationIter = decorations.erase(decorationIter);
-        } else {
-            ++decorationIter;
-        }
-    }
+    // C89 decoration records are cached for this lease; prune by target without
+    // destroying typed instructions or scanning every unrelated decoration.
+    const xe_spv_record_view decorations = module.decorationRecords();
+    for (Id target : unreachableDefinitions) xe_spv_decorations_remove_target(decorations, target);
+
 }
 
 // comment in header
@@ -433,16 +424,7 @@ void Builder::postProcessFeatures() {
                 const Instruction& inst = *vi;
                 Id resultId = inst.getResultId();
                 if (containsPhysicalStorageBufferOrArray(getDerefTypeId(resultId))) {
-                    bool foundDecoration = false;
-                    const auto function = [&](const std::unique_ptr<Instruction>& decoration) {
-                        if (decoration.get()->getIdOperand(0) == resultId &&
-                            decoration.get()->getOpCode() == Op::OpDecorate &&
-                            (decoration.get()->getImmediateOperand(1) == spv::Decoration::AliasedPointerEXT ||
-                             decoration.get()->getImmediateOperand(1) == spv::Decoration::RestrictPointerEXT)) {
-                            foundDecoration = true;
-                        }
-                    };
-                    std::for_each(decorations.begin(), decorations.end(), function);
+                    const bool foundDecoration = xe_spv_decorations_has_alias(module.decorationRecords(), resultId) != 0;
                     if (!foundDecoration) {
                         addDecoration(resultId, spv::Decoration::AliasedPointerEXT);
                     }

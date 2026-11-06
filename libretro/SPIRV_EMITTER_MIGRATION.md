@@ -6,6 +6,13 @@ its classes does not satisfy this requirement. This migration is incomplete.
 
 ## Current cuts
 
+- All eleven decoration factories bypass typed instructions and the set
+  owner. C89 borrowed keys compare target ID, opcode, operand flags and words
+  before allocating; unique records encode directly into module-owned payloads.
+  Output borrows raw words. Alignment/alias queries use sorted target ranges,
+  and CFG pruning deactivates targets without retiring typed instructions.
+  Pruned keys remain cached until reset; metadata/payload growth is checked.
+
 - Uniform composite constants borrow one scalar ID through a C89 logical source.
   Repeated hashing, exact-key matching and packet emission need no intermediary
   member array. Normal views and repeated sources share constant identity.

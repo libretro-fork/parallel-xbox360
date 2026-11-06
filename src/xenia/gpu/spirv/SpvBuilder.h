@@ -66,7 +66,6 @@ namespace spv {
 #include <cstdint>
 #include <map>
 #include <memory>
-#include <set>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -1004,9 +1003,6 @@ protected:
     template <class Output> void dumpModuleProcesses(Output&) const;
     spv::MemoryAccessMask sanitizeMemoryAccessForStorageClass(spv::MemoryAccessMask memoryAccess, StorageClass sc)
         const;
-    struct DecorationInstructionLessThan {
-        bool operator()(const std::unique_ptr<Instruction>& lhs, const std::unique_ptr<Instruction>& rhs) const;
-    };
 
     unsigned int spvVersion;     // the version of SPIR-V to emit in the header
     SourceLanguage sourceLang;
@@ -1064,7 +1060,6 @@ protected:
     xe_spv_instruction_chain entryPoints = {};
     xe_spv_instruction_chain executionModes = {};
     xe_spv_instruction_chain names = {};
-    std::set<std::unique_ptr<Instruction>, DecorationInstructionLessThan> decorations;
     xe_spv_instruction_chain constantsTypesGlobals = {};
     xe_spv_instruction_chain functions = {};
 

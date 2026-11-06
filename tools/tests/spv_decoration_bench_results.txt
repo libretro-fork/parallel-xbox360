@@ -1,0 +1,141 @@
+C89 direct decoration records, 2026-11-06
+Parent: complete 1492903dc2b50e08c3f312bca121091d2ab55f6d sources.
+
+All eleven production decoration factories bypass typed Instruction construction
+and std::set<std::unique_ptr<Instruction>> nodes. C89 keys borrow caller words
+and text during exact lookup, before allocating anything. Unique records encode
+directly into module-owned payload pages; sorted pointer metadata borrows them.
+Output borrows the complete encoded record. Target IDs and shader IDs do not
+change. The tested x64 Builder shrinks 1456 -> 1408 bytes; Instruction64,
+Block136, Function136 and Module88 layouts are unchanged.
+
+Comparison preserves the previous ordering: target ID first, opcode next,
+then operand ID/literal flags before unsigned word values, then length. String
+words use logical SPIR-V little-endian packing, not lexical text ordering.
+Counted linkage text can include NUL and unaligned input. A compact ID interval
+represents the contiguous ID-valued operands used by these factories; no
+per-word flag bitmap is allocated. Each blob owns an active flag, ID interval
+and its raw words (12-byte non-wire prefix). Input is encoded/copied once for
+ownership; final module assembly still copies spans into contiguous output.
+This is neither zero-copy input ownership nor zero-copy Vulkan submission.
+
+Physical-buffer alignment and alias queries binary-search the target ID and
+scan only its records, replacing full set traversal. CFG pruning deactivates
+all decorations for an unreachable target. Inactive keys remain cached until
+module reset, so re-add reactivates the existing encoding. No typed destructor,
+Instruction slots, extra IDs, separate packet allocation or temporary string
+encoding buffers are involved. No locks or release logging were introduced.
+
+Cold pointer reserve: 128 entries / 1024 bytes per workspace on x64. Metadata
+and payloads grow at checked high-water marks. Input count/pointer/opcode and
+65535-word guards precede allocation; metadata or payload allocation failure
+preserves prior published records. Sorted insertion can move pointer suffixes;
+encoded blobs remain stable. Worst-case insertion metadata work is quadratic
+in distinct key count, so descending/permuted construction is measured too.
+Pruned names/values are not reclaimed individually within a lease. Payload
+allocation can interrupt a previous span's in-place growth. Reset retains
+pages/capacity; close frees them. No universal RSS or no-growth claim is made.
+
+Method: Windows x64 GCC16.2 -O2, own-revision C/IR sources and the same benchmark
+fixture. C allocator hooks plus C++ new/delete hooks count all relevant user
+allocation requests. Requested/tracked memory excludes allocator overhead,
+RSS/VRAM and stack objects. Caller vector adapters are built before timing;
+benchmark code does not allocate per call to create an input vector. Duplicate
+checks include the production API and actual module lease. Unique-module
+samples include construction and cleanup, with one cold module before timing.
+Output bytes are compared separately, outside timing. All tracked owners are
+released after each executable. Seven alternating pairs run with compiler
+processes terminal; results below are medians and observed min/max in ms.
+
+                         parent ms (range)       current ms (range)
+100000 duplicate calls:
+ scalar immediate        3.089 (2.886..3.155)      0.755 (0.748..1.156)
+ 128 ID operands        45.835 (45.167..46.180)   13.310 (13.224..13.835)
+ 128 counted bytes      16.917 (16.610..22.737)    6.591 (6.319..6.749)
+1000 modules, each with 512 distinct decorated constants:
+ ascending targets      54.760 (53.671..55.345)   16.597 (16.184..16.863)
+ descending targets     53.432 (52.297..53.790)   28.594 (28.315..32.947)
+ permuted targets       42.982 (42.463..43.462)   21.551 (21.212..22.337)
+These fixture medians improve by 1.87..4.09x, not a measured game/FPS gain.
+
+Duplicate allocations/retained high-water, per 100000 calls:
+ kind          parent calls   requested    retained before -> after
+ scalar              766       6360098       176884 -> 6536982
+ 128 IDs            4099      61097957       176884 -> 61274841
+ 128 bytes          2584      36217112       176884 -> 36393996
+ current all three     0             0       177868 -> 177868
+Old rejected candidates consumed fresh Instruction slots and pooled operand
+bytes before set insertion deduplicated them. Retiring those records did not
+recycle their slots/payloads within the module lease. The new keys prevent
+that growth before encoding or allocation. This is compilation scratch growth,
+not a claim that these particular records caused a VRAM leak.
+
+Distinct 512-record modules, all three orders: parent 512000 allocations /
+20480000 requested bytes per 1000 modules; current zero/zero. Warm retained
+tracked storage is 218626 -> 222722 bytes across revisions (+4096, the final
+512-pointer registry). Record occupancy falls, but the unchanged cold arena
+still reserves its original instruction pages. Builder shrink is on the stack
+and excluded from tracked heap totals. The new sorted insertion is slower for
+descending order than ascending, but both beat the previous set in this fixture.
+
+Independent warmed construction controls (parent -> current medians/ranges):
+ functions 1:    .106 (.106...113) -> .112 (.105...112)
+ functions 71:  3.234 (3.202..3.297) -> 3.226 (3.198..3.286)
+ functions 257:11.620 (11.547..11.742) -> 11.754 (11.632..12.141)
+ constants 40:  1.888 (1.874..1.913) -> 1.885 (1.869..1.901)
+ constants 640:32.332 (32.105..32.637) -> 32.370 (32.262..33.811)
+ constants5120:28.491 (28.394..28.871) -> 28.689 (28.589..29.290)
+Each sample uses 1000 modules, except constants5120 uses 100. All module bytes
+match parent; all six controls stay at zero warm allocations. Tracked retained
+bytes respectively: 52085->53109, 95816->96840, 228929->229953,
+52801->53825, 156953->157977, 926561->927585 (+1024 cold registry each).
+
+
+Independent controls: warmed 1/71/257-function and 40/640/5120-constant modules
+remain at zero allocations on both revisions. Tracked retained storage rises
+by exactly 1024 bytes, the new cold pointer reserve. Larger control medians
+vary by about 0..1.2%, with overlapping observed ranges; no broad all-workload
+speedup claim is inferred. The ranges above describe the observed variation; total-game performance is
+not inferred.
+
+Validation:
+- Native MSVC /TC /W4 /WX and strict C89: independent ordering/wire oracle,
+  1024 mixed keys, 10 leases, duplicate reuse without growth, owned overwritten
+  strings, unaligned/embedded-NUL/counted text, target deactivation/reactivation,
+  alignment/alias masks, failed cold/metadata/payload allocations and wire limit.
+- Public production APIs: complete parent/current snapshots for every factory,
+  10000 repeated calls, 193 batches of arbitrary forms, literal/ID operands,
+  empty vectors, counted linkage, duplicate aliases and unreachable pruning.
+  Both vector and sized-C output match. Arbitrary forms are byte-oracle cases;
+  the standard module passes spirv-val after pruning.
+- Physical-buffer postprocessor fixture checks member Offset plus ArrayStride
+  alignment, explicit Restrict/Aliased and default AliasedPointer decorations,
+  and idempotence across two feature passes. Native and ASan/UBSan pass;
+  complete parent/current bytes match and the resulting shader passes spirv-val.
+- Full ASan/UBSan suite passes (C -O2, C++ -O1), including retired decoration
+  access detected as use-after-poison. Existing typed instruction, payload,
+  stack, constant/type, partial-construction and exception checks pass.
+- Full Make -j5 and native output suite pass. Native geometry: 18432 modules,
+  109668864 bytes with unchanged SHA256
+  427B071C7E7868566596FF55270BBCA9AAB31F54C714CA552E928DFE349E69E0.
+  Its peak instruction records fall from 721 to 616; the unchanged cold arena
+  reservation means this occupancy reduction is not an equal RSS reduction.
+- Actual rebuilt guest core objects: all 1410 Tekken + 210 Tomb Raider cached
+  translations match previous bytes across host-RT/interlock profiles, with
+  2 + 96 translated control-flow cases respectively.
+
+No game/frontend/GPU was launched or installed DLL overwritten. Audio pacing,
+renderer retirement, shared-memory watches and shutdown order are untouched.
+The legacy type/CFG builder and other allocations remain. Gameplay/FPS and
+other hardware/architectures are unmeasured.
+
+Reproduce byte oracle: sh tools/tests/run_spv_decorations_compare.sh
+For physical queries, use TEST_SOURCE=tools/tests/core_spv_decoration_queries_bridge.cc
+and a distinct TEST_BUILD_DIR. Optional SPIRV_VALIDATOR validates final standard
+output. Set BASELINE_ROOT to a complete parent archive; SANITIZER can be supplied.
+Reproduce allocation/construction metrics: sh tools/tests/run_spv_decorations_bench.sh
+with BASELINE_ROOT=<complete parent>. After compilation, alternate parent/current
+executables in seven pairs for modes0..5 and compare their module bytes. In
+PowerShell put C:/msys64/mingw64/bin first on PATH to resolve 64-bit runtime DLLs.
+Use run_spv_binary_bench.sh with CAPTURE_OPERANDS=1 and the function/constant
+fixtures for controls. Timing excludes serialization, validation and I/O.

@@ -680,6 +680,10 @@ public:
     }
     void removeExtension(const char* name) { xe_spv_arena_remove_extension(arena, name); }
     xe_spv_record_view extensionRecords() const { return xe_spv_arena_extensions(arena); }
+    void addDecoration(const xe_spv_decoration_key& key) {
+        if (!xe_spv_arena_add_decoration(arena, &key)) throw std::bad_alloc();
+    }
+    xe_spv_record_view decorationRecords() const { return xe_spv_arena_decorations(arena); }
     void addCapability(uint32_t value) {
         if (!xe_spv_arena_add_capability(arena, value)) throw std::bad_alloc();
     }

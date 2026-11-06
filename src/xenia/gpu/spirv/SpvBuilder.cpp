@@ -2292,61 +2292,43 @@ void Builder::addMemberName(Id id, int memberNumber, const char* string)
 
 void Builder::addDecoration(Id id, Decoration decoration, int num)
 {
-    if (decoration == spv::Decoration::Max)
-        return;
-
-    Instruction* dec = createInstruction(Op::OpDecorate);
-    dec->reserveOperands(2);
-    dec->addIdOperand(id);
-    dec->addImmediateOperand(decoration);
-    if (num >= 0)
-        dec->addImmediateOperand(num);
-
-    decorations.insert(std::unique_ptr<Instruction>(dec));
+    if (decoration == spv::Decoration::Max) return;
+    const uint32_t value = static_cast<uint32_t>(num);
+    xe_spv_decoration_key key;
+    xe_spv_decoration_key_init(&key, static_cast<uint32_t>(Op::OpDecorate), id,
+        static_cast<uint32_t>(decoration));
+    key.values = xe_spv_words_view(&value, num >= 0 ? 1 : 0);
+    module.addDecoration(key);
 }
 
 void Builder::addDecoration(Id id, Decoration decoration, const char* s)
 {
-    if (decoration == spv::Decoration::Max)
-        return;
-
-    Instruction* dec = createInstruction(Op::OpDecorateString);
-    dec->reserveOperands(3);
-    dec->addIdOperand(id);
-    dec->addImmediateOperand(decoration);
-    dec->addStringOperand(s);
-
-    decorations.insert(std::unique_ptr<Instruction>(dec));
+    if (decoration == spv::Decoration::Max) return;
+    xe_spv_decoration_key key;
+    xe_spv_decoration_key_init(&key, static_cast<uint32_t>(Op::OpDecorateString), id,
+        static_cast<uint32_t>(decoration));
+    key.strings = &s; key.string_count = 1;
+    module.addDecoration(key);
 }
 
 void Builder::addDecoration(Id id, Decoration decoration, const std::vector<unsigned>& literals)
 {
-    if (decoration == spv::Decoration::Max)
-        return;
-
-    Instruction* dec = createInstruction(Op::OpDecorate);
-    dec->reserveOperands(literals.size() + 2);
-    dec->addIdOperand(id);
-    dec->addImmediateOperand(decoration);
-    for (auto literal : literals)
-        dec->addImmediateOperand(literal);
-
-    decorations.insert(std::unique_ptr<Instruction>(dec));
+    if (decoration == spv::Decoration::Max) return;
+    xe_spv_decoration_key key;
+    xe_spv_decoration_key_init(&key, static_cast<uint32_t>(Op::OpDecorate), id,
+        static_cast<uint32_t>(decoration));
+    key.values = xe_spv_words_view(literals.data(), literals.size());
+    module.addDecoration(key);
 }
 
 void Builder::addDecoration(Id id, Decoration decoration, const std::vector<const char*>& strings)
 {
-    if (decoration == spv::Decoration::Max)
-        return;
-
-    Instruction* dec = createInstruction(Op::OpDecorateString);
-    dec->reserveOperands(strings.size() + 2);
-    dec->addIdOperand(id);
-    dec->addImmediateOperand(decoration);
-    for (auto string : strings)
-        dec->addStringOperand(string);
-
-    decorations.insert(std::unique_ptr<Instruction>(dec));
+    if (decoration == spv::Decoration::Max) return;
+    xe_spv_decoration_key key;
+    xe_spv_decoration_key_init(&key, static_cast<uint32_t>(Op::OpDecorateString), id,
+        static_cast<uint32_t>(decoration));
+    key.strings = strings.data(); key.string_count = strings.size();
+    module.addDecoration(key);
 }
 
 void Builder::addLinkageDecoration(Id id, const char* name, spv::LinkageType linkType) {
@@ -2354,107 +2336,79 @@ void Builder::addLinkageDecoration(Id id, const char* name, spv::LinkageType lin
 }
 
 void Builder::addLinkageDecoration(Id id, const char* name, size_t bytes, spv::LinkageType linkType) {
-    Instruction* dec = createInstruction(Op::OpDecorate);
-    dec->reserveOperands(4);
-    dec->addIdOperand(id);
-    dec->addImmediateOperand(spv::Decoration::LinkageAttributes);
-    dec->addStringOperand(name, bytes);
-    dec->addImmediateOperand(linkType);
-
-    decorations.insert(std::unique_ptr<Instruction>(dec));
+    xe_spv_decoration_key key;
+    xe_spv_decoration_key_init(&key, static_cast<uint32_t>(Op::OpDecorate), id,
+        static_cast<uint32_t>(Decoration::LinkageAttributes));
+    key.strings = &name; key.string_count = 1;
+    key.first_string_counted = 1; key.first_string_bytes = bytes;
+    key.suffix = static_cast<uint32_t>(linkType); key.has_suffix = 1;
+    module.addDecoration(key);
 }
 
 void Builder::addDecorationId(Id id, Decoration decoration, Id idDecoration)
 {
-    if (decoration == spv::Decoration::Max)
-        return;
-
-    Instruction* dec = createInstruction(Op::OpDecorateId);
-    dec->reserveOperands(3);
-    dec->addIdOperand(id);
-    dec->addImmediateOperand(decoration);
-    dec->addIdOperand(idDecoration);
-
-    decorations.insert(std::unique_ptr<Instruction>(dec));
+    if (decoration == spv::Decoration::Max) return;
+    xe_spv_decoration_key key;
+    xe_spv_decoration_key_init(&key, static_cast<uint32_t>(Op::OpDecorateId), id,
+        static_cast<uint32_t>(decoration));
+    key.values = xe_spv_words_view(&idDecoration, 1); key.values_are_ids = 1;
+    module.addDecoration(key);
 }
 
 void Builder::addDecorationId(Id id, Decoration decoration, const std::vector<Id>& operandIds)
 {
-    if(decoration == spv::Decoration::Max)
-        return;
-
-    Instruction* dec = createInstruction(Op::OpDecorateId);
-    dec->reserveOperands(operandIds.size() + 2);
-    dec->addIdOperand(id);
-    dec->addImmediateOperand(decoration);
-
-    for (auto operandId : operandIds)
-        dec->addIdOperand(operandId);
-
-    decorations.insert(std::unique_ptr<Instruction>(dec));
+    if (decoration == spv::Decoration::Max) return;
+    xe_spv_decoration_key key;
+    xe_spv_decoration_key_init(&key, static_cast<uint32_t>(Op::OpDecorateId), id,
+        static_cast<uint32_t>(decoration));
+    key.values = xe_spv_words_view(operandIds.data(), operandIds.size());
+    key.values_are_ids = 1;
+    module.addDecoration(key);
 }
 
 void Builder::addMemberDecoration(Id id, unsigned int member, Decoration decoration, int num)
 {
-    if (decoration == spv::Decoration::Max)
-        return;
-
-    Instruction* dec = createInstruction(Op::OpMemberDecorate);
-    dec->reserveOperands(3);
-    dec->addIdOperand(id);
-    dec->addImmediateOperand(member);
-    dec->addImmediateOperand(decoration);
-    if (num >= 0)
-        dec->addImmediateOperand(num);
-
-    decorations.insert(std::unique_ptr<Instruction>(dec));
+    if (decoration == spv::Decoration::Max) return;
+    const uint32_t value = static_cast<uint32_t>(num);
+    xe_spv_decoration_key key;
+    xe_spv_decoration_key_init(&key, static_cast<uint32_t>(Op::OpMemberDecorate), id,
+        static_cast<uint32_t>(decoration));
+    key.prefix[1] = key.prefix[0]; key.prefix[0] = member; key.prefix_count = 2;
+    key.values = xe_spv_words_view(&value, num >= 0 ? 1 : 0);
+    module.addDecoration(key);
 }
 
 void Builder::addMemberDecoration(Id id, unsigned int member, Decoration decoration, const char *s)
 {
-    if (decoration == spv::Decoration::Max)
-        return;
-
-    Instruction* dec = createInstruction(Op::OpMemberDecorateStringGOOGLE);
-    dec->reserveOperands(4);
-    dec->addIdOperand(id);
-    dec->addImmediateOperand(member);
-    dec->addImmediateOperand(decoration);
-    dec->addStringOperand(s);
-
-    decorations.insert(std::unique_ptr<Instruction>(dec));
+    if (decoration == spv::Decoration::Max) return;
+    xe_spv_decoration_key key;
+    xe_spv_decoration_key_init(&key, static_cast<uint32_t>(Op::OpMemberDecorateString), id,
+        static_cast<uint32_t>(decoration));
+    key.prefix[1] = key.prefix[0]; key.prefix[0] = member; key.prefix_count = 2;
+    key.strings = &s; key.string_count = 1;
+    module.addDecoration(key);
 }
 
 void Builder::addMemberDecoration(Id id, unsigned int member, Decoration decoration, const std::vector<unsigned>& literals)
 {
-    if (decoration == spv::Decoration::Max)
-        return;
-
-    Instruction* dec = createInstruction(Op::OpMemberDecorate);
-    dec->reserveOperands(literals.size() + 3);
-    dec->addIdOperand(id);
-    dec->addImmediateOperand(member);
-    dec->addImmediateOperand(decoration);
-    for (auto literal : literals)
-        dec->addImmediateOperand(literal);
-
-    decorations.insert(std::unique_ptr<Instruction>(dec));
+    if (decoration == spv::Decoration::Max) return;
+    xe_spv_decoration_key key;
+    xe_spv_decoration_key_init(&key, static_cast<uint32_t>(Op::OpMemberDecorate), id,
+        static_cast<uint32_t>(decoration));
+    key.prefix[1] = key.prefix[0]; key.prefix[0] = member; key.prefix_count = 2;
+    key.values = xe_spv_words_view(literals.data(), literals.size());
+    module.addDecoration(key);
 }
 
 void Builder::addMemberDecoration(Id id, unsigned int member, Decoration decoration, const std::vector<const char*>& strings)
 {
-    if (decoration == spv::Decoration::Max)
-        return;
-
-    Instruction* dec = createInstruction(Op::OpMemberDecorateString);
-    dec->reserveOperands(strings.size() + 3);
-    dec->addIdOperand(id);
-    dec->addImmediateOperand(member);
-    dec->addImmediateOperand(decoration);
-    for (auto string : strings)
-        dec->addStringOperand(string);
-
-    decorations.insert(std::unique_ptr<Instruction>(dec));
+    if (decoration == spv::Decoration::Max) return;
+    xe_spv_decoration_key key;
+    xe_spv_decoration_key_init(&key, static_cast<uint32_t>(Op::OpMemberDecorateString), id,
+        static_cast<uint32_t>(decoration));
+    key.prefix[1] = key.prefix[0]; key.prefix[0] = member; key.prefix_count = 2;
+    key.strings = strings.data(); key.string_count = strings.size();
+    module.addDecoration(key);
 }
 
 void Builder::addInstruction(std::unique_ptr<Instruction> inst) {
@@ -4621,7 +4575,11 @@ template <class Output> void Builder::dumpInternal(Output& out, xe_spv_plan* pla
     dumpModuleProcesses(out);
 
     // Annotation instructions
-    dumpInstructions(out, decorations);
+    const xe_spv_record_view decorationRecords = module.decorationRecords();
+    for (size_t d = 0; d < decorationRecords.count; ++d) {
+        const auto* decoration = static_cast<const xe_spv_decoration*>(decorationRecords.records[d]);
+        if (decoration->active) appendEncodedWords(out, xe_spv_decoration_view(decoration));
+    }
 
     dumpInstructions(out, constantsTypesGlobals);
 
@@ -4928,40 +4886,4 @@ template <class Output> void Builder::dumpModuleProcesses(Output& out) const
     appendBinaryWords(out, moduleProcesses);
 }
 
-bool Builder::DecorationInstructionLessThan::operator()(const std::unique_ptr<Instruction>& lhs,
-                                                        const std::unique_ptr<Instruction>& rhs) const
-{
-    // Order by the id to which the decoration applies first. This is more intuitive.
-    assert(lhs->isIdOperand(0) && rhs->isIdOperand(0));
-    if (lhs->getIdOperand(0) != rhs->getIdOperand(0)) {
-        return lhs->getIdOperand(0) < rhs->getIdOperand(0);
-    }
-
-    if (lhs->getOpCode() != rhs->getOpCode())
-        return lhs->getOpCode() < rhs->getOpCode();
-
-    // Now compare the operands.
-    int minSize = std::min(lhs->getNumOperands(), rhs->getNumOperands());
-    for (int i = 1; i < minSize; ++i) {
-        if (lhs->isIdOperand(i) != rhs->isIdOperand(i)) {
-            return lhs->isIdOperand(i) < rhs->isIdOperand(i);
-        }
-
-        if (lhs->isIdOperand(i)) {
-            if (lhs->getIdOperand(i) != rhs->getIdOperand(i)) {
-                return lhs->getIdOperand(i) < rhs->getIdOperand(i);
-            }
-        } else {
-            if (lhs->getImmediateOperand(i) != rhs->getImmediateOperand(i)) {
-                return lhs->getImmediateOperand(i) < rhs->getImmediateOperand(i);
-            }
-        }
-    }
-
-    if (lhs->getNumOperands() != rhs->getNumOperands())
-        return lhs->getNumOperands() < rhs->getNumOperands();
-
-    // In this case they are equal.
-    return false;
-}
 } // end spv namespace

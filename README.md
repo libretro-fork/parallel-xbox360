@@ -10,6 +10,8 @@ Shader module ID/type queries borrow the C89 packet index directly. The obsolete
 
 Uniform shader composites borrow one scalar ID rather than staging repeated members in a vector. C89 source hashing/matching/emission preserves ordinary constant aliases and specialization identity; composite extraction borrows scalar operands/indices. Extension names now encode once into module-owned C89 payload storage. Sorted pointer metadata borrows those words for lookup and output; duplicates and disable/re-add cycles allocate nothing. The cold registry reserves 16 pointers, grows for additional unique names, and caches removed names until module reset. Final contiguous SPIR-V assembly still copies packet words. Measurements and lifetime coverage are in `tools/tests/spv_extension_bench_results.txt`.
 
+Decoration generation now bypasses the typed instruction graph and set nodes. C89 keys borrow caller operands and text while checking identity; unique records encode once into module-owned words. Output borrows those spans. Target-ID queries replace full decoration scans for physical-buffer alignment and pointer aliases. The cold registry reserves 128 pointers, grows with checked high-water capacity, and retains pruned keys until module reset. Final module assembly still copies words; other graph/container allocations remain. See `tools/tests/spv_decoration_bench_results.txt`.
+
 ## Savestate work in progress
 
 Audio/XMA pause requests use acknowledged common gates with bounded waits. Content teardown releases the decoder contexts and their retained packet buffers after joining the decoder worker.

@@ -13,6 +13,10 @@ cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests
 if errorlevel 1 goto fail
 %OUT%\extensions-unit.exe
 if errorlevel 1 goto fail
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_decorations_test.c /Fo%OUT%\decorations-unit.obj /Fe%OUT%\decorations-unit.exe
+if errorlevel 1 goto fail
+%OUT%\decorations-unit.exe
+if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /c libretro/core_spv_probe.c /Fo%OUT%\probe.obj
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_metadata_test.c /Fo%OUT%\metadata-unit.obj /Fe%OUT%\metadata-unit.exe /link %OUT%\probe.obj
@@ -157,6 +161,16 @@ for %%V in (0 1) do (
  %OUT%\extensions.exe %OUT%\extensions-%%V.bin %%V
  if errorlevel 1 goto fail
 )
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_decorations_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\decorations.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+if errorlevel 1 goto fail
+for %%V in (0 1) do (
+ %OUT%\decorations.exe %OUT%\decorations-%%V.bin %%V
+ if errorlevel 1 goto fail
+)
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_decoration_queries_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\decoration-queries.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+if errorlevel 1 goto fail
+%OUT%\decoration-queries.exe %OUT%\decoration-queries.spv 0
+if errorlevel 1 goto fail
 popd
 exit /b 0
 :fail
