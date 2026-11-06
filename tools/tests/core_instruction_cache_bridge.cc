@@ -40,8 +40,7 @@ extern "C" int xe_test_ic_mapping(const char* path, size_t size) {
         module.GetInstructionAddressFlags(0x82001008) ||
         module.GetInstructionAddressFlags(0x82000fff) || cache.LookupFlags(8) ||
         cache.LookupFlags(UINT32_MAX)) return 0;
-    xe::cpu::InfoCacheFlags bits{}; bits.was_resolved=1; bits.is_return_site=1;
-    xe::cpu::AtomicSetInfoCacheFlags(first,bits);
+    xe_ic_flags_set(first, XE_IC_FLAG_RESOLVED | XE_IC_FLAG_RETURN_SITE);
     cache.executable_addr_flags_->Flush();
     if (!module.Unload() || module.GetInstructionAddressFlags(0x82001000)) return 0;
   }
@@ -49,7 +48,8 @@ extern "C" int xe_test_ic_mapping(const char* path, size_t size) {
   if (!xe_ic_prepare(path,size,4,&fresh) || fresh) return 0;
   auto mapping = xe::MappedMemory::Open(xe::to_path(path),xe::MappedMemory::Mode::kReadWrite,0,size);
   if (!mapping) return 0;
-  xe::cpu::InfoCacheFlags stored{};
+  uint32_t stored = 0;
   std::memcpy(&stored,xe_ic_slot(mapping->data(),mapping->size(),0),4);
-  return stored.was_resolved && stored.is_return_site;
+  return (stored & (XE_IC_FLAG_RESOLVED | XE_IC_FLAG_RETURN_SITE)) ==
+      (XE_IC_FLAG_RESOLVED | XE_IC_FLAG_RETURN_SITE);
 }

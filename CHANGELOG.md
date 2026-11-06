@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Mapped instruction facts now use libretro-common atomic word reads and explicit C89 masks throughout the CPU callers, replacing concurrent C++ bitfield reads and temporary mask copies. Tested GCC/MSVC C and C++ layouts match the existing version-4 cache words. Concurrent updates, mapped-file persistence and loader regressions are checked offline; no gameplay performance claim is made.
+
 - Instruction-cache preparation now uses checked libretro-common native VFS operations instead of std::filesystem I/O. Valid caches keep their flags; invalid sizes/versions rebuild zero backing, with only the fixed header touched after mapping. Failed reads do not authorize repair, and file errors disable this optional cache. Lookups reject the exclusive code endpoint, truncated words and unloaded modules. Writable flags remain mapped without a staging copy; no gameplay speedup is claimed.
 
 - PE section discovery now checks DOS/NT/optional headers, complete table bounds and resident section spans using byte reads. Reusable C89 storage replaces the section vector and preserves owned snapshots across guest header changes. Repeated parsing reuses capacity, malformed input publishes no sections, and unload hides old records. Failed PE continuations remain failures on retry, and empty executable ranges skip preanalysis before reserve-size underflow. Imports and other PE directories remain separate work.

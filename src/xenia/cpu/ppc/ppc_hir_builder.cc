@@ -798,9 +798,7 @@ void PPCHIRBuilder::SetReturnAddress(Value* value) {
       if (xexmod) {
         auto flags = xexmod->GetInstructionAddressFlags(value->AsUint32());
         if (flags) {
-          InfoCacheFlags bits{};
-          bits.is_return_site = true;
-          AtomicSetInfoCacheFlags(flags, bits);
+          xe_ic_flags_set(flags, XE_IC_FLAG_RETURN_SITE);
         }
       }
     }

@@ -1150,7 +1150,7 @@ static bool IsPossibleMMIOInstruction(X64Emitter& e, const hir::Instr* i) {
 
   auto flags = guest_module->GetInstructionAddressFlags(guestaddr);
 
-  return flags && flags->accessed_mmio;
+  return xe_ic_flags_test(flags, XE_IC_FLAG_MMIO);
 }
 template <typename T, bool swap>
 static void MMIOAwareStore(void* _ctx, unsigned int guestaddr, T value) {

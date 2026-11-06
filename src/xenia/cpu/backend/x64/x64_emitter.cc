@@ -680,7 +680,7 @@ uint64_t ResolveFunction(void* raw_context, uint64_t target_address) {
     InfoCacheFlags* flags = xexmod ? xexmod->GetInstructionAddressFlags(
                                          static_cast<uint32_t>(target_address))
                                    : nullptr;
-    if (flags && flags->is_return_site) {
+    if (xe_ic_flags_test(flags, XE_IC_FLAG_RETURN_SITE)) {
       if (uint64_t host_address = ResolveLongjmp(
               guest_context, static_cast<uint32_t>(target_address), 0)) {
         return host_address;

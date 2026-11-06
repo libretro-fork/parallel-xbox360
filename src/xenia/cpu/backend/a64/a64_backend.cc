@@ -1052,7 +1052,7 @@ uint64_t ResolveFunction(void* raw_context, uint64_t target_address) {
     if (xexmod) {
       InfoCacheFlags* flags = xexmod->GetInstructionAddressFlags(
           static_cast<uint32_t>(target_address));
-      if (flags && flags->is_return_site) {
+      if (xe_ic_flags_test(flags, XE_IC_FLAG_RETURN_SITE)) {
         if (uint64_t host_address = ResolveLongjmp(
                 guest_context, static_cast<uint32_t>(target_address), 0)) {
           return host_address;
@@ -1852,9 +1852,7 @@ void A64Backend::RecordMMIOExceptionForGuestInstruction(void* host_address) {
         cpu::InfoCacheFlags* icf =
             xex_guest_module->GetInstructionAddressFlags(guestaddr);
         if (icf) {
-          cpu::InfoCacheFlags bits{};
-          bits.accessed_mmio = true;
-          cpu::AtomicSetInfoCacheFlags(icf, bits);
+          xe_ic_flags_set(icf, XE_IC_FLAG_MMIO);
         }
       }
     }

@@ -10,7 +10,7 @@
 #ifndef XENIA_CPU_XEX_MODULE_H_
 #define XENIA_CPU_XEX_MODULE_H_
 
-#include <retro_atomic.h>
+#include "libretro/core_instruction_flags.h"
 #include <cstring>
 #include <string>
 #include <vector>
@@ -41,27 +41,8 @@ constexpr fourcc_t kElfSignature = make_fourcc(0x7F, 'E', 'L', 'F');
 constexpr fourcc_t kXBESignature = make_fourcc("XBEH");
 
 class Runtime;
-struct InfoCacheFlags {
-  uint32_t was_resolved : 1;  // has this address ever been called/requested
-                              // via resolvefunction?
-  uint32_t accessed_mmio : 1;
-  uint32_t is_syscall_func : 1;
-  uint32_t is_return_site : 1;  // address can be reached from another function
-                                // by returning
-  uint32_t reserved : 28;
-};
-static_assert(sizeof(InfoCacheFlags) == 4,
-              "InfoCacheFlags size should be equal to sizeof ppc instruction.");
-
-// The flags share one 32-bit word in a shared mmap and are written by several
-// threads. Set bits atomically so concurrent writes don't lose updates.
-inline void AtomicSetInfoCacheFlags(InfoCacheFlags* slot, InfoCacheFlags bits) {
-  uint32_t mask;
-  std::memcpy(&mask, &bits, sizeof(mask));
-  retro_atomic_fetch_or_int(reinterpret_cast<retro_atomic_int_t*>(slot),
-                            static_cast<int32_t>(mask));
-}
-
+typedef xe_ic_flags InfoCacheFlags;
+static_assert(sizeof(InfoCacheFlags) == 4, "Mapped instruction flags retain their 32-bit ABI.");
 struct XexInfoCache {
   // increment this to invalidate all user infocaches
   static constexpr uint32_t CURRENT_INFOCACHE_VERSION = 4;

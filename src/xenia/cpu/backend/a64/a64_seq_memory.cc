@@ -52,7 +52,7 @@ static bool IsPossibleMMIOInstruction(A64Emitter& e, const hir::Instr* i) {
     return false;
   }
   auto* flags = guest_module->GetInstructionAddressFlags(guest_address);
-  return flags && flags->accessed_mmio;
+  return xe_ic_flags_test(flags, XE_IC_FLAG_MMIO);
 }
 
 // ============================================================================

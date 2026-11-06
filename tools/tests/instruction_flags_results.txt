@@ -1,0 +1,53 @@
+Atomic mapped instruction facts
+==============================
+
+The old mapped flags had common atomic OR writers but ordinary C++ bitfield
+readers in x64/A64 MMIO and return-site decisions. Concurrent accesses to that
+word therefore did not consistently use the atomic abstraction.
+
+core_instruction_flags.h supplies one C89 common-atomic word and explicit masks:
+1 resolved, 2 MMIO, 4 syscall, 8 return site. All production setters and readers
+now call those helpers. Writers retain the common fetch-OR operation. Readers
+use a relaxed atomic load of the same word: these are monotonic fact/hint bits,
+not publication of other objects. Object readiness and lifetime synchronization
+must remain with their owners. No mapped payload copy, allocation, lock, new
+thread or stronger per-read fence is added. Temporary C++ bitfield construction
+and memcpy-to-mask conversion are gone from production writers.
+
+The four-byte native word and version-4 persistent bit meanings are preserved.
+Independent tests construct each old C and C++ bitfield and compare its raw word
+with the explicit mask. Reserved bits remain untouched by OR updates. These ABI
+tests pass for native MSVC and GCC x86-64, C and C++. The format was already native
+host-endian; this does not claim a newly portable file format on every ABI.
+
+Coverage:
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror with Linux ASan/UBSan.
+- Native MSVC /TC /W4 /WX C tests, native C++20 old-layout test and actual
+  XexModule/mapped bridge compilation. No Clang/LLVM dependency introduced.
+- Eight rounds of four rthreads writers plus one reader, 3.2 million fetch-OR
+  updates. Concurrent snapshots remain monotonic, final masks contain all facts,
+  reserved bits survive updates and null optional-cache slots are safe.
+- The same concurrent fixture passes GCC ThreadSanitizer without reported races.
+  Default WSL ASLR initially prevented TSan startup with "unexpected memory
+  mapping"; rerun of the instrumented fixture under setarch x86_64 -R passes.
+- Windows static Make -j5 compiles the actual processor, PPC builder and x64
+  backend/emitter/memory callers. A64 source callers use the same helpers, but
+  a full A64 SDK build/runtime is not part of this validation.
+- Actual native mapped-cache/module fixture updates flags with the C89 helper,
+  closes/reopens the mapping and verifies version-4 bits persisted. Existing
+  code-range, mapped-word and post-unload guards are retained.
+- PE, six normal XEX compression/encryption cases and delta-module regressions.
+
+Limits:
+ASan/UBSan/TSan apply to the standalone C fixture, not a full instrumented core
+or gameplay. No guest execution, JIT, GPU or frontend is launched. Mapping/guest
+module lifetime and unrelated CPU races still require their own validation.
+No measured FPS, latency or whole-emulator thread-safety claim is made. Audio
+scheduling, GPU retirement and shutdown order are unchanged.
+
+Reproduce tools/tests/run_instruction_flags_tests.sh (ASan/UBSan default), or
+tools\tests\run_instruction_flags_tests.cmd from an x64 Visual Studio prompt.
+For TSan, build with SANITIZER=-fsanitize=thread and a distinct TEST_BUILD_DIR;
+on this WSL host run the resulting test under setarch x86_64 -R.
+After building core objects, run tools/tests/run_instruction_cache_bridge_tests.sh
+and the PE/XEX/delta bridge scripts as in their existing result documents.

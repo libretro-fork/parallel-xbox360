@@ -737,9 +737,7 @@ Function* Processor::ResolveFunction(uint32_t address) {
         if (xexmod) {
           auto addr_flags = xexmod->GetInstructionAddressFlags(address);
           if (addr_flags) {
-            InfoCacheFlags bits{};
-            bits.was_resolved = 1;
-            AtomicSetInfoCacheFlags(addr_flags, bits);
+            xe_ic_flags_set(addr_flags, XE_IC_FLAG_RESOLVED);
           }
         }
       }
