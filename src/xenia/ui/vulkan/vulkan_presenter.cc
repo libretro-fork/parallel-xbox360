@@ -124,7 +124,7 @@ bool VulkanPresenter::CaptureGuestOutputGPUBlit(const void*& data_out,
   std::shared_ptr<GuestOutputImage> guest_output_image;
   {
     uint32_t guest_output_mailbox_index;
-    std::unique_lock<std::mutex> guest_output_consumer_lock(
+    auto guest_output_consumer_lease(
         ConsumeGuestOutput(guest_output_mailbox_index));
     if (guest_output_mailbox_index != UINT32_MAX) {
       assert_true(guest_output_images_[guest_output_mailbox_index]
@@ -270,12 +270,12 @@ bool VulkanPresenter::CaptureGuestOutputGPUBlit(const void*& data_out,
 
 #ifdef XENIA_LIBRETRO
 bool VulkanPresenter::BlitGuestOutputToImage(
-    const std::function<VkImage(uint32_t width, uint32_t height)>& target_for,
+    VkImage (*target_for)(void*, uint32_t, uint32_t), void* target_data,
     uint32_t& width_out, uint32_t& height_out) {
   std::shared_ptr<GuestOutputImage> guest_output_image;
   {
     uint32_t guest_output_mailbox_index;
-    std::unique_lock<std::mutex> guest_output_consumer_lock(
+    auto guest_output_consumer_lease(
         ConsumeGuestOutput(guest_output_mailbox_index));
     if (guest_output_mailbox_index != UINT32_MAX) {
       guest_output_image =
@@ -290,7 +290,7 @@ bool VulkanPresenter::BlitGuestOutputToImage(
   if (!w || !h) {
     return false;
   }
-  const VkImage target = target_for(w, h);
+  const VkImage target = target_for(target_data, w, h);
   if (target == VK_NULL_HANDLE) {
     return false;
   }
@@ -404,7 +404,7 @@ bool VulkanPresenter::CaptureGuestOutput(RawImage& image_out) {
   std::shared_ptr<GuestOutputImage> guest_output_image;
   {
     uint32_t guest_output_mailbox_index;
-    std::unique_lock<std::mutex> guest_output_consumer_lock(
+    auto guest_output_consumer_lease(
         ConsumeGuestOutput(guest_output_mailbox_index));
     if (guest_output_mailbox_index != UINT32_MAX) {
       assert_true(guest_output_images_[guest_output_mailbox_index]
@@ -598,7 +598,7 @@ bool VulkanPresenter::CaptureGuestOutput(RawImage& image_out) {
 bool VulkanPresenter::RefreshGuestOutputImpl(
     uint32_t mailbox_index, uint32_t frontbuffer_width,
     uint32_t frontbuffer_height,
-    std::function<bool(GuestOutputRefreshContext& context)> refresher,
+    GuestOutputRefresher refresher, void* refresher_data,
     bool& is_8bpc_out_ref) {
   assert_not_zero(frontbuffer_width);
   assert_not_zero(frontbuffer_height);
@@ -635,7 +635,7 @@ bool VulkanPresenter::RefreshGuestOutputImpl(
       is_8bpc_out_ref, image_instance.image->image(),
       image_instance.image->view(), image_instance.version,
       image_instance.ever_successfully_refreshed);
-  bool refresher_succeeded = refresher(context);
+  bool refresher_succeeded = refresher(refresher_data, context);
   if (refresher_succeeded) {
     image_instance.ever_successfully_refreshed = true;
   }

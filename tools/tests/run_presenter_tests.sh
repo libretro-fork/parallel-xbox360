@@ -7,7 +7,7 @@ cc=${CC:-cc}
 cxx=${CXX:-c++}
 san=${SANITIZER--fsanitize=address,undefined}
 inc="-I$root -I$root/src -I$root/third_party -I$root/third_party/libretro-common/include"
-flags="-O1 -g -DNDEBUG -DHAVE_THREADS -DHAVE_THREAD_STORAGE $san -fno-omit-frame-pointer"
+flags="-O1 -g -DNDEBUG -DHAVE_THREADS -DHAVE_THREAD_STORAGE -DRETRO_ATOMIC_FORCE_GCC_NEW $san -fno-omit-frame-pointer"
 exe=presenter-test
 case $(uname -s) in MINGW*|MSYS*|CYGWIN*) exe=presenter-test.exe ;; esac
 # Intentional word splitting for compiler flags; paths must have no spaces.

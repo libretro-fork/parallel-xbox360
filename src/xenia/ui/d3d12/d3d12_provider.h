@@ -10,6 +10,7 @@
 #ifndef XENIA_UI_D3D12_D3D12_PROVIDER_H_
 #define XENIA_UI_D3D12_D3D12_PROVIDER_H_
 
+#include <string>
 #include <memory>
 
 #include "xenia/ui/d3d12/d3d12_api.h"
@@ -33,9 +34,7 @@ class D3D12Provider : public GraphicsProvider {
 
   static std::unique_ptr<D3D12Provider> Create();
 
-  std::unique_ptr<Presenter> CreatePresenter(
-      Presenter::HostGpuLossCallback host_gpu_loss_callback =
-          Presenter::FatalErrorHostGpuLossCallback) override;
+  std::unique_ptr<Presenter> CreatePresenter() override;
 
   uint32_t CreateUploadResource(
       D3D12_HEAP_FLAGS HeapFlags, _In_ const D3D12_RESOURCE_DESC* pDesc,

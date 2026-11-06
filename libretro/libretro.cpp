@@ -1125,13 +1125,14 @@ static void update_video_vulkan(void)
             lr_graphics && lr_graphics->presenter() &&
             libretro_vk_blit_guest_output(
                 lr_graphics->presenter(),
-                [&f](uint32_t fw, uint32_t fh) -> VkImage {
+                [](void* data, uint32_t fw, uint32_t fh) -> VkImage {
+                    auto& f = *static_cast<VulkanFrameResources*>(data);
                     if (f.width != fw || f.height != fh) {
                         vk_destroy_frame(f);
                         if (!vk_create_frame(f, fw, fh)) return VK_NULL_HANDLE;
                     }
                     return f.image;
-                },
+                }, &f,
                 w, h);
         if (!blitted) {
             core_state.video_cb(RETRO_HW_FRAME_BUFFER_VALID, 0, 0, 0);

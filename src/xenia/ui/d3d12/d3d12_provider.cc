@@ -633,9 +633,8 @@ uint32_t D3D12Provider::CreateUploadResource(
 
   return UPLOAD_RESULT_CREATE_SUCCESS;
 }
-std::unique_ptr<Presenter> D3D12Provider::CreatePresenter(
-    Presenter::HostGpuLossCallback host_gpu_loss_callback) {
-  return D3D12Presenter::Create(host_gpu_loss_callback, *this);
+std::unique_ptr<Presenter> D3D12Provider::CreatePresenter() {
+  return D3D12Presenter::Create(*this);
 }
 
 void D3D12Provider::LogD3D12DebugMessages() const {

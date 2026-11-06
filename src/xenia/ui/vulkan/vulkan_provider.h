@@ -45,9 +45,7 @@ class VulkanProvider : public GraphicsProvider {
 
   // nullptr if created without presentation support.
 
-  std::unique_ptr<Presenter> CreatePresenter(
-      Presenter::HostGpuLossCallback host_gpu_loss_callback =
-          Presenter::FatalErrorHostGpuLossCallback) override;
+  std::unique_ptr<Presenter> CreatePresenter() override;
 
 
  private:

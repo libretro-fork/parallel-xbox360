@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan and D3D12 frame refresh now borrow synchronous callbacks without owning callback copies. Guest-output capture uses nonblocking C89 consumer leases and libretro-common mailbox atomics instead of a consumer mutex; competing captures can skip rather than wait. Existing slot/resource ownership and GPU completion paths remain intact. Removed an unused GPU-loss callback parameter that the presenter never retained or invoked. The architecture audit review records remaining allocation, capacity and stutter work without treating its broad completion claims as verified.
+
 - Memory-export shaders iterate selected registers directly through a C89 mask helper instead of nested owning callbacks. The tested export shaders avoid 142 C++ allocations each while preserving generated SPIR-V bytes. Fixed a pre-existing translation crash for scaled pixel shaders with memory export and no color output: these now declare the fragment-coordinate input required by the existing center-pixel guard. All 256 synthetic mask/stage/profile modules validate; previously valid parent cases remain byte-identical.
 
 - Removed the standalone SPIR-V postprocessor and its dormant feature-inference, dead-block rewriting and sampled-image-cloning APIs after verifying the core has no callers. Shader output now borrows a function pointer and context instead of `std::function`. Decoration records shed their unused active flag and queries. Core-generated shader bytes and callback failure propagation remain checked; other subsystems still need callback conversion.

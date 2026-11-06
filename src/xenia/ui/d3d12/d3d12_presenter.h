@@ -49,10 +49,9 @@ class D3D12Presenter final : public Presenter {
   };
 
   static std::unique_ptr<D3D12Presenter> Create(
-      HostGpuLossCallback host_gpu_loss_callback,
       const D3D12Provider& provider) {
     auto presenter = std::unique_ptr<D3D12Presenter>(
-        new D3D12Presenter(host_gpu_loss_callback, provider));
+        new D3D12Presenter(provider));
     if (!presenter->InitializeSurfaceIndependent()) {
       return nullptr;
     }
@@ -76,14 +75,13 @@ class D3D12Presenter final : public Presenter {
   bool RefreshGuestOutputImpl(
       uint32_t mailbox_index, uint32_t frontbuffer_width,
       uint32_t frontbuffer_height,
-      std::function<bool(GuestOutputRefreshContext& context)> refresher,
+      GuestOutputRefresher refresher, void* refresher_data,
       bool& is_8bpc_out) override;
 
 
  private:
-  explicit D3D12Presenter(HostGpuLossCallback host_gpu_loss_callback,
-                          const D3D12Provider& provider)
-      : Presenter(host_gpu_loss_callback), provider_(provider) {}
+  explicit D3D12Presenter(const D3D12Provider& provider)
+      : Presenter(), provider_(provider) {}
 
 
   bool InitializeSurfaceIndependent();

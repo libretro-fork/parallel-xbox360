@@ -11,12 +11,10 @@
 #define XENIA_UI_PRESENTER_H_
 #include "xenia/base/byte_order.h"
 #include <array>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
-#include <mutex>
 #include <vector>
+#include "libretro/core_video_mailbox.h"
 namespace xe {
 namespace ui {
 struct RawImage {
@@ -28,9 +26,6 @@ struct RawImage {
 // Owns guest output images for frontend capture. No window or host presentation.
 class Presenter {
  public:
-  using HostGpuLossCallback = std::function<void(bool, bool)>;
-  static void FatalErrorHostGpuLossCallback(bool is_responsible,
-                                           bool statically_from_ui_thread);
   class GuestOutputRefreshContext {
    public:
     GuestOutputRefreshContext(const GuestOutputRefreshContext& context) =
@@ -55,13 +50,16 @@ class Presenter {
   };
 
 
+  // Invoked synchronously; neither the function nor its context is retained.
+  using GuestOutputRefresher = bool (*)(void*, GuestOutputRefreshContext&);
+
   Presenter(const Presenter&) = delete;
   Presenter& operator=(const Presenter&) = delete;
   virtual ~Presenter() = default;
   bool RefreshGuestOutput(uint32_t frontbuffer_width, uint32_t frontbuffer_height,
                           uint32_t display_aspect_ratio_x,
                           uint32_t display_aspect_ratio_y,
-                          std::function<bool(GuestOutputRefreshContext&)> refresher);
+                          GuestOutputRefresher refresher, void* refresher_data);
   virtual bool CaptureGuestOutput(RawImage& image_out) = 0;
  protected:
   static uint32_t Packed10bpcRGBTo8bpcBytes(uint32_t rgb10) {
@@ -85,7 +83,9 @@ class Presenter {
            (uint32_t(0xFF) << 24);
   }
 
-  explicit Presenter([[maybe_unused]] HostGpuLossCallback callback) {}
+  Presenter() {
+    xe_video_mailbox_init(&guest_output_mailbox_);
+  }
   static constexpr uint32_t kGuestOutputMailboxSize = 3;
   struct GuestOutputProperties {
     // At least any value being 0 here means the guest output is disabled for
@@ -117,16 +117,33 @@ class Presenter {
 
   virtual bool RefreshGuestOutputImpl(uint32_t mailbox_index,
       uint32_t frontbuffer_width, uint32_t frontbuffer_height,
-      std::function<bool(GuestOutputRefreshContext&)> refresher,
+      GuestOutputRefresher refresher, void* refresher_data,
       bool& is_8bpc_out) = 0;
-  [[nodiscard]] std::unique_lock<std::mutex> ConsumeGuestOutput(
+  // A failed claim produces no frame; the frontend may repeat its last one.
+  // Keep the lease while taking any slot-owned references, including on errors.
+  class GuestOutputLease {
+   public:
+    explicit GuestOutputLease(xe_video_mailbox* mailbox, uint32_t& index)
+        : mailbox_(mailbox) {
+      index = xe_video_mailbox_read_begin(mailbox);
+      if (index == UINT32_MAX) mailbox_ = nullptr;
+    }
+    GuestOutputLease(const GuestOutputLease&) = delete;
+    GuestOutputLease& operator=(const GuestOutputLease&) = delete;
+    GuestOutputLease(GuestOutputLease&& other) noexcept : mailbox_(other.mailbox_) {
+      other.mailbox_ = nullptr;
+    }
+    ~GuestOutputLease() {
+      if (mailbox_) xe_video_mailbox_read_end(mailbox_);
+    }
+   private:
+    xe_video_mailbox* mailbox_;
+  };
+  [[nodiscard]] GuestOutputLease ConsumeGuestOutput(
       uint32_t& mailbox_index_or_max_if_inactive_out);
  private:
-  // Producer owns writable; consumer owns acquired. Release/acquire publication
-  // transfers ready images without copying their pixel storage.
-  std::atomic<uint32_t> guest_output_mailbox_acquired_and_ready_{0};
-  uint32_t guest_output_mailbox_writable_ = 1;
-  std::mutex guest_output_mailbox_consumer_mutex_;
+  // One producer; consumer leases protect slot snapshots without blocking.
+  xe_video_mailbox guest_output_mailbox_;
   std::array<GuestOutputProperties, kGuestOutputMailboxSize> guest_output_properties_;
   bool guest_output_active_last_refresh_ = false;
 };

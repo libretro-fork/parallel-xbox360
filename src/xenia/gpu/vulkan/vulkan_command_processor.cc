@@ -2015,9 +2015,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
 
   auto aspect = graphics_system_->GetScaledAspectRatio();
 
-  presenter->RefreshGuestOutput(
-      frontbuffer_width_scaled, frontbuffer_height_scaled, aspect.first,
-      aspect.second,
+  auto refresher =
       [this, frontbuffer_width_scaled, frontbuffer_height_scaled,
        frontbuffer_format, swap_texture_view](
           ui::Presenter::GuestOutputRefreshContext& context) -> bool {
@@ -2569,7 +2567,13 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         // queue, and also need to submit the release barrier.
         EndSubmission(true);
         return true;
-      });
+      };
+  presenter->RefreshGuestOutput(
+      frontbuffer_width_scaled, frontbuffer_height_scaled, aspect.first,
+      aspect.second,
+      [](void* data, ui::Presenter::GuestOutputRefreshContext& context) {
+        return (*static_cast<decltype(refresher)*>(data))(context);
+      }, &refresher);
 
   // End the frame even if did not present for any reason (the image refresher
   // was not called), to prevent leaking per-frame resources.

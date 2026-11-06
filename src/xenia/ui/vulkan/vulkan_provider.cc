@@ -119,9 +119,8 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(
   return provider;
 }
 
-std::unique_ptr<Presenter> VulkanProvider::CreatePresenter(
-    Presenter::HostGpuLossCallback host_gpu_loss_callback) {
-  return VulkanPresenter::Create(host_gpu_loss_callback, vulkan_device());
+std::unique_ptr<Presenter> VulkanProvider::CreatePresenter() {
+  return VulkanPresenter::Create(vulkan_device());
 }
 
 }  // namespace vulkan

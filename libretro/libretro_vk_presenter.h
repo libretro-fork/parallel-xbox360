@@ -10,7 +10,6 @@
 #define LIBRETRO_VK_PRESENTER_H
 
 #include <cstdint>
-#include <functional>
 
 // Forward declare
 namespace xe {
@@ -58,10 +57,11 @@ void libretro_vk_set_shared_queue_lock(void (*lock)(void* user),
                                        void* user);
 
 // The guest output blitted into an image of RetroArch's frame (shared device
-// only); target_for gets the size and gives the image.
+// only); target_for gets the size and gives the image. Function and target_data
+// are borrowed synchronously until this call returns.
 bool libretro_vk_blit_guest_output(
     xe::ui::Presenter* presenter,
-    const std::function<VkImage(uint32_t width, uint32_t height)>& target_for,
+    VkImage (*target_for)(void*, uint32_t, uint32_t), void* target_data,
     uint32_t& width_out, uint32_t& height_out);
 
 #endif // LIBRETRO_VK_PRESENTER_H

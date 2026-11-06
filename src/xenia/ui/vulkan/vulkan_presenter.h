@@ -14,7 +14,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -89,9 +88,9 @@ class VulkanPresenter final : public Presenter {
   };
 
   static std::unique_ptr<VulkanPresenter> Create(
-      HostGpuLossCallback host_gpu_loss_callback, VulkanDevice* vulkan_device) {
+      VulkanDevice* vulkan_device) {
     auto presenter = std::unique_ptr<VulkanPresenter>(new VulkanPresenter(
-        host_gpu_loss_callback, vulkan_device));
+        vulkan_device));
     return presenter;
   }
 
@@ -110,17 +109,17 @@ class VulkanPresenter final : public Presenter {
   // On a device shared with the frontend: the guest output blitted (to
   // R8G8B8A8) straight into an image of the frontend's frame, left in
   // SHADER_READ_ONLY_OPTIMAL. target_for gets the output's size and gives
-  // the image, VK_NULL_HANDLE to skip. Waits for the blit.
+  // the image, VK_NULL_HANDLE to skip. The callback/context are borrowed only
+  // until return. Waits for the blit.
   bool BlitGuestOutputToImage(
-      const std::function<VkImage(uint32_t width, uint32_t height)>&
-          target_for,
+      VkImage (*target_for)(void*, uint32_t, uint32_t), void* target_data,
       uint32_t& width_out, uint32_t& height_out);
 #endif
 
   bool RefreshGuestOutputImpl(
       uint32_t mailbox_index, uint32_t frontbuffer_width,
       uint32_t frontbuffer_height,
-      std::function<bool(GuestOutputRefreshContext& context)> refresher,
+      GuestOutputRefresher refresher, void* refresher_data,
       bool& is_8bpc_out_ref) override;
 
 
@@ -189,8 +188,8 @@ class VulkanPresenter final : public Presenter {
     }
   };
 
-  explicit VulkanPresenter(HostGpuLossCallback callback, VulkanDevice* device)
-      : Presenter(callback), vulkan_device_(device),
+  explicit VulkanPresenter(VulkanDevice* device)
+      : Presenter(), vulkan_device_(device),
         guest_output_image_refresher_completion_timeline_(device, "guest-refresher") {
     assert_not_null(device);
   }

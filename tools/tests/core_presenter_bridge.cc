@@ -13,13 +13,13 @@ extern "C" void xe_test_presenter_fill(unsigned* pixels, unsigned value);
 
 class TestPresenter final : public xe::ui::Presenter {
  public:
-  TestPresenter() : Presenter(nullptr) {}
+  TestPresenter() : Presenter() {}
   bool CaptureGuestOutput(xe::ui::RawImage&) override { return false; }
   bool Refresh(unsigned value, bool active, bool fail) {
     value_ = value;
     fail_ = fail;
     return RefreshGuestOutput(active ? 256 : 0, 1, 16, 9,
-                             [](GuestOutputRefreshContext&) { return true; });
+                             [](void*, GuestOutputRefreshContext&) { return true; }, nullptr);
   }
   bool Capture(unsigned* pixels) {
     uint32_t index;
@@ -30,11 +30,25 @@ class TestPresenter final : public xe::ui::Presenter {
   }
  private:
   bool RefreshGuestOutputImpl(uint32_t index, uint32_t, uint32_t,
-      std::function<bool(GuestOutputRefreshContext&)>, bool&) override {
+      GuestOutputRefresher refresher, void* data, bool& is_8bpc) override {
+    struct Context : GuestOutputRefreshContext {
+      explicit Context(bool& value) : GuestOutputRefreshContext(value) {}
+    } context(is_8bpc);
+    if (!refresher(data, context)) return false;
     if (fail_) return false;
     xe_test_presenter_fill(pixels_[index], value_);
     return true;
   }
+ public:
+  bool NestedCapture() {
+    uint32_t index;
+    auto lease = ConsumeGuestOutput(index);
+    if (index == UINT32_MAX) return false;
+    auto moved = std::move(lease);
+    unsigned pixels[256];
+    return !Capture(pixels);
+  }
+ private:
   unsigned pixels_[kGuestOutputMailboxSize][256] = {};
   unsigned value_ = 0;
   bool fail_ = false;
@@ -50,4 +64,8 @@ extern "C" int xe_test_presenter_refresh(void* p, unsigned value,
 }
 extern "C" int xe_test_presenter_capture(void* p, unsigned* pixels) {
   return static_cast<TestPresenter*>(p)->Capture(pixels);
+}
+
+extern "C" int xe_test_presenter_nested(void* p) {
+  return static_cast<TestPresenter*>(p)->NestedCapture();
 }

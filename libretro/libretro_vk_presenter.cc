@@ -147,11 +147,11 @@ void libretro_vk_set_shared_queue_lock(void (*lock)(void* user),
 
 bool libretro_vk_blit_guest_output(
     xe::ui::Presenter* presenter,
-    const std::function<VkImage(uint32_t width, uint32_t height)>& target_for,
+    VkImage (*target_for)(void*, uint32_t, uint32_t), void* target_data,
     uint32_t& width_out, uint32_t& height_out) {
     auto* vk_presenter =
         dynamic_cast<xe::ui::vulkan::VulkanPresenter*>(presenter);
     return vk_presenter &&
-           vk_presenter->BlitGuestOutputToImage(target_for, width_out,
+           vk_presenter->BlitGuestOutputToImage(target_for, target_data, width_out,
                                                 height_out);
 }

@@ -113,10 +113,7 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
   }
 
   if (with_presentation && provider_) {
-    presenter_ = provider_->CreatePresenter(
-        [this](bool is_responsible, bool) {
-          OnHostGpuLossFromAnyThread(is_responsible);
-        });
+    presenter_ = provider_->CreatePresenter();
   }
 
   // Create command processor. This will spin up a thread to process all

@@ -1,0 +1,62 @@
+Synchronous guest-output callback/publication fixture, 2026-11-06
+Reference: 3a2e7f4f82d645873dbd698ee1daca0c73c144c6.
+
+The reference binary compiles its own complete presenter.h/presenter.cc from
+git, not an old object against a new class layout. Both binaries use the same
+C89 batch driver, allocation hooks and C++ test subclass. The parent-only
+std::function signature is an isolated comparison fixture, not a runtime API.
+32/40-byte captures model the large backend closures; no graphics device,
+command buffer, frontend, consumer capture or image blit runs in this fixture.
+
+Each execution warms 1,000 refreshes, then measures seven 100,000-refresh batches
+per capture size. Seven alternating parent/current executions were run after
+all compiler processes finished. Values below are medians of those seven batch
+medians; ranges are between executions, in microseconds per 100,000 refreshes.
+
+Compiler / capture       Parent median (range)     Current median (range)
+MinGW GCC 16.2 / 32 B     4534 (4478..4589)         827 (801..837)
+MinGW GCC 16.2 / 40 B     4313 (4267..4433)         805 (801..815)
+MSVC x64 / 32 B          1134 (1124..1159)         595 (594..598)
+MSVC x64 / 40 B          1166 (1157..1184)         617 (612..619)
+
+Ordinary C++ allocation requests during 700,000 refreshes per capture size:
+- MinGW parent: 1,400,000 requests, 44,800,000 / 56,000,000 requested bytes.
+- MinGW current: zero requests / bytes for both sizes.
+- MSVC parent AND current: zero requests / bytes. The parent captures fit its
+  small-object storage already. Do not claim an MSVC heap-allocation reduction.
+- Tracked fixture object retention: MinGW 88 -> 88 bytes, MSVC 160 -> 88 bytes.
+  This is requested C++ object size, not RSS/VRAM or allocator overhead.
+
+The production refresh callback and context are borrowed only until return,
+including across the backend virtual call. Large original command-generation
+closures remain automatic objects; their bodies, references and GPU commands
+are unchanged. Vulkan target selection borrows its frame directly as well.
+The new C89 mailbox preserves three-slot acquire/release ownership and replaces
+the consumer mutex with a nonblocking exclusive lease. A busy capture returns
+without waiting. That contention behavior is verified separately, not timed by
+this producer-only benchmark. Other GPU mutexes and allocations remain.
+
+Verification:
+- Native MSVC /TC /W4 /WX C89 protocol/test driver plus production presenter
+  bridge pass, including failed refresh, blanking, nested capture, lease move
+  and two concurrent consumers against 200,000 produced frames.
+- GCC strict C89 + C++ production bridge ASan/UBSan pass the same coverage.
+- A held lease survives 100,000 producer publications without slot reuse.
+- Full Windows static Make -j5 compiles/links Vulkan and D3D12.
+- Both backend presenters and command processors compile with native MSVC.
+- Existing GPU retirement ASan/UBSan tests pass 200,000 retirements.
+- ThreadSanitizer compiled but could not start: WSL reported an unexpected
+  memory mapping before executing the test. This is not a passing TSan result.
+- No game/frontend/GPU test launch or installed DLL replacement. This fixture
+  does not prove gameplay cadence, FPS, or GPU post-unload driver behavior.
+
+Reproduce from the repository root:
+  PRESENTER_REFERENCE_REVISION=3a2e7f4f8 TEST_BUILD_DIR=build/tests/presenter-parent sh tools/tests/run_presenter_bench.sh
+  TEST_BUILD_DIR=build/tests/presenter-current sh tools/tests/run_presenter_bench.sh
+On Windows put the matching MinGW runtime first on PATH. For MSVC use the x64
+developer prompt and run tools\tests\run_presenter_bench.cmd with the same two
+environment variables (unset PRESENTER_REFERENCE_REVISION for current). Alternate
+the resulting executables only after compilation ends. The historical fixture
+supports this specified parent API; it is not a generic old-revision adapter.
+Correctness: sh tools/tests/run_presenter_tests.sh (ASan/UBSan by default), or
+tools\tests\run_presenter_tests.cmd from a Visual Studio x64 developer prompt.

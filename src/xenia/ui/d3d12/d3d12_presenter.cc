@@ -114,7 +114,7 @@ bool D3D12Presenter::CaptureGuestOutputGPUBlit(const void*& data_out,
   Microsoft::WRL::ComPtr<ID3D12Resource> guest_output_resource;
   {
     uint32_t guest_output_mailbox_index;
-    std::unique_lock<std::mutex> guest_output_consumer_lock(
+    auto guest_output_consumer_lease(
         ConsumeGuestOutput(guest_output_mailbox_index));
     if (guest_output_mailbox_index != UINT32_MAX) {
       guest_output_resource =
@@ -238,7 +238,7 @@ bool D3D12Presenter::CaptureGuestOutput(RawImage& image_out) {
   Microsoft::WRL::ComPtr<ID3D12Resource> guest_output_resource;
   {
     uint32_t guest_output_mailbox_index;
-    std::unique_lock<std::mutex> guest_output_consumer_lock(
+    auto guest_output_consumer_lease(
         ConsumeGuestOutput(guest_output_mailbox_index));
     if (guest_output_mailbox_index != UINT32_MAX) {
       guest_output_resource =
@@ -385,7 +385,7 @@ bool D3D12Presenter::CaptureGuestOutput(RawImage& image_out) {
 bool D3D12Presenter::RefreshGuestOutputImpl(
     uint32_t mailbox_index, uint32_t frontbuffer_width,
     uint32_t frontbuffer_height,
-    std::function<bool(GuestOutputRefreshContext& context)> refresher,
+    GuestOutputRefresher refresher, void* refresher_data,
     bool& is_8bpc_out_ref) {
   assert_not_zero(frontbuffer_width);
   assert_not_zero(frontbuffer_height);
@@ -396,7 +396,7 @@ bool D3D12Presenter::RefreshGuestOutputImpl(
         xe_d3d12_resource_desc(guest_output_resource_ref.second.Get());
     if (guest_output_resource_current_desc.Width != frontbuffer_width ||
         guest_output_resource_current_desc.Height != frontbuffer_height) {
-      // Capture holds the mailbox consumer lock and awaits its own submissions.
+      // Capture holds the mailbox consumer lease and awaits its own submissions.
       guest_output_resource_refresher_completion_timeline_
           ->AwaitSubmissionAndUpdateCompleted(guest_output_resource_ref.first);
       guest_output_resource_ref.second.Reset();
@@ -430,7 +430,7 @@ bool D3D12Presenter::RefreshGuestOutputImpl(
   }
   D3D12GuestOutputRefreshContext context(
       is_8bpc_out_ref, guest_output_resource_ref.second.Get());
-  bool refresher_succeeded = refresher(context);
+  bool refresher_succeeded = refresher(refresher_data, context);
   // Even if the refresher has returned false, it still might have submitted
   // some commands referencing the resource. It's better to put an excessive
   // signal and wait slightly longer, for nothing important, while shutting down

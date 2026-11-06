@@ -43,9 +43,7 @@ class GraphicsProvider {
   virtual ~GraphicsProvider() = default;
 
   // Creates guest output storage and capture resources for frontend handoff.
-  virtual std::unique_ptr<Presenter> CreatePresenter(
-      Presenter::HostGpuLossCallback host_gpu_loss_callback =
-          Presenter::FatalErrorHostGpuLossCallback) = 0;
+  virtual std::unique_ptr<Presenter> CreatePresenter() = 0;
 
 
  protected:
