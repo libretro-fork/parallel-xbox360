@@ -627,7 +627,10 @@ bool D3D12CommandProcessor::SetupContext() {
   }
 
   // Read-watch consumption tracking for resolves.
-  InitResolveReadWatch();
+  if (!InitResolveReadWatch()) {
+    XELOGE("Failed to allocate resolve readback metadata");
+    return false;
+  }
   resolve_read_callback_ = memory_->RegisterPhysicalMemoryReadCallback(
       ResolveReadCallbackThunk, this);
 
@@ -2398,8 +2401,8 @@ void D3D12CommandProcessor::DestroyReadbackStagingBuffer(
 }
 
 bool D3D12CommandProcessor::FaultCopyResolveToGuestRam(
-    const std::vector<std::pair<uint32_t, uint32_t>>& ranges) {
-  if (ranges.empty()) {
+    const xe_resolve_copy_plan& ranges) {
+  if (!ranges.count) {
     return false;
   }
   const ui::d3d12::D3D12Provider& provider = GetD3D12Provider();
@@ -2441,11 +2444,7 @@ bool D3D12CommandProcessor::FaultCopyResolveToGuestRam(
     // copied out to guest RAM here once the GPU is done.
     staging = dest == nullptr;
     if (staging) {
-      uint32_t staging_length = 0;
-      for (const auto& range : ranges) {
-        staging_length += range.second;
-      }
-      if (!EnsureResolveFaultReadback(staging_length)) {
+      if (!EnsureResolveFaultReadback(ranges.bytes)) {
         return false;
       }
       dest = resolve_fault_readback_.resource.Get();
@@ -2469,11 +2468,13 @@ bool D3D12CommandProcessor::FaultCopyResolveToGuestRam(
     UINT barrier_count = staging ? 1 : 2;
     resolve_fault_command_list_->ResourceBarrier(barrier_count, barriers);
     uint32_t staging_offset = 0;
-    for (const auto& range : ranges) {
+    xe_resolve_copy_cursor cursor = xe_resolve_cursor_make(&ranges);
+    xe_memexport_run range;
+    while (xe_resolve_next(&cursor, &range)) {
       resolve_fault_command_list_->CopyBufferRegion(
-          dest, staging ? staging_offset : range.first, source, range.first,
-          range.second);
-      staging_offset += range.second;
+          dest, staging ? staging_offset : range.base, source, range.base,
+          range.size);
+      staging_offset += range.size;
     }
     for (D3D12_RESOURCE_BARRIER& barrier : barriers) {
       std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);

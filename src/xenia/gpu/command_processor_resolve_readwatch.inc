@@ -19,7 +19,8 @@
 // dispatch. The include site must already provide SharedMemory, the base
 // memory_ (Memory*), texture_cache_, xenia/memory.h (VirtualHeap,
 // IsWritableProtect), xenia/base/assert.h, xenia/base/logging.h,
-// xenia/gpu/draw_util.h, xenia/gpu/registers.h, and <algorithm> <atomic>
+// xenia/gpu/draw_util.h, xenia/gpu/registers.h, the C89
+// core_resolve_readback.h declarations, and <algorithm>
 // <cstring> <memory> <mutex> <unordered_map> <unordered_set> <vector>. No
 // include guard: injected into a class body.
 //
@@ -31,13 +32,15 @@
 //   uint64_t GetResolveSubmittedThrough() const
 //     The last submission handed to the GPU, from any thread.
 //   bool FaultCopyResolveToGuestRam(
-//       const std::vector<std::pair<uint32_t, uint32_t>>& ranges)
+//       const xe_resolve_copy_plan& ranges)
 //     Copies ranges of the shared memory buffer into guest RAM from the
 //     faulting thread and waits for it. Without the guest RAM host buffer the
 //     copy lands in a CPU-readable buffer, for CopyPackedRangesToGuestRam. With
 //     zero-copy the resolve wrote guest RAM itself, so it only waits. Called
 //     under resolve_read_mutex_, so it may neither take the global lock nor
 //     need the GPU thread.
+//   bool ResolveFaultCopyUsesStaging() const
+//     Whether the native destination is packed readback staging.
 //   bool EnsureMemexportRangeInDeviceBuffer(uint32_t base, uint32_t size)
 //     Copies memexport output in the host buffer into the shared memory buffer.
 // And include command_processor_readback_staging.inc.
@@ -80,19 +83,16 @@ bool IsResolveDestinationResident(uint32_t address, uint32_t length) const {
 // lock: records which resolves' output the CPU read, for the next resolve of
 // the same destinations, and provides it.
 void MarkResolvePagesRead(uint32_t physical_address, uint32_t length) {
-  if (!resolve_page_owners_ || !length) {
+  if (!resolve_pages_.owners || !length) {
     return;
   }
-  const uint32_t page_count = SharedMemory::kBufferSize >> 12;
-  uint32_t first_page = physical_address >> 12;
-  if (first_page >= page_count) {
+  uint32_t first_page, last_page;
+  if (!xe_resolve_page_window(physical_address, length, &first_page, &last_page)) {
     return;
   }
-  uint32_t last_page =
-      std::min((physical_address + length - 1) >> 12, page_count - 1);
   uint64_t last_owner = 0;
   for (uint32_t page = first_page; page <= last_page; ++page) {
-    uint64_t owner = resolve_page_owners_[page].load(std::memory_order_relaxed);
+    uint64_t owner = xe_resolve_owner_load(&resolve_pages_, page);
     if (owner && owner != last_owner) {
       std::lock_guard<std::mutex> lock(resolve_read_mutex_);
       resolve_read_keys_.insert(owner);
@@ -111,7 +111,7 @@ void PrepareResolvePagesForWrite(uint32_t address, uint32_t length) {
 // Before recording a draw that writes guest RAM directly, so a later fault copy
 // of older resolve output can't land over it. May wait for the GPU.
 void ProvideResolveOutputForGpuWrite(uint32_t address, uint32_t length) {
-  if (!resolve_page_owners_ || !length ||
+  if (!resolve_pages_.owners || !length ||
       address >= SharedMemory::kBufferSize) {
     return;
   }
@@ -126,15 +126,17 @@ void ProvideResolveOutputForGpuWrite(uint32_t address, uint32_t length) {
 
 // Whether an unsubmitted resolve owns uncopied output in these pages.
 bool HasUnsubmittedResolveOutput(uint32_t address, uint32_t length) {
-  const uint32_t page_count = SharedMemory::kBufferSize >> 12;
-  uint32_t first_page = address >> 12;
-  uint32_t last_page = std::min((address + length - 1) >> 12, page_count - 1);
+  uint32_t first_page, last_page;
+  if (!resolve_pages_.owners ||
+      !xe_resolve_page_window(address, length, &first_page, &last_page)) {
+    return false;
+  }
   uint64_t submitted = GetResolveSubmittedThrough();
   std::lock_guard<std::mutex> lock(resolve_read_mutex_);
   uint64_t last_owner_key = 0;
   for (uint32_t page = first_page; page <= last_page; ++page) {
     uint64_t owner_key =
-        resolve_page_owners_[page].load(std::memory_order_relaxed);
+        xe_resolve_owner_load(&resolve_pages_, page);
     if (!owner_key || owner_key == last_owner_key) {
       continue;
     }
@@ -169,21 +171,18 @@ void DiscardResolvePages(uint32_t address, uint32_t length) {
 // armed again once it is. A write the copy can't precede lands in guest RAM, so
 // the later copy of an edge page it hit takes only the resolve's own bytes.
 void ProvideResolveOutput(uint32_t address, uint32_t length, bool write) {
-  if (!resolve_page_owners_ || !length) {
+  if (!resolve_pages_.owners || !length) {
     return;
   }
   const uint32_t page_count = SharedMemory::kBufferSize >> 12;
-  uint32_t first_page = address >> 12;
-  if (first_page >= page_count) {
-    return;
-  }
-  uint32_t last_page = std::min((address + length - 1) >> 12, page_count - 1);
+  uint32_t first_page, last_page;
+  if (!xe_resolve_page_window(address, length, &first_page, &last_page)) return;
   std::lock_guard<std::mutex> lock(resolve_read_mutex_);
   uint64_t submitted = GetResolveSubmittedThrough();
   uint64_t last_owner_key = 0;
   for (uint32_t page = first_page; page <= last_page; ++page) {
     uint64_t owner_key =
-        resolve_page_owners_[page].load(std::memory_order_relaxed);
+        xe_resolve_owner_load(&resolve_pages_, page);
     if (!owner_key || owner_key == last_owner_key) {
       continue;
     }
@@ -207,41 +206,12 @@ void ProvideResolveOutput(uint32_t address, uint32_t length, bool write) {
       RearmResolveAfterSubmission(owner);
       continue;
     }
-    resolve_fault_copy_ranges_.clear();
-    for (uint32_t owner_page = owner_first_page; owner_page <= owner_last_page;
-         ++owner_page) {
-      if (resolve_page_owners_[owner_page].load(std::memory_order_relaxed) !=
-          owner_key) {
-        continue;
-      }
-      uint32_t page_address = owner_page << 12;
-      if (!resolve_fault_copy_ranges_.empty() &&
-          resolve_fault_copy_ranges_.back().first +
-                  resolve_fault_copy_ranges_.back().second ==
-              page_address) {
-        resolve_fault_copy_ranges_.back().second += 4096;
-      } else {
-        resolve_fault_copy_ranges_.emplace_back(page_address, 4096);
-      }
-    }
-    // The first and last pages may be partly someone else's, but the shared
-    // memory buffer holds the latest GPU data for all of them, unless the CPU
-    // wrote them before this could copy it.
-    if (!resolve_fault_copy_ranges_.empty()) {
-      uint32_t first_page_base = owner_first_page << 12;
-      uint32_t last_page_end = (owner_last_page + 1) << 12;
-      auto& first_range = resolve_fault_copy_ranges_.front();
-      if (owner.clip_first_page && first_range.first == first_page_base) {
-        first_range.second -= owner.address - first_page_base;
-        first_range.first = owner.address;
-      }
-      auto& last_range = resolve_fault_copy_ranges_.back();
-      if (owner.clip_last_page &&
-          last_range.first + last_range.second == last_page_end) {
-        last_range.second -= last_page_end - owner_end;
-      }
-    }
-    if (FaultCopyResolveToGuestRam(resolve_fault_copy_ranges_)) {
+    xe_resolve_copy_plan ranges;
+    xe_resolve_snapshot_make(&resolve_pages_, owner_key, owner.address,
+                             owner.length, owner.clip_first_page,
+                             owner.clip_last_page,
+                             ResolveFaultCopyUsesStaging(), &ranges);
+    if (FaultCopyResolveToGuestRam(ranges)) {
       owner.in_guest_ram = true;
     } else {
       if (write) {
@@ -257,12 +227,13 @@ void ProvideResolveOutput(uint32_t address, uint32_t length, bool write) {
 // physical view, which the read watch does not protect.
 void CopyPackedRangesToGuestRam(
     const void* source,
-    const std::vector<std::pair<uint32_t, uint32_t>>& ranges) {
+    const xe_resolve_copy_plan& ranges) {
   const uint8_t* source_bytes = static_cast<const uint8_t*>(source);
-  for (const auto& range : ranges) {
-    std::memcpy(memory_->TranslatePhysical(range.first), source_bytes,
-                range.second);
-    source_bytes += range.second;
+  xe_resolve_copy_cursor cursor = xe_resolve_cursor_make(&ranges);
+  xe_memexport_run range;
+  while (xe_resolve_next(&cursor, &range)) {
+    std::memcpy(memory_->TranslatePhysical(range.base), source_bytes, range.size);
+    source_bytes += range.size;
   }
 }
 
@@ -270,6 +241,8 @@ void CopyPackedRangesToGuestRam(
 // submission, for ProvideResolveOutput. is_scaled means its output is not in
 // the shared memory buffer, so it can't be copied.
 void NoteResolveForReadback(uint32_t address, uint32_t length, bool is_scaled) {
+  if (!length || address >= SharedMemory::kBufferSize) return;
+  length = std::min(length, SharedMemory::kBufferSize - address);
   if (!is_scaled) {
     DropStagedMemexportOutput(address, length);
     // Before this resolve takes the pages over.
@@ -330,9 +303,9 @@ bool PullMemexportEdgeBytes(uint32_t start, uint32_t end) {
   if (start >= end || !IsMemexportRange(start, end - start)) {
     return false;
   }
-  if (resolve_page_owners_) {
+  if (resolve_pages_.owners) {
     uint64_t owner_key =
-        resolve_page_owners_[start >> 12].load(std::memory_order_relaxed);
+        xe_resolve_owner_load(&resolve_pages_, start >> 12);
     if (owner_key) {
       std::lock_guard<std::mutex> lock(resolve_read_mutex_);
       auto owner_it = resolve_owners_.find(owner_key);
@@ -354,10 +327,10 @@ void PruneResolveOwners() {
     const ResolveOwner& owner = it->second;
     uint32_t last_page = std::min((owner.address + owner.length - 1) >> 12,
                                   (SharedMemory::kBufferSize >> 12) - 1);
-    bool owns_first = resolve_page_owners_[owner.address >> 12].load(
-                          std::memory_order_relaxed) == it->first;
-    bool owns_last = resolve_page_owners_[last_page].load(
-                         std::memory_order_relaxed) == it->first;
+    bool owns_first =
+        xe_resolve_owner_load(&resolve_pages_, owner.address >> 12) == it->first;
+    bool owns_last =
+        xe_resolve_owner_load(&resolve_pages_, last_page) == it->first;
     if (owner.in_guest_ram || (!owns_first && !owns_last)) {
       it = resolve_owners_.erase(it);
     } else {
@@ -461,15 +434,7 @@ bool ResolveReadRecently(uint64_t resolve_key, bool read_before) {
 // Makes a resolve the owner of the pages it writes, so later reads of them are
 // attributed to it.
 void SetResolvePageOwner(uint32_t base, uint32_t length, uint64_t resolve_key) {
-  const uint32_t page_count = SharedMemory::kBufferSize >> 12;
-  uint32_t first_page = base >> 12;
-  if (!resolve_page_owners_ || !length || first_page >= page_count) {
-    return;
-  }
-  uint32_t last_page = std::min((base + length - 1) >> 12, page_count - 1);
-  for (uint32_t page = first_page; page <= last_page; ++page) {
-    resolve_page_owners_[page].store(resolve_key, std::memory_order_relaxed);
-  }
+  xe_resolve_owner_set(&resolve_pages_, base, length, resolve_key);
 }
 
 // Ends the resolve frame.
@@ -556,9 +521,9 @@ bool GetScaledResolveReadbackInfo(uint32_t address, uint32_t length,
 
 // Allocates the page owners. Called from each backend's SetupContext, which
 // then registers the per-backend read callback thunk.
-void InitResolveReadWatch() {
-  resolve_page_owners_ = std::make_unique<std::atomic<uint64_t>[]>(
-      SharedMemory::kBufferSize >> 12);
+bool InitResolveReadWatch(size_t native_copy_stride = 0) {
+  static_assert(SharedMemory::kBufferSize == XE_MEMEXPORT_BUFFER_SIZE);
+  return xe_resolve_readback_init(&resolve_pages_, native_copy_stride) != 0;
 }
 
 // Unregisters the read callback and drops all tracking. Called from each
@@ -568,7 +533,7 @@ void ResetResolveReadWatch() {
     memory_->UnregisterPhysicalMemoryReadCallback(resolve_read_callback_);
     resolve_read_callback_ = nullptr;
   }
-  resolve_page_owners_.reset();
+  xe_resolve_readback_destroy(&resolve_pages_);
   {
     std::lock_guard<std::mutex> lock(resolve_read_mutex_);
     resolve_read_keys_.clear();
@@ -582,7 +547,9 @@ void ResetResolveReadWatch() {
 
 // Per guest page, the key of the resolve that last wrote it, or 0. Written on
 // the GPU thread and by discards, read on faulting threads, so atomic.
-std::unique_ptr<std::atomic<uint64_t>[]> resolve_page_owners_;
+// Compact D3D12 or final native Vulkan records share a cold allocation with
+// page keys. Faults borrow these records through recording and CPU delivery.
+xe_resolve_readback_owner resolve_pages_;
 // Destinations whose last output the CPU has read, until resolved again. Taken
 // by the fault handler both with and without the global lock, and held across
 // FaultCopyResolveToGuestRam, so nothing may take the global lock while holding
@@ -630,7 +597,6 @@ void ClipResolveEdgePagesWritten(ResolveOwner& owner, uint32_t owner_first_page,
     owner.clip_last_page = true;
   }
 }
-std::vector<std::pair<uint32_t, uint32_t>> resolve_fault_copy_ranges_;
 // Owners whose watch a read used up before they could be copied, to arm again
 // when the next submission ends. Under resolve_read_mutex_, and the GPU
 // thread's copy of them.

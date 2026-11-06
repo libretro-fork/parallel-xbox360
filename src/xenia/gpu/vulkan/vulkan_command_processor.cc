@@ -424,8 +424,19 @@ bool VulkanCommandProcessor::SetupContext() {
     return false;
   }
 
+  // Byte-written final records must match the native API's exact wire layout.
+  static_assert(sizeof(VkBufferCopy) == XE_RESOLVE_NATIVE_STRIDE &&
+                offsetof(VkBufferCopy, srcOffset) == 0 &&
+                offsetof(VkBufferCopy, dstOffset) == 8 &&
+                offsetof(VkBufferCopy, size) == 16 &&
+                (sizeof(retro_atomic_64_t) * XE_MEMEXPORT_PAGE_COUNT) %
+                    alignof(VkBufferCopy) == 0);
   // Read-watch consumption tracking for resolves.
-  InitResolveReadWatch();
+  if (!InitResolveReadWatch(shared_memory_->is_zero_copy() ? 0
+                                                         : sizeof(VkBufferCopy))) {
+    XELOGE("Failed to allocate resolve readback metadata");
+    return false;
+  }
   resolve_read_callback_ = memory_->RegisterPhysicalMemoryReadCallback(
       ResolveReadCallbackThunk, this);
 
@@ -1798,8 +1809,8 @@ void VulkanCommandProcessor::InvalidateReadbackStaging(
 }
 
 bool VulkanCommandProcessor::FaultCopyResolveToGuestRam(
-    const std::vector<std::pair<uint32_t, uint32_t>>& ranges) {
-  if (ranges.empty() || device_lost_) {
+    const xe_resolve_copy_plan& ranges) {
+  if (!ranges.count || device_lost_) {
     return false;
   }
   ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
@@ -1874,25 +1885,18 @@ bool VulkanCommandProcessor::FaultCopyResolveToGuestRam(
     // copied out to guest RAM here once the GPU is done.
     VkBuffer dest = shared_memory_->host_buffer();
     staging = dest == VK_NULL_HANDLE;
-    resolve_fault_copy_regions_.clear();
-    VkDeviceSize staging_offset = 0;
-    for (const auto& range : ranges) {
-      VkBufferCopy& region = resolve_fault_copy_regions_.emplace_back();
-      region.srcOffset = range.first;
-      region.dstOffset = staging ? staging_offset : range.first;
-      region.size = range.second;
-      staging_offset += range.second;
-    }
+    // The fault scan wrote final native records directly into cold storage.
+    const VkBufferCopy* regions =
+        static_cast<const VkBufferCopy*>(ranges.records);
     if (staging) {
-      if (!EnsureResolveFaultReadback(uint32_t(staging_offset))) {
+      if (!EnsureResolveFaultReadback(ranges.bytes)) {
         dfn.vkEndCommandBuffer(resolve_fault_command_buffer_);
         return false;
       }
       dest = resolve_fault_readback_.buffer;
     }
     dfn.vkCmdCopyBuffer(resolve_fault_command_buffer_, shared_memory_->buffer(),
-                        dest, uint32_t(resolve_fault_copy_regions_.size()),
-                        resolve_fault_copy_regions_.data());
+                        dest, ranges.count, regions);
     memory_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     memory_barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT |
                                    VK_ACCESS_MEMORY_WRITE_BIT |

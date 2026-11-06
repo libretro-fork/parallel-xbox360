@@ -1,0 +1,131 @@
+Resolve fault readback: direct final records
+===========================================
+
+Both renderers now capture fault-copy runs into cold-reserved MSVC C89 storage.
+Each atomic page key is loaded once. Vulkan writes final VkBufferCopy fields
+without an intermediate CPU range vector or conversion pass. D3D12 borrows
+compact 8-byte base/size records. CPU packed delivery borrows the same records
+until the fault returns, after native completion. There is no bitmap expansion.
+
+All page-owner accesses in the shared readwatch path now use libretro-common
+retro_atomic relaxed 64-bit loads/stores, replacing std::atomic<uint64_t>[].
+Keys remain hints, not publication of owner objects or completed GPU contents.
+The existing owner/read-key lock, submission acquire loads, callback unregister
+and drain, native barriers/queue/fence ordering and shutdown sequence remain.
+No native GPU call is added: Vulkan still records one vkCmdCopyBuffer, D3D12
+records the same per-run CopyBufferRegion calls. Error/rearm behavior remains.
+
+The aperture is 512 MiB / 4 KiB = 131072 pages. Any selected subset has at most
+ceil(P/2) disjoint runs, giving 65536 final records. Setup reserves the entire
+bound with the 1 MiB key table in one allocation, before registering callbacks.
+Final-record capacity is 512 KiB compact (D3D12 and Vulkan zero-copy) or 1.5 MiB
+native (other Vulkan paths). No allocation, relocation, or capacity check/growth
+is needed while scanning. Native scalar fields are written via byte access;
+sizeof/offsetof/alignment assertions validate actual VkBufferCopy layout:
+24 bytes, offsets 0/8/16. This avoids incompatible typed aliasing. All consumed
+fields are written before the native API synchronously consumes the array.
+
+The single owner/fault serialization protects record leases through recording
+and CPU delivery. Later atomic key changes cannot alter captured records.
+This retains individual relaxed page observations, not a whole-array atomic
+snapshot. Edge clipping, packed offsets and exact selected-byte sum are computed
+while capturing. No key rescan or metadata conversion is performed afterwards.
+D3D12 also avoids summing the old range list to request staging capacity.
+
+Host access windows clamp before base+length addition, avoiding UINT32 wrap.
+Empty/out-of-aperture resolves acquire no owner/watch; noted lengths clamp before
+publication. Initialization failure returns false before callback registration.
+Normal/reset/exceptional teardown frees CPU storage; reset unregisters/drains the
+callback before freeing, preserving the existing lifetime boundary.
+
+Tradeoffs / remaining work
+--------------------------
+Cold requested capacity is larger for small faults. The previous native path
+retains only 32 bytes of vector payload for one run, growing to 2 MiB under GNU
+or about 2.81 MiB under MSVC at maximum fragmentation. New native records always
+reserve 1.5 MiB; compact records reserve 512 KiB. The old key table (1 MiB) is
+unchanged. Records are not zero-filled and may first-touch on use; no OS-residency,
+RSS or all-gameplay-allocation-freedom claim is made. Other owner/read maps,
+rearm vectors, native command-pool/list/fence creation and fallback readback
+buffer growth still allocate. Required GPU payload/CPU delivery copies and
+synchronization remain. No logging, timer, sleep, audio or pacing change is added.
+
+Offline coverage
+----------------
+- 15076 reference cases, both native destinations and compact records: full
+  65536 runs, clipped edges, randomized ownership, high-bit keys, no matches,
+  UINT32 overflow/clamping, poison allocation, invalid stride, OOM and reset.
+  Actual native fields are checked directly, without a test adapter filling
+  them. Later key mutation leaves leases unchanged. Packed CPU delivery matches
+  reference bytes and preserves unselected/edge bytes.
+- GCC 13.3 strict C89 ASan/UBSan, MSVC 19.44 /TC /O2 /W4 /WX and MinGW GCC 16.2
+  C89 pass. MinGW enables its uint64 literal extension with -Wno-long-long.
+  Vulkan SDK headers are system includes in the strict GCC fixture.
+- Real rthreads test: 6.4M alternating 64-bit key stores, >=50000 reader passes
+  rejecting torn values, 20000 captures repeatedly consumed during key changes.
+  GCC ASan/UBSan, MinGW and MSVC pass. GCC TSan also passes: 50101 reader passes,
+  20000 leases, error=0, no race report. This covers helper key/record ownership,
+  not every emulator lock or GPU visibility mechanism.
+- C++ normal/throwing-constructor owner teardown passes on all three compilers.
+- Actual Vulkan/D3D12 processors and shared/deferred units compile with MSVC;
+  prior upload/memexport/descriptor/submission/storage tests pass. Windows static
+  Make -j5 rebuild/link passes. No fake/unconstructed command processor is used.
+- No native device/driver/emulator/gameplay replay was run. No FPS/RSS/latency
+  gain is asserted from offline CPU tests.
+
+Reproduction
+------------
+sh tools/tests/run_resolve_readback_tests.sh
+sh tools/tests/run_resolve_readback_threads_tests.sh
+SANITIZER=-fsanitize=thread TEST_BUILD_DIR=build/tests/resolve-readback-tsan \
+  sh tools/tests/run_resolve_readback_threads_tests.sh
+Developer Command Prompt:
+  tools\tests\run_resolve_readback_tests.cmd
+  tools\tests\run_resolve_readback_threads_tests.cmd
+Benchmark:
+  g++ -std=c++20 -O2 -Wall -Wextra -Werror -Ilibretro \
+    -Ithird_party/libretro-common/include \
+    -isystem third_party/Vulkan-Headers/include \
+    tools/tests/core_resolve_readback_bench.cc -o resolve-readback-bench
+  ./resolve-readback-bench
+MSVC: /MD /O2 /EHsc /std:c++20 with the same include directories.
+
+Seven interleaved paired samples, median us per scan + final native recording
++ CPU consumption; no device cost. Timed repeats: 100000 small, 1000 dense,
+500 fragmented, 100 sparse, 20 max-fragmented. Both paths have warmed capacities.
+Exact absolute/packed records and paired checksums match. Legacy counting
+allocators act only on real vector allocate/free paths; warmed counts do not
+grow. Cold vector counts exclude the unchanged key table. Relocation bytes sum
+old full vector capacities at push/emplace growth. New cold reserved capacity
+is separately reported, not hidden as zero allocation. Legacy std::atomic,
+vectors and steady_clock exist only in the benchmark, not the new runtime.
+core_resolve_readback_bench.cc
+MSVC 1944 /O2; 7 interleaved samples, median snapshot+native record+CPU consume time; warm capacities; paired checksums/exact host+packed records; no device calls
+Cold allocation combines unchanged 1 MiB keys and 1.5 MiB final native capacity (compact D3D12/zero-copy: 512 KiB). No duplicate CPU range or bitmap array. Old keys allocate 1 MiB plus vector growth.
+small-dense: 8 pages, 1 runs; vectors 0.007 us, snapshot 0.006 us (1.18x); cold vector growth allocations 2/0, relocated 0/0 bytes, retained range+native 32/1572864 bytes; warm growth 0/0
+dense: 4096 pages, 1 runs; vectors 1.896 us, snapshot 1.505 us (1.26x); cold vector growth allocations 2/0, relocated 0/0 bytes, retained range+native 32/1572864 bytes; warm growth 0/0
+fragmented: 4096 pages, 2048 runs; vectors 4.021 us, snapshot 3.394 us (1.18x); cold vector growth allocations 40/0, relocated 153664/0 bytes, retained range+native 76736/1572864 bytes; warm growth 0/0
+sparse: 65536 pages, 2 runs; vectors 23.242 us, snapshot 11.697 us (1.99x); cold vector growth allocations 4/0, relocated 32/0 bytes, retained range+native 64/1572864 bytes; warm growth 0/0
+max-fragmented: 131072 pages, 65536 runs; vectors 119.885 us, snapshot 107.830 us (1.11x); cold vector growth allocations 58/0, relocated 5899232/0 bytes, retained range+native 2949440/1572864 bytes; warm growth 0/0
+
+GCC 16.2.0 -O2; 7 interleaved samples, median snapshot+native record+CPU consume time; warm capacities; paired checksums/exact host+packed records; no device calls
+Cold allocation combines unchanged 1 MiB keys and 1.5 MiB final native capacity (compact D3D12/zero-copy: 512 KiB). No duplicate CPU range or bitmap array. Old keys allocate 1 MiB plus vector growth.
+small-dense: 8 pages, 1 runs; vectors 0.006 us, snapshot 0.005 us (1.14x); cold vector growth allocations 2/0, relocated 0/0 bytes, retained range+native 32/1572864 bytes; warm growth 0/0
+dense: 4096 pages, 1 runs; vectors 1.604 us, snapshot 1.514 us (1.06x); cold vector growth allocations 2/0, relocated 0/0 bytes, retained range+native 32/1572864 bytes; warm growth 0/0
+fragmented: 4096 pages, 2048 runs; vectors 3.612 us, snapshot 2.950 us (1.22x); cold vector growth allocations 24/0, relocated 65504/0 bytes, retained range+native 65536/1572864 bytes; warm growth 0/0
+sparse: 65536 pages, 2 runs; vectors 11.684 us, snapshot 11.732 us (1.00x); cold vector growth allocations 4/0, relocated 32/0 bytes, retained range+native 64/1572864 bytes; warm growth 0/0
+max-fragmented: 131072 pages, 65536 runs; vectors 112.350 us, snapshot 93.300 us (1.20x); cold vector growth allocations 34/0, relocated 2097120/0 bytes, retained range+native 2097152/1572864 bytes; warm growth 0/0
+
+GCC 13.3.0 -O2; 7 interleaved samples, median snapshot+native record+CPU consume time; warm capacities; paired checksums/exact host+packed records; no device calls
+Cold allocation combines unchanged 1 MiB keys and 1.5 MiB final native capacity (compact D3D12/zero-copy: 512 KiB). No duplicate CPU range or bitmap array. Old keys allocate 1 MiB plus vector growth.
+small-dense: 8 pages, 1 runs; vectors 0.006 us, snapshot 0.005 us (1.11x); cold vector growth allocations 2/0, relocated 0/0 bytes, retained range+native 32/1572864 bytes; warm growth 0/0
+dense: 4096 pages, 1 runs; vectors 1.590 us, snapshot 1.517 us (1.05x); cold vector growth allocations 2/0, relocated 0/0 bytes, retained range+native 32/1572864 bytes; warm growth 0/0
+fragmented: 4096 pages, 2048 runs; vectors 3.237 us, snapshot 2.941 us (1.10x); cold vector growth allocations 24/0, relocated 65504/0 bytes, retained range+native 65536/1572864 bytes; warm growth 0/0
+sparse: 65536 pages, 2 runs; vectors 11.768 us, snapshot 11.758 us (1.00x); cold vector growth allocations 4/0, relocated 32/0 bytes, retained range+native 64/1572864 bytes; warm growth 0/0
+max-fragmented: 131072 pages, 65536 runs; vectors 109.214 us, snapshot 91.972 us (1.19x); cold vector growth allocations 34/0, relocated 2097120/0 bytes, retained range+native 2097152/1572864 bytes; warm growth 0/0
+
+These CPU fixtures improve tested dense/fragmented workloads; sparse GNU cases
+are effectively equal. Tiny cases are sensitive to code layout/timing noise.
+D3D12 has correctness/compile coverage, not separate native timing. The initial
+bitmap prototype was rejected after measurement and is not shipped. No claim
+is made for all workloads or total frame time.

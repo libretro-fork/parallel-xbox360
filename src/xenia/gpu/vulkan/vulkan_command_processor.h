@@ -32,6 +32,7 @@
 #include "libretro/core_keyed_descriptor_reuse.h"
 #include "libretro/core_submission_counter.h"
 #include "libretro/core_memexport.h"
+#include "libretro/core_resolve_readback.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/hash.h"
 #include "xenia/base/logging.h"
@@ -336,7 +337,10 @@ class VulkanCommandProcessor final : public CommandProcessor {
   // buffer and fence, as the faulting thread can't use the GPU thread's. With
   // zero-copy, only waits for the resolve to have written it.
   bool FaultCopyResolveToGuestRam(
-      const std::vector<std::pair<uint32_t, uint32_t>>& ranges);
+      const xe_resolve_copy_plan& ranges);
+  bool ResolveFaultCopyUsesStaging() const {
+    return shared_memory_->host_buffer() == VK_NULL_HANDLE;
+  }
   void DestroyResolveFaultCopy();
   bool EnsureResolveFaultReadback(uint32_t size);
   // The last submission handed to the GPU, for other threads.
@@ -344,7 +348,6 @@ class VulkanCommandProcessor final : public CommandProcessor {
   VkCommandPool resolve_fault_command_pool_ = VK_NULL_HANDLE;
   VkCommandBuffer resolve_fault_command_buffer_ = VK_NULL_HANDLE;
   VkFence resolve_fault_fence_ = VK_NULL_HANDLE;
-  std::vector<VkBufferCopy> resolve_fault_copy_regions_;
 
   // Staging storage for command_processor_readback_staging.inc, which owns the
   // pool itself. Used only without the guest RAM host buffer.

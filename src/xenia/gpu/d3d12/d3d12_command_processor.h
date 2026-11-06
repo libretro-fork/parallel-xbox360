@@ -14,6 +14,7 @@
 #include <array>
 #include "libretro/core_submission_counter.h"
 #include "libretro/core_memexport.h"
+#include "libretro/core_resolve_readback.h"
 #include "libretro/core_snapshot_pair.h"
 #include "libretro/core_descriptor_indices.h"
 #include <cstdint>
@@ -389,7 +390,10 @@ class D3D12CommandProcessor final : public CommandProcessor {
   // and fence, as the faulting thread can't use the GPU thread's. With
   // zero-copy, only waits for the resolve to have written it.
   bool FaultCopyResolveToGuestRam(
-      const std::vector<std::pair<uint32_t, uint32_t>>& ranges);
+      const xe_resolve_copy_plan& ranges);
+  bool ResolveFaultCopyUsesStaging() const {
+    return shared_memory_->GetHostBuffer() == nullptr;
+  }
   void DestroyResolveFaultCopy();
   bool EnsureResolveFaultReadback(uint32_t size);
   void ReleaseResolveFaultReadback();
