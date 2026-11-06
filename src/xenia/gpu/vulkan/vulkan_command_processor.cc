@@ -128,6 +128,8 @@ VulkanCommandProcessor::~VulkanCommandProcessor() {
   xe_sampler_stage_free(&samplers_vertex_);
   xe_sampler_stage_free(&samplers_pixel_);
   xe_descriptor_scratch_free(&descriptor_write_image_info_);
+  xe_descriptor_reuse_destroy(&constants_transient_descriptors_);
+  for (auto& pool : single_transient_descriptors_) xe_descriptor_reuse_destroy(&pool);
 }
 
 void VulkanCommandProcessor::UpdateDebugMarkersEnabled() {
@@ -247,6 +249,10 @@ bool VulkanCommandProcessor::SetupContext() {
     XELOGE("Failed to initialize base command processor context");
     return false;
   }
+
+  if (!xe_descriptor_reuse_warm(&constants_transient_descriptors_)) return false;
+  for (auto& pool : single_transient_descriptors_)
+    if (!xe_descriptor_reuse_warm(&pool)) return false;
 
   // Check if debug markers should be enabled (CVAR or RenderDoc detection).
   UpdateDebugMarkersEnabled();
@@ -3025,12 +3031,14 @@ VkDescriptorSet VulkanCommandProcessor::AllocateSingleTransientDescriptor(
     SingleTransientDescriptorLayout transient_descriptor_layout) {
   assert_true(frame_open_);
   VkDescriptorSet descriptor_set;
-  std::vector<VkDescriptorSet>& transient_descriptors_free =
-      single_transient_descriptors_free_[size_t(transient_descriptor_layout)];
-  if (!transient_descriptors_free.empty()) {
-    descriptor_set = transient_descriptors_free.back();
-    transient_descriptors_free.pop_back();
-  } else {
+  if (size_t(transient_descriptor_layout) >= size_t(SingleTransientDescriptorLayout::kCount))
+    return VK_NULL_HANDLE;
+  xe_descriptor_reuse& reuse = single_transient_descriptors_[size_t(transient_descriptor_layout)];
+  xe_descriptor_reuse_node* lease = xe_descriptor_reuse_acquire(&reuse, frame_current_);
+  if (!lease) return VK_NULL_HANDLE;
+  xe_descriptor_reuse_scope lease_scope(&reuse);
+  descriptor_set = (VkDescriptorSet)lease->handle;
+  if (descriptor_set == VK_NULL_HANDLE) {
     const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
     const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
     const VkDevice device = vulkan_device->device();
@@ -3065,14 +3073,13 @@ VkDescriptorSet VulkanCommandProcessor::AllocateSingleTransientDescriptor(
         GetSingleTransientDescriptorLayout(transient_descriptor_layout),
         descriptor_counts, descriptor_count_count);
     if (descriptor_set == VK_NULL_HANDLE) {
-      return VK_NULL_HANDLE;
+      xe_descriptor_reuse_cancel(&reuse); return VK_NULL_HANDLE;
     }
+    lease->handle = (uint64_t)descriptor_set;
   }
-  UsedSingleTransientDescriptor used_descriptor;
-  used_descriptor.frame = frame_current_;
-  used_descriptor.layout = transient_descriptor_layout;
-  used_descriptor.set = descriptor_set;
-  single_transient_descriptors_used_.emplace_back(used_descriptor);
+  if (!xe_descriptor_reuse_commit(&reuse)) {
+    xe_descriptor_reuse_cancel(&reuse); return VK_NULL_HANDLE;
+  }
   return descriptor_set;
 }
 
@@ -5514,27 +5521,9 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     // FIXME(Triang3l): This will result in a memory leak if the guest is not
     // presenting.
     uniform_buffer_pool_->Reclaim(frame_completed_);
-    while (!single_transient_descriptors_used_.empty()) {
-      const UsedSingleTransientDescriptor& used_transient_descriptor =
-          single_transient_descriptors_used_.front();
-      if (used_transient_descriptor.frame > frame_completed_) {
-        break;
-      }
-      single_transient_descriptors_free_[size_t(
-                                             used_transient_descriptor.layout)]
-          .push_back(used_transient_descriptor.set);
-      single_transient_descriptors_used_.pop_front();
-    }
-    while (!constants_transient_descriptors_used_.empty()) {
-      const std::pair<uint64_t, VkDescriptorSet>& used_transient_descriptor =
-          constants_transient_descriptors_used_.front();
-      if (used_transient_descriptor.first > frame_completed_) {
-        break;
-      }
-      constants_transient_descriptors_free_.push_back(
-          used_transient_descriptor.second);
-      constants_transient_descriptors_used_.pop_front();
-    }
+    for (auto& pool : single_transient_descriptors_)
+      xe_descriptor_reuse_collect(&pool, frame_completed_);
+    xe_descriptor_reuse_collect(&constants_transient_descriptors_, frame_completed_);
     while (!texture_transient_descriptor_sets_used_.empty()) {
       const UsedTextureTransientDescriptorSet& used_transient_descriptor_set =
           texture_transient_descriptor_sets_used_.front();
@@ -5920,17 +5909,14 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
 }
 
 void VulkanCommandProcessor::ClearTransientDescriptorPools() {
+  if (constants_transient_descriptors_.leased) return;
+  for (const auto& pool : single_transient_descriptors_) if (pool.leased) return;
   texture_transient_descriptor_sets_free_.clear();
   texture_transient_descriptor_sets_used_.clear();
   transient_descriptor_allocator_textures_.Reset();
 
-  constants_transient_descriptors_free_.clear();
-  constants_transient_descriptors_used_.clear();
-  for (std::vector<VkDescriptorSet>& transient_descriptors_free :
-       single_transient_descriptors_free_) {
-    transient_descriptors_free.clear();
-  }
-  single_transient_descriptors_used_.clear();
+  xe_descriptor_reuse_reset(&constants_transient_descriptors_);
+  for (auto& pool : single_transient_descriptors_) xe_descriptor_reuse_reset(&pool);
   transient_descriptor_allocator_storage_buffer_.Reset();
   transient_descriptor_allocator_storage_buffer_and_image_.Reset();
   transient_descriptor_allocator_uniform_buffer_.Reset();
@@ -6992,10 +6978,12 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   if (!(current_graphics_descriptor_set_values_up_to_date_ &
         (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetConstants))) {
     VkDescriptorSet constants_descriptor_set;
-    if (!constants_transient_descriptors_free_.empty()) {
-      constants_descriptor_set = constants_transient_descriptors_free_.back();
-      constants_transient_descriptors_free_.pop_back();
-    } else {
+    xe_descriptor_reuse_node* lease =
+        xe_descriptor_reuse_acquire(&constants_transient_descriptors_, frame_current_);
+    if (!lease) return false;
+    xe_descriptor_reuse_scope lease_scope(&constants_transient_descriptors_);
+    constants_descriptor_set = (VkDescriptorSet)lease->handle;
+    if (constants_descriptor_set == VK_NULL_HANDLE) {
       VkDescriptorPoolSize constants_descriptor_count;
       constants_descriptor_count.type =
           VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
@@ -7005,11 +6993,13 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
           transient_descriptor_allocator_uniform_buffer_.Allocate(
               descriptor_set_layout_constants_, &constants_descriptor_count, 1);
       if (constants_descriptor_set == VK_NULL_HANDLE) {
-        return false;
+        xe_descriptor_reuse_cancel(&constants_transient_descriptors_); return false;
       }
+      lease->handle = (uint64_t)constants_descriptor_set;
     }
-    constants_transient_descriptors_used_.emplace_back(
-        frame_current_, constants_descriptor_set);
+    if (!xe_descriptor_reuse_commit(&constants_transient_descriptors_)) {
+      xe_descriptor_reuse_cancel(&constants_transient_descriptors_); return false;
+    }
     // Consecutive bindings updated via a single VkWriteDescriptorSet must have
     // identical stage flags, but for the constants they vary.
     for (uint32_t i = 0; i < SpirvShaderTranslator::kConstantBufferCount; ++i) {

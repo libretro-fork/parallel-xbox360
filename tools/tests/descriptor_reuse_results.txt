@@ -1,0 +1,75 @@
+Stable Vulkan descriptor reuse records
+======================================
+
+Single-layout and constants descriptor metadata now uses a C89 single-owner
+paged store. Each handle stays in one stable node. A pending FIFO preserves its
+usage frame; completed nodes move by relinking to the same per-layout free LIFO
+order as the old deque-to-vector path. Collection receives frame_completed_ at
+the existing NewFrame point. No queue wait, completion threshold or GPU lifetime
+boundary changes. The C owner never destroys a Vulkan descriptor or pool.
+
+Reserve a CPU lease before requesting any native descriptor. Failed CPU growth
+cannot strand a newly allocated GPU handle. Native allocation failure cancels
+the lease; a thin C++ scope guard also cancels on existing allocator exceptions.
+Commit is allocation-free. Single-layout enum bounds are checked before indexing.
+
+Three pools (two single layouts and constants) each warm a 128-node metadata
+page in SetupContext. A page is an allocation granule, not a handle-count cap.
+New demand grows with nonmoving pages; normal recycling does not allocate.
+Reset at the existing native-pool reset boundary retains CPU pages, clears
+queue roots/cursor and invalidates handles lazily when virgin nodes are leased.
+It does not clear or copy capacity-sized arrays. A live lease prevents reset;
+the command processor preflights all three owners before any native pool reset.
+Only final owner destruction frees CPU pages. Native pool ownership is unchanged.
+
+Three free vectors, two used deques and the copied used-descriptor struct are
+removed. Texture-layout-keyed descriptor containers remain a separate path.
+D3D12 uses different descriptor-heap/query/resource queues; no matching Vulkan
+set reuse queues were changed in D3D12. Both renderer units still compile.
+
+Validation:
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror, ASan/UBSan C storage tests.
+- Native MSVC /TC /W4 /WX C tests and native C++ reference; actual Vulkan/D3D12
+  command-processor translation units compile. Full Windows static Make -j5.
+- C fixture: 1.28M leases with frame thresholds, exact LIFO order, failed warm/
+  page growth, stable old nodes after growth, canceled/zero native handles,
+  rejected backward frame/second lease/reset with lease, repeated destroy and
+  zero metadata allocations after capacity warm-up, including repeated resets.
+- Sanitized differential reference: 320,000 events match the old single-layout
+  deque/free vectors and constants deque/vector. Simulated native failures,
+  actual C++ exception cleanup, frame delay, per-layout native IDs and ten pool
+  resets agree. Pointer and integer Vulkan descriptor handle forms pass.
+- Prior CPU GPU-retirement fixture (200,000 lifetime/order/backpressure cases)
+  passes under sanitizers. No actual GPU/device/post-unload harness is launched.
+
+Offline CPU measurements (instrumented allocation counts, no sanitizers):
+32M leases, 64 per frame, two frames pending, three pools, 1000 warm-up frames;
+median of three std::clock measurements on this machine, same workload checksum.
+
+Compiler/host              Legacy ms    C89 ms    Ratio   Timed metadata allocs
+GCC 13.3 / WSL Linux -O3     78.037     60.011    1.30x   1,351,935 -> 0
+MinGW 16.2 / Windows -O3     95.000     60.000    1.58x   1,351,935 -> 0
+MSVC x64 / Windows /O2      132.000     69.000    1.91x           0 -> 0
+
+MSVC's legacy containers already reuse their warmed blocks; its measured CPU
+improvement is not an allocation-count reduction. Counting allocator hooks add
+instrumentation to allocation events; these microbenchmarks are not an actual
+renderer trace, hardware cycle limit or prediction of game FPS/latency.
+
+Limits:
+This pool is owned by one command processor; it is not a concurrent MPMC queue.
+Completed-frame correctness still depends on the backend's existing GPU fence
+tracking. No driver, JIT, frontend or game is launched. Actual GPU rendering and
+post-unload validation remain unrun under the no-launch restriction.
+Warmed capacity is retained (including across explicit cache clears); this can
+retain more idle CPU metadata than a cleared deque, trading memory for avoiding
+repeated heap calls. On the tested 64-bit ABI each 128-node page is about 3 KiB.
+New high-water demand still allocates metadata and native descriptor creation
+still allocates as before. No whole-core allocation-free/RSS/FPS claim.
+Shutdown ordering, audio timing and frontend pacing are unchanged.
+
+Reproduce run_descriptor_reuse_tests.sh, run_descriptor_reuse_bridge_tests.sh
+(sanitizers default) and run_descriptor_reuse_bench.sh, all under tools/tests.
+The matching leaf .cmd works in an x64 MSVC tools prompt. MSVC benchmark command:
+cl /O2 /EHsc /std:c++20 /Ilibretro /Ithird_party/libretro-common/include
+  tools/tests/core_descriptor_reuse_bench.cc

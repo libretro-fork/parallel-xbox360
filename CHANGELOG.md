@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan single-layout and constant descriptor reuse replaces three free-list vectors and two pending deques with stable C89 records. Pending handles become reusable only after the existing completed-frame check; context setup warms metadata and pool resets retain its capacity. Native allocation failures and C++ exceptions release metadata leases safely. CPU metadata benchmarks improve on tested GCC/MinGW/MSVC builds; no gameplay speedup is claimed.
+
 - Vulkan descriptor image scratch now uses checked C89 storage and fills final Vulkan records once, preserving every API field while removing the vector and redundant initialization stores. Both renderers publish resolve-submission indices through libretro-common release/acquire operations without changing GPU completion waits. D3D12's one-shot PIX capture flag also uses common atomics. Storage growth still allocates; CPU fixtures and builds do not certify gameplay performance.
 
 - Vulkan draw sampler snapshots now use reusable C89 storage with an index-only commit, removing four vectors and full-list snapshot copies. Overflow retries and repeated binding updates retain current records; texture-cache sampler ownership is unchanged. Async publication cannot expose more sampler descriptors than were collected for the draw. Removed two unused D3D12 sampler vectors. New high-water peaks still allocate; no gameplay performance gain is claimed.

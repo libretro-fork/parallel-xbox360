@@ -28,6 +28,7 @@
 
 #include "libretro/core_sampler_scratch.h"
 #include "libretro/core_descriptor_scratch.h"
+#include "libretro/core_descriptor_reuse.h"
 #include "libretro/core_submission_counter.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/hash.h"
@@ -492,13 +493,7 @@ class VulkanCommandProcessor final : public CommandProcessor {
     VkDescriptorSetLayout descriptor_set_layout_textures_pixel_ref_;
   };
 
-  struct UsedSingleTransientDescriptor {
-    uint64_t frame;
-    SingleTransientDescriptorLayout layout;
-    VkDescriptorSet set;
-  };
-
-  struct UsedTextureTransientDescriptorSet {
+struct UsedTextureTransientDescriptorSet {
     uint64_t frame;
     TextureDescriptorSetLayoutKey layout;
     VkDescriptorSet set;
@@ -788,15 +783,8 @@ class VulkanCommandProcessor final : public CommandProcessor {
       transient_descriptor_allocator_storage_buffer_;
   ui::vulkan::LinkedTypeDescriptorSetAllocator
       transient_descriptor_allocator_storage_buffer_and_image_;
-  std::deque<UsedSingleTransientDescriptor> single_transient_descriptors_used_;
-  std::array<std::vector<VkDescriptorSet>,
-             size_t(SingleTransientDescriptorLayout::kCount)>
-      single_transient_descriptors_free_;
-  // <Usage frame, set>.
-  std::deque<std::pair<uint64_t, VkDescriptorSet>>
-      constants_transient_descriptors_used_;
-  std::vector<VkDescriptorSet> constants_transient_descriptors_free_;
-
+  xe_descriptor_reuse single_transient_descriptors_[size_t(SingleTransientDescriptorLayout::kCount)]{};
+  xe_descriptor_reuse constants_transient_descriptors_{};
   ui::vulkan::LinkedTypeDescriptorSetAllocator
       transient_descriptor_allocator_textures_;
   std::deque<UsedTextureTransientDescriptorSet>
