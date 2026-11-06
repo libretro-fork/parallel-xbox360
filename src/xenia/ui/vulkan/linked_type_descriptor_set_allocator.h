@@ -13,7 +13,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
-#include <memory>
+#include <iterator>
+#include <utility>
 #include <new>
 
 #include "xenia/base/assert.h"
@@ -75,7 +76,8 @@ class LinkedTypeDescriptorSetAllocator {
       }
     }
 #endif
-    if (!xe_vk_pool_owner_warm(&pool_owner_)) throw std::bad_alloc();
+    if (!xe_vk_pool_owner_configure(&pool_owner_, descriptor_size_count) ||
+        !xe_vk_pool_owner_warm(&pool_owner_)) throw std::bad_alloc();
   }
   LinkedTypeDescriptorSetAllocator(
       const LinkedTypeDescriptorSetAllocator& allocator) = delete;
@@ -92,7 +94,7 @@ class LinkedTypeDescriptorSetAllocator {
  private:
   struct Page {
     VkDescriptorPool pool;
-    std::unique_ptr<VkDescriptorPoolSize[]> descriptors_remaining;
+    VkDescriptorPoolSize* descriptors_remaining;
     uint32_t descriptor_sets_remaining;
   };
 

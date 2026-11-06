@@ -1,0 +1,54 @@
+Vulkan descriptor counters in retained C89 ownership pages (0120)
+===============================================================
+
+The per-pool unique_ptr<VkDescriptorPoolSize[]> has been removed. An ownership
+page now has checked trailing storage for 64 native-pool counter spans. The
+constructor configures its descriptor-type count before warming pages. There is
+no fixed two-type limit: tests exercise three and seventeen types and reject
+size overflow/reconfiguration after allocation. Each span is borrowed by the
+existing latest/usable search metadata and remains stable when maps move pages.
+
+All counter values are initialized from the static type table before use for a
+new pool. Reset rewinds retained storage without clearing unused counters; the
+next lease initializes its own span. Dedicated/full pools need no active count
+view, but their CPU span capacity stays retained. No separate per-pool count
+allocation, ownership transfer, destructor or array free remains. Both the native
+pool owner and counter storage are reserved before native creation, keeping the
+previous failure-safe ownership fix. Native destruction and GPU completion
+boundaries, allocation sizes and latest/map selection policy are unchanged.
+
+Evidence:
+- Paired fixture compiles the previous 349a0b5e4 allocator header/source and the
+  current allocator against the same fake Vulkan device/logging dispatch. The
+  extracted old source blobs were checked against Git. The 1,500-request,
+  three-reset workload includes dedicated pools, asymmetric image/sampler
+  counts, latest/map reuse, native allocation failures and native create errors.
+- Both emit native trace 1aed303f01c48a25: 970 create calls, 1,478 set-allocation
+  calls, 1,267 successful sets. The fixture now asserts this reference trace.
+- GCC C++ allocations: 1,389 -> 584. MSVC: 1,390 -> 585. This removes 805 count
+  array allocations in that workload, not all allocator heap traffic. The usable
+  multimap still allocates. No time/FPS improvement is claimed from counts alone.
+- GCC ASan/UBSan and MSVC real-allocator fake-dispatch tests sweep every remaining
+  C++ allocation-failure point and all 233 logger failures; every native pool
+  created successfully is destroyed exactly once. Pointer/integer Vulkan forms.
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror and MSVC /TC /W4 /WX leaf tests
+  check 257,000 retained record lifetimes, counter writes across page growth,
+  stable old spans, three/seventeen types, checked sizing, failed warm/growth,
+  lease/reset gates, cancellation, balanced frees and no metadata allocations
+  after warming the tested high-water capacity.
+- Native MSVC production allocator and Vulkan command processor compile; full
+  Windows static Make -j5 passes. No device, frontend, game or JIT is launched.
+  Actual rendering/post-unload GPU validation and gameplay timings remain unrun.
+
+Storage tradeoff:
+On tested x64, the counter page request is 520 + 64*type_count*8 bytes. Warming
+all four core allocators reserves 3,072 more bytes of counters than the previous
+ownership-only pages, plus two extra size_t fields per owner. Counter capacity
+for full pools remains until owner destruction, trading retained storage for
+allocation reuse across explicit pool resets. This is not a measured RSS saving.
+New high-water pages and native descriptor pools can still allocate mid-game.
+
+Reproduce tools/tests/run_vk_pool_owner_tests.sh or the matching .cmd. The C89
+owner supports an optional zero-counter registry; the core configures real type
+counts. Configure only before the first page; destroy/reset ownership rules still
+apply. See vk_pool_owner_results.txt for the original native-pool leak regression.

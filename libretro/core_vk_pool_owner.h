@@ -19,9 +19,19 @@ typedef struct xe_vk_pool_page {
 } xe_vk_pool_page;
 typedef struct xe_vk_pool_owner {
   xe_vk_pool_page *pages, *last, *cursor;
-  size_t next_slot, count;
+  size_t next_slot, count, type_count, page_bytes;
   xe_vk_pool_record *leased;
 } xe_vk_pool_owner;
+/* Optional trailing counters are configured once, before warming any pages.
+ * No fixed descriptor-type cap: checked size arithmetic defines capacity. */
+static INLINE int xe_vk_pool_owner_configure(xe_vk_pool_owner *s, size_t types) {
+  if (s->pages || s->leased || s->count) return 0;
+  if (types > (((size_t)-1 - sizeof(xe_vk_pool_page)) /
+      sizeof(VkDescriptorPoolSize)) / XE_POOL_OWNER_SLOTS) return 0;
+  s->type_count = types;
+  s->page_bytes = sizeof(xe_vk_pool_page) + types * XE_POOL_OWNER_SLOTS * sizeof(VkDescriptorPoolSize);
+  return 1;
+}
 static INLINE xe_vk_pool_record *xe_vk_pool_owner_acquire(xe_vk_pool_owner *s) {
   xe_vk_pool_page *page;
   xe_vk_pool_record *record;
@@ -30,7 +40,7 @@ static INLINE xe_vk_pool_record *xe_vk_pool_owner_acquire(xe_vk_pool_owner *s) {
   page = s->cursor; slot = s->next_slot;
   if (page && slot == XE_POOL_OWNER_SLOTS) { page = page->next; slot = 0; }
   if (!page) {
-    page = (xe_vk_pool_page *)XE_POOL_OWNER_ALLOC(sizeof(*page));
+    page = (xe_vk_pool_page *)XE_POOL_OWNER_ALLOC(s->page_bytes ? s->page_bytes : sizeof(*page));
     if (!page) return NULL;
     page->next = NULL;
     if (s->last) s->last->next = page;
@@ -40,6 +50,12 @@ static INLINE xe_vk_pool_record *xe_vk_pool_owner_acquire(xe_vk_pool_owner *s) {
   record = page->records + slot;
   s->cursor = page; s->next_slot = slot;
   record->pool = VK_NULL_HANDLE; s->leased = record; return record;
+}
+/* The leased slot's counter view never moves. The owner retains its page.
+ * Caller initializes every counter before first use after acquire/reset. */
+static INLINE VkDescriptorPoolSize *xe_vk_pool_owner_counts(xe_vk_pool_owner *s) {
+  if (!s->leased || !s->type_count) return NULL;
+  return (VkDescriptorPoolSize *)(s->cursor + 1) + s->next_slot * s->type_count;
 }
 static INLINE int xe_vk_pool_owner_commit(xe_vk_pool_owner *s) {
   if (!s->leased || s->leased->pool == VK_NULL_HANDLE) return 0;

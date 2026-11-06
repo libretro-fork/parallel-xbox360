@@ -22,7 +22,7 @@ void LinkedTypeDescriptorSetAllocator::Reset() {
   const VkDevice device = vulkan_device_->device();
   xe_vk_pool_owner_reset(&pool_owner_, device, dfn.vkDestroyDescriptorPool);
   page_usable_latest_.pool = VK_NULL_HANDLE;
-  page_usable_latest_.descriptors_remaining.reset();
+  page_usable_latest_.descriptors_remaining = nullptr;
   pages_usable_.clear();
 }
 
@@ -164,7 +164,7 @@ VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
       }
       if (latest_page_becomes_full) {
         page_usable_latest_.pool = VK_NULL_HANDLE;
-        page_usable_latest_.descriptors_remaining.reset();
+        page_usable_latest_.descriptors_remaining = nullptr;
       } else {
         --page_usable_latest_.descriptor_sets_remaining;
         for (uint32_t i = 0; i < descriptor_type_count; ++i) {
@@ -262,7 +262,7 @@ VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
       map_page_becomes_full = true;
     }
     if (map_page_becomes_full) {
-      map_page.descriptors_remaining.reset();
+      map_page.descriptors_remaining = nullptr;
     } else {
       --map_page.descriptor_sets_remaining;
       for (uint32_t i = 0; i < descriptor_type_count; ++i) {
@@ -342,11 +342,10 @@ VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
     new_descriptor_pool_create_info.poolSizeCount = descriptor_pool_size_count_;
     new_descriptor_pool_create_info.pPoolSizes = descriptor_pool_sizes_;
   }
-  // All throwing per-page count storage is acquired before native creation.
-  std::unique_ptr<VkDescriptorPoolSize[]> new_remaining;
-  if (!new_page_becomes_full) new_remaining.reset(new VkDescriptorPoolSize[descriptor_pool_size_count_]);
+  // Ownership and remaining counts share retained nonmoving C89 pages.
   xe_vk_pool_record* owner = xe_vk_pool_owner_acquire(&pool_owner_);
   if (!owner) throw std::bad_alloc();
+  VkDescriptorPoolSize* new_remaining = xe_vk_pool_owner_counts(&pool_owner_);
   VkDescriptorPool new_descriptor_pool;
   if (dfn.vkCreateDescriptorPool(device, &new_descriptor_pool_create_info,
                                  nullptr, &new_descriptor_pool) != VK_SUCCESS) {
@@ -383,7 +382,7 @@ VkDescriptorSet LinkedTypeDescriptorSetAllocator::Allocate(
                             std::move(page_usable_latest_));
     }
     page_usable_latest_.pool = new_descriptor_pool;
-    page_usable_latest_.descriptors_remaining = std::move(new_remaining);
+    page_usable_latest_.descriptors_remaining = new_remaining;
     for (uint32_t i = 0; i < descriptor_pool_size_count_; ++i) {
       const VkDescriptorPoolSize& descriptor_pool_size_for_type =
           descriptor_pool_sizes_[i];
