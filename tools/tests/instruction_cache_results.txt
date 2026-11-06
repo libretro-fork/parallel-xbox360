@@ -1,0 +1,71 @@
+Mapped instruction flags: bounds and native common VFS preparation
+===============================================================
+
+The old module lookup allowed guest_addr == high_address_ and the mapped-cache
+lookup never checked its length. That could expose a word past the mapping.
+The replacement checks the exclusive module range and complete mapped word;
+unloaded modules and misaligned backing pointers return no slot. Byte offsets
+still select their containing four-byte instruction, preserving old semantics.
+64-bit checked geometry prevents rounding/header arithmetic overflow.
+
+Initialization uses libretro-common native VFS mkdir/stat/open/size/read/truncate/
+close rather than std::filesystem I/O. This deliberately stays native because
+MappedMemory::Open maps a native pathname. It must not prepare an arbitrary
+frontend-VFS object and then map a different native file with the same name.
+Paths are checked into fixed scratch without truncation; the core's cache root
+already exists. The existing native MappedMemory owner/API is retained.
+
+Valid exact-size/version files preserve their bytes. Invalid geometry/version
+causes checked truncate-to-zero then extension, or just extension for an empty
+file. The owned native backend uses ftruncate or _chsize[_s], which zero the
+extension on supported hosts. This does NOT assume that arbitrary frontend VFS
+truncate padding is zero (libretro explicitly leaves that unspecified).
+Only the 256-byte header is initialized through the final mapping: no whole-file
+read, staging copy, payload zero pass, or eager touching of every mapped page.
+The host-endian version-4 header/flag layout remains compatible. Version changes
+are published on this load, avoiding the old repeated version-repair path.
+
+Native extension contracts:
+https://pubs.opengroup.org/onlinepubs/9699919799/functions/ftruncate.html
+https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/chsize-s
+https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/chsize
+
+Read failures and bogus transfer counts do not authorize erasing an existing
+cache. Short reads/EINTR complete the four-byte header read; resize and close
+failures prevent publication. Geometry/version-invalid files may already be
+modified when a later operation fails: repair is not transactional. Optional
+cache failure does not fail guest loading. Initialization is before compiled
+code can borrow pointers; existing module shutdown/mapping lifetime is retained.
+Removed unused unbounded header-slot accessors, stored temporary opener lambda
+and the never-called PrecompileKnownFunctions helper; active precompilation stays.
+
+Coverage:
+- GCC strict C89 -pedantic -Wall -Wextra -Werror, Linux ASan/UBSan.
+- Native MSVC /TC /W4 /WX C leaf/full-fixture compilation and leaf execution;
+  actual XexModule and C++ mapping bridge compile with MSVC.
+- Real native common VFS missing/valid/wrong-version/wrong-size cache cases;
+  stale tail flags become zero on invalid-cache reset. Valid file preparation
+  performs no truncate. Header publication does not touch payload canaries.
+- Injected existing-open, size, read, zero-read, over-read, resize and close
+  failures; interrupted one-byte header reads. No truncation after read errors.
+- Code range endpoints, byte rounding, tiny/truncated maps, unaligned maps,
+  overflow-size offsets, bounded paths and invalid key/path rejection.
+- CPU-only real XexModule Load/GetInstructionAddressFlags/Unload with a real
+  native writable MappedMemory, actual retro_atomic flag updates, close/reopen
+  persistence and unchanged version accepted. Both actual map lookup and module
+  endpoint/unload guards run. Private range/cache state is set using explicit
+  template-instantiation member access; production interface has no test hook.
+- Full Windows Make -j5 build/link and prior PE/XEX/delta fixtures.
+
+Limits:
+No new writable-mapping frontend API is supplied: generic frontend VFS writable
+mapping and further migration of MappedMemory remain work. No cache slurp fallback
+is introduced. Native files outside the supported truncate capabilities disable
+this optional cache. Other mapped-cache bitfield reads, all CPU cache concurrency
+and module/heap ownership are not certified by these bounds tests.
+Actual core bridge is unsanitized; C algorithms/native-file faults are sanitized.
+No title, JIT, GPU or frontend launch, measured FPS/RSS claim or audio changes.
+
+Reproduce tools/tests/run_instruction_cache_tests.sh (sanitizers default), or
+tools\tests\run_instruction_cache_tests.cmd in a Visual Studio x64 tools prompt.
+After building core objects: tools/tests/run_instruction_cache_bridge_tests.sh.

@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Instruction-cache preparation now uses checked libretro-common native VFS operations instead of std::filesystem I/O. Valid caches keep their flags; invalid sizes/versions rebuild zero backing, with only the fixed header touched after mapping. Failed reads do not authorize repair, and file errors disable this optional cache. Lookups reject the exclusive code endpoint, truncated words and unloaded modules. Writable flags remain mapped without a staging copy; no gameplay speedup is claimed.
+
 - PE section discovery now checks DOS/NT/optional headers, complete table bounds and resident section spans using byte reads. Reusable C89 storage replaces the section vector and preserves owned snapshots across guest header changes. Repeated parsing reuses capacity, malformed input publishes no sections, and unload hides old records. Failed PE continuations remain failures on retry, and empty executable ranges skip preanalysis before reserve-size underflow. Imports and other PE directories remain separate work.
 
 - XEX delta patches now use bounded borrowed packet spans and verify the complete image hash chain before relocating or modifying the guest image. Invalid ranges and truncated blocks return errors. Encrypted patch scratch avoids zero-initialization immediately overwritten by decryption; synchronous LZX calls remove three wrapper allocations. Real synthetic plaintext/encrypted patches and normal compressed-image loading are checked offline. Decoder allocations remain, and patch application is not fully transactional.

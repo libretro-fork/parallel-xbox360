@@ -17,6 +17,7 @@
 #include "libretro/core_byte_storage.h"
 #include "libretro/core_xex_image.h"
 #include "libretro/core_pe_image.h"
+#include "libretro/core_instruction_cache.h"
 #include "xenia/base/mapped_memory.h"
 #include "xenia/cpu/module.h"
 #include "xenia/kernel/util/xex2_info.h"
@@ -70,9 +71,6 @@ struct XexInfoCache {
 
     unsigned char reserved[252];
 
-    InfoCacheFlags* LookupFlags(unsigned offset) {
-      return &reinterpret_cast<InfoCacheFlags*>(&this[1])[offset];
-    }
   };
   /*
         for every 4-byte aligned address, records a 4 byte set of flags.
@@ -80,29 +78,10 @@ struct XexInfoCache {
   std::unique_ptr<MappedMemory> executable_addr_flags_;
 
   void Init(class XexModule*);
-  InfoCacheFlagsHeader* GetHeader() {
-    if (!executable_addr_flags_) {
-      return nullptr;
-    }
-    uint8_t* data = executable_addr_flags_->data();
-
-    if (!data) {
-      return nullptr;
-    }
-    return reinterpret_cast<InfoCacheFlagsHeader*>(data);
-  }
-
   InfoCacheFlags* LookupFlags(unsigned offset) {
-    offset /= 4;
-    if (!executable_addr_flags_) {
-      return nullptr;
-    }
-    uint8_t* data = executable_addr_flags_->data();
-
-    if (!data) {
-      return nullptr;
-    }
-    return reinterpret_cast<InfoCacheFlagsHeader*>(data)->LookupFlags(offset);
+    if (!executable_addr_flags_) return nullptr;
+    return reinterpret_cast<InfoCacheFlags*>(xe_ic_slot(executable_addr_flags_->data(),
+        executable_addr_flags_->size(), offset));
   }
 };
 
@@ -265,7 +244,6 @@ class XexModule : public xe::cpu::Module {
   std::unique_ptr<Function> CreateFunction(uint32_t address) override;
 
  private:
-  void PrecompileKnownFunctions();
   std::vector<uint32_t> FindStaticInitializers() const;
   bool IsCodeAddress(uint32_t address) const {
     return !(address & 3) && address >= low_address_ && address < high_address_;

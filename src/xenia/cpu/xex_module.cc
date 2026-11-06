@@ -20,6 +20,7 @@
 #include "third_party/fmt/include/fmt/format.h"
 
 #include "xenia/base/byte_order.h"
+#include "xenia/base/filesystem.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
@@ -1223,70 +1224,31 @@ std::unique_ptr<Function> XexModule::CreateFunction(uint32_t address) {
       processor_->backend()->CreateGuestFunction(this, address));
 }
 void XexInfoCache::Init(XexModule* xexmod) {
-  // If context promotion is disabled then disable instruction info cache as
-  // well, otherwise XMA will write to unknown registers.
-  if (cvars::disable_instruction_infocache ||
-      cvars::disable_context_promotion) {
-    return;
-  }
-
-  auto emu = xexmod->kernel_state_->emulator();
-  std::filesystem::path infocache_path = emu->cache_root();
-
-  infocache_path.append(L"modules");
-
-  infocache_path.append(xexmod->image_sha_str_);
-
-  std::filesystem::create_directories(infocache_path);
-  infocache_path.append("executable_addr_flags.bin");
-
-  unsigned num_codebytes = xexmod->high_address_ - xexmod->low_address_;
-  num_codebytes += 3;  // round up to nearest multiple of 4
-  num_codebytes &= ~3;
-
-  auto try_open = [this, &infocache_path, num_codebytes]() {
-    bool did_exist = true;
-    const size_t file_size = sizeof(InfoCacheFlagsHeader) +
-                             (sizeof(InfoCacheFlags) * (num_codebytes / 4));
-
-    if (!std::filesystem::exists(infocache_path)) {
-      xe::filesystem::CreateEmptyFile(infocache_path);
-      std::filesystem::resize_file(infocache_path, file_size);
-      did_exist = false;
-    }
-
-    // todo: prepopulate with stuff from pdata, dll exports
-    this->executable_addr_flags_ = MappedMemory::Open(
-        infocache_path, xe::MappedMemory::Mode::kReadWrite, 0,
-        file_size);  // one infocacheflags entry for each PPC instr-sized addr
-
-    return did_exist;
-  };
-
-  bool did_exist = try_open();
-  if (!GetHeader()) {
-    return;
-  }
-
-  if (!did_exist) {
-    GetHeader()->version = CURRENT_INFOCACHE_VERSION;
-
-  } else {
-    if (GetHeader()->version != CURRENT_INFOCACHE_VERSION) {
-      this->executable_addr_flags_->Close();
-      std::filesystem::remove(infocache_path);
-      try_open();
-    }
-  }
+  char path[4096];
+  size_t size;
+  int fresh;
+  uint32_t stored;
+  // Initialization runs before compiled code can borrow mapped flag addresses.
+  if (cvars::disable_instruction_infocache || cvars::disable_context_promotion) return;
+  executable_addr_flags_.reset();
+  if (!xexmod || !xexmod->kernel_state_ ||
+      !xe_ic_size(xexmod->low_address_, xexmod->high_address_, &size)) return;
+  const std::string root = xe::path_to_utf8(xexmod->kernel_state_->emulator()->cache_root());
+  if (!xe_ic_path(root.c_str(), xexmod->image_sha_str_.c_str(), path, sizeof(path)) ||
+      !xe_ic_prepare(path, size, CURRENT_INFOCACHE_VERSION, &fresh)) return;
+  auto mapping = MappedMemory::Open(xe::to_path(std::string_view(path)),
+      MappedMemory::Mode::kReadWrite, 0, size);
+  if (!mapping || !mapping->data() || mapping->size() != size ||
+      !xe_ic_slot(mapping->data(), size, 0)) return;
+  std::memcpy(&stored, mapping->data(), sizeof(stored));
+  if (!fresh && stored != CURRENT_INFOCACHE_VERSION) return;
+  if (fresh && !xe_ic_initialize(mapping->data(), size, CURRENT_INFOCACHE_VERSION)) return;
+  executable_addr_flags_ = std::move(mapping);
 }
 InfoCacheFlags* XexModule::GetInstructionAddressFlags(uint32_t guest_addr) {
-  if (guest_addr < low_address_ || guest_addr > high_address_) {
-    return nullptr;
-  }
-
-  guest_addr -= low_address_;
-
-  return info_cache_.LookupFlags(guest_addr);
+  uint32_t offset;
+  if (!loaded_ || !xe_ic_address(low_address_, high_address_, guest_addr, &offset)) return nullptr;
+  return info_cache_.LookupFlags(offset);
 }
 void XexModule::PrecompileDiscoveredFunctions() {
   if (!cvars::enable_early_precompilation) {
@@ -1305,29 +1267,6 @@ void XexModule::PrecompileDiscoveredFunctions() {
   XELOGI("Precompiled {} discovered functions in {} ms", compiled,
          elapsed.count());
 }
-void XexModule::PrecompileKnownFunctions() {
-  if (!cvars::enable_early_precompilation) {
-    return;
-  }
-  uint32_t start = 0;
-  uint32_t end = (high_address_ - low_address_) / 4;
-  auto flags = info_cache_.LookupFlags(0);
-  if (!flags) {
-    return;
-  }
-  // maybe should pre-acquire global crit?
-  for (uint32_t i = 0; i < end; i++) {
-    if (flags[i].was_resolved) {
-      uint32_t addr = low_address_ + (i * 4);
-      auto sym = processor_->LookupFunction(addr);
-
-      if (!sym || sym->status() != Symbol::Status::kDefined) {
-        processor_->ResolveFunction(addr);
-      }
-    }
-  }
-}
-
 static uint32_t GetBLCalledFunction(XexModule* xexmod, uint32_t current_base,
                                     ppc::PPCOpcodeBits wrd) {
   int32_t displ = static_cast<int32_t>(ppc::XEEXTS26(wrd.I.LI << 2));
