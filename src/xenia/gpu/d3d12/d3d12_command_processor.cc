@@ -4197,7 +4197,9 @@ bool D3D12CommandProcessor::UpdateBindingsNative(
   // SpirvShaderTranslator defines the layout). Serves both the host render
   // target and FSI paths. FSI EDRAM fields are filled below only when
   // edram_fsi.
-  SpirvShaderTranslator::SystemConstants sc;
+  SpirvShaderTranslator::SystemConstants& sc =
+      *static_cast<SpirvShaderTranslator::SystemConstants*>(
+          native_system_constants_state_.candidate);
   std::memset(&sc, 0, sizeof(sc));
   sc.zpd_fsi_counter_index = UINT32_MAX;
 
@@ -4443,13 +4445,10 @@ bool D3D12CommandProcessor::UpdateBindingsNative(
   // submission start. The address is cached in the binding. The float, bool and
   // fetch buffers hold raw guest register data, packed here directly.
 
-  // System constants are derived, not raw registers, so there is no per write
-  // invalidation. Compare against the last uploaded copy instead.
-  if (native_system_constants_shadow_.size() != sizeof(sc) ||
-      std::memcmp(native_system_constants_shadow_.data(), &sc, sizeof(sc)) != 0) {
-    native_system_constants_shadow_.assign(
-        reinterpret_cast<const uint8_t*>(&sc),
-        reinterpret_cast<const uint8_t*>(&sc) + sizeof(sc));
+  // Derived constants have no per-register invalidation. Compare cacheable CPU
+  // slots and commit the generated slot without copying a shadow. Failed GPU
+  // requests leave the binding invalid so identical later draws retry upload.
+  if (xe_snapshot_pair_commit(&native_system_constants_state_, sizeof(sc))) {
     cbuffer_binding_system_.up_to_date = false;
   }
   if (!cbuffer_binding_system_.up_to_date) {
@@ -4460,7 +4459,7 @@ bool D3D12CommandProcessor::UpdateBindingsNative(
     if (!mapping) {
       return false;
     }
-    std::memcpy(mapping, &sc, sizeof(sc));
+    std::memcpy(mapping, native_system_constants_state_.active, sizeof(sc));
     cbuffer_binding_system_.up_to_date = true;
     current_graphics_root_up_to_date_ &=
         ~(uint32_t(1) << kRootParameter_Native_SystemConstants);

@@ -14,6 +14,7 @@
 #include <array>
 #include "libretro/core_submission_counter.h"
 #include "libretro/core_memexport.h"
+#include "libretro/core_snapshot_pair.h"
 #include "libretro/core_descriptor_indices.h"
 #include <cstdint>
 #include <cstring>
@@ -41,6 +42,7 @@
 #include "xenia/gpu/d3d12/pipeline_cache.h"
 #include "xenia/gpu/draw_util.h"
 #include "xenia/gpu/registers.h"
+#include "xenia/gpu/spirv_shader_translator.h"
 #include "xenia/gpu/xenos.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
@@ -909,9 +911,11 @@ class D3D12CommandProcessor final : public CommandProcessor {
   ConstantBufferBinding cbuffer_binding_runtime_data_;
   ConstantBufferBinding cbuffer_binding_descriptor_indices_vertex_;
   ConstantBufferBinding cbuffer_binding_descriptor_indices_pixel_;
-  // Shadow of the last uploaded Native system constants, for the dirty compare.
-  // The derived system constants have no per register write invalidation.
-  std::vector<uint8_t> native_system_constants_shadow_;
+  // GPU-thread CPU snapshots, never borrowed UPLOAD mappings. Build into the
+  // inactive slot and swap pointers instead of copying a vector shadow.
+  SpirvShaderTranslator::SystemConstants native_system_constants_[2];
+  xe_snapshot_pair native_system_constants_state_ = {
+      &native_system_constants_[0], &native_system_constants_[1], 0};
   // Whether the vertex float constant buffer currently holds the full 256
   // float4 register file (for a ucode interpreter placeholder draw) rather than
   // the packed subset, so it is invalidated when switching between the two

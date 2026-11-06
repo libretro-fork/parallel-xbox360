@@ -1,0 +1,111 @@
+D3D12 derived-system-constant snapshots
+=====================================
+
+Runtime scope and ownership
+---------------------------
+D3D12 Native bindings generate the existing 688-byte SystemConstants directly
+into an inactive typed CPU slot. The C89 snapshot helper compares cacheable CPU
+slots and swaps their pointers when bytes change, replacing a vector shadow and
+its assign copy. Required zero-initialization, register/derived-field generation
+and shader layout are unchanged. Byte comparison preserves padding, signed zero
+and NaN bit-pattern behavior; no float comparison/quantization is introduced.
+
+Both slots belong to the GPU command processor. Its stable, noncopyable,
+nonmovable ownership is checked against the actual class at compile time.
+Pointers refer to live typed slots, not raw storage or a borrowed D3D UPLOAD
+mapping. Only the recording owner mutates them. Moving such an owner would
+require reinitializing the pair; current class ownership disallows that.
+
+Changed constants invalidate the existing GPU binding; unchanged constants do
+not. Frame-start invalidation still forces an upload even with identical data.
+The required memcpy into constant_buffer_pool_->Request output is preserved.
+A failed request leaves the binding invalid, even though the CPU snapshot has
+committed. An identical later draw therefore retries the GPU upload. Existing
+root dirtiness updates and Native tessellation/system bindings are unchanged.
+No GPU readback, synchronization, allocation, lock, logging, timer, audio or
+frame-pacing mechanism is added. Upload-pool/driver allocations still remain.
+
+Storage tradeoff
+----------------
+The old persistent payload was a vector control block plus 688 heap bytes,
+with another 688-byte local generation temporary. New persistent payload is
+two inline typed slots (1376 bytes) plus 24-byte pointer/valid state on tested
+x64 builds. It removes the heap allocation and local generation payload while
+retaining an additional 688 bytes of persistent CPU member storage after the
+old shadow would have allocated (excluding allocator overhead/class padding).
+No claim is made that compiler total stack frames or process RSS shrink.
+
+Validation
+----------
+- C89 state/reference fixture: 98,304 exact dirty decisions and modeled upload
+  sequences across 12 sizes (1..4096 including 688 bytes), poisoned first use,
+  unchanged snapshots, changed tails, frame invalidation, failed request followed
+  by identical retry, reset with poisoned data and balanced fixture teardown.
+- GCC 13.3 -std=c89 -pedantic -Wall -Wextra -Werror + ASan/UBSan passes.
+  MSVC 19.44 /TC /O2 /W4 /WX and MinGW GCC 16.2 C89 fixtures pass.
+- A thin MSVC boundary calls the C89 fixture with the actual SystemConstants
+  sizeof (688), verifies typed array stride and reports alignment (4 bytes).
+  A compile-only mode checks actual D3D12 processor copy/move traits. It is
+  deliberately not linked: that header also includes unrelated static emulator
+  initialization. No fake unconstructed command processor is used.
+- Actual D3D12 and Vulkan command processors, deferred/shared implementations
+  compile with MSVC. Prior command-page, upload, memexport, descriptor and
+  submission-ownership tests pass. Static Windows Make -j5 rebuild/link passes.
+- Tests model constant-upload memory with CPU byte arrays. The real register
+  generation path was source-audited/compiled, not driven by an emulator fixture.
+  No GPU device/driver/gameplay test, FPS, RSS or latency claim.
+
+Reproduction
+------------
+sh tools/tests/run_snapshot_pair_tests.sh
+Developer Command Prompt: tools\tests\run_snapshot_pair_tests.cmd
+Actual-layout/owner boundary uses the normal core include/define environment:
+  compile core_snapshot_pair_test.c as C with XE_SNAPSHOT_BRIDGE;
+  link that object with core_snapshot_pair_layout_test.cc as C++20;
+  separately compile the latter with XE_SNAPSHOT_OWNER_CHECK, without linking.
+
+Paired CPU benchmark:
+  g++ -std=c++20 -O2 -mavx -Wno-attributes -DFMT_HEADER_ONLY \
+    -DXENIA_LIBRETRO -DNDEBUG -I. -Isrc -Ilibretro -Ithird_party \
+    -Ithird_party/fmt/include -Ithird_party/libretro-common/include \
+    -Ithird_party/Vulkan-Headers/include -Ibuild/make/windows-x86_64/generated \
+    tools/tests/core_snapshot_pair_bench.cc -o snapshot-bench
+  ./snapshot-bench
+MSVC: /MD /O2 /EHsc /std:c++20 /arch:AVX with normal core includes/defines.
+Benchmark-only C++ uses the actual constant type, old vector assign and local
+payload versus typed inline slots, identical synthetic constant generation,
+byte compare and CPU upload copy. It does not reproduce register-cache lookup
+or native driver cost. Seven interleaved paired samples of 200,000 draws use
+noinline producer/consumer boundaries (GCC noipa), checksum and equal upload
+counts; frame invalidation every 257 draws. Timing is median ns/draw. Cold
+population is untimed; repeat loops assert no additional vector allocations.
+Shadow-copy byte counts accumulate all seven samples plus cold initialization.
+Host steady_clock is benchmark-only; no core clock is introduced.
+core_snapshot_pair_bench.cc
+MSVC 1944 /O2; actual SystemConstants 688 bytes, 7 interleaved samples x 200,000 draws, median; synthetic generation+dirty check+CPU upload copy; no D3D device
+unchanged: vector 19.88 ns/draw, pair 15.53 ns/draw (1.28x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 688/0, equal CPU upload copies 5454
+changed-every-draw: vector 24.36 ns/draw, pair 16.50 ns/draw (1.48x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 963200000/0, equal CPU upload copies 1400001
+changed-every-eight: vector 21.46 ns/draw, pair 17.65 ns/draw (1.22x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 120400000/0, equal CPU upload copies 179768
+changed-every-64: vector 20.09 ns/draw, pair 16.43 ns/draw (1.22x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 15050000/0, equal CPU upload copies 27238
+Requested persistent CPU snapshot payload: old vector 688, pair 1376 + state 24; old local temporary 688, pair no local payload
+
+GCC 16.2.0 -O2; actual SystemConstants 688 bytes, 7 interleaved samples x 200,000 draws, median; synthetic generation+dirty check+CPU upload copy; no D3D device
+unchanged: vector 15.66 ns/draw, pair 16.33 ns/draw (0.96x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 688/0, equal CPU upload copies 5454
+changed-every-draw: vector 17.39 ns/draw, pair 12.18 ns/draw (1.43x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 963200000/0, equal CPU upload copies 1400001
+changed-every-eight: vector 17.62 ns/draw, pair 17.13 ns/draw (1.03x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 120400000/0, equal CPU upload copies 179768
+changed-every-64: vector 16.28 ns/draw, pair 16.62 ns/draw (0.98x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 15050000/0, equal CPU upload copies 27238
+Requested persistent CPU snapshot payload: old vector 688, pair 1376 + state 24; old local temporary 688, pair no local payload
+
+GCC 13.3.0 -O2; actual SystemConstants 688 bytes, 7 interleaved samples x 200,000 draws, median; synthetic generation+dirty check+CPU upload copy; no D3D device
+unchanged: vector 17.23 ns/draw, pair 18.75 ns/draw (0.92x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 688/0, equal CPU upload copies 5454
+changed-every-draw: vector 27.02 ns/draw, pair 24.59 ns/draw (1.10x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 963200000/0, equal CPU upload copies 1400001
+changed-every-eight: vector 19.74 ns/draw, pair 20.82 ns/draw (0.95x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 120400000/0, equal CPU upload copies 179768
+changed-every-64: vector 17.61 ns/draw, pair 19.11 ns/draw (0.92x); cold shadow allocations 1/0, warm 0/0, shadow-copy bytes 15050000/0, equal CPU upload copies 27238
+Requested persistent CPU snapshot payload: old vector 688, pair 1376 + state 24; old local temporary 688, pair no local payload
+
+These CPU fixtures improve changed-every-draw cases, with small regressions in
+some rarely-changing GNU cases. Pointer swapping removes the earlier candidate
+index/stride calculation, but is not universally faster than stack generation.
+The unused index-based prototype is not shipped. The production benefit claimed
+is removal of a heap owner and changed-snapshot copies with exact behavior,
+not universal throughput improvement or elimination of all runtime allocation.

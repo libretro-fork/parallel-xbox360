@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- D3D12 derives system constants directly into two inline CPU snapshots and swaps pointers on change, removing its vector shadow and duplicate 688-byte copy. Frame invalidation, failed-upload retries and required GPU upload copies are preserved. This trades bounded extra CPU storage for no shadow allocation; changed-draw CPU fixtures improve, while some rarely-changing GCC cases are slightly slower. No gameplay gain is claimed.
+
 - Vulkan deferred recording now uses reusable C89 pages instead of a growing vector. This removes packet zero-filling and relocation copies during growth, keeps earlier argument views stable, and retains warmed storage across reset. Native command ordering is unchanged. CPU fixtures improve on MSVC, MinGW and GCC; page slack can increase retained memory and new peaks still allocate. GPU/gameplay performance remains unmeasured.
 
 - Memexport tracking now marks and clears bitmap words in C89 and borrows copy runs instead of allocating per-backend vectors. Vulkan counts runs with word operations and fills final native copy records directly, removing its intermediate region vector and memcpy. D3D12 emits runs in one pass. Exact copy/barrier bounds and existing fence/readback ordering are preserved; native command-storage growth still allocates at new peaks.
