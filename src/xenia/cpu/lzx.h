@@ -10,14 +10,8 @@
 #ifndef XENIA_CPU_LZX_H_
 #define XENIA_CPU_LZX_H_
 
-#include <string>
-#include <vector>
-
-#include "xenia/cpu/module.h"
-
-namespace xe {
-struct xex2_delta_patch;
-}  // namespace xe
+#include <stddef.h>
+#include <stdint.h>
 
 struct lzxd_stream;
 struct mspack_memory_file_t;
@@ -50,7 +44,7 @@ class LzxFrameDecoder {
   lzxd_stream* stream_ = nullptr;
 };
 
-int lzxdelta_apply_patch(xe::xex2_delta_patch* patch, size_t patch_len,
-                         uint32_t window_size, void* dest);
+int lzxdelta_apply_patch(const void* patch, size_t patch_len,
+                         uint32_t window_size, void* dest, size_t destination_size, size_t reference_size);
 
 #endif  // XENIA_CPU_LZX_H_

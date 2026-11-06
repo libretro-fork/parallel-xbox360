@@ -54,7 +54,7 @@ static void make_header(unsigned format) {
   put32(header + 64, fixed + 24);
   put32(header + 64 + fixed - 4, 1); put32(header + 64 + fixed, 0x11);
 }
-#ifdef XE_XEX_BRIDGE
+#if defined(XE_XEX_BRIDGE) || defined(XE_DELTA_FIXTURES)
 static uint8_t module_image[68000], expected_image[65536], lzx[65552];
 extern int xe_test_xex_module(const uint8_t *, size_t, const uint8_t *, size_t, int);
 extern int xe_test_xex_patch_without_descriptor(const uint8_t *, size_t);
@@ -105,6 +105,45 @@ static size_t make_module(unsigned compression, int encrypted_mode) {
     }
   }
   return 1024 + length;
+}
+#endif
+#ifdef XE_DELTA_FIXTURES
+static uint8_t delta_image[1200];
+void xe_test_prepare_delta(int encrypted, int corrupted, const uint8_t **base,
+    size_t *base_length, const uint8_t **delta, size_t *delta_length, const uint8_t **result) {
+  static const uint8_t session[16] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
+  uint8_t patch_key[16], iv[16], block[16];
+  u32 key_schedule[4 * (MAXNR + 1)];
+  size_t i, j, length = encrypted ? 64 : 60;
+  int rounds;
+  *base_length = make_module(0, 0); *base = module_image;
+  memcpy(delta_image, module_image, 1024); memset(delta_image + 1024, 0, 64);
+  put32(delta_image + 4, 0x10); put32(delta_image + 20, 2);
+  put32(delta_image + 32, 0x000005ffU); put32(delta_image + 36, 840);
+  put32(delta_image + 800, 36); delta_image[805] = (uint8_t)encrypted;
+  delta_image[807] = 3; put32(delta_image + 808, 32768);
+  put32(delta_image + 840, 88); put32(delta_image + 840 + 0x30, 1024);
+  put32(delta_image + 840 + 0x44, 65536);
+  for (i = 0; i < 16; ++i) patch_key[i] = (uint8_t)(32 + i);
+  rounds = rijndaelKeySetupEnc(key_schedule, session, 128);
+  rijndaelEncrypt(key_schedule, rounds, patch_key, delta_image + 64 + 0x150);
+  rijndaelEncrypt(key_schedule, rounds, session, delta_image + 840 + 0x20);
+  /* copy-overlap packet, zero packet, terminal packet, one hash block */
+  put32(delta_image + 1048, 128); put32(delta_image + 1052, 131);
+  delta_image[1057] = 31; delta_image[1059] = 1;
+  put32(delta_image + 1064, 400); delta_image[1069] = 7;
+  put32(delta_image + 812, 60); SHA1Digest(delta_image + 1024, 60, delta_image + 816);
+  if (encrypted) {
+    rounds = rijndaelKeySetupEnc(key_schedule, patch_key, 128); memset(iv, 0, 16);
+    for (i = 0; i < length; i += 16) {
+      for (j = 0; j < 16; ++j) block[j] = delta_image[1024 + i + j] ^ iv[j];
+      rijndaelEncrypt(key_schedule, rounds, block, delta_image + 1024 + i);
+      memcpy(iv, delta_image + 1024 + i, 16);
+    }
+  }
+  if (corrupted) delta_image[1050] ^= 1;
+  else { memmove(expected_image + 131, expected_image + 128, 31); memset(expected_image + 400, 0, 7); }
+  *delta = delta_image; *delta_length = 1024 + length; *result = expected_image;
 }
 #endif
 int main(void) {

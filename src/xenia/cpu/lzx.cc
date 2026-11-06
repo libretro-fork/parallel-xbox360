@@ -8,9 +8,10 @@
  */
 
 #include "xenia/cpu/lzx.h"
+#include "libretro/core_xex_delta.h"
 
-#include <algorithm>
 #include <climits>
+#include <cstdlib>
 #include <cstring>
 
 #include "xenia/base/byte_order.h"
@@ -23,7 +24,6 @@
 #include "third_party/mspack/mspack.h"
 
 typedef struct mspack_memory_file_t {
-  mspack_system sys;
   void* buffer;
   off_t buffer_size;
   off_t offset;
@@ -36,7 +36,7 @@ mspack_memory_file* mspack_memory_open(mspack_system* sys, void* buffer,
     return NULL;
   }
   auto memfile =
-      (mspack_memory_file*)std::calloc(1, sizeof(mspack_memory_file));
+      (mspack_memory_file*)std::malloc(sizeof(mspack_memory_file));
   if (!memfile) {
     return NULL;
   }
@@ -52,23 +52,28 @@ void mspack_memory_close(mspack_memory_file* file) {
 }
 
 int mspack_memory_read(mspack_file* file, void* buffer, int chars) {
-  auto memfile = (mspack_memory_file*)file;
-  const off_t remaining = memfile->buffer_size - memfile->offset;
-  const off_t total = std::min(static_cast<off_t>(chars), remaining);
-  std::memcpy(buffer, (uint8_t*)memfile->buffer + memfile->offset, total);
-  memfile->offset += total;
-  return (int)total;
+  mspack_memory_file* memfile = (mspack_memory_file*)file;
+  off_t remaining, total;
+  if (!memfile || chars < 0 || memfile->offset < 0 || memfile->offset > memfile->buffer_size) return -1;
+  remaining = memfile->buffer_size - memfile->offset;
+  if (!chars || !remaining) return 0;
+  if (!buffer || !memfile->buffer) return -1;
+  total = chars < remaining ? chars : remaining;
+  std::memcpy(buffer, (uint8_t*)memfile->buffer + memfile->offset, (size_t)total);
+  memfile->offset += total; return (int)total;
 }
 
 int mspack_memory_write(mspack_file* file, void* buffer, int chars) {
-  auto memfile = (mspack_memory_file*)file;
-  const off_t remaining = memfile->buffer_size - memfile->offset;
-  const off_t total = std::min(static_cast<off_t>(chars), remaining);
-  std::memcpy((uint8_t*)memfile->buffer + memfile->offset, buffer, total);
-  memfile->offset += total;
-  return (int)total;
+  mspack_memory_file* memfile = (mspack_memory_file*)file;
+  off_t remaining, total;
+  if (!memfile || chars < 0 || memfile->offset < 0 || memfile->offset > memfile->buffer_size) return -1;
+  remaining = memfile->buffer_size - memfile->offset;
+  if (!chars || !remaining) return 0;
+  if (!buffer || !memfile->buffer) return -1;
+  total = chars < remaining ? chars : remaining;
+  std::memcpy((uint8_t*)memfile->buffer + memfile->offset, buffer, (size_t)total);
+  memfile->offset += total; return (int)total;
 }
-
 void* mspack_memory_alloc(mspack_system* sys, size_t chars) {
   return std::calloc(chars, 1);
 }
@@ -79,42 +84,46 @@ void mspack_memory_copy(void* src, void* dest, size_t chars) {
   std::memcpy(dest, src, chars);
 }
 
-mspack_system* mspack_memory_sys_create() {
-  auto sys = (mspack_system*)std::calloc(1, sizeof(mspack_system));
-  if (!sys) {
-    return NULL;
-  }
-  sys->read = mspack_memory_read;
-  sys->write = mspack_memory_write;
-  sys->alloc = mspack_memory_alloc;
-  sys->free = mspack_memory_free;
+static void mspack_memory_sys_init(mspack_system* sys) {
+  std::memset(sys, 0, sizeof(*sys));
+  sys->read = mspack_memory_read; sys->write = mspack_memory_write;
+  sys->alloc = mspack_memory_alloc; sys->free = mspack_memory_free;
   sys->copy = mspack_memory_copy;
+}
+mspack_system* mspack_memory_sys_create() {
+  mspack_system* sys = (mspack_system*)std::malloc(sizeof(mspack_system));
+  if (sys) mspack_memory_sys_init(sys);
   return sys;
 }
-
 void mspack_memory_sys_destroy(struct mspack_system* sys) { free(sys); }
 
 int lzx_decompress(const void* lzx_data, size_t lzx_len, void* dest,
                    size_t dest_len, uint32_t window_size, void* window_data,
                    size_t window_data_len) {
   int result_code = 1;
-
   uint32_t window_bits;
+  mspack_system system;
+  mspack_memory_file input, output;
+  lzxd_stream* lzxd;
+  size_t padding_len;
+  if (!dest_len) return 0;
+  if (!lzx_data || !lzx_len || lzx_len >= INT_MAX || !dest || dest_len >= INT_MAX || !window_size ||
+      (window_size & (window_size - 1)) || window_data_len > window_size ||
+      (!window_data && window_data_len)) return result_code;
+
   if (!xe::bit_scan_forward(window_size, &window_bits)) {
     return result_code;
   }
 
-  mspack_system* sys = mspack_memory_sys_create();
-  mspack_memory_file* lzxsrc =
-      mspack_memory_open(sys, (void*)lzx_data, lzx_len);
-  mspack_memory_file* lzxdst = mspack_memory_open(sys, dest, dest_len);
-  lzxd_stream* lzxd = lzxd_init(sys, (mspack_file*)lzxsrc, (mspack_file*)lzxdst,
-                                window_bits, 0, 0x8000, (off_t)dest_len, 0);
-
+  mspack_memory_sys_init(&system);
+  input.buffer = const_cast<void*>(lzx_data); input.buffer_size = (off_t)lzx_len; input.offset = 0;
+  output.buffer = dest; output.buffer_size = (off_t)dest_len; output.offset = 0;
+  lzxd = lzxd_init(&system, (mspack_file*)&input, (mspack_file*)&output,
+      window_bits, 0, 0x8000, (off_t)dest_len, 0);
   if (lzxd) {
     if (window_data) {
       // zero the window and then copy window_data to the end of it
-      auto padding_len = window_size - window_data_len;
+      padding_len = window_size - window_data_len;
       std::memset(&lzxd->window[0], 0, padding_len);
       std::memcpy(&lzxd->window[padding_len], window_data, window_data_len);
       // TODO(gibbed): should this be set regardless if source window data is
@@ -128,21 +137,6 @@ int lzx_decompress(const void* lzx_data, size_t lzx_len, void* dest,
     lzxd = NULL;
   }
 
-  if (lzxsrc) {
-    mspack_memory_close(lzxsrc);
-    lzxsrc = NULL;
-  }
-
-  if (lzxdst) {
-    mspack_memory_close(lzxdst);
-    lzxdst = NULL;
-  }
-
-  if (sys) {
-    mspack_memory_sys_destroy(sys);
-    sys = NULL;
-  }
-
   return result_code;
 }
 
@@ -150,7 +144,9 @@ LzxFrameDecoder::LzxFrameDecoder(uint32_t window_size)
     : system_(mspack_memory_sys_create()),
       input_(mspack_memory_open(system_, NULL, 0)),
       output_(mspack_memory_open(system_, NULL, 0)) {
-  xe::bit_scan_forward(window_size, &window_bits_);
+  if (window_size >= 32768 && window_size <= 2097152 &&
+      !(window_size & (window_size - 1)))
+    xe::bit_scan_forward(window_size, &window_bits_);
 }
 
 LzxFrameDecoder::~LzxFrameDecoder() {
@@ -163,7 +159,7 @@ LzxFrameDecoder::~LzxFrameDecoder() {
 bool LzxFrameDecoder::Reset() {
   lzxd_free(stream_);
   stream_ = NULL;
-  if (input_ && output_) {
+  if (system_ && input_ && output_ && window_bits_) {
     stream_ = lzxd_init(system_, (mspack_file*)input_, (mspack_file*)output_,
                         window_bits_, 0, 0x8000, 0, 0);
   }
@@ -172,7 +168,8 @@ bool LzxFrameDecoder::Reset() {
 
 bool LzxFrameDecoder::Decompress(const void* source, size_t source_size,
                                  void* dest, size_t dest_size) {
-  if (!stream_ || !dest_size || dest_size > LZX_FRAME_SIZE) {
+  if (!stream_ || !source || !source_size || source_size >= INT_MAX ||
+      !dest || !dest_size || dest_size > LZX_FRAME_SIZE) {
     return false;
   }
   input_->buffer = (void*)source;
@@ -197,56 +194,13 @@ bool LzxFrameDecoder::Decompress(const void* source, size_t source_size,
          lzxd_decompress(stream_, 1) == MSPACK_ERR_OK;
 }
 
-int lzxdelta_apply_patch(xe::xex2_delta_patch* patch, size_t patch_len,
-                         uint32_t window_size, void* dest) {
-  void* patch_end = (char*)patch + patch_len;
-  auto* cur_patch = patch;
-
-  while (patch_end > cur_patch) {
-    int patch_sz = -4;  // 0 byte patches need us to remove 4 byte from next
-                        // patch addr because of patch_data field
-    if (cur_patch->compressed_len == 0 && cur_patch->uncompressed_len == 0 &&
-        cur_patch->new_addr == 0 && cur_patch->old_addr == 0) {
-      break;
-    }
-    switch (cur_patch->compressed_len) {
-      case 0:  // fill with 0
-        std::memset((char*)dest + cur_patch->new_addr, 0,
-                    cur_patch->uncompressed_len);
-        break;
-      case 1:  // copy from old -> new
-        // Both ends are inside the image being patched, and "this region
-        // moved" is exactly the case where they overlap, so this has to be a
-        // memmove. memcpy over an overlap is undefined, and the two differ in
-        // practice: glibc's x86-64 memcpy shares its implementation with
-        // memmove and copies backwards when the ranges overlap, while its
-        // aarch64 memcpy copies forwards in 16 byte chunks with no overlap
-        // check - the destination stomps source bytes it has not read yet and
-        // the result comes out periodic with period (new_addr - old_addr).
-        std::memmove((char*)dest + cur_patch->new_addr,
-                     (char*)dest + cur_patch->old_addr,
-                     cur_patch->uncompressed_len);
-        break;
-      default:  // delta patch
-        patch_sz =
-            cur_patch->compressed_len - 4;  // -4 because of patch_data field
-
-        int result = lzx_decompress(
-            cur_patch->patch_data, cur_patch->compressed_len,
-            (char*)dest + cur_patch->new_addr, cur_patch->uncompressed_len,
-            window_size, (char*)dest + cur_patch->old_addr,
-            cur_patch->uncompressed_len);
-
-        if (result) {
-          return result;
-        }
-        break;
-    }
-
-    cur_patch++;
-    cur_patch = (xe::xex2_delta_patch*)((char*)cur_patch +
-                                        patch_sz);  // TODO: make this less ugly
-  }
-
-  return 0;
+int lzxdelta_apply_patch(const void* patch, size_t patch_len,
+    uint32_t window_size, void* dest, size_t destination_size, size_t reference_size) {
+  return xe_delta_apply(static_cast<const uint8_t*>(patch), patch_len, window_size,
+      static_cast<uint8_t*>(dest), destination_size, reference_size,
+      [](void*, const uint8_t* data, size_t size, uint8_t* output, size_t length,
+          uint32_t window, const uint8_t* reference, size_t reference_length) {
+        return lzx_decompress(data, size, output, length, window,
+            const_cast<uint8_t*>(reference), reference_length);
+      }, nullptr);
 }

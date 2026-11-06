@@ -1,0 +1,56 @@
+XEX delta packets and synchronous LZX wrapper storage
+===================================================
+
+The old delta walker had no destination/reference capacity and trusted packet
+and compressed-block sizes. Its header caller also passed the whole descriptor
+length from a pointer already 0x4c bytes into that descriptor.
+
+The C89 replacement borrows immutable packet bytes, preflights the complete
+stream, and uses subtraction-based destination/reference/payload bounds.
+Fill and overlapping memmove retain their wire semantics; compressed packets
+borrow their input directly. Hashed image blocks are all verified and their
+packets checked before image relocation, source movement or tail clearing.
+The application pass borrows the validated blocks without a registry/gather
+allocation or repeated hash computation. Malformed chains return errors.
+
+Plaintext patch payload still borrows its owned XEXP bytes. Encrypted payload
+uses checked uninitialized C89 scratch and bounded CBC instead of an unchecked
+calloc plus legacy void decrypt helper. Scratch is released on return. The
+legacy fixed-size key transforms are unchanged.
+
+Synchronous lzx_decompress keeps its callback table and two memory-file records
+on the stack: three wrapper allocations/frees removed per call. Decoder state,
+window and input-buffer allocations remain. Persistent LzxFrameDecoder keeps
+its longer-lived records; no borrowed stack pointer escapes. Read/write reject
+negative counts and invalid offsets. Frame decoding rejects null/nonrepresentable
+input/output and invalid window setup. Actual decoded byte semantics are retained.
+
+Coverage:
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror; Linux ASan/UBSan.
+- Native MSVC /TC /W4 /WX C leaf and complete C fixture compilation.
+- Native MSVC actual lzx.cc, xex_module.cc and C++ bridge compilation.
+- Forward/backward overlap, zero-fill, borrowed compressed spans, decoder errors,
+  source alias, truncated packets, reference/destination overflow, invalid window,
+  real SHA1 chained blocks, corrupt later blocks and 10,000 wire mutations.
+- Real lzxdelta_apply_patch and LzxFrameDecoder literal decoding/reset, invalid
+  frame input/window guards, negative memory-file I/O and EOF behavior.
+- Real CPU-only XexModule Load/ApplyPatch/Unload: plaintext and encrypted patch
+  modules with constructed keys/hash chain, 65,536 guest bytes checked exactly.
+  Corrupt encrypted/plain chains leave image bytes unchanged.
+- Prior real-module six NONE/BASIC/NORMAL x plaintext/encrypted image cases still
+  match, including real LZX decoding and corrupt encrypted-chain rejection.
+- Full Windows static Make -j5 build/link. No gameplay, JIT, renderer or frontend
+  launch; actual core bridges are unsanitized, C algorithms are sanitized.
+
+Limits:
+This is not a transactional patch engine. Header patching/growth and image
+reservation occur before image-chain validation; decoder failure may leave an
+applied prefix. Existing heap-reset, base-relocation/allocation ownership and
+PE/import parsing need further work. This does not make the entire loader safe,
+remove decoder allocations, or claim measured gameplay performance gains.
+No audio scheduling, frontend pacing, GPU lifetime or installed DLL changes.
+
+Reproduce: tools/tests/run_xex_delta_tests.sh (sanitizers default), or
+tools\tests\run_xex_delta_tests.cmd in a Visual Studio x64 tools prompt.
+With the core objects built: tools/tests/run_xex_delta_bridge_tests.sh and
+tools/tests/run_xex_image_bridge_tests.sh (CPU-only; synthetic modules).
