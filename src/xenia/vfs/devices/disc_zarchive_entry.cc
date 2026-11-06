@@ -11,6 +11,7 @@
 
 #include "xenia/base/math.h"
 #include "xenia/vfs/devices/disc_zarchive_file.h"
+#include "xenia/vfs/devices/disc_zarchive_device.h"
 
 #include "libretro/core_zarchive.h"
 
@@ -40,7 +41,17 @@ X_STATUS DiscZarchiveEntry::Open(uint32_t desired_access, File** out_file) {
 
 std::unique_ptr<MappedMemory> DiscZarchiveEntry::OpenMapped(
     MappedMemory::Mode mode, size_t offset, size_t length) {
-  return nullptr;
+  if (mode != MappedMemory::Mode::kRead) return nullptr;
+  size_t absolute, count;
+  if (!xe_file_span_slice(size_, 0, size_, offset, length, &absolute, &count))
+    return nullptr;
+  auto* device = dynamic_cast<DiscZarchiveDevice*>(device_);
+  if (!device) return nullptr;
+  const uint8_t* view = xe_zar_view(device->reader(), handle_, absolute, count);
+  if (!view) return nullptr;
+  // Read-only borrow of immutable archive storage. Entry/device must outlive
+  // this wrapper; decoded cache slots are never exposed by xe_zar_view.
+  return std::make_unique<MappedMemory>(const_cast<uint8_t*>(view), count);
 }
 
 bool DiscZarchiveEntry::DeleteEntryInternal(Entry* entry) { return false; }

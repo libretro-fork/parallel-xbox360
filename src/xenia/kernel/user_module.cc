@@ -15,6 +15,7 @@
 #include "xenia/base/xxhash.h"
 #include "xenia/cpu/elf_module.h"
 #include "xenia/emulator.h"
+#include "xenia/vfs/content_input.h"
 
 DECLARE_bool(dump_xex);
 
@@ -85,8 +86,6 @@ bool UserModule::is_multi_disc_title() const {
 }
 
 X_STATUS UserModule::LoadFromFile(const std::string_view path) {
-  X_STATUS result = X_STATUS_UNSUCCESSFUL;
-
   // Resolve the file to open.
   // TODO(benvanik): make this code shared?
   auto fs_entry = kernel_state()->file_system()->ResolvePath(path);
@@ -98,45 +97,19 @@ X_STATUS UserModule::LoadFromFile(const std::string_view path) {
   path_ = fs_entry->absolute_path();
   name_ = utf8::find_base_name_from_guest_path(path_);
 
-  // If the FS supports mapping, map the file in and load from that.
-  if (fs_entry->can_map()) {
-    // Map.
-    auto mmap = fs_entry->OpenMapped(MappedMemory::Mode::kRead);
-    if (!mmap) {
-      return result;
-    }
-
-    // Load the module.
-    result = LoadFromMemory(mmap->data(), mmap->size());
-  } else {
-    std::vector<uint8_t> buffer(fs_entry->size());
-
-    // Open file for reading.
-    vfs::File* file = nullptr;
-    result = fs_entry->Open(vfs::FileAccess::kGenericRead, &file);
-    if (XFAILED(result)) {
-      return result;
-    }
-
-    // Read entire file into memory.
-    // Ugh.
-    size_t bytes_read = 0;
-    result = file->ReadSync(std::span<uint8_t>(buffer.data(), buffer.size()), 0,
-                            &bytes_read);
-    if (XFAILED(result)) {
-      return result;
-    }
-
-    // Load the module.
-    result = LoadFromMemory(buffer.data(), bytes_read);
-
-    // Close the file.
-    file->Destroy();
-  }
-  return result;
+  if (fs_entry->attributes() & vfs::kFileAttributeDirectory)
+    return X_STATUS_INVALID_PARAMETER;
+  vfs::ContentInput source(fs_entry);
+  vfs::ContentBuffer buffer;
+  const int acquired = buffer.Acquire(source, sizeof(fourcc_t));
+  if (acquired < 0) return X_STATUS_NO_MEMORY;
+  if (!acquired)
+    return XFAILED(source.status()) ? source.status() : X_STATUS_UNSUCCESSFUL;
+  return LoadFromMemory(buffer.data(), buffer.size());
 }
 
 X_STATUS UserModule::LoadFromMemory(const void* addr, const size_t length) {
+  if (!addr || length < sizeof(fourcc_t)) return X_STATUS_INVALID_PARAMETER;
   auto processor = kernel_state()->processor();
 
   be<fourcc_t> magic;

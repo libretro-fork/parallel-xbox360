@@ -11,6 +11,7 @@
 
 #include "devices/host_path_entry.h"
 #include "libretro/core_content_extract.h"
+#include "xenia/vfs/content_input.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/string.h"
 #include "xenia/kernel/xfile.h"
@@ -405,61 +406,18 @@ X_STATUS VirtualFileSystem::OpenFile(Entry* root_entry,
   return result;
 }
 
-namespace {
-struct ContentInput {
-  Entry* entry = nullptr;
-  File* file = nullptr;
-  std::unique_ptr<MappedMemory> mapping;
-  ~ContentInput() {
-    if (mapping) mapping->Close();
-    if (file) file->Destroy();
-  }
-};
-}  // namespace
-
 X_STATUS VirtualFileSystem::ExtractContentFile(
     Entry* entry, const std::filesystem::path& base_path) {
   if (!entry || (entry->attributes() & kFileAttributeDirectory))
     return X_STATUS_INVALID_PARAMETER;
-  ContentInput input;
-  input.entry = entry;
-  xe_content_source source;
-  source.opaque = &input;
-  source.size = entry->size();
-  source.view = [](void* opaque, uint64_t* available) -> const uint8_t* {
-    ContentInput& input = *static_cast<ContentInput*>(opaque);
-    *available = 0;
-    if (!input.entry->can_map()) return nullptr;
-    input.mapping = input.entry->OpenMapped(MappedMemory::Mode::kRead);
-    if (!input.mapping) return nullptr;
-    if (!input.mapping->data() || input.mapping->size() < input.entry->size()) {
-      input.mapping->Close();
-      input.mapping.reset();
-      return nullptr;
-    }
-    *available = input.mapping->size();
-    return input.mapping->data();
-  };
-  source.read = [](void* opaque, uint64_t offset, void* data,
-                   size_t wanted, size_t* received) -> int {
-    ContentInput& input = *static_cast<ContentInput*>(opaque);
-    if (offset > SIZE_MAX) return 0;
-    if (!input.file) {
-      if (XFAILED(input.entry->Open(FileAccess::kFileReadData, &input.file)))
-        return 0;
-    }
-    if (!input.file) return 0;
-    return XFAILED(input.file->ReadSync(
-        std::span<uint8_t>(static_cast<uint8_t*>(data), wanted),
-        static_cast<size_t>(offset), received)) ? 0 : 1;
-  };
+  ContentInput input(entry);
 #if XE_PLATFORM_WIN32
   const std::string directory = xe::path_to_utf8(base_path);
   const char* directory_view = directory.c_str();
 #else
   const char* directory_view = base_path.c_str();
 #endif
-  return xe_content_extract_file(&source, directory_view,
+  return xe_content_extract_file(input.source(), directory_view,
       entry->name().data(), entry->name().size()) ?
       X_STATUS_SUCCESS : X_STATUS_UNSUCCESSFUL;
 }

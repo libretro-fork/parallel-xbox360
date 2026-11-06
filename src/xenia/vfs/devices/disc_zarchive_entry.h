@@ -36,7 +36,7 @@ class DiscZarchiveEntry : public Entry {
 
   X_STATUS Open(uint32_t desired_access, File** out_file) override;
 
-  bool can_map() const override { return false; }
+  bool can_map() const override { return size_ != 0; }
   std::unique_ptr<MappedMemory> OpenMapped(MappedMemory::Mode mode,
                                            size_t offset,
                                            size_t length) override;

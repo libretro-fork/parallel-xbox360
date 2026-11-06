@@ -1,0 +1,74 @@
+Module input ownership and raw archive borrowing
+==============================================
+
+The old UserModule::LoadFromFile allocated a zero-filled std::vector for every
+unmappable image, then read the image into it. Returning on ReadSync failure
+leaked the opened guest File. Short successful reads could reach the parser as
+a partial module. Its mapped path passed backing length instead of logical
+entry length, and a failed mapping did not try ordinary reads.
+
+libretro/core_content_input.h now provides C89 exact input ownership. A complete
+immutable view is borrowed through synchronous parsing; otherwise there is one
+exact malloc buffer, with no zero-fill/growth/intermediate read buffer. Reads
+go directly to final offsets in that buffer in at-most-one-MiB requests, with
+checked positive progress, bounds and complete logical length. No parser gets
+a partial prefix. A thin noncopyable C++ guard owns that C record so virtual-read
+or parser exceptions release its allocation as well as the source File/mapping.
+The source adapter is shared with launch-image extraction; no owning callbacks,
+new thread, queue, lock or timer is introduced. Existing lower-level file and
+archive synchronization is unchanged.
+
+DiscZarchiveEntry now offers read-only OpenMapped slices through xe_zar_view.
+Only immutable contiguous RAW mapped storage can escape that probe; decoded
+cache pointers are never borrowed. The archive/device must outlive the borrow.
+The adapter attempts a map once and falls back to ordinary reads if unavailable,
+short, or compressed. Existing generic can_map/OpenMapped consumers were audited:
+only the module and extraction paths use them, now via this checked adapter.
+MappedMemory remains the existing mutable-pointer wrapper; write-mode requests
+are rejected and the borrowed data is passed to const parser inputs. No public
+mapping ABI is changed. A small mapping wrapper allocation still remains.
+
+XexModule copies retained XEX headers and patch-image bytes; ElfModule copies
+its retained header and guest segments. Source input already expired after
+LoadFromMemory before this change; the new guards retain it to the same point.
+The real UserModule path rejects null/sub-four-byte inputs before reading magic.
+This is not complete validation of optional headers, security records, ELF
+program tables or guest ranges. Further parser bounds hardening is still work.
+Compressed module parsing still needs a contiguous owned input image; removing
+that whole-file materialization requires parser/decompression changes rather
+than merely renaming an allocation. The decoder cache-to-image copy remains.
+
+Validation completed:
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror, Linux ASan/UBSan, native MSVC
+  /TC /O2 /W4 /WX. Both standalone and full-bridge C fault-matrix code compile
+  with native MSVC. Actual UserModule, VFS, archive-entry and C++ fixture compile.
+- Exact 2,097,169-byte fallback allocation; allocator sentinel verifies there
+  was no zero-fill before reading, and every write targets final buffer offsets.
+- Oversized borrowed view clamps to logical length and performs zero payload
+  allocations/reads; NULL/short views fall back; absent read/view callbacks,
+  partial reads, zero progress, zero progress after a prefix, failed and
+  overreported reads, injected allocation failure and repeated release are tested.
+- Existing acquired ownership is not overwritten; invalid/empty/short source
+  does not invoke callbacks. Failed transfers never publish input data.
+- Full CPU-only fixture links the actual core objects and real Entry/File/Device
+  interfaces: forty combinations cover valid/NULL/short mappings, open failure
+  with/without a returned File, partial/failing reads, read exceptions and parser
+  exceptions. File/mapping destruction, map-before-fallback close order and C
+  buffer allocation/free counts are checked. Allocator-instrumented ContentBuffer
+  uses a test-only class name to isolate its inline definitions from production;
+  its body comes from the actual production header.
+- Independent two-block raw and RLE archives are mounted through the actual
+  DiscZarchiveDevice/Entry. Raw parser input pointer equals xe_zar_view with zero
+  parser-buffer allocations; compressed input has exactly one allocation/free.
+  Both payloads match expected bytes. Read-write mapping, out-of-range requests,
+  slices and tail clamping are checked; compressed mappings remain unavailable.
+- Previous extraction tests pass under Linux ASan/UBSan after adapter sharing.
+- Full Windows Make -j5 compiles/links successfully. No gameplay/GPU launch or
+  installed DLL replacement; no audio or pacing changes and no FPS claims.
+
+Reproduce: tools/tests/run_content_input_tests.sh (sanitizers default), or
+ tools\tests\run_content_input_tests.cmd from an x64 MSVC developer prompt.
+After a core Make build, tools/tests/run_content_bridge_tests.sh links its
+objects and runs the real guest-file/archive integration fixture. The full
+integration fixture uses the normal core objects and is not a full sanitized
+emulator build. Only the standalone C algorithm/extraction tests run ASan/UBSan.

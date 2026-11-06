@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Module loading now borrows mapped input or reads directly into one exact uninitialized C89 buffer, removing its zero-filled staging vector. Short transfers must complete before parsing, failed reads and parser exceptions retire their file/buffer owners, and null or sub-four-byte input is rejected before reading magic. Raw mapped ZArchive entries can now be borrowed by the module and extraction paths; compressed entries retain checked owned storage. Parser lifetime, audio scheduling and GPU resource management are preserved.
+
 - Launch-image extraction now borrows mapped input directly or reuses bounded 64 KiB scratch instead of allocating a 4 MiB copy buffer. Checked libretro-common VFS transfers stage each extraction under a unique name and publish only after successful writes and close, preserving an existing file on failure. Truncated cached images are retried, unused progress atomics and standalone bulk-dump tools are removed. Relaunch timing and audio scheduling are unchanged.
 
 - Removed unused standalone installer/profile-migration APIs and unregistered UI/process-launch callbacks. Core subsystem factories now use stateless function pointers, and the input factory returns its driver directly without a temporary vector. Live relaunch control uses tested C89 libretro-common atomics; existing launch serialization, worker teardown and frontend disc handling are preserved. Audio scheduling is unchanged.
