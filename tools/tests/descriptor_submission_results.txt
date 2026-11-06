@@ -1,0 +1,65 @@
+Final descriptor records and common submission publication
+========================================================
+
+Vulkan UpdateBindings now plans four checked spans (vertex images/samplers,
+pixel images/samplers) before requesting storage. Record-count addition and
+count-times-actual-stride overflow reject the request before mutation. Checked
+C89 scratch retains capacity, grows geometrically and preserves the previous
+allocation on failure. Successful growth allocates new uninitialized storage,
+then frees expired storage without copying it. Prepare is only legal after the
+previous synchronous API borrower returns; it does not retain record contents.
+
+The old vector was already cleared before reserve, discarding expired elements
+at growth. The C owner preserves that behavior. The concrete changes remove
+the vector, add complete count bounds and avoid value-initializing records whose
+fields are subsequently overwritten. Shared C89 Vulkan-C helpers write every
+VkDescriptorImageInfo field once, preserving sampler/null image/layout values.
+The actual API struct and sizeof are used, with no guessed layout or type punning
+between mirror structs. Vulkan receives spans of this final storage directly.
+Record padding is not compared or treated as an API field by the fixtures.
+
+Vulkan and D3D12 resolve_submitted_through_ now use a C89 common-atomic 64-bit
+word through shared publish/acquire helpers. The release store remains after
+the existing queue submission/signal, at exactly the prior handoff point; the
+read remains acquire. This publishes host submission metadata, NOT completed
+GPU contents. All backend completion waits, callbacks, timeline/fence advancement
+and stop/join ordering remain in place. D3D12's one-shot PIX capture flag uses
+common int atomics; exchange is common's acq_rel operation (previously relaxed).
+No new lock, sleeper, worker, runtime log or toolchain dependency is introduced.
+
+Coverage:
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror for the new C sources; native
+  MSVC /TC /W4 /WX. Owned Vulkan vendor headers are system includes for GCC
+  diagnostics; the new algorithms themselves use C89 declarations/syntax.
+- Descriptor C tests with ASan/UBSan: prefix offsets, add/multiply overflow,
+  allocation failure preserving bytes/plan, poison-filled new allocations proving
+  no prior payload copy/zeroing, empty packets, repeated free, and 10,000 warmed
+  prepares without allocation. All actual Vulkan record fields are initialized.
+- Sanitized differential reference: 10,000 four-span packets match the previous
+  vector's value-initialized field values and order. Pointer and integer Vulkan
+  handles (VK_USE_64_BIT_PTR_DEFINES=0) pass in C and C++ fixture compilations.
+- Submission C tests: two rthreads exchange 80,000 protected non-atomic payloads
+  via the release/acquire counter and acknowledgment protocol. Exact indices
+  above 32 bits and across the signed high bit survive. PIX's one-shot common
+  exchange is consumed exactly once. ASan/UBSan and ThreadSanitizer pass.
+  TSan uses setarch x86_64 -R on this WSL host for its required address layout.
+- Native MSVC actual Vulkan/D3D12 command-processor translation units and native
+  C/C++ descriptor reference pass; Windows static Make -j5 compiles and links.
+- Prior sampler-snapshot differential fixture and CPU GPU-retirement fixture
+  (200,000 retirements, reuse/order/backpressure cases) pass under sanitizers.
+
+Limits:
+No device, frontend, guest/JIT or game launch: GPU post-unload/device fixtures
+and actual renderer output are unrun under the existing no-launch restriction.
+CPU packet and publication tests do not prove full-GPU behavior or whole-core
+thread safety. New capacity peaks still allocate and transiently keep old plus
+new storage alive until allocation succeeds; no whole-core allocation-free or
+measured FPS/latency/RSS claim is made. Other vectors, pipeline atomics, mutexes
+and async callbacks remain work. Installed core is not overwritten. Audio and
+frontend pacing are unchanged.
+
+Reproduce tools/tests/run_descriptor_scratch_tests.sh and
+tools/tests/run_descriptor_scratch_bridge_tests.sh (ASan/UBSan default).
+tools/tests/run_submission_counter_tests.sh checks common atomic publication;
+for TSan use SANITIZER=-fsanitize=thread and a distinct TEST_BUILD_DIR under
+setarch x86_64 -R. Matching .cmd leaf runners work in an x64 MSVC tools prompt.

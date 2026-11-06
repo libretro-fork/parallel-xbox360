@@ -133,7 +133,7 @@ void D3D12CommandProcessor::RequestFrameTrace(
     const std::filesystem::path& root_path) {
   // Capture with PIX if attached.
   if (GetD3D12Provider().GetGraphicsAnalysis() != nullptr) {
-    pix_capture_requested_.store(true, std::memory_order_relaxed);
+    retro_atomic_store_relaxed_int(&pix_capture_requested_, 1);
     return;
   }
   CommandProcessor::RequestFrameTrace(root_path);
@@ -1411,7 +1411,7 @@ bool D3D12CommandProcessor::SetupContext() {
   host_query_pool_ = std::make_unique<D3D12QueryPool>();
   EnsureQueryResources();
 
-  pix_capture_requested_.store(false, std::memory_order_relaxed);
+  retro_atomic_store_relaxed_int(&pix_capture_requested_, 0);
   pix_capturing_ = false;
 
   return true;
@@ -3875,7 +3875,7 @@ bool D3D12CommandProcessor::BeginSubmission(bool is_guest_command) {
     }
 
     pix_capturing_ =
-        pix_capture_requested_.exchange(false, std::memory_order_relaxed);
+        retro_atomic_exchange_int(&pix_capture_requested_, 0) != 0;
     if (pix_capturing_) {
       IDXGraphicsAnalysis* graphics_analysis =
           GetD3D12Provider().GetGraphicsAnalysis();
@@ -3971,8 +3971,7 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
       command_allocator_writable_last_ = nullptr;
     }
     completion_timeline_->SignalAndAdvance(direct_queue);
-    resolve_submitted_through_.store(GetCurrentSubmission() - 1,
-                                     std::memory_order_release);
+    xe_submission_publish(&resolve_submitted_through_, GetCurrentSubmission() - 1);
     OnResolveSubmissionEnded();
 
     submission_open_ = false;

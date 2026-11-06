@@ -12,7 +12,7 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
+#include "libretro/core_submission_counter.h"
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -379,7 +379,7 @@ class D3D12CommandProcessor final : public CommandProcessor {
     return !submission_open_ || EndSubmission(false);
   }
   uint64_t GetResolveSubmittedThrough() const {
-    return resolve_submitted_through_.load(std::memory_order_acquire);
+    return xe_submission_acquire(&resolve_submitted_through_);
   }
   // Copies resolve output into guest RAM from a fault, on its own command list
   // and fence, as the faulting thread can't use the GPU thread's. With
@@ -390,7 +390,7 @@ class D3D12CommandProcessor final : public CommandProcessor {
   bool EnsureResolveFaultReadback(uint32_t size);
   void ReleaseResolveFaultReadback();
   // The last submission handed to the GPU, for other threads.
-  std::atomic<uint64_t> resolve_submitted_through_{0};
+  xe_submission_counter resolve_submitted_through_{0};
   Microsoft::WRL::ComPtr<ID3D12CommandAllocator>
       resolve_fault_command_allocator_;
   Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> resolve_fault_command_list_;
@@ -963,7 +963,7 @@ class D3D12CommandProcessor final : public CommandProcessor {
   draw_util::GetViewportInfoArgs previous_viewport_info_args_;
   draw_util::ViewportInfo previous_viewport_info_;
 
-  std::atomic<bool> pix_capture_requested_ = false;
+  retro_atomic_int_t pix_capture_requested_ = 0;
   bool pix_capturing_;
 
   // Temporary storage for memexport stream constants used in the draw.

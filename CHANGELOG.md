@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan descriptor image scratch now uses checked C89 storage and fills final Vulkan records once, preserving every API field while removing the vector and redundant initialization stores. Both renderers publish resolve-submission indices through libretro-common release/acquire operations without changing GPU completion waits. D3D12's one-shot PIX capture flag also uses common atomics. Storage growth still allocates; CPU fixtures and builds do not certify gameplay performance.
+
 - Vulkan draw sampler snapshots now use reusable C89 storage with an index-only commit, removing four vectors and full-list snapshot copies. Overflow retries and repeated binding updates retain current records; texture-cache sampler ownership is unchanged. Async publication cannot expose more sampler descriptors than were collected for the draw. Removed two unused D3D12 sampler vectors. New high-water peaks still allocate; no gameplay performance gain is claimed.
 
 - Mapped instruction facts now use libretro-common atomic word reads and explicit C89 masks throughout the CPU callers, replacing concurrent C++ bitfield reads and temporary mask copies. Tested GCC/MSVC C and C++ layouts match the existing version-4 cache words. Concurrent updates, mapped-file persistence and loader regressions are checked offline; no gameplay performance claim is made.

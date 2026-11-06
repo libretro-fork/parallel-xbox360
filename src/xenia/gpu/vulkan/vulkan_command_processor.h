@@ -27,6 +27,8 @@
 #include <vector>
 
 #include "libretro/core_sampler_scratch.h"
+#include "libretro/core_descriptor_scratch.h"
+#include "libretro/core_submission_counter.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/hash.h"
 #include "xenia/base/logging.h"
@@ -324,7 +326,7 @@ class VulkanCommandProcessor final : public CommandProcessor {
     return !submission_open_ || EndSubmission(false);
   }
   uint64_t GetResolveSubmittedThrough() const {
-    return resolve_submitted_through_.load(std::memory_order_acquire);
+    return xe_submission_acquire(&resolve_submitted_through_);
   }
   // Copies resolve output into guest RAM from a fault, on its own command
   // buffer and fence, as the faulting thread can't use the GPU thread's. With
@@ -334,7 +336,7 @@ class VulkanCommandProcessor final : public CommandProcessor {
   void DestroyResolveFaultCopy();
   bool EnsureResolveFaultReadback(uint32_t size);
   // The last submission handed to the GPU, for other threads.
-  std::atomic<uint64_t> resolve_submitted_through_{0};
+  xe_submission_counter resolve_submitted_through_{0};
   VkCommandPool resolve_fault_command_pool_ = VK_NULL_HANDLE;
   VkCommandBuffer resolve_fault_command_buffer_ = VK_NULL_HANDLE;
   VkFence resolve_fault_fence_ = VK_NULL_HANDLE;
@@ -748,7 +750,7 @@ class VulkanCommandProcessor final : public CommandProcessor {
   std::vector<VkDescriptorSetLayoutBinding> descriptor_set_layout_bindings_;
   // Temporary storage with reusable memory for writing image and sampler
   // descriptors.
-  std::vector<VkDescriptorImageInfo> descriptor_write_image_info_;
+  xe_descriptor_scratch descriptor_write_image_info_{};
 
   std::unique_ptr<ui::vulkan::VulkanUploadBufferPool> uniform_buffer_pool_;
 

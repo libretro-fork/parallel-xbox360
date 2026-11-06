@@ -8,6 +8,7 @@
  */
 
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
+#include "libretro/core_vk_descriptor_image.h"
 #include "libretro/core_gpu_downscale.h"
 
 #include <cstdarg>
@@ -126,6 +127,7 @@ static_assert(sizeof(VkSampler) == sizeof(uint64_t));
 VulkanCommandProcessor::~VulkanCommandProcessor() {
   xe_sampler_stage_free(&samplers_vertex_);
   xe_sampler_stage_free(&samplers_pixel_);
+  xe_descriptor_scratch_free(&descriptor_write_image_info_);
 }
 
 void VulkanCommandProcessor::UpdateDebugMarkersEnabled() {
@@ -5850,8 +5852,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
                                                      semaphore);
     }
     current_submission_wait_semaphores_.clear();
-    resolve_submitted_through_.store(submission_index,
-                                     std::memory_order_release);
+    xe_submission_publish(&resolve_submitted_through_, submission_index);
     OnResolveSubmissionEnded();
     command_buffers_submitted_.emplace_back(submission_index, command_buffer);
     command_buffers_writable_.pop_back();
@@ -6931,58 +6932,48 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       (texture_count_pixel || sampler_count_pixel) &&
       !(current_graphics_descriptor_set_values_up_to_date_ &
         (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel));
-  descriptor_write_image_info_.clear();
-  descriptor_write_image_info_.reserve(
-      (write_vertex_textures ? texture_count_vertex + sampler_count_vertex
-                             : 0) +
-      (write_pixel_textures ? texture_count_pixel + sampler_count_pixel : 0));
-  size_t vertex_texture_image_info_offset = descriptor_write_image_info_.size();
+  const size_t image_counts[4] = {
+      write_vertex_textures ? texture_count_vertex : 0,
+      write_vertex_textures ? sampler_count_vertex : 0,
+      write_pixel_textures ? texture_count_pixel : 0,
+      write_pixel_textures ? sampler_count_pixel : 0};
+  xe_descriptor_plan image_plan;
+  if (!xe_descriptor_prepare(&descriptor_write_image_info_, image_counts,
+        sizeof(VkDescriptorImageInfo), &image_plan)) return false;
+  VkDescriptorImageInfo* descriptor_image_infos =
+      reinterpret_cast<VkDescriptorImageInfo*>(descriptor_write_image_info_.data);
+  const size_t vertex_texture_image_info_offset = image_plan.offsets[0];
   if (write_vertex_textures && texture_count_vertex) {
-    for (const VulkanShader::TextureBinding& texture_binding :
-         textures_vertex) {
-      VkDescriptorImageInfo& descriptor_image_info =
-          descriptor_write_image_info_.emplace_back();
-      descriptor_image_info.imageView =
-          texture_cache_->GetActiveBindingOrNullImageView(
-              texture_binding.fetch_constant, texture_binding.dimension,
-              bool(texture_binding.is_signed));
-      descriptor_image_info.imageLayout =
-          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    size_t index = vertex_texture_image_info_offset;
+    for (const VulkanShader::TextureBinding& texture_binding : textures_vertex) {
+      xe_vk_descriptor_texture(descriptor_image_infos + index++,
+          texture_cache_->GetActiveBindingOrNullImageView(texture_binding.fetch_constant,
+              texture_binding.dimension, bool(texture_binding.is_signed)));
     }
   }
-  size_t vertex_sampler_image_info_offset = descriptor_write_image_info_.size();
+  const size_t vertex_sampler_image_info_offset = image_plan.offsets[1];
   if (write_vertex_textures && sampler_count_vertex) {
     const xe_sampler_buffer* samplers = xe_sampler_current(&samplers_vertex_);
-    for (size_t index = 0; index < samplers->count; ++index) {
-      VkDescriptorImageInfo& descriptor_image_info =
-          descriptor_write_image_info_.emplace_back();
-      descriptor_image_info.sampler = (VkSampler)samplers->data[index].sampler;
-    }
+    for (size_t index = 0; index < samplers->count; ++index)
+      xe_vk_descriptor_sampler(descriptor_image_infos + vertex_sampler_image_info_offset + index,
+          (VkSampler)samplers->data[index].sampler);
   }
-  size_t pixel_texture_image_info_offset = descriptor_write_image_info_.size();
+  const size_t pixel_texture_image_info_offset = image_plan.offsets[2];
   if (write_pixel_textures && texture_count_pixel) {
-    for (const VulkanShader::TextureBinding& texture_binding :
-         *textures_pixel) {
-      VkDescriptorImageInfo& descriptor_image_info =
-          descriptor_write_image_info_.emplace_back();
-      descriptor_image_info.imageView =
-          texture_cache_->GetActiveBindingOrNullImageView(
-              texture_binding.fetch_constant, texture_binding.dimension,
-              bool(texture_binding.is_signed));
-      descriptor_image_info.imageLayout =
-          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    size_t index = pixel_texture_image_info_offset;
+    for (const VulkanShader::TextureBinding& texture_binding : *textures_pixel) {
+      xe_vk_descriptor_texture(descriptor_image_infos + index++,
+          texture_cache_->GetActiveBindingOrNullImageView(texture_binding.fetch_constant,
+              texture_binding.dimension, bool(texture_binding.is_signed)));
     }
   }
-  size_t pixel_sampler_image_info_offset = descriptor_write_image_info_.size();
+  const size_t pixel_sampler_image_info_offset = image_plan.offsets[3];
   if (write_pixel_textures && sampler_count_pixel) {
     const xe_sampler_buffer* samplers = xe_sampler_current(&samplers_pixel_);
-    for (size_t index = 0; index < samplers->count; ++index) {
-      VkDescriptorImageInfo& descriptor_image_info =
-          descriptor_write_image_info_.emplace_back();
-      descriptor_image_info.sampler = (VkSampler)samplers->data[index].sampler;
-    }
+    for (size_t index = 0; index < samplers->count; ++index)
+      xe_vk_descriptor_sampler(descriptor_image_infos + pixel_sampler_image_info_offset + index,
+          (VkSampler)samplers->data[index].sampler);
   }
-
   // Write the new descriptor sets.
 
   // Consecutive bindings updated via a single VkWriteDescriptorSet must have
@@ -7050,8 +7041,8 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
         true, texture_count_vertex, sampler_count_vertex,
         current_guest_graphics_pipeline_layout_
             ->descriptor_set_layout_textures_vertex_ref(),
-        descriptor_write_image_info_.data() + vertex_texture_image_info_offset,
-        descriptor_write_image_info_.data() + vertex_sampler_image_info_offset,
+        descriptor_image_infos + vertex_texture_image_info_offset,
+        descriptor_image_infos + vertex_sampler_image_info_offset,
         write_textures);
     if (!texture_descriptor_set_write_count) {
       return false;
@@ -7074,8 +7065,8 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
         false, texture_count_pixel, sampler_count_pixel,
         current_guest_graphics_pipeline_layout_
             ->descriptor_set_layout_textures_pixel_ref(),
-        descriptor_write_image_info_.data() + pixel_texture_image_info_offset,
-        descriptor_write_image_info_.data() + pixel_sampler_image_info_offset,
+        descriptor_image_infos + pixel_texture_image_info_offset,
+        descriptor_image_infos + pixel_sampler_image_info_offset,
         write_textures);
     if (!texture_descriptor_set_write_count) {
       return false;
