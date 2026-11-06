@@ -1,0 +1,116 @@
+Borrowed repeated shader operands, 2026-11-06
+Parent: complete b40bab43d38485f19fcc26bbd874b93b7494be51 sources.
+
+C89 logical sources borrow either contiguous caller words or one scalar ID plus
+a repetition count. Repeated mode never pretends that the scalar has an N-word
+C array extent. Hashing, exact-key comparison and packet emission consume this
+source directly; there is no intermediary member array or retained caller view.
+The repeated hash equals the existing contiguous-key hash, so ordinary-view and
+repeated factories share constant identity in either insertion order.
+
+SpirvBuilder::smearFloatConstant and specialization-mode Builder::smearScalar
+now use repeated sources. Composite comparison uses the single-index extract
+overload, and extract specialization operands/literals borrow their scalar
+arguments rather than creating vectors. The multi-index overload borrows the
+caller's existing indices. No new capability requirement is introduced.
+
+Replicated-composite selection, compressed one-member encoding, extension/cap
+ordering, cooperative-vector handling, ordinary aliases and uncached spec
+composites/structs keep existing behavior. Oversized physical constant payloads
+are rejected before hashing/emission; a compressed source checks its physical
+one-member count. Final packet-to-contiguous-module assembly still copies.
+This removes staging arrays, not all compilation copies or allocations.
+
+The first coordinator implementation copied its source descriptor twice through
+an extra ABI call (observed GCC assembly) and regressed ordinary constant
+construction about8-9%. That version was not pushed. The two producer adapters
+now inline the shared type/feature coordinator under MSVC/GCC-compatible
+compilers, removing those intermediary metadata copies and specializing source
+mode. The algorithms and packet writer remain MSVC-compatible C89, with thin
+C++ ownership/exception/type coordination. Final ordinary costs are below.
+
+Validation of final sources:
+- Native MSVC /TC /W4 /WX C units and full typed output/ownership suite pass.
+- C89 repeated-source unit covers counts0..1024, normal/repeated hash equality,
+  encoded values/ID flags, changed payload/type/opcode, empty/nonuniform sources,
+  checked source capacity and wire boundaries. Existing allocation-failure,
+  ownership, pooled growth, tag preservation and retired-pointer checks remain.
+- Own-revision C/IR parent/current producer oracle matches bytes in four modes:
+  extension off/on and cooperative vectors off/on. It covers2/3/4-member vectors,
+  16/1024-member arrays, matrices, structs, empty sources, normal-first and
+  repeat-first aliases, overwritten input buffers, uncached specializations,
+  ordinary/spec scalar smears, nested aggregate comparisons, scalar/multi-index
+  extracts and oversized repeated payload rejection. Standard module passes
+  spirv-val; extension/cooperative variants are byte comparisons only because
+  validator support for those newer extensions is not assumed.
+- Full final WSL ASan/UBSan suite passes (C -O2/C++ -O1), including5248 current
+  helper modules plus own-revision baseline, repeated cases, source/views,
+  sampled images, constants/types/linkage/CFG/stacks, allocation faults and
+  negative retired C/typed/stack/payload use-after-poison checks.
+- Native geometry18432 variants/109668864 bytes retains golden SHA256
+  427b071c7e7868566596ff55270bbca9aab31f54c714ca552e928dfe349e69e0.
+- Actual final GCC -O3 Make objects:1410 cached Tekken translations/two with CFG
+  and210 Tomb Raider translations/96 with CFG match older golden outputs.
+  Private cache inputs are not shipped. This does not prove all-game behavior.
+- Windows static Make -j5 passes. No game/frontend/GPU was launched and installed
+  core untouched. Audio, presentation, resource retirement and shutdown unchanged.
+  Other platforms/CMake and hardware counters/RSS/GPU latency/FPS unmeasured.
+
+Performance: Windows x64 GCC16.2 -O2, same-revision C/IR/producer implementations.
+Seven quiet alternating parent/current pairs after all compiler jobs stopped;
+Windows compiler inventory was zero at the start. Hooks cover C++ new and C
+packet/arena/index/output requests, excluding allocator metadata/free-block
+retention and driver storage. All timed repeated lookups return the warmed ID;
+live storage is checked unchanged and returns to its initial value at close.
+Untimed complete output modules match byte-for-byte for every workload.
+
+100000 warmed lookups/sample; calls/requested bytes/retained bytes/median ms(range):
+actual float4 smearFloatConstant:
+ parent 100000/1600000/191706/3.844(3.800..3.938)
+ current     0/      0/191706/1.671(1.666..1.678)
+uncompressed repeated-array1024 factory (vector producer vs repeated source):
+ parent 100000/409600000/191706/92.530(91.844..93.778)
+ current     0/        0/191706/94.095(92.867..94.182)
+replicated repeated-array1024 factory:
+ parent 200000/412600000/191800/22.940(21.675..23.928)
+ current100000/  3000000/191800/ 3.366(3.295..3.518)
+actual specialization-mode smearScalar with an ordinary float4 source:
+ parent 100000/1600000/191706/3.120(3.083..5.026)
+ current     0/      0/191706/0.988(0.966..1.002)
+
+The large uncompressed case is about1.7% slower by median with overlapping
+ranges; there is no universal speedup. Its hash/matching still visits1024 words
+per hit. The array workloads are controlled factory scenarios, not a claim that
+titles invoke those exact sizes. The requested409.6 MB reduction is cumulative
+allocator traffic, not retained memory, RSS or VRAM savings.
+
+Replicated mode STILL allocates a30-byte temporary extension string per lookup
+through the existing std::set<std::string> insertion interface. This is separate
+from the removed repeated-member vector and is the next allocation target.
+No release profiling counters/logging or adaptive cache behavior is added.
+
+General construction controls,1000 modules/sample except5120 constants(100):
+median ms(range),parent -> current:
+1 function:0.108(0.107..0.114) ->0.114(0.109..0.119)
+71 functions:3.987(3.941..4.027) ->4.041(3.995..4.090)
+257 functions:14.407(14.259..14.692) ->14.470(14.348..14.705)
+40 constants:1.891(1.879..1.913) ->1.914(1.889..1.978)
+640 constants:32.638(32.438..32.687) ->32.307(32.160..32.858)
+5120 constants:28.919(28.822..29.523) ->28.355(28.238..28.531)
+Allocation/requested/retained/peak counts are unchanged in these controls, with
+zero tracked warm allocations. Most ranges overlap; the tiny function case has
+a small absolute/percentage increase. No universal constructor gain is claimed.
+Record/builder/module sizes and retained arena storage are unchanged; the logical
+source is ephemeral metadata, not another owned payload buffer.
+
+Reproduce: run_spv_repeat_compare.sh with BASELINE_ROOT=<complete b40bab43d
+sources>, optional SANITIZER/SPIRV_VALIDATOR. For repeated microbench use
+PROFILE=1 TEST_SOURCE=tools/tests/core_spv_repeat_bench.cc and a distinct
+TEST_BUILD_DIR; after compilation alternate parent/current modes0..3 seven times
+and compare outputs. General controls use run_spv_binary_bench.sh with
+CAPTURE_OPERANDS=1 and the same function/constant fixtures as previous reports.
+Native/full sanitizer suites include the new C89/typed producer cases.
+
+Legacy src/xenia/gpu/spirv graph removal remains incomplete. Next remove the
+extension-string temporary using owned C89/borrowed encoded metadata, then
+continue module/type/CFG migration. Keep exact bytes and source ownership checks.

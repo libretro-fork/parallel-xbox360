@@ -459,6 +459,7 @@ public:
     Id makeCompositeConstant(Id type, const std::vector<Id>& comps, bool specConst = false);
     // Borrows words only until this call returns. No staging vector.
     Id makeCompositeConstantView(Id type, xe_spv_word_view members, bool specConst = false);
+    Id makeCompositeConstantRepeat(Id type, Id member, size_t count, bool specConst = false);
 
     // Methods for adding information outside the CFG.
     Instruction* addEntryPoint(ExecutionModel, Function*, const char* name);
@@ -982,6 +983,11 @@ public:
     Id findScalarConstant(Op typeClass, Op opcode, Id typeId, unsigned v1, unsigned v2);
     Id findConstant(Op opcode, Id typeId, xe_spv_word_view words);
     static int equalConstant(const void* record, const xe_spv_constant_key* key);
+    static int equalRepeatedConstant(const void* record, const xe_spv_constant_key* key);
+    Id findRepeatedConstant(Op opcode, Id typeId, Id member, size_t count);
+private:
+    Id makeCompositeConstantSource(Id type, xe_spv_word_source source, bool specConst);
+protected:
     void publishConstant(Instruction* constant, bool cache);
     Id collapseAccessChain();
     void remapDynamicSwizzle();

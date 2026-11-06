@@ -18,6 +18,43 @@ static void packet_free(void *value) { if (value) { --live; free(value); } }
 #define XE_SPV_FREE packet_free
 #include "../../libretro/core_spv_packet.c"
 #include "../../libretro/core_spv_module.h"
+#include "../../libretro/core_spv_constant_cache.h"
+static int repeated_sources(void) {
+   xe_spv_packet packet;
+   uint32_t words[1024], scalar = UINT32_C(0x7fc00123);
+   xe_spv_constant_key key;
+   xe_spv_word_source source;
+   size_t count, i;
+   key.opcode = 44; key.type = 17; key.words = words;
+   for (count = 0; count <= 1024; ++count) {
+      for (i = 0; i < count; ++i) words[i] = scalar;
+      key.count = count;
+      CHECK(xe_spv_constant_hash(&key) == xe_spv_constant_hash_repeat(44, 17, scalar, count));
+      xe_spv_packet_init(&packet, 44, 17, 31);
+      source = xe_spv_source_repeat(&scalar, count);
+      CHECK(xe_spv_source_all_equal(source) == (count != 0));
+      CHECK(xe_spv_source_all_equal(xe_spv_source_view(xe_spv_words_view(words, count))) == (count != 0));
+      CHECK(xe_spv_packet_reserve_with(&packet, count, NULL, NULL));
+      xe_spv_packet_source_ids_reserved(&packet, source, count);
+      CHECK(xe_spv_packet_constant_repeat_equal(&packet, 44, 17, scalar, count));
+      CHECK(xe_spv_packet_constant_equal(&packet, 44, 17, words, count));
+      for (i = 0; i < count; ++i) CHECK(xe_spv_packet_is_id(&packet, (uint32_t)i));
+      if (count) {
+         xe_spv_packet_operands(&packet)[count - 1] ^= 1;
+         CHECK(!xe_spv_packet_constant_repeat_equal(&packet, 44, 17, scalar, count));
+         CHECK(!xe_spv_packet_constant_repeat_equal(&packet, 45, 17, scalar, count));
+      }
+      CHECK(!xe_spv_packet_constant_repeat_equal(&packet, 44, 18, scalar, count));
+      CHECK(!xe_spv_packet_source_capacity(&packet, SIZE_MAX));
+      xe_spv_packet_free(&packet);
+   }
+   words[0] = 1; words[1] = 2;
+   CHECK(!xe_spv_source_all_equal(xe_spv_source_view(xe_spv_words_view(words, 2))));
+   CHECK(xe_spv_source_fits_instruction(65532, 3));
+   CHECK(!xe_spv_source_fits_instruction(65533, 3) && !xe_spv_source_fits_instruction(SIZE_MAX, 3));
+   CHECK(!live);
+   return 0;
+}
 static int layout(unsigned type, unsigned result) {
    xe_spv_packet packet;
    xe_spv_word_view view;
@@ -162,6 +199,7 @@ int main(void) {
    CHECK(!strings());
    CHECK(!constant_keys());
    CHECK(!module_queries());
+   CHECK(!repeated_sources());
    xe_spv_packet_init(&packet, 65536, 7, 9);
    CHECK(xe_spv_packet_opcode(&packet) == 65536 && !xe_spv_packet_valid(&packet));
    xe_spv_packet_init(&packet, 128, 7, 9);

@@ -154,6 +154,10 @@ for variant in 0 1 2 3 4 5 6 7; do
 done
 echo "PASS: parent/current EDRAM output byte-for-byte, stable high-water storage"
 echo "PASS: eight archived-vector/borrowed-view modules, overwritten inputs and nested access chains"
+${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DFMT_HEADER_ONLY $san -I"$root" -I"$root/src" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" -I"$root/third_party/fmt/include" \
+ "$root/tools/tests/core_spv_repeat_bridge.cc" "$root/src/xenia/gpu/spirv_builder.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/size.o" "$out/binary.o" "$out/operands.o" "$out/arena.o" -o "$out/repeat-bridge"
+for variant in 0 1 2 3; do "$out/repeat-bridge" "$out/repeat-$variant.spv" "$variant"; done
+if test -n "${SPIRV_VALIDATOR:-}"; then "$SPIRV_VALIDATOR" "$out/repeat-0.spv"; fi
 
 ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" \
  "$root/tools/tests/core_spv_linkage_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \

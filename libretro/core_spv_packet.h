@@ -76,6 +76,17 @@ static INLINE uint32_t xe_spv_packet_typed_result(const xe_spv_packet *packet) {
          (XE_SPV_PACKET_TYPE | XE_SPV_PACKET_RESULT));
    return packet->local_words[2];
 }
+static INLINE int xe_spv_packet_constant_repeat_equal(const xe_spv_packet *packet,
+      uint32_t opcode, uint32_t type, uint32_t word, size_t count) {
+   const uint32_t *words;
+   size_t i;
+   if ((packet->flags & UINT32_C(0xffff0300)) !=
+         (XE_SPV_PACKET_TYPE | XE_SPV_PACKET_RESULT) || packet->count != count) return 0;
+   words = xe_spv_packet_const_words(packet);
+   if ((words[0] & 65535u) != opcode || words[1] != type) return 0;
+   for (i = 0; i < count; ++i) if (words[3 + i] != word) return 0;
+   return 1;
+}
 static INLINE int xe_spv_packet_valid(const xe_spv_packet *packet) {
    return !(packet->flags & UINT32_C(0xffff0000)) &&
          packet->count <= 65535u - xe_spv_packet_prefix(packet);
@@ -130,6 +141,27 @@ static INLINE size_t xe_spv_packet_string_capacity(const xe_spv_packet *packet, 
    size_t added = bytes / 4 + 1;
    if (packet->count > INT_MAX || added > (size_t)INT_MAX - packet->count) return 0;
    return packet->count + added;
+}
+static INLINE size_t xe_spv_packet_source_capacity(const xe_spv_packet *packet, size_t count) {
+   if (packet->count > INT_MAX || count > (size_t)INT_MAX - packet->count) return 0;
+   return packet->count + count;
+}
+/* Caller reserves once; no source buffer is retained or staged. */
+static INLINE void xe_spv_packet_source_ids_reserved(xe_spv_packet *packet,
+      xe_spv_word_source source, size_t count) {
+   size_t i;
+   assert(count <= source.count && count <= packet->capacity - packet->count);
+   if (source.repeated) {
+      for (i = 0; i < count; ++i) {
+         assert(*source.words);
+         xe_spv_packet_append_reserved(packet, *source.words, 1);
+      }
+   } else {
+      for (i = 0; i < count; ++i) {
+         assert(source.words[i]);
+         xe_spv_packet_append_reserved(packet, source.words[i], 1);
+      }
+   }
 }
 void xe_spv_packet_free(xe_spv_packet *packet);
 int xe_spv_packet_reserve_with(xe_spv_packet *packet, size_t capacity,

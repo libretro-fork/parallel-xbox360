@@ -243,6 +243,15 @@ public:
     bool matchesConstant(uint32_t opcode, Id type, xe_spv_word_view words) const {
         return xe_spv_packet_constant_equal(&packet, opcode, type, words.words, words.count) != 0;
     }
+    bool matchesRepeatedConstant(uint32_t opcode, Id type, Id word, size_t count) const {
+        return xe_spv_packet_constant_repeat_equal(&packet, opcode, type, word, count) != 0;
+    }
+    void addSourceIdOperands(xe_spv_word_source source, size_t count) {
+        size_t capacity = xe_spv_packet_source_capacity(&packet, count);
+        if ((!capacity && count) || count > source.count) throw std::bad_alloc();
+        reserveOperands(capacity);
+        xe_spv_packet_source_ids_reserved(&packet, source, count);
+    }
     xe_spv_word_view getOperandsView() const {
         return xe_spv_words_view(xe_spv_packet_const_operands(&packet), packet.count);
     }

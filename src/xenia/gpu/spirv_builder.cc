@@ -127,9 +127,8 @@ spv::Id SpirvBuilder::smearFloatConstant(float value, spv::Id value_type) {
   if (!isVectorType(value_type)) {
     return scalar;
   }
-  std::vector<spv::Id> components(size_t(getNumTypeComponents(value_type)),
-                                  scalar);
-  return makeCompositeConstant(value_type, components);
+  return makeCompositeConstantRepeat(value_type, scalar,
+                                     size_t(getNumTypeComponents(value_type)));
 }
 
 SpirvBuilder::IfBuilder::IfBuilder(spv::Id condition,

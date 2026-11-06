@@ -6,6 +6,11 @@ its classes does not satisfy this requirement. This migration is incomplete.
 
 ## Current cuts
 
+- Uniform composite constants borrow one scalar ID through a C89 logical source.
+  Repeated hashing, exact-key matching and packet emission need no intermediary
+  member array. Normal views and repeated sources share constant identity.
+  Scalar smears and composite comparison/extraction remove temporary vectors.
+  Replicated mode still allocates a separate extension-string temporary.
 - Obsolete operand-only storage and its compatibility API are deleted. Packet
   growth/free/string code now belongs to the C89 packet implementation itself.
 - Module ID registration, packet lookup, type queries and checked pointer-storage

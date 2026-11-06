@@ -33,6 +33,20 @@ static INLINE uint32_t xe_spv_constant_hash(const xe_spv_constant_key *key)
    hash ^= hash >> 13;
    return hash;
 }
+/* Same hash as a contiguous repeated payload, without constructing that array. */
+static INLINE uint32_t xe_spv_constant_hash_repeat(uint32_t opcode, uint32_t type,
+      uint32_t word, size_t count)
+{
+   uint32_t hash = (UINT32_C(2166136261) ^ opcode) * UINT32_C(16777619);
+   size_t i;
+   hash = (hash ^ type) * UINT32_C(16777619);
+   hash = (hash ^ (uint32_t)count) * UINT32_C(16777619);
+   for (i = 0; i < count; ++i) hash = (hash ^ word) * UINT32_C(16777619);
+   hash ^= hash >> 16;
+   hash *= UINT32_C(0x85ebca6b);
+   hash ^= hash >> 13;
+   return hash;
+}
 static INLINE void xe_spv_constant_cache_reset(xe_spv_constant_cache *cache)
 {
    ++cache->epoch;

@@ -1767,6 +1767,22 @@ Id Builder::findConstant(Op opcode, Id typeId, xe_spv_word_view words)
     return found ? found->getTypedResultId() : NoResult;
 }
 
+int Builder::equalRepeatedConstant(const void* record, const xe_spv_constant_key* key)
+{
+    // This key borrows one scalar, not a contiguous array of key->count words.
+    return static_cast<const Instruction*>(record)->matchesRepeatedConstant(
+        key->opcode, key->type, *key->words, key->count);
+}
+
+Id Builder::findRepeatedConstant(Op opcode, Id typeId, Id member, size_t count)
+{
+    xe_spv_constant_key key = {enumCast(opcode), typeId, &member, count};
+    const Instruction* found = static_cast<const Instruction*>(xe_spv_constant_cache_find(
+        module.constantCache(), xe_spv_constant_hash_repeat(key.opcode, typeId, member, count),
+        &key, equalRepeatedConstant));
+    return found ? found->getTypedResultId() : NoResult;
+}
+
 void Builder::publishConstant(Instruction* constant, bool cache)
 {
     // Reserve before ID publication; mapInstruction is the last throwing step.
@@ -2101,17 +2117,33 @@ Id Builder::makeCompositeConstant(Id typeId, const std::vector<Id>& members, boo
 
 Id Builder::makeCompositeConstantView(Id typeId, xe_spv_word_view view, bool specConstant)
 {
-    const std::span<const Id> members(view.words, view.count);
+    return makeCompositeConstantSource(typeId, xe_spv_source_view(view), specConstant);
+}
 
+Id Builder::makeCompositeConstantRepeat(Id typeId, Id member, size_t count, bool specConstant)
+{
+    return makeCompositeConstantSource(typeId, xe_spv_source_repeat(&member, count), specConstant);
+}
+
+// These two producer adapters must specialize the logical source mode without
+// copying a descriptor through another ABI call on every cache lookup.
+#if defined(_MSC_VER)
+__forceinline
+#elif defined(__GNUC__)
+inline __attribute__((always_inline))
+#else
+inline
+#endif
+Id Builder::makeCompositeConstantSource(Id typeId, xe_spv_word_source source, bool specConstant)
+{
     assert(typeId);
     Op typeClass = getTypeClass(typeId);
 
     bool replicate = false;
-    size_t numMembers = members.size();
+    size_t numMembers = source.count;
     if (useReplicatedComposites || typeClass == Op::OpTypeCooperativeVectorNV) {
         // use replicate if all members are the same
-        replicate = numMembers > 0 &&
-            std::equal(members.begin() + 1, members.end(), members.begin());
+        replicate = xe_spv_source_all_equal(source) != 0;
 
         if (replicate) {
             numMembers = 1;
@@ -2120,6 +2152,7 @@ Id Builder::makeCompositeConstantView(Id typeId, xe_spv_word_view view, bool spe
         }
     }
 
+    if (!xe_spv_source_fits_instruction(numMembers, 3)) throw std::bad_alloc();
     Op opcode = replicate ?
         (specConstant ? Op::OpSpecConstantCompositeReplicateEXT : Op::OpConstantCompositeReplicateEXT) :
         (specConstant ? Op::OpSpecConstantComposite : Op::OpConstantComposite);
@@ -2132,14 +2165,16 @@ Id Builder::makeCompositeConstantView(Id typeId, xe_spv_word_view view, bool spe
     case Op::OpTypeCooperativeMatrixNV:
     case Op::OpTypeCooperativeVectorNV:
         if (! specConstant) {
-            Id existing = findConstant(opcode, typeId, xe_spv_words_view(members.data(), numMembers));
+            Id existing = source.repeated ? findRepeatedConstant(opcode, typeId, *source.words, numMembers) :
+                findConstant(opcode, typeId, xe_spv_words_view(source.words, numMembers));
             if (existing)
                 return existing;
         }
         break;
     case Op::OpTypeStruct:
         if (! specConstant) {
-            Id existing = findConstant(opcode, typeId, xe_spv_words_view(members.data(), numMembers));
+            Id existing = source.repeated ? findRepeatedConstant(opcode, typeId, *source.words, numMembers) :
+                findConstant(opcode, typeId, xe_spv_words_view(source.words, numMembers));
             if (existing)
                 return existing;
         }
@@ -2150,9 +2185,7 @@ Id Builder::makeCompositeConstantView(Id typeId, xe_spv_word_view view, bool spe
     }
 
     Instruction* c = createInstruction(getUniqueId(), typeId, opcode);
-    c->reserveOperands(numMembers);
-    for (size_t op = 0; op < numMembers; ++op)
-        c->addIdOperand(members[op]);
+    c->addSourceIdOperands(source, numMembers);
     publishConstant(c, !specConstant);
 
     return c->getResultId();
@@ -2973,8 +3006,8 @@ Id Builder::createCompositeExtract(Id composite, Id typeId, unsigned index)
     // Generate code for spec constants if in spec constant operation
     // generation mode.
     if (generatingOpCodeForSpecConst) {
-        return createSpecConstantOp(Op::OpCompositeExtract, typeId, std::vector<Id>(1, composite),
-            std::vector<Id>(1, index));
+        return createSpecConstantOpView(Op::OpCompositeExtract, typeId,
+            xe_spv_words_view(&composite, 1), xe_spv_words_view(&index, 1));
     }
     Instruction* extract = createInstruction(getUniqueId(), typeId, Op::OpCompositeExtract);
     extract->reserveOperands(2);
@@ -2990,7 +3023,8 @@ Id Builder::createCompositeExtract(Id composite, Id typeId, const std::vector<un
     // Generate code for spec constants if in spec constant operation
     // generation mode.
     if (generatingOpCodeForSpecConst) {
-        return createSpecConstantOp(Op::OpCompositeExtract, typeId, std::vector<Id>(1, composite), indexes);
+        return createSpecConstantOpView(Op::OpCompositeExtract, typeId,
+            xe_spv_words_view(&composite, 1), xe_spv_words_view(indexes.data(), indexes.size()));
     }
     Instruction* extract = createInstruction(getUniqueId(), typeId, Op::OpCompositeExtract);
     extract->reserveOperands(indexes.size() + 1);
@@ -3336,7 +3370,6 @@ Id Builder::smearScalar(Decoration precision, Id scalar, Id vectorType)
 
     Instruction* smear = nullptr;
     if (generatingOpCodeForSpecConst) {
-        auto members = std::vector<spv::Id>(numComponents, scalar);
         // Sometime even in spec-constant-op mode, the temporary vector created by
         // promoting a scalar might not be a spec constant. This should depend on
         // the scalar.
@@ -3345,7 +3378,7 @@ Id Builder::smearScalar(Decoration precision, Id scalar, Id vectorType)
         // In such cases, the temporary vector created from a_front_end_const_scalar
         // is not a spec constant vector, even though the binary operation node is marked
         // as 'specConstant' and we are in spec-constant-op mode.
-        auto result_id = makeCompositeConstant(vectorType, members, isSpecConstant(scalar));
+        auto result_id = makeCompositeConstantRepeat(vectorType, scalar, size_t(numComponents), isSpecConstant(scalar));
         smear = module.getInstruction(result_id);
     } else {
         bool replicate = (useReplicatedComposites || isCooperativeVectorType(vectorType)) && (numComponents > 0);
@@ -3720,11 +3753,10 @@ Id Builder::createCompositeCompare(Decoration precision, Id value1, Id value2, b
 
     // Compare each pair of constituents
     for (int constituent = 0; constituent < numConstituents; ++constituent) {
-        std::vector<unsigned> indexes(1, constituent);
         Id constituentType1 = getContainedTypeId(getTypeId(value1), constituent);
         Id constituentType2 = getContainedTypeId(getTypeId(value2), constituent);
-        Id constituent1 = createCompositeExtract(value1, constituentType1, indexes);
-        Id constituent2 = createCompositeExtract(value2, constituentType2, indexes);
+        Id constituent1 = createCompositeExtract(value1, constituentType1, unsigned(constituent));
+        Id constituent2 = createCompositeExtract(value2, constituentType2, unsigned(constituent));
 
         Id subResultId = createCompositeCompare(precision, constituent1, constituent2, equal);
 

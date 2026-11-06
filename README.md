@@ -8,6 +8,8 @@ The Vulkan version probe writes its final SPIR-V words directly in C89 caller st
 
 Shader module ID/type queries borrow the C89 packet index directly. The obsolete operand-only storage API is removed; packet growth retains its pooled storage and checked allocation rollback. Pointer-storage queries reject missing or malformed records. The legacy builder's remaining module/type/CFG duties still need migration.
 
+Uniform shader composites borrow one scalar ID rather than staging repeated members in a vector. C89 source hashing/matching/emission preserves ordinary constant aliases and specialization identity; composite extraction borrows scalar operands/indices. Extension-string metadata can still allocate, and final contiguous SPIR-V assembly still copies packet words.
+
 ## Savestate work in progress
 
 Audio/XMA pause requests use acknowledged common gates with bounded waits. Content teardown releases the decoder contexts and their retained packet buffers after joining the decoder worker.
