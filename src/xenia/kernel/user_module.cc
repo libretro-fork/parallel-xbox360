@@ -170,7 +170,8 @@ X_STATUS UserModule::LoadFromMemory(const void* addr, const size_t length) {
   } else if (module_format_ == kModuleFormatElf) {
     auto elf_module =
         std::make_unique<cpu::ElfModule>(processor, kernel_state());
-    if (!elf_module->Load(name_, path_, addr, length)) {
+    if (!elf_module->Load(name_, path_, addr, length,
+                         !kernel_state()->GetExecutableModule())) {
       return X_STATUS_UNSUCCESSFUL;
     }
 

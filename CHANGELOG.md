@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- ELF loading now validates borrowed PPC wire records before guest writes, merges shared heap pages with an allocation-free linear cursor, and rolls back newly reserved pages on failure. It copies file bytes directly and zeros only BSS, removes the retained header vector, and initializes load/entry state. Initial libxenon loads explicitly reuse verified boot backing; unrelated allocations remain protected. PT_DYNAMIC is treated as metadata rather than an independent load segment. No gameplay speedup is claimed.
+
 - Module loading now borrows mapped input or reads directly into one exact uninitialized C89 buffer, removing its zero-filled staging vector. Short transfers must complete before parsing, failed reads and parser exceptions retire their file/buffer owners, and null or sub-four-byte input is rejected before reading magic. Raw mapped ZArchive entries can now be borrowed by the module and extraction paths; compressed entries retain checked owned storage. Parser lifetime, audio scheduling and GPU resource management are preserved.
 
 - Launch-image extraction now borrows mapped input directly or reuses bounded 64 KiB scratch instead of allocating a 4 MiB copy buffer. Checked libretro-common VFS transfers stage each extraction under a unique name and publish only after successful writes and close, preserving an existing file on failure. Truncated cached images are retried, unused progress atomics and standalone bulk-dump tools are removed. Relaunch timing and audio scheduling are unchanged.

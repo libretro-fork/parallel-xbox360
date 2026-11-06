@@ -1,0 +1,83 @@
+ELF borrowed records, guest range ownership and direct image writes
+================================================================
+
+The old ELF loader cast untrusted input to native C++ header structs without
+checking input/table/segment extents. Release builds relied on assertions for
+header strides. Allocation failure logged then continued into memset/memcpy.
+Files larger than memory segments could overwrite guest memory; malformed
+alignments and wrapped guest ranges were unchecked. It also zeroed every file
+byte immediately before overwriting it, copied the entire ELF header into a
+vector solely to read e_entry later, and left loaded_/entry_point_ uninitialized.
+
+libretro/core_elf.h now holds C89 borrowed wire validation, a fixed range cursor,
+and direct copy/BSS application. There is no host allocation, sort/range vector
+or payload staging in this algorithm. It validates ELF32, big-endian PPC ET_EXEC,
+versions/header/table lengths, record stride, file ranges, filesz<=memsz, guest
+bounds, ordered PT_LOAD records, alignments/congruence and a mapped entry point.
+Unaligned input is read as bytes. PT_DYNAMIC/other metadata are not loaded as
+independent images; runtime dynamic linking remains unsupported as before.
+
+The cursor makes at most two program-table scans, one per guest heap, splitting
+segments at the 64-KiB/4-KiB heap boundary and merging adjacent/overlapping page
+coverage. It reserves minimal heap pages rather than padding allocations up to
+potentially huge file p_align. All reservations and initial translation/alias
+checks precede writes. Input overlapping a guest commit range (including page padding) is rejected
+before that range is reserved: the
+borrowed metadata/payload must survive every output write. Copies go directly
+from input to guest; only the memsz-filesz tail is zeroed. Executable notifications
+are instruction-aligned and deferred until copying completes.
+
+The C++ adapter uses exact AllocRange bounds, which atomically select FREE heap
+pages under the existing heap synchronization. The old AllocFixed reserve+commit
+path can replace existing regions, so it is unsuitable for enforcing ownership.
+Failure rolls back only successful new reservations and does not publish loaded
+state. A thin C++ lease also rolls back if a virtual callback throws. Heap release
+semantics remain the existing Memory implementation; no new lock/thread/timer.
+
+Compatibility matters: Memory::Initialize owns a 256-KiB boot placeholder at
+0x80000000, and the libxenon linker script starts there. The initial-title caller
+explicitly permits borrowing that region, after verifying its exact allocation
+base/size/state/protection. Rollback never releases this borrowed prefix. A range
+which also includes new tail pages releases only its newly reserved tail. Other
+modules default to no boot loan; existing unrelated allocations cannot be
+silently overwritten. Memory/guest allocation state must stay stable during
+loading; the loan is only for the pre-executable initial-title path.
+
+References for format/boot behavior (primary sources):
+https://gabi.xinuos.com/elf/08-pheader.html
+https://raw.githubusercontent.com/Free60Project/libxenon/master/devkitxenon/app.lds
+
+ElfModule now keeps initialized scalar loaded/entry state, eliminating its ELF
+header vector/copy and unused kernel-state pointer. Existing names/path ownership
+remains. Successful guest allocations still belong to Memory until existing
+teardown; this patch does not add explicit ELF unload or ELF savestates, or
+change XEX loading. No end-to-end allocation-free emulator/FPS claim is made.
+Underlying guest heap bookkeeping can still allocate host metadata. This is not
+a general ELF loader/dynamic linker or full XEX/parser hardening audit.
+
+Validation:
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror; Linux ASan/UBSan.
+- Native MSVC /TC /O2 /W4 /WX for standalone and bridge C code; actual ElfModule,
+  UserModule and C++ fixture compile with MSVC.
+- Valid direct copies/BSS and untouched padding, shared pages, split heaps,
+  zero/one alignment, metadata records, truncated fixed/table headers, file/
+  memory/guest range errors, unordered loads, missing entry and bad alignment.
+- Injected early/later reservation failures, translation failure and source/
+  destination alias: newly reserved ranges retire, no writes/notifications occur
+  for those pre-copy failures, and state can be safely released again.
+- 20,000 deterministic wire mutations under sanitizers; 1,000 randomized plans
+  compared with an independent 4-KiB occupancy oracle around both heap sizes.
+  The maximum 65,535 program-record count is also exercised without allocation.
+- CPU-only real core fixture initializes Memory/Processor without a JIT, renderer,
+  guest execution or frontend. Conflicting allocated bytes survive a failed
+  load, free-page counts restore, boot loans require explicit permission, a
+  successful image has exact bytes/BSS/state, reload is rejected, and mixed
+  boot-prefix/new-tail ownership is preserved. Fixture segments omit PF_X so no
+  backend setup is needed; executable notifications are checked by the C sink.
+- Full Windows static Make -j5 compiles and links. No installed DLL replacement
+  or gameplay timing/FPS claim. Actual full-core fixture is not ASan-instrumented;
+  the C algorithm is, including faults and range-oracle tests.
+
+Reproduce tools/tests/run_elf_tests.sh (sanitizers default), or
+ tools\tests\run_elf_tests.cmd from an x64 MSVC developer prompt. After a core
+Make build, tools/tests/run_elf_bridge_tests.sh links the real core objects.

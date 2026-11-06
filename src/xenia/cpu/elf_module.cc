@@ -9,141 +9,91 @@
 
 #include "xenia/cpu/elf_module.h"
 
-#include "xenia/base/byte_order.h"
+#include "libretro/core_elf.h"
 #include "xenia/base/logging.h"
 #include "xenia/cpu/processor.h"
 
 namespace xe {
 namespace cpu {
 
-ElfModule::ElfModule(Processor* processor, kernel::KernelState* kernel_state)
-    : Module(processor), kernel_state_(kernel_state) {}
+ElfModule::ElfModule(Processor* processor, kernel::KernelState*)
+    : Module(processor) {}
 
 ElfModule::~ElfModule() = default;
 
-// ELF structures
-struct elf32_ehdr {
-  uint8_t e_ident[16];
-  xe::be<uint16_t> e_type;
-  xe::be<uint16_t> e_machine;
-  xe::be<uint32_t> e_version;
-  xe::be<uint32_t> e_entry;
-  xe::be<uint32_t> e_phoff;
-  xe::be<uint32_t> e_shoff;
-  xe::be<uint32_t> e_flags;
-  xe::be<uint16_t> e_ehsize;
-  xe::be<uint16_t> e_phentsize;
-  xe::be<uint16_t> e_phnum;
-  xe::be<uint16_t> e_shentsize;
-  xe::be<uint16_t> e_shnum;
-  xe::be<uint16_t> e_shtrndx;
-};
-
-struct elf32_phdr {
-  xe::be<uint32_t> p_type;
-  xe::be<uint32_t> p_offset;
-  xe::be<uint32_t> p_vaddr;
-  xe::be<uint32_t> p_paddr;
-  xe::be<uint32_t> p_filesz;
-  xe::be<uint32_t> p_memsz;
-  xe::be<uint32_t> p_flags;
-  xe::be<uint32_t> p_align;
-};
-
-bool ElfModule::is_executable() const {
-  auto hdr = reinterpret_cast<const elf32_ehdr*>(elf_header_mem_.data());
-  return hdr->e_entry != 0;
-}
+bool ElfModule::is_executable() const { return loaded_ && entry_point_ != 0; }
 
 bool ElfModule::Load(const std::string_view name, const std::string_view path,
-                     const void* elf_addr, size_t elf_length) {
+                     const void* elf_addr, size_t elf_length, bool initial_title) {
+  if (loaded_) return false;
+  xe_elf_plan plan;
+  if (!xe_elf_validate(&plan, elf_addr, elf_length,
+          memory()->LookupHeap(0x80000000)->page_size(),
+          memory()->LookupHeap(0x90000000)->page_size())) {
+    XELOGE("ELF: Invalid or unsupported load layout");
+    return false;
+  }
   name_ = name;
   path_ = path;
-
-  uint8_t* pelf = (uint8_t*)elf_addr;
-  elf32_ehdr* hdr = (elf32_ehdr*)(pelf + 0x0);
-  if (hdr->e_ident[0] != 0x7F || hdr->e_ident[1] != 'E' ||
-      hdr->e_ident[2] != 'L' || hdr->e_ident[3] != 'F') {
-    // Not an ELF file!
+  struct Context { ElfModule* module; uint32_t boot_end; } context{this, 0};
+  // Memory::Initialize lends the first 256 KiB as a boot placeholder. Libxenon
+  // links at 0x80000000; retain that backing only for the initial title, after
+  // verifying its exact region. Other live allocations are never overwritten.
+  HeapAllocationInfo boot{};
+  if (initial_title && memory()->LookupHeap(0x80000000)->QueryRegionInfo(
+          0x80000000, &boot, 0x40000) &&
+      boot.allocation_base == 0x80000000 && boot.allocation_size == 0x40000 &&
+      boot.region_size == 0x40000 &&
+      boot.state == (kMemoryAllocationReserve | kMemoryAllocationCommit) &&
+      boot.protect == (kMemoryProtectRead | kMemoryProtectWrite))
+    context.boot_end = 0x80040000;
+  const xe_elf_sink sink = {
+      &context,
+      [](void* opaque, uint32_t base, uint32_t size) -> int {
+        auto* context = static_cast<Context*>(opaque);
+        if (base < context->boot_end) {
+          if (size <= context->boot_end - base) return 1;
+          size -= context->boot_end - base; base = context->boot_end;
+        }
+        auto* module = context->module;
+        auto* heap = module->memory()->LookupHeap(base);
+        uint32_t actual = 0;
+        if (!heap || !heap->AllocRange(base, base + size - 1, size,
+                heap->page_size(), kMemoryAllocationReserve | kMemoryAllocationCommit,
+                kMemoryProtectRead | kMemoryProtectWrite, false, &actual)) return 0;
+        if (actual == base) return 1;
+        heap->Release(actual);
+        return 0;
+      },
+      [](void* opaque, uint32_t base, uint32_t size) {
+        auto* context = static_cast<Context*>(opaque);
+        if (base < context->boot_end) {
+          if (size <= context->boot_end - base) return;
+          base = context->boot_end;
+        }
+        context->module->memory()->LookupHeap(base)->Release(base);
+      },
+      [](void* opaque, uint32_t address) -> uint8_t* {
+        return static_cast<Context*>(opaque)->module->memory()->TranslateVirtual(address);
+      },
+      [](void* opaque, uint32_t base, uint32_t end) {
+        static_cast<Context*>(opaque)->module->processor_->backend()->CommitExecutableRange(base, end);
+      }};
+  // C state also remains visible to this guard if a virtual callback throws.
+  struct Lease {
+    const xe_elf_plan* plan;
+    const xe_elf_sink* sink;
+    xe_elf_state state{};
+    ~Lease() { xe_elf_rollback(plan, sink, &state); }
+  } lease{&plan, &sink};
+  if (!xe_elf_apply(&plan, &sink, &lease.state)) {
+    XELOGE("ELF: Unable to reserve or translate guest load ranges");
     return false;
   }
-
-  assert_true(hdr->e_ident[4] == 1);  // 32bit
-
-  if (hdr->e_type != 2 /* ET_EXEC */) {
-    // Not executable (shared objects not supported yet)
-    XELOGE("ELF: Could not load ELF because it isn't executable!");
-    return false;
-  }
-
-  if (hdr->e_machine != 20 /* EM_PPC */) {
-    // Not a PPC ELF!
-    XELOGE(
-        "ELF: Could not load ELF because target machine is not PPC! (target: "
-        "{})",
-        uint32_t(hdr->e_machine));
-    return false;
-  }
-
-  // Parse LOAD program headers and load into memory.
-  if (!hdr->e_phoff) {
-    XELOGE("ELF: File doesn't have a program header!");
-    return false;
-  }
-
-  if (!hdr->e_entry) {
-    XELOGE("ELF: Executable has no entry point!");
-    return false;
-  }
-
-  // Entry point virtual address
-  entry_point_ = hdr->e_entry;
-
-  // Copy the ELF header
-  elf_header_mem_.resize(hdr->e_ehsize);
-  std::memcpy(elf_header_mem_.data(), hdr, hdr->e_ehsize);
-
-  assert_true(hdr->e_phentsize == sizeof(elf32_phdr));
-  elf32_phdr* phdr = (elf32_phdr*)(pelf + hdr->e_phoff);
-  for (uint32_t i = 0; i < hdr->e_phnum; i++) {
-    if (phdr[i].p_type == 1 /* PT_LOAD */ ||
-        phdr[i].p_type == 2 /* PT_DYNAMIC */) {
-      // Allocate and copy into memory.
-      // Base address @ 0x80000000
-      if (phdr[i].p_vaddr < 0x80000000 || phdr[i].p_vaddr > 0x9FFFFFFF) {
-        XELOGE("ELF: Could not allocate memory for section @ address 0x{:08X}",
-               uint32_t(phdr[i].p_vaddr));
-        return false;
-      }
-
-      uint32_t virtual_addr = phdr[i].p_vaddr & ~(phdr[i].p_align - 1);
-      uint32_t virtual_size = xe::round_up(phdr[i].p_vaddr + phdr[i].p_memsz,
-                                           uint32_t(phdr[i].p_align)) -
-                              virtual_addr;
-      if (!memory()
-               ->LookupHeap(virtual_addr)
-               ->AllocFixed(
-                   virtual_addr, virtual_size, phdr[i].p_align,
-                   xe::kMemoryAllocationReserve | xe::kMemoryAllocationCommit,
-                   xe::kMemoryProtectRead | xe::kMemoryProtectWrite)) {
-        XELOGE("ELF: Could not allocate memory!");
-      }
-
-      auto p = memory()->TranslateVirtual(phdr[i].p_vaddr);
-      std::memset(p, 0, phdr[i].p_memsz);
-      std::memcpy(p, pelf + phdr[i].p_offset, phdr[i].p_filesz);
-
-      // Notify backend about executable code.
-      if (phdr[i].p_flags & 0x1 /* PF_X */) {
-        processor_->backend()->CommitExecutableRange(
-            virtual_addr, virtual_addr + virtual_size);
-      }
-    }
-  }
-
+  entry_point_ = plan.entry;
+  loaded_ = true;
   return true;
 }
-
 std::unique_ptr<Function> ElfModule::CreateFunction(uint32_t address) {
   return std::unique_ptr<Function>(
       processor_->backend()->CreateGuestFunction(this, address));
