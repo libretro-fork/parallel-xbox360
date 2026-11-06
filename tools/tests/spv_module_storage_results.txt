@@ -1,0 +1,102 @@
+C89 packet-only storage and module queries, 2026-11-06
+Parent: complete435e57a8cffce0ca22f426a8fe10feaed73303ec sources.
+
+Deleted the obsolete operand-only C structure/API and its source/header. The
+packet implementation now has its own C file and callback declaration. Production
+sources no longer contain xe_spv_operands or include its header; the rebuilt
+DLL's nm output contains no xe_spv_operands symbols. Historical comparison tools
+may still select that source from an older complete revision, never the current
+runtime. Existing packet allocator hooks and payload-pool behavior are preserved.
+
+Module registration, packet lookup, type queries and checked pointer-storage
+queries now operate on the C89 packet/index directly. The typed wrapper verifies
+standard layout and first-member pointer interconvertibility. No new table,
+packet copy, cache, owned buffer or allocation is introduced. Index borrow/reset
+and arena ownership remain unchanged. Missing/non-pointer/empty records or an
+ID-flagged storage operand fail without changing the C caller's output; the typed
+wrapper asserts in debug and returns StorageClass::Max on release failure.
+
+The control-flow/type builder graph in src/xenia/gpu/spirv remains. This is a real
+storage/API deletion and a module-query migration, not completed directory
+removal. Final Vulkan module assembly still copies ordered packets into a
+contiguous buffer. Other growth/allocations and intermediary vectors remain.
+
+Validation:
+- Strict/pedantic C89 packet and pooled-payload units pass. Old operand coverage
+  is moved to packets: inline/heap transitions, all65532 operand values/ID flags,
+  preserved byte12 retirement tag, inline and existing-heap allocation failure,
+  rollback, null/oversized strings, counted padding, stable/copy pool growth,
+  allocator transitions, warm reuse and balanced release.
+- C89 module queries cover sparse IDs, packet/type identity,100 index resets,
+  borrowed index slots, unmapping, missing/non-pointer/empty/ID-flagged pointer
+  records, unchanged failure output and retained index storage.
+- Native MSVC /TC /W4 /WX full unit/typed output/ownership suite passes.
+- Full WSL ASan/UBSan suite passes (C -O2/C++ -O1), including5248 current
+  standard/wide helper modules plus baseline, cross-block sampled images,
+  source/views/linkage, constants/types, nested CFG/stacks, allocation faults,
+  arena cleanup and negative retired C/typed/payload/stack accesses.
+- Output suite now defaults to a complete435e57a8c source archive. Baseline
+  C objects and private headers come from that revision rather than linking
+  historical IR against the current storage ABI. Partial IR-only archives are
+  explicitly rejected. Per-revision benchmark/comparison scripts select their
+  own packet or historical operand source. Runtime storage changes cannot be
+  hidden by accidentally sharing one C implementation between both modes.
+- Native geometry18432 variants/109668864 bytes retains golden SHA256
+  427b071c7e7868566596ff55270bbca9aab31f54c714ca552e928dfe349e69e0.
+- Four own-revision metadata fixtures, capability/postprocess bytes and seven
+  raw version probes match the parent. Actual rebuilt GCC -O3 Make objects:
+  1410 Tekken cached translations/two with CFG and210 Tomb Raider translations/
+  96 with CFG match older golden outputs. Private inputs are not distributed.
+- Windows static Make -j5 passes. CMake source registration is updated, but
+  CMake/platform builds were not rerun. No game/frontend/GPU was launched or
+  installed DLL changed. Audio, retirement and shutdown behavior are untouched.
+
+Performance, Windows x64 GCC16.2 -O2, own-revision C/IR sources. Seven alternating
+parent/current pairs after all task compilers stopped; Windows compiler inventory
+was zero at the start. Construction includes cleanup, excludes dump/file I/O.
+Warm untimed binaries match. All C++ new and C arena/packet/index/plan/output
+hooks counted; allocator metadata/free-block retention and driver memory excluded.
+Tracked live storage returns to the initial state after workspace close.
+
+Construction median ms/range, parent -> current,1000 modules except largest
+constant workload(100 modules):
+1 function:.124(.116.. .127) ->.123(.118.. .128)
+71 functions:4.177(4.121..4.605) ->4.135(4.099..4.507)
+257 functions:15.014(14.904..15.252) ->14.924(14.852..15.355)
+40 constants:1.973(1.936..2.303) ->1.931(1.915..1.964)
+640 constants:33.177(33.102..34.595) ->33.359(33.349..33.961)
+5120 constants:29.444(29.155..30.117) ->29.726(29.545..30.539)
+Zero warm tracked allocations/requested bytes in these fixtures; retained/peak
+counts unchanged. Instructions64/Block136/Function136/Module88/Builder1504 and
+workspace72 bytes unchanged. No new module state is stored.
+
+Index factory/map/sparse lookup/cleanup,35 samples per revision (seven launches
+with five internal samples),1000 modules/sample; median ms/range parent->current:
+128 IDs:.606(.584.. .628) ->.582(.570.. .853)
+2048 IDs:9.165(9.109..9.927) ->9.156(9.020..9.593)
+16384 IDs:74.413(74.030..78.368) ->74.300(71.343..77.498)
+Both revisions zero warm allocation/requested bytes; retained39371/225356/
+1614044 bytes. The checksum and tracked-live baseline are checked on every run.
+
+Direct-owned serialization,10000 modules/sample, median ms/range parent->current:
+328-byte module:1.323(1.310..1.425) ->1.313(1.295..1.558)
+5432-byte module:11.335(11.133..11.736) ->11.230(11.078..11.638)
+13624-byte module:95.783(94.606..100.013) ->96.099(94.751..98.606)
+3968-byte module:23.447(23.309..24.896) ->23.696(23.332..24.489)
+Allocation/requested/peak output costs unchanged from the packet report. Ranges
+overlap; these results support comparable fixture costs, not universal speedups.
+No game FPS, full shader-compile latency, hardware counters or RSS was measured.
+
+Reproduce with run_spv_output_tests.cmd/.sh, run_spv_operands_tests.sh (now packet
+units plus the typed adapter oracle), run_spv_metadata_compare.sh, and
+run_spv_binary_bench.sh/run_spv_index_bench.sh. Use BASELINE_ROOT=<complete435e57a8c
+sources>, CAPTURE_OPERANDS=1 for construction/output, same fixtures/flags as the
+packet report, and seven quiet alternating pairs. The full output suite's
+BASELINE_ARCHIVE must now contain complete source including libretro C storage.
+
+Next zero-copy candidates found: SpirvBuilder::smearFloatConstant allocates a
+vector of repeated scalar IDs; Builder::smearScalar does the same for spec
+constants; createCompositeCompare allocates a one-element index vector per
+constituent. Direct repeated-operand hashing/emission and borrowed index views
+can remove these intermediaries. Preserve replicated-composite extension/opcode
+rules, ordinary-vs-specialization caching, struct identity and exact ID order.

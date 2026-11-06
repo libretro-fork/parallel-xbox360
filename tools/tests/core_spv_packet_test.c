@@ -16,7 +16,8 @@ static void *packet_alloc(size_t bytes) {
 static void packet_free(void *value) { if (value) { --live; free(value); } }
 #define XE_SPV_ALLOC packet_alloc
 #define XE_SPV_FREE packet_free
-#include "../../libretro/core_spv_operands.c"
+#include "../../libretro/core_spv_packet.c"
+#include "../../libretro/core_spv_module.h"
 static int layout(unsigned type, unsigned result) {
    xe_spv_packet packet;
    xe_spv_word_view view;
@@ -52,6 +53,10 @@ static int layout(unsigned type, unsigned result) {
    xe_spv_packet_operands(&packet)[33] = UINT32_MAX;
    CHECK(xe_spv_packet_view(&packet).words[prefix + 33] == UINT32_MAX);
    stable = xe_spv_packet_const_words(&packet);
+   before = allocations;
+   fail_next = 1;
+   CHECK(!xe_spv_packet_reserve_with(&packet, 4096, NULL, NULL));
+   CHECK(packet.heap == stable && packet.count == 64 && allocations == before + 1);
    before = allocations;
    CHECK(!xe_spv_packet_reserve_with(&packet, SIZE_MAX, NULL, NULL));
    CHECK(!xe_spv_packet_string_capacity(&packet, SIZE_MAX));
@@ -116,22 +121,66 @@ static int constant_keys(void) {
    CHECK(!live);
    return 0;
 }
+static int module_queries(void) {
+   xe_spv_index index = {0};
+   xe_spv_packet pointer, value, malformed;
+   uint32_t storage = UINT32_MAX;
+   void *const *borrowed;
+   unsigned round;
+   xe_spv_packet_init(&pointer, XE_SPV_MODULE_TYPE_POINTER, 0, 17);
+   xe_spv_packet_append_reserved(&pointer, 12, 0);
+   xe_spv_packet_append_reserved(&pointer, 23, 1);
+   xe_spv_packet_init(&value, 128, 17, 700);
+   xe_spv_packet_init(&malformed, XE_SPV_MODULE_TYPE_POINTER, 0, 19);
+   for (round = 0; round < 100; ++round) {
+      CHECK(!xe_spv_module_get(&index, 17) && !xe_spv_module_type(&index, 700));
+      CHECK(xe_spv_module_map(&index, &pointer) && xe_spv_module_map(&index, &value));
+      CHECK(xe_spv_module_get(&index, 17) == &pointer && xe_spv_module_type(&index, 700) == 17);
+      CHECK(!xe_spv_module_get(&index, 18) && !xe_spv_module_type(&index, UINT32_MAX));
+      CHECK(xe_spv_module_storage_class(&index, 17, &storage) && storage == 12);
+      storage = UINT32_MAX;
+      CHECK(!xe_spv_module_storage_class(&index, 700, &storage) && storage == UINT32_MAX);
+      CHECK(!xe_spv_module_storage_class(&index, 18, &storage) && storage == UINT32_MAX);
+      CHECK(xe_spv_module_map(&index, &malformed));
+      CHECK(!xe_spv_module_storage_class(&index, 19, &storage) && storage == UINT32_MAX);
+      borrowed = xe_spv_index_borrow(&index, 17, 3);
+      CHECK(borrowed && borrowed[0] == &pointer && !borrowed[1] && borrowed[2] == &malformed);
+      xe_spv_index_unmap(&index, 17);
+      CHECK(!xe_spv_module_get(&index, 17));
+      xe_spv_index_reset(&index);
+   }
+   xe_spv_packet_append_reserved(&malformed, 31, 1);
+   CHECK(xe_spv_module_map(&index, &malformed));
+   CHECK(!xe_spv_module_storage_class(&index, 19, &storage) && storage == UINT32_MAX);
+   xe_spv_index_close(&index);
+   return 0;
+}
 int main(void) {
    xe_spv_packet packet;
    unsigned i;
    CHECK(!layout(0,0) && !layout(7,0) && !layout(0,9) && !layout(7,9));
    CHECK(!strings());
    CHECK(!constant_keys());
+   CHECK(!module_queries());
    xe_spv_packet_init(&packet, 65536, 7, 9);
    CHECK(xe_spv_packet_opcode(&packet) == 65536 && !xe_spv_packet_valid(&packet));
    xe_spv_packet_init(&packet, 128, 7, 9);
    CHECK(xe_spv_packet_reserve_with(&packet, 65533, NULL, NULL));
    for (i = 0; i < 65532; ++i) xe_spv_packet_append_reserved(&packet, i, i & 1);
+   for (i = 0; i < 65532; ++i) {
+      CHECK(xe_spv_packet_const_operands(&packet)[i] == i);
+      CHECK(xe_spv_packet_is_id(&packet, i) == (int)(i & 1));
+   }
    CHECK(xe_spv_packet_valid(&packet) && xe_spv_packet_view(&packet).count == 65535);
    xe_spv_packet_append_reserved(&packet, 1, 0);
    CHECK(!xe_spv_packet_valid(&packet));
    xe_spv_packet_free(&packet);
    CHECK(!live);
+   xe_spv_packet_init(&packet, 5, 0, 0);
+   CHECK(!xe_spv_packet_string_reserved(&packet, NULL, 1) && !packet.count);
+   CHECK(!xe_spv_packet_string_reserved(&packet, "x", SIZE_MAX) && !packet.count);
+   CHECK(xe_spv_packet_string_reserved(&packet, NULL, 0) && packet.count == 1 &&
+         !xe_spv_packet_const_operands(&packet)[0]);
    puts("PASS: encoded prefixes, inline/growing words and ID flags, patches, faults, strings, wire limits and preserved arena tag");
    return 0;
 }

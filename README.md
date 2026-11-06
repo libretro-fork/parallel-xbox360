@@ -6,6 +6,8 @@ This repository follows xenia-edge and adds the libretro frontend in `libretro/`
 
 The Vulkan version probe writes its final SPIR-V words directly in C89 caller storage, bypassing the instruction graph and output vector. Capability metadata uses retained sorted C89 storage; capability and memory-model serialization avoids temporary instruction objects. Guest/helper instructions now construct C89 wire packets and output borrows their encoded spans, preserving operand fixups and ID flags. Final module assembly still copies packets into Vulkan's contiguous buffer. The guest translator still uses the legacy builder in `src/xenia/gpu/spirv`; its removal requires the backend migration described in [the emitter migration plan](libretro/SPIRV_EMITTER_MIGRATION.md).
 
+Shader module ID/type queries borrow the C89 packet index directly. The obsolete operand-only storage API is removed; packet growth retains its pooled storage and checked allocation rollback. Pointer-storage queries reject missing or malformed records. The legacy builder's remaining module/type/CFG duties still need migration.
+
 ## Savestate work in progress
 
 Audio/XMA pause requests use acknowledged common gates with bounded waits. Content teardown releases the decoder contexts and their retained packet buffers after joining the decoder worker.

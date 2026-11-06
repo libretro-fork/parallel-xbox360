@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+. "$root/tools/tests/spv_storage_source.sh"
 parent=${BASELINE_ROOT:?Set BASELINE_ROOT to a complete pre-change source archive}
 parent=$(CDPATH= cd -- "$parent" && pwd)
 out=${TEST_BUILD_DIR:-"$root/build/tests/spv-geometry"}
@@ -32,7 +33,9 @@ for revision in parent current; do
  obj="$out/$revision"
  mkdir -p "$obj/validation"
  for unit in size binary operands arena; do
-  ${CC:-cc} -std=c89 -O2 $san $profile_flags -I"$src/third_party/libretro-common/include" -I"$root/tools/tests" -c "$src/libretro/core_spv_$unit.c" -o "$obj/$unit.o"
+  unit_source="$src/libretro/core_spv_$unit.c"
+  if test "$unit" = operands; then unit_source=$(spv_storage_source "$src"); fi
+  ${CC:-cc} -std=c89 -O2 $san $profile_flags -I"$src/third_party/libretro-common/include" -I"$root/tools/tests" -c "$unit_source" -o "$obj/$unit.o"
  done
  profile_object=
  if test "${PROFILE:-0}" = 1; then

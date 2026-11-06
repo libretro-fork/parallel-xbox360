@@ -6,6 +6,11 @@ its classes does not satisfy this requirement. This migration is incomplete.
 
 ## Current cuts
 
+- Obsolete operand-only storage and its compatibility API are deleted. Packet
+  growth/free/string code now belongs to the C89 packet implementation itself.
+- Module ID registration, packet lookup, type queries and checked pointer-storage
+  queries use the C89 packet index. These borrow existing records; no duplicate
+  index, type cache, packet buffer or ownership transfer is introduced.
 - Every production instruction now uses a C89 encoded packet. Its type/result
   prefix and operands share a wire-word span; output borrows that span rather
   than encoding fields again. ID flags and operand patches remain available.

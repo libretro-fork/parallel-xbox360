@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed the obsolete operand-only shader storage API. Module ID mapping, type queries and checked pointer-storage queries now use the C89 packet index directly, borrowing existing records without another lookup table or payload copy. Packet pooling, failure recovery and shader identity remain covered by the migrated storage tests.
+
 - Shader instructions construct their raw SPIR-V words in C89 packets, avoiding separate prefix encoding during output. The packets retain operand fixups and packed ID flags without increasing the tested 64-byte instruction size. Constant lookups compare raw scalar/pair bit patterns directly. Final module assembly still copies into a contiguous buffer, and the legacy control-flow/type graph remains pending replacement.
 
 - Vulkan version probing emits its final shader directly into fixed C89 storage. Shader capability metadata now reuses contiguous C89 storage, and capability/memory-model output avoids temporary instruction objects. The quad specialization helper borrows four IDs instead of building a vector. These cuts preserve shader bytes; the guest translator still depends on the legacy SPIR-V builder pending its replacement.

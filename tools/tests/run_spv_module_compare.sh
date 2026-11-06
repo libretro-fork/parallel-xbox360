@@ -8,7 +8,7 @@ git -C "$root" archive "$baseline" src/xenia/gpu/spirv > "$out/base.tar"
 tar -xf "$out/base.tar" -C "$out/base"
 san=${SANITIZER-}
 ${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" \
- -c "$root/libretro/core_spv_operands.c" -o "$out/storage.o"
+ -c "$root/libretro/core_spv_packet.c" -o "$out/storage.o"
 ${CC:-cc} -std=c89 -O2 $san -c "$root/libretro/core_spv_binary.c" -o "$out/binary.o"
 ${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_arena.c" -o "$out/arena.o"
 ${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_size.c" -o "$out/size.o"

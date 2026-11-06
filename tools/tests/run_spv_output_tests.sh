@@ -1,16 +1,21 @@
 #!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+. "$root/tools/tests/spv_storage_source.sh"
 out=${TEST_BUILD_DIR:-"$root/build/tests/spv-output-$(uname -s)"}
 mkdir -p "$out/base"
 out=$(CDPATH= cd -- "$out" && pwd)
 if test -n "${BASELINE_ARCHIVE:-}"; then
  cp "$BASELINE_ARCHIVE" "$out/base.tar"
 else
- baseline=$(git -C "$root" rev-parse --verify "${BASELINE_COMMIT:-27b870d25}^{commit}")
-git -C "$root" archive "$baseline" src/xenia/gpu/spirv src/xenia/gpu/spirv_shader_translator.cc src/xenia/gpu/spirv_shader_translator_rb.cc src/xenia/gpu/spirv_builder.h src/xenia/gpu/spirv_builder.cc src/xenia/gpu/edram_dump_shader.h src/xenia/gpu/edram_dump_shader.cc src/xenia/gpu/edram_transfer_shader.h src/xenia/gpu/edram_transfer_shader.cc > "$out/base.tar"
+baseline=$(git -C "$root" rev-parse --verify "${BASELINE_COMMIT:-435e57a8c}^{commit}")
+git -C "$root" archive "$baseline" > "$out/base.tar"
 fi
 tar -xf "$out/base.tar" -C "$out/base"
+if test ! -f "$out/base/libretro/core_spv_arena.c"; then
+ echo 'BASELINE_ARCHIVE must contain a complete source revision, including libretro C storage.' >&2
+ exit 1
+fi
 san=${SANITIZER-}
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_packet_test.c" -o "$out/packet-unit"
 "$out/packet-unit"
@@ -45,7 +50,7 @@ ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party
 "$out/instruction-chain-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_size.c" -o "$out/size.o"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -c "$root/libretro/core_spv_binary.c" -o "$out/binary.o"
-${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_operands.c" -o "$out/operands.o"
+${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -c "$root/libretro/core_spv_packet.c" -o "$out/operands.o"
 profile=
 profile_object=
 if test "${CAPTURE_ALLOCATIONS:-0}" = 1; then
@@ -64,13 +69,23 @@ ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party
 "$out/object-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_arena_test.c" -o "$out/arena-unit"
 "$out/arena-unit"
+mkdir -p "$out/base-objects"
+for unit in size binary operands arena; do
+ unit_source="$out/base/libretro/core_spv_$unit.c"
+ if test "$unit" = operands; then unit_source=$(spv_storage_source "$out/base"); fi
+ ${CC:-cc} -std=c89 -O2 $san $arena_flags -I"$out/base/third_party/libretro-common/include" -I"$root/third_party/libretro-common/include" -c "$unit_source" -o "$out/base-objects/$unit.o"
+done
 for mode in baseline current; do
  src="$root/src"
+ source_root="$root"
+ objects_root="$out"
  legacy=
  legacy_views=
  arena_test=-DXE_SPV_ARENA_TEST
  if test "$mode" = baseline; then
   src="$out/base/src"
+  source_root="$out/base"
+  objects_root="$out/base-objects"
   legacy_views=-DXE_SPV_OUTPUT_LEGACY
   arena_test=
   # Accept the older vector-output baseline as well as reusable-output commits.
@@ -87,7 +102,7 @@ for mode in baseline current; do
  awk '/^spv::Id SpirvShaderTranslator::(PreClampedDepthTo20e4|UnclampedFloat32To7e3|PreClampedFloat32To7e3|Float7e3To32|Depth20e4To32|PWLGammaToLinear|LinearToPWLGamma)\(/ { emit=1; count++ } emit { print } emit && /^}/ { emit=0 } END { if (count != 7) exit 1 }' "$src/xenia/gpu/spirv_shader_translator.cc" "$src/xenia/gpu/spirv_shader_translator_rb.cc"
  echo '} }'
 } > "$out/static_emitters-$mode.cc"
- ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DXENIA_LIBRETRO=1 -DVULKAN_HPP_NO_TO_STRING -Wno-attributes $san $legacy $profile $arena_flags $arena_test -I"$src" -I"$root/src" -I"$root" \
+ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DXENIA_LIBRETRO=1 -DVULKAN_HPP_NO_TO_STRING -Wno-attributes $san $legacy $profile $arena_flags $arena_test -I"$src" -I"$root/src" -I"$source_root" -I"$root" \
   -I"$root/third_party/libretro-common/include" -I"$root/third_party/fmt/include" \
   -I"$root/third_party" -I"$root/third_party/Vulkan-Headers/include" \
   "$root/tools/tests/core_spv_edram_output_test.cc" \
@@ -95,19 +110,19 @@ for mode in baseline current; do
   "$src/xenia/gpu/edram_dump_shader.cc" "$src/xenia/gpu/edram_transfer_shader.cc" \
   "$src/xenia/gpu/spirv_builder.cc" "$src/xenia/gpu/spirv/SpvBuilder.cpp" \
   "$src/xenia/gpu/spirv/SpvPostProcess.cpp" "$src/xenia/gpu/spirv/InReadableOrder.cpp" \
-  "$src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/operands.o" "$out/arena.o" "$out/size.o" $profile_object -o "$out/$mode"
+  "$src/xenia/gpu/spirv/Logger.cpp" "$objects_root/binary.o" "$objects_root/operands.o" "$objects_root/arena.o" "$objects_root/size.o" $profile_object -o "$out/$mode"
  "$out/$mode" "$out/$mode.bin"
  "$out/$mode" "$out/$mode-wide.bin" wide
- ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san $legacy_views $arena_flags -I"$src" -I"$root/src" -I"$root" \
+ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san $legacy_views $arena_flags -I"$src" -I"$root/src" -I"$source_root" -I"$root" \
   -I"$root/third_party/libretro-common/include" \
   "$root/tools/tests/core_spv_views_bridge.cc" "$src/xenia/gpu/spirv_builder.cc" \
   "$src/xenia/gpu/spirv/SpvBuilder.cpp" "$src/xenia/gpu/spirv/SpvPostProcess.cpp" \
   "$src/xenia/gpu/spirv/InReadableOrder.cpp" "$src/xenia/gpu/spirv/Logger.cpp" \
-  "$out/binary.o" "$out/operands.o" "$out/arena.o" "$out/size.o" $profile_object -o "$out/views-$mode"
- ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$src/xenia/gpu/spirv" -I"$root" -I"$root/third_party/libretro-common/include" \
+  "$objects_root/binary.o" "$objects_root/operands.o" "$objects_root/arena.o" "$objects_root/size.o" $profile_object -o "$out/views-$mode"
+ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$src/xenia/gpu/spirv" -I"$source_root" -I"$root" -I"$root/third_party/libretro-common/include" \
   "$root/tools/tests/core_spv_sampler_bridge.cc" "$src/xenia/gpu/spirv/SpvBuilder.cpp" \
   "$src/xenia/gpu/spirv/SpvPostProcess.cpp" "$src/xenia/gpu/spirv/InReadableOrder.cpp" \
-  "$src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/operands.o" "$out/arena.o" "$out/size.o" -o "$out/sampler-$mode"
+  "$src/xenia/gpu/spirv/Logger.cpp" "$objects_root/binary.o" "$objects_root/operands.o" "$objects_root/arena.o" "$objects_root/size.o" -o "$out/sampler-$mode"
  "$out/sampler-$mode" "$out/sampler-$mode.spv"
  for variant in 0 1 2 3 4 5 6 7; do
   "$out/views-$mode" "$out/views-$mode-$variant.spv" "$variant"
@@ -165,7 +180,7 @@ for variant in 0 1 2 3; do "$out/metadata-bridge" "$out/metadata-$variant.bin" "
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_payload_test.c" -o "$out/payload-unit"
 "$out/payload-unit"
 ${CC:-cc} -std=c89 -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" -include "$root/tools/tests/core_spv_arena_test_alloc.h" -c "$root/libretro/core_spv_arena.c" -o "$out/arena-plain.o"
-${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -include "$root/tools/tests/core_spv_arena_test_alloc.h" -c "$root/libretro/core_spv_operands.c" -o "$out/operands-fault.o"
+${CC:-cc} -std=c89 -O2 $san -I"$root/third_party/libretro-common/include" -include "$root/tools/tests/core_spv_arena_test_alloc.h" -c "$root/libretro/core_spv_packet.c" -o "$out/operands-fault.o"
 ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -include "$root/tools/tests/core_spv_arena_test_alloc.h" -I"$root" -I"$root/src" -I"$root/third_party/libretro-common/include" \
  "$root/tools/tests/core_spv_arena_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-plain.o" "$out/size.o" "$out/operands-fault.o" "$out/fault.o" -o "$out/arena-bridge"

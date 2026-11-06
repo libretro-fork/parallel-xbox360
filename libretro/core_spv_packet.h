@@ -4,7 +4,9 @@
  * cache or copy is needed. Views expire on growth/free. No shallow copies. */
 #ifndef XE_CORE_SPV_PACKET_H
 #define XE_CORE_SPV_PACKET_H
-#include "core_spv_operands.h"
+#include <limits.h>
+#include <assert.h>
+#include <retro_inline.h>
 #include "core_spv_words.h"
 #include <string.h>
 #ifdef __cplusplus
@@ -22,6 +24,10 @@ typedef struct xe_spv_packet {
     * opcode bits, checked at output. */
    uint32_t flags;
 } xe_spv_packet;
+/* Borrow a workspace. Old is supplied only for pooled storage. A successful
+ * callback may extend it in place, but must never free it. Spans are 8-byte
+ * aligned/padded; their owner outlives every packet that borrows them. */
+typedef void *(*xe_spv_packet_realloc_fn)(void *, void *, size_t, size_t);
 enum { XE_SPV_PACKET_TYPE = 256, XE_SPV_PACKET_RESULT = 512,
        XE_SPV_PACKET_POOLED = 1024 };
 static INLINE size_t xe_spv_packet_prefix(const xe_spv_packet *packet) {
@@ -127,7 +133,7 @@ static INLINE size_t xe_spv_packet_string_capacity(const xe_spv_packet *packet, 
 }
 void xe_spv_packet_free(xe_spv_packet *packet);
 int xe_spv_packet_reserve_with(xe_spv_packet *packet, size_t capacity,
-      xe_spv_operand_realloc_fn resize_storage, void *context);
+      xe_spv_packet_realloc_fn resize_storage, void *context);
 /* Caller reserves once using its matching arena callback before encoding. */
 int xe_spv_packet_string_reserved(xe_spv_packet *packet, const char *text, size_t bytes);
 #ifdef __cplusplus

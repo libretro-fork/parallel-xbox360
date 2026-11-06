@@ -85,7 +85,7 @@ cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /c libretro
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /c libretro/core_spv_binary.c /Fo%OUT%\binary.obj
 if errorlevel 1 goto fail
-cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /c libretro/core_spv_operands.c /Fo%OUT%\operands.obj
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /c libretro/core_spv_packet.c /Fo%OUT%\operands.obj
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /I. /FItools/tests/core_spv_arena_test_alloc.h /c libretro/core_spv_binary.c /Fo%OUT%\binary-fault.obj
 if errorlevel 1 goto fail
@@ -129,7 +129,7 @@ for %%V in (0 1) do (
  %OUT%\types.exe %OUT%\types-%%V.bin %%V
  if errorlevel 1 goto fail
 )
-cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /I. /FItools/tests/core_spv_arena_test_alloc.h /c libretro/core_spv_operands.c /Fo%OUT%\operands-fault.obj
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /I. /FItools/tests/core_spv_arena_test_alloc.h /c libretro/core_spv_packet.c /Fo%OUT%\operands-fault.obj
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include /I. /FItools/tests/core_spv_arena_test_alloc.h /c libretro/core_spv_arena.c /Fo%OUT%\arena-fault.obj
 if errorlevel 1 goto fail

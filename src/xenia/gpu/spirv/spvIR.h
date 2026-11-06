@@ -48,8 +48,9 @@
 #define spvIR_H
 
 #include "spirv.hpp11"
-#include "libretro/core_spv_operands.h"
 #include "libretro/core_spv_packet.h"
+#include "libretro/core_spv_module.h"
+#include <type_traits>
 #include "libretro/core_spv_words.h"
 #include "libretro/core_spv_binary.h"
 #include "libretro/core_spv_size.h"
@@ -613,6 +614,7 @@ public:
         : arena(externalArena ? externalArena : &localArena), borrowed(externalArena != nullptr)
     {
         static_assert(sizeof(Instruction) <= XE_SPV_RECORD_BYTES);
+        static_assert(std::is_standard_layout_v<Instruction> && offsetof(Instruction, packet) == 0);
         static_assert(offsetof(Instruction, packet) + offsetof(xe_spv_packet, arena_offset) == XE_SPV_RECORD_ARENA_OFFSET);
         if (!xe_spv_arena_begin(arena)) throw std::bad_alloc();
     }
@@ -683,7 +685,7 @@ public:
     }
     void mapInstruction(Instruction *instruction)
     {
-        if (!xe_spv_index_set(&arena->index, instruction->getResultId(), instruction))
+        if (!xe_spv_module_map(&arena->index, &instruction->packet))
             throw std::bad_alloc();
     }
 
@@ -691,17 +693,19 @@ public:
         return xe_spv_index_borrow(&arena->index, first, count);
     }
     Instruction* getInstruction(Id id) const {
-        return static_cast<Instruction*>(xe_spv_index_get(&arena->index, id));
+        return reinterpret_cast<Instruction*>(xe_spv_module_get(&arena->index, id));
     }
     spv::Id getTypeId(Id resultId) const {
-        const Instruction* instruction = getInstruction(resultId);
-        return instruction ? instruction->getTypeId() : NoType;
+        return xe_spv_module_type(&arena->index, resultId);
     }
     StorageClass getStorageClass(Id typeId) const
     {
-        const Instruction* instruction = getInstruction(typeId);
-        assert(instruction && instruction->getOpCode() == spv::Op::OpTypePointer);
-        return (StorageClass)instruction->getImmediateOperand(0);
+        static_assert(static_cast<uint32_t>(spv::Op::OpTypePointer) == XE_SPV_MODULE_TYPE_POINTER);
+        uint32_t storage = static_cast<uint32_t>(StorageClass::Max);
+        const bool valid = xe_spv_module_storage_class(&arena->index, typeId, &storage) != 0;
+        assert(valid);
+        (void)valid;
+        return static_cast<StorageClass>(storage);
     }
 
 protected:

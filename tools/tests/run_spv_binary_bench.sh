@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+. "$root/tools/tests/spv_storage_source.sh"
 source=${TEST_SOURCE:-}
 operand_flags=
 if test "${CAPTURE_OPERANDS:-0}" = 1; then
@@ -25,7 +26,7 @@ for revision in $revisions; do
  ${CC:-cc} -std=c89 -O2 -include "$src/tools/tests/core_pipeline_bench_profile.h" \
   -DXE_SPV_BINARY_REALLOC=xe_bench_realloc -DXE_SPV_BINARY_FREE=xe_bench_free \
   -c "$src/libretro/core_spv_binary.c" -o "$obj/binary.o"
- ${CC:-cc} -std=c89 -O2 $operand_flags -I"$src/third_party/libretro-common/include" -c "$src/libretro/core_spv_operands.c" -o "$obj/operands.o"
+ ${CC:-cc} -std=c89 -O2 $operand_flags -I"$src/third_party/libretro-common/include" -c "$(spv_storage_source "$src")" -o "$obj/operands.o"
  ${CC:-cc} -std=c89 -O2 -include "$src/tools/tests/core_pipeline_bench_profile.h" -DXE_SPV_INDEX_REALLOC=xe_bench_realloc -DXE_SPV_INDEX_FREE=xe_bench_free -DXE_SPV_ARENA_ALLOC=xe_bench_malloc -DXE_SPV_ARENA_FREE=xe_bench_free -I"$src/third_party/libretro-common/include" -c "$src/libretro/core_spv_arena.c" -o "$obj/arena.o"
  ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DXE_SPV_BINARY_CHECK -DXE_SPV_BYTE_BENCH ${EXTRA_CXXFLAGS:-} \
   -include "$src/tools/tests/core_pipeline_bench_profile.h" \

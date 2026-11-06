@@ -13,14 +13,14 @@ static void release(void *p) { if (p) ++frees; free(p); }
 #define XE_SPV_ALLOC allocate
 #define XE_SPV_FREE release
 #include "../../libretro/core_spv_arena.c"
-#include "../../libretro/core_spv_operands.c"
+#include "../../libretro/core_spv_packet.c"
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"line %d: %s\n",__LINE__,#x); return 1; } } while (0)
-static int reserve(xe_spv_arena *arena, xe_spv_operands *ops, size_t n) {
-   return xe_spv_operands_reserve_with(ops, n, xe_spv_arena_payload_realloc, arena);
+static int reserve(xe_spv_arena *arena, xe_spv_packet *ops, size_t n) {
+   return xe_spv_packet_reserve_with(ops, n, xe_spv_arena_payload_realloc, arena);
 }
 int main(int argc, char **argv) {
    xe_spv_arena arena = {0}, other = {0};
-   xe_spv_operands a, b;
+   xe_spv_packet a, b;
    uint32_t offset, *stable, *old;
    void *record;
    size_t before, i, round, warm = 0;
@@ -43,18 +43,18 @@ int main(int argc, char **argv) {
       record = xe_spv_arena_alloc(&arena, &offset);
       CHECK(record && xe_spv_arena_record_owner(record, offset) == &arena);
       CHECK(!xe_spv_arena_record_owner(NULL, 0));
-      xe_spv_operands_init(&a); xe_spv_operands_init(&b);
-      for (i = 0; i < 4; ++i) CHECK(xe_spv_operands_append(&a, (uint32_t)i + 10, (i + round) & 1));
+      xe_spv_packet_init(&a, 128, 7, 9); xe_spv_packet_init(&b, 128, 7, 9);
+      for (i = 0; i < 4; ++i) xe_spv_packet_append_reserved(&a, (uint32_t)i + 10, (i + round) & 1);
       CHECK(reserve(&arena, &a, 8)); stable = a.heap; before = allocations;
       CHECK(reserve(&arena, &a, 1024) && a.heap == stable && allocations == before);
       for (i = 0; i < 4; ++i) {
-         CHECK(a.heap[i] == i + 10);
-         CHECK(xe_spv_operands_is_id(&a, (uint32_t)i) == (int)((i + round) & 1));
+         CHECK(xe_spv_packet_const_operands(&a)[i] == i + 10);
+         CHECK(xe_spv_packet_is_id(&a, (uint32_t)i) == (int)((i + round) & 1));
       }
       CHECK(reserve(&arena, &b, 100));
       CHECK(reserve(&arena, &a, 8192) && a.heap != stable); old = a.heap;
       CHECK(!xe_spv_arena_end(&arena, NULL) && !xe_spv_arena_close(&arena));
-      CHECK(old[0] == 10);
+      CHECK(old[3] == 10);
       before = allocations;
       if (!round) {
          fail_after = allocations;
@@ -63,12 +63,12 @@ int main(int argc, char **argv) {
       }
       CHECK(!reserve(&arena, &a, SIZE_MAX) && a.heap == old);
       if (argc > 1 && !strcmp(argv[1], "grow-uaf")) { value = stable[0]; return (int)value; }
-      xe_spv_operands_free(&b);
+      xe_spv_packet_free(&b);
       if (argc > 1 && !strcmp(argv[1], "free-uaf")) {
          CHECK(reserve(&arena, &b, 10)); stable = b.heap;
-         xe_spv_operands_free(&b); value = stable[0]; return (int)value;
+         xe_spv_packet_free(&b); value = stable[0]; return (int)value;
       }
-      xe_spv_operands_free(&a); xe_spv_arena_retire(record);
+      xe_spv_packet_free(&a); xe_spv_arena_retire(record);
       CHECK(xe_spv_arena_end(&arena, NULL));
       if (argc > 1 && !strcmp(argv[1], "end-uaf")) { value = old[0]; return (int)value; }
       CHECK(xe_spv_arena_end(&other, NULL));
@@ -76,24 +76,24 @@ int main(int argc, char **argv) {
       CHECK(allocations == warm);
    }
    CHECK(xe_spv_arena_begin(&arena) && xe_spv_arena_begin(&other));
-   xe_spv_operands_init(&a);
+   xe_spv_packet_init(&a, 128, 7, 9);
    CHECK(reserve(&arena, &a, 65));
-   for (i = 0; i < 65; ++i) xe_spv_operands_append_reserved(&a, (uint32_t)i, i & 1);
+   for (i = 0; i < 65; ++i) xe_spv_packet_append_reserved(&a, (uint32_t)i, i & 1);
    stable = a.heap;
    CHECK(reserve(&arena, &a, 66) && a.heap == stable);
    for (i = 0; i < 65; ++i) {
-      CHECK(a.heap[i] == i && xe_spv_operands_is_id(&a, (uint32_t)i) == (int)(i & 1));
+      CHECK(xe_spv_packet_const_operands(&a)[i] == i && xe_spv_packet_is_id(&a, (uint32_t)i) == (int)(i & 1));
    }
-   xe_spv_operands_free(&a);
-   CHECK(reserve(&arena, &a, 10) && a.local_flags[0]);
-   CHECK(xe_spv_operands_append(&a, 17, 1));
-   CHECK(xe_spv_operands_reserve(&a, 100) && !a.local_flags[0]);
-   CHECK(a.heap[0] == 17 && xe_spv_operands_is_id(&a, 0));
-   CHECK(reserve(&other, &a, 1000) && a.local_flags[0]);
-   CHECK(a.heap[0] == 17 && xe_spv_operands_is_id(&a, 0));
-   CHECK(reserve(&arena, &a, 2000) && a.local_flags[0]);
-   CHECK(a.heap[0] == 17 && xe_spv_operands_is_id(&a, 0));
-   xe_spv_operands_free(&a);
+   xe_spv_packet_free(&a);
+   CHECK(reserve(&arena, &a, 10) && (a.flags & XE_SPV_PACKET_POOLED));
+   xe_spv_packet_append_reserved(&a, 17, 1);
+   CHECK(xe_spv_packet_reserve_with(&a, 100, NULL, NULL) && !(a.flags & XE_SPV_PACKET_POOLED));
+   CHECK(xe_spv_packet_const_operands(&a)[0] == 17 && xe_spv_packet_is_id(&a, 0));
+   CHECK(reserve(&other, &a, 1000) && (a.flags & XE_SPV_PACKET_POOLED));
+   CHECK(xe_spv_packet_const_operands(&a)[0] == 17 && xe_spv_packet_is_id(&a, 0));
+   CHECK(reserve(&arena, &a, 2000) && (a.flags & XE_SPV_PACKET_POOLED));
+   CHECK(xe_spv_packet_const_operands(&a)[0] == 17 && xe_spv_packet_is_id(&a, 0));
+   xe_spv_packet_free(&a);
    CHECK(xe_spv_arena_end(&arena, NULL) && xe_spv_arena_end(&other, NULL));
    CHECK(xe_spv_arena_close(&arena) && xe_spv_arena_close(&other));
    CHECK(allocations == frees);

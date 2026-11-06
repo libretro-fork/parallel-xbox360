@@ -322,7 +322,7 @@ SOURCES_C += libretro/core_bitmap.c
 
 SOURCES_C += libretro/core_pause_gate.c libretro/core_cache_writer.c libretro/core_pipeline_order.c libretro/core_job_pool.c
 
-SOURCES_C += libretro/core_spv_operands.c libretro/core_spv_binary.c libretro/core_spv_arena.c
+SOURCES_C += libretro/core_spv_packet.c libretro/core_spv_binary.c libretro/core_spv_arena.c
 SOURCES_C += libretro/core_spv_size.c
 SOURCES_C += libretro/core_spv_probe.c
 

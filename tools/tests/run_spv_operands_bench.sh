@@ -14,7 +14,7 @@ for capture in tracked plain; do
   cflags="-DXE_SPV_ALLOC=xe_bench_malloc -DXE_SPV_FREE=xe_bench_free"
  else cppflags=-DXE_SPV_BENCH_PLAIN; fi
  ${CC:-cc} -std=c89 -O3 -I"$common" -include "$profile" $cflags \
-  -c "$root/libretro/core_spv_operands.c" -o "$out/storage-$capture.o"
+  -c "$root/libretro/core_spv_packet.c" -o "$out/storage-$capture.o"
  ${CC:-cc} -std=c89 -O3 -I"$common" -c "$root/libretro/core_spv_arena.c" -o "$out/arena-$capture.o"
  for mode in baseline current; do
   src="$root/src"
