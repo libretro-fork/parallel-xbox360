@@ -1,0 +1,68 @@
+Launch-image extraction: ownership and transfer checks
+====================================================
+
+Scope: the two live XamContent launch-image extraction calls, their shared VFS
+bridge, and the new C89 transfer helper. No gameplay speedup is claimed.
+
+The old nonmappable path allocated a 4 MiB payload buffer per operation, ignored
+ReadSync status/zero progress and fwrite/close results, and wrote directly to
+the final file. A failed extraction could leave a partial file which the next
+launch skipped solely because it existed. The mapped path opened a redundant
+File, did not check mapping failure, and copied the mapping size rather than
+the logical entry size. Neither caller observed its atomic progress counter.
+
+The replacement borrows mapped bytes until synchronous return, lazily opens a
+guest File only for ordinary reads, and clamps every transfer to the logical
+entry size. Nonmappable input reuses a 64 KiB automatic buffer in a separate
+noinline function; mapped calls do not touch those scratch pages. The callers'
+host execution stacks are 16 MiB (XThread fiber/native host setup), independent
+of the guest-visible stack size. Per-call storage remains safe across yields.
+
+All destination operations use common RFILE/path primitives. Each operation
+gets its own PID/counter staging name; the common atomic writer's fixed .tmp
+name would collide across same-target requests. A saturating retro_atomic
+counter avoids wrap reuse. Publish follows successful writes and close; failed
+rename does not remove an existing destination to retry. Cleanup attempts to
+remove only this operation's staging name. The backend controls actual rename
+atomicity. Windows may refuse competing same-target renames; these fail without
+removing the destination. A failed cleanup can leave a temporary file. PID reuse
+may encounter stale staging files from a previous process. No cross-process
+exclusivity or crash-durable fsync guarantee is claimed.
+
+The normal path has no helper-owned payload heap allocation. Path names share
+8 KiB inline metadata storage; longer names allocate checked metadata rather
+than imposing another path limit. Common stream handles/backend machinery can
+still allocate. Ordinary guest reads still copy into scratch; this is not a
+claim of end-to-end zero-copy extraction. Same-sized cached targets are reused
+without reading source bytes; this does not validate their content hashes.
+The operation remains synchronous. Detached relaunch workers, their lifetime,
+and guest parking are separate existing work and have not been altered.
+
+Validation:
+- Actual common RFILE and path callbacks, not a second transfer implementation.
+- 196,711-byte mapped view with an oversized tail: direct source pointer checks
+  on every partial write, exact logical size, no ordinary guest reads.
+- NULL/short mapping fallback, absent optional view, missing read callback,
+  bounded 64 KiB requests, identical reused scratch address, partial reads.
+- Zero/negative/overreported writes, failed/zero/overreported reads, zero progress
+  after the first block, open/close/rename failures: no failed payload published
+  and the previous final bytes preserved. Mapped failure cases covered too.
+- Same-sized target skips source callbacks/output open; short/oversized targets
+  are replaced. Empty files, invalid leaf spans, embedded NUL, parent paths,
+  integer overflow, oversized source size, and long path metadata are checked.
+- Native filesystem smoke creates a seven-byte image, replaces it with the full
+  payload, runs four common rthreads through 64 same-target extractions with
+  differing logical sizes, compares final bytes in bounded blocks, then removes
+  file/directory.
+- Strict GCC -std=c89 -pedantic -Wall -Wextra -Werror; ASan/UBSan on Linux.
+- Native MSVC /TC /O2 /W4 /WX for helper/tests, with real common VFS sources.
+- Native MSVC compiles the actual VirtualFileSystem and XamContent callers.
+- Ten additional native Windows contention/failure-matrix runs pass.
+- Full Windows static Make -j5 compiles and links successfully.
+- No game, frontend or GPU launched; installed DLL untouched.
+
+Reproduce with tools/tests/run_content_extract_tests.sh (sanitizers default),
+or tools\tests\run_content_extract_tests.cmd in an x64 MSVC developer prompt.
+The C89 helper and concurrent native transfers are exercised under sanitizers;
+complete C++ guest-entry ownership is not covered by those tests. Native
+Windows and Linux smoke tests cover their respective default VFS backends.

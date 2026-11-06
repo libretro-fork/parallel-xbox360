@@ -1,6 +1,6 @@
 # Shared, hand-maintained source selection for the GNU Make build.
 # Keep in sync with the libretro target when importing upstream changes.
-SOURCES_C += libretro/core_vblank.c libretro/core_socket_worker.c libretro/core_fiber_context.c libretro/core_events.c libretro/core_audio_cadence.c libretro/core_audio_samples.c libretro/core_audio_queue.c libretro/core_audio_convert.c libretro/core_input_analog.c libretro/core_ui_queue.c libretro/core_decompress.c libretro/core_image.c libretro/core_file.c libretro/core_cache_file.c libretro/core_zarchive.c libretro/core_xex_metadata.c libretro/core_crypto.c libretro/core_guest_hash.c libretro/core_xlast.c
+SOURCES_C += libretro/core_vblank.c libretro/core_socket_worker.c libretro/core_fiber_context.c libretro/core_events.c libretro/core_audio_cadence.c libretro/core_audio_samples.c libretro/core_audio_queue.c libretro/core_audio_convert.c libretro/core_input_analog.c libretro/core_ui_queue.c libretro/core_decompress.c libretro/core_image.c libretro/core_file.c libretro/core_content_extract.c libretro/core_cache_file.c libretro/core_zarchive.c libretro/core_xex_metadata.c libretro/core_crypto.c libretro/core_guest_hash.c libretro/core_xlast.c
 CORE_DIRS := src/xenia src/xenia/base src/xenia/apu src/xenia/apu/nop \
  src/xenia/cpu src/xenia/cpu/backend src/xenia/cpu/compiler \
  src/xenia/cpu/compiler/passes src/xenia/cpu/hir src/xenia/cpu/ppc \
@@ -35,8 +35,7 @@ PLATFORM_SUFFIXES := win linux posix gnulinux x11 gtk android mac amd64 x64 arm6
 SOURCES_CXX := $(filter-out $(foreach s,$(PLATFORM_SUFFIXES),%_$(s).cc),$(ALL_CORE_SOURCES))
 SOURCES_CXX += $(filter $(foreach s,$(OS_SUFFIXES) $(ARCH_SUFFIXES),%_$(s).cc),$(ALL_CORE_SOURCES))
 SOURCES_CXX := $(filter-out %_main.cc %_test.cc %_demo.cc \
- src/xenia/base/console_app_main_%.cc src/xenia/base/main_init_%.cc \
- src/xenia/vfs/vfs_dump.cc,$(SOURCES_CXX))
+ src/xenia/base/console_app_main_%.cc src/xenia/base/main_init_%.cc,$(SOURCES_CXX))
 SOURCES_CXX += libretro/libretro.cpp libretro/libretro_audio_driver.cc \
  libretro/libretro_graphics_system.cc \
  libretro/libretro_hid.cc libretro/libretro_vk_presenter.cc \

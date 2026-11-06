@@ -10,7 +10,6 @@
 #ifndef XENIA_VFS_VIRTUAL_FILE_SYSTEM_H_
 #define XENIA_VFS_VIRTUAL_FILE_SYSTEM_H_
 
-#include <atomic>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -52,16 +51,10 @@ class VirtualFileSystem {
                     bool is_non_directory, File** out_file,
                     FileAction* out_action);
 
+  // Extract one launch-image leaf into the core content directory. Mapped
+  // input is borrowed; failures never publish a partial destination.
   static X_STATUS ExtractContentFile(Entry* entry,
-                                     std::filesystem::path base_path,
-                                     std::atomic<uint64_t>& progress,
-                                     bool extract_to_root = false);
-  static X_STATUS ExtractContentFiles(
-      Device* device, std::filesystem::path base_path,
-      std::atomic<uint64_t>& progress,
-      std::function<bool()> should_cancel = nullptr);
-  static void ExtractContentHeader(Device* device,
-                                   std::filesystem::path base_path);
+                                     const std::filesystem::path& base_path);
 
  private:
   xe::global_critical_region global_critical_region_;

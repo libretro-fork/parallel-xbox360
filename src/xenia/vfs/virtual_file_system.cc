@@ -8,19 +8,15 @@
  */
 
 #include "xenia/vfs/virtual_file_system.h"
-#include "xenia/kernel/xam/content_manager.h"
-#include "xenia/vfs/devices/xcontent_container_device.h"
 
 #include "devices/host_path_entry.h"
-#include "xenia/base/literals.h"
+#include "libretro/core_content_extract.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/string.h"
 #include "xenia/kernel/xfile.h"
 
 namespace xe {
 namespace vfs {
-
-using namespace xe::literals;
 
 VirtualFileSystem::VirtualFileSystem() {}
 
@@ -409,135 +405,63 @@ X_STATUS VirtualFileSystem::OpenFile(Entry* root_entry,
   return result;
 }
 
-X_STATUS VirtualFileSystem::ExtractContentFile(Entry* entry,
-                                               std::filesystem::path base_path,
-                                               std::atomic<uint64_t>& progress,
-                                               bool extract_to_root) {
-  // Allocate a buffer when needed.
-  size_t buffer_size = 0;
-  uint8_t* buffer = nullptr;
-
-  XELOGI("Extracting file: {}", entry->path());
-
-  auto dest_name =
-      base_path / xe::to_path(utf8::fix_path_separators(entry->path()));
-
-  if (extract_to_root) {
-    dest_name = base_path / xe::to_path(entry->name());
+namespace {
+struct ContentInput {
+  Entry* entry = nullptr;
+  File* file = nullptr;
+  std::unique_ptr<MappedMemory> mapping;
+  ~ContentInput() {
+    if (mapping) mapping->Close();
+    if (file) file->Destroy();
   }
+};
+}  // namespace
 
-  if (entry->attributes() & kFileAttributeDirectory) {
-    std::error_code error_code;
-    std::filesystem::create_directories(dest_name, error_code);
-    if (error_code) {
-      return error_code.value();
+X_STATUS VirtualFileSystem::ExtractContentFile(
+    Entry* entry, const std::filesystem::path& base_path) {
+  if (!entry || (entry->attributes() & kFileAttributeDirectory))
+    return X_STATUS_INVALID_PARAMETER;
+  ContentInput input;
+  input.entry = entry;
+  xe_content_source source;
+  source.opaque = &input;
+  source.size = entry->size();
+  source.view = [](void* opaque, uint64_t* available) -> const uint8_t* {
+    ContentInput& input = *static_cast<ContentInput*>(opaque);
+    *available = 0;
+    if (!input.entry->can_map()) return nullptr;
+    input.mapping = input.entry->OpenMapped(MappedMemory::Mode::kRead);
+    if (!input.mapping) return nullptr;
+    if (!input.mapping->data() || input.mapping->size() < input.entry->size()) {
+      input.mapping->Close();
+      input.mapping.reset();
+      return nullptr;
     }
-    return 0;
-  }
-
-  vfs::File* in_file = nullptr;
-  X_STATUS result = entry->Open(FileAccess::kFileReadData, &in_file);
-  if (result != X_STATUS_SUCCESS) {
-    return result;
-  }
-
-  auto file = xe::filesystem::OpenFile(dest_name, "wb");
-  if (!file) {
-    in_file->Destroy();
-    return 1;
-  }
-  constexpr size_t write_buffer_size = 4_MiB;
-
-  if (entry->can_map()) {
-    auto map = entry->OpenMapped(xe::MappedMemory::Mode::kRead);
-
-    size_t remaining_size = map->size();
-    size_t offset = 0;
-
-    while (remaining_size > 0) {
-      const auto bytes_to_read = std::min(write_buffer_size, remaining_size);
-      fwrite(map->data() + offset, bytes_to_read, 1, file);
-      offset += bytes_to_read;
-      remaining_size -= bytes_to_read;
-      progress += bytes_to_read;
+    *available = input.mapping->size();
+    return input.mapping->data();
+  };
+  source.read = [](void* opaque, uint64_t offset, void* data,
+                   size_t wanted, size_t* received) -> int {
+    ContentInput& input = *static_cast<ContentInput*>(opaque);
+    if (offset > SIZE_MAX) return 0;
+    if (!input.file) {
+      if (XFAILED(input.entry->Open(FileAccess::kFileReadData, &input.file)))
+        return 0;
     }
-    map->Close();
-  } else {
-    size_t remaining_size = entry->size();
-    size_t offset = 0;
-    buffer = new uint8_t[write_buffer_size];
-
-    while (remaining_size > 0) {
-      size_t bytes_read = 0;
-      in_file->ReadSync(std::span<uint8_t>(buffer, write_buffer_size), offset,
-                        &bytes_read);
-      fwrite(buffer, bytes_read, 1, file);
-      offset += bytes_read;
-      remaining_size -= bytes_read;
-      progress += bytes_read;
-    }
-  }
-
-  fclose(file);
-  in_file->Destroy();
-
-  if (buffer) {
-    delete[] buffer;
-  }
-  return 0;
-}
-
-X_STATUS VirtualFileSystem::ExtractContentFiles(
-    Device* device, std::filesystem::path base_path,
-    std::atomic<uint64_t>& progress, std::function<bool()> should_cancel) {
-  // Run through all the files, breadth-first style.
-  std::queue<vfs::Entry*> queue;
-  auto root = device->ResolvePath("/");
-  queue.push(root);
-
-  while (!queue.empty()) {
-    // Check for cancellation before processing each file
-    if (should_cancel && should_cancel()) {
-      return X_ERROR_CANCELLED;
-    }
-
-    auto entry = queue.front();
-    queue.pop();
-    for (auto& entry : entry->children()) {
-      queue.push(entry.get());
-    }
-
-    ExtractContentFile(entry, base_path, progress);
-  }
-  return X_STATUS_SUCCESS;
-}
-
-void VirtualFileSystem::ExtractContentHeader(Device* device,
-                                             std::filesystem::path base_path) {
-  const XContentContainerDevice* xcontent_device =
-      ((XContentContainerDevice*)device);
-
-  if (!std::filesystem::exists(base_path.parent_path())) {
-    if (!std::filesystem::create_directories(base_path.parent_path())) {
-      return;
-    }
-  }
-  auto header_filename = base_path.filename().concat(".header");
-  auto header_path = base_path.parent_path() / header_filename;
-  xe::filesystem::CreateEmptyFile(header_path);
-
-  if (std::filesystem::exists(header_path)) {
-    auto file = xe::filesystem::OpenFile(header_path, "wb");
-    kernel::xam::XCONTENT_AGGREGATE_DATA data =
-        xcontent_device->content_header();
-    uint32_t license_mask = xcontent_device->license_mask();
-
-    data.set_file_name(xe::path_to_utf8(base_path.filename()));
-    fwrite(&data, 1, sizeof(kernel::xam::XCONTENT_AGGREGATE_DATA), file);
-    fwrite(&license_mask, 1, sizeof(license_mask), file);
-    fclose(file);
-  }
-  return;
+    if (!input.file) return 0;
+    return XFAILED(input.file->ReadSync(
+        std::span<uint8_t>(static_cast<uint8_t*>(data), wanted),
+        static_cast<size_t>(offset), received)) ? 0 : 1;
+  };
+#if XE_PLATFORM_WIN32
+  const std::string directory = xe::path_to_utf8(base_path);
+  const char* directory_view = directory.c_str();
+#else
+  const char* directory_view = base_path.c_str();
+#endif
+  return xe_content_extract_file(&source, directory_view,
+      entry->name().data(), entry->name().size()) ?
+      X_STATUS_SUCCESS : X_STATUS_UNSUCCESSFUL;
 }
 }  // namespace vfs
 }  // namespace xe

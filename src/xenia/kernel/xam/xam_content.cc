@@ -7,7 +7,6 @@
  ******************************************************************************
  */
 
-#include <atomic>
 #include <thread>
 
 #include "xenia/base/logging.h"
@@ -915,12 +914,9 @@ dword_result_t XamContentLaunchImageFromFileInternal_entry(
 
   const std::filesystem::path host_path =
       kernel_state()->emulator()->content_root() / entry->name();
-  if (!std::filesystem::exists(host_path)) {
-    std::atomic<uint64_t> progress{0};
-
-    vfs::VirtualFileSystem::ExtractContentFile(
-        entry, kernel_state()->emulator()->content_root(), progress, true);
-  }
+  const X_STATUS extraction = vfs::VirtualFileSystem::ExtractContentFile(
+      entry, kernel_state()->emulator()->content_root());
+  if (XFAILED(extraction)) return extraction;
 
   // In-process relaunch is disabled on macOS — see XamLoaderLaunchTitle.
 #if !XE_PLATFORM_MAC
@@ -970,11 +966,9 @@ dword_result_t XamContentLaunchImageInternal_entry(lpvoid_t content_data_ptr,
   const std::filesystem::path host_path =
       kernel_state()->emulator()->content_root() / entry->name();
 
-  if (!std::filesystem::exists(host_path)) {
-    std::atomic<uint64_t> progress{0};
-    kernel_state()->file_system()->ExtractContentFile(
-        entry, kernel_state()->emulator()->content_root(), progress, true);
-  }
+  const X_STATUS extraction = vfs::VirtualFileSystem::ExtractContentFile(
+      entry, kernel_state()->emulator()->content_root());
+  if (XFAILED(extraction)) return extraction;
 
   // In-process relaunch is disabled on macOS — see XamLoaderLaunchTitle.
 #if !XE_PLATFORM_MAC
