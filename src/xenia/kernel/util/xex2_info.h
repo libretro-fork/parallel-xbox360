@@ -15,6 +15,7 @@
 #include <unordered_map>
 
 #include "xenia/base/byte_order.h"
+#include "libretro/core_pe_section.h"
 
 union xe_xex2_version_t {
   uint32_t value;
@@ -35,15 +36,7 @@ enum xe_pe_section_flags_e : uint32_t {
   kXEPESectionMemoryWrite = 0x80000000,
 };
 
-class PESection {
- public:
-  char name[9];  // 8 + 1 for \0
-  uint32_t raw_address;
-  uint32_t raw_size;
-  uint32_t address;
-  uint32_t size;
-  uint32_t flags;  // kXEPESection*
-};
+typedef xe_pe_section PESection;
 
 struct PEExport {
   const char* name;

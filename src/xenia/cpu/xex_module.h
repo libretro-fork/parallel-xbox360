@@ -16,6 +16,7 @@
 #include <vector>
 #include "libretro/core_byte_storage.h"
 #include "libretro/core_xex_image.h"
+#include "libretro/core_pe_image.h"
 #include "xenia/base/mapped_memory.h"
 #include "xenia/cpu/module.h"
 #include "xenia/kernel/util/xex2_info.h"
@@ -237,12 +238,9 @@ class XexModule : public xe::cpu::Module {
   }
 
   bool is_valid_executable() const {
-    assert_not_zero(base_address_);
-    if (!base_address_) {
-      return false;
-    }
-    uint8_t* buffer = memory()->TranslateVirtual(base_address_);
-    return *(uint32_t*)buffer == 0x905A4D;
+    const uint32_t size = image_size();
+    return base_address_ && size >= 4 &&
+        xe_pe_probe(memory()->TranslateVirtual(base_address_), size);
   }
 
   bool is_patch() const {
@@ -297,7 +295,7 @@ class XexModule : public xe::cpu::Module {
   std::vector<ImportLibrary>
       import_libs_;  // pre-loaded import libraries for ease of use
   std::vector<std::string> missing_import_libs_;
-  std::vector<PESection> pe_sections_;
+  xe_pe_sections pe_sections_{};
 
   // XEX_HEADER_ALTERNATE_TITLE_IDS loaded into a safe std::vector
   std::vector<uint32_t> opt_alternate_title_ids_;

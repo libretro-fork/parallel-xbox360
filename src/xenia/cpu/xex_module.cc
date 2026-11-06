@@ -117,7 +117,7 @@ static_assert(offsetof(xex25_security_info, page_descriptors) == 0x154);
 XexModule::XexModule(Processor* processor, KernelState* kernel_state)
     : Module(processor), kernel_state_(kernel_state) {}
 
-XexModule::~XexModule() { xe_bytes_free(&xex_header_mem_); xe_bytes_free(&xexp_data_mem_); xe_bytes_free(&image_scratch_); }
+XexModule::~XexModule() { xe_bytes_free(&xex_header_mem_); xe_bytes_free(&xexp_data_mem_); xe_bytes_free(&image_scratch_); xe_pe_sections_free(&pe_sections_); }
 
 bool XexModule::GetOptHeader(const xex2_header* header, xex2_header_keys key,
                              void** out_ptr) {
@@ -134,11 +134,9 @@ const void* XexModule::GetSecurityInfo(const xex2_header* header) {
 }
 
 const PESection* XexModule::GetPESection(const char* name) {
-  for (std::vector<PESection>::iterator it = pe_sections_.begin();
-       it != pe_sections_.end(); ++it) {
-    if (!strcmp(it->name, name)) {
-      return &(*it);
-    }
+  if (!name) return nullptr;
+  for (size_t i = 0; i < pe_sections_.size; ++i) {
+    if (!strcmp(pe_sections_.data[i].name, name)) return pe_sections_.data + i;
   }
   return nullptr;
 }
@@ -608,73 +606,13 @@ int XexModule::ReadImageCompressed(const void* xex_addr, size_t xex_length) {
       window, nullptr, 0);
 }
 int XexModule::ReadPEHeaders() {
-  const uint8_t* p = memory()->TranslateVirtual(base_address_);
-
-  // Verify DOS signature (MZ).
-  auto doshdr = reinterpret_cast<const XIMAGE_DOS_HEADER*>(p);
-  if (doshdr->e_magic != XIMAGE_DOS_SIGNATURE) {
-    XELOGE("PE signature mismatch; likely bad decryption/decompression");
-    return 1;
-  }
-
-  // Move to the NT header offset from the DOS header.
-  p += doshdr->e_lfanew;
-
-  // Verify NT signature (PE\0\0).
-  auto nthdr = reinterpret_cast<const XIMAGE_NT_HEADERS32*>(p);
-  if (nthdr->Signature != XIMAGE_NT_SIGNATURE) {
-    return 1;
-  }
-
-  // Verify matches an Xbox PE.
-  const XIMAGE_FILE_HEADER* filehdr = &nthdr->FileHeader;
-  if ((filehdr->Machine != XIMAGE_FILE_MACHINE_POWERPCBE) ||
-      !(filehdr->Characteristics & XIMAGE_FILE_32BIT_MACHINE)) {
-    return 1;
-  }
-  // Verify the expected size.
-  if (filehdr->SizeOfOptionalHeader != XIMAGE_SIZEOF_NT_OPTIONAL_HEADER) {
-    return 1;
-  }
-
-  // Verify optional header is 32bit.
-  const XIMAGE_OPTIONAL_HEADER32* opthdr = &nthdr->OptionalHeader;
-  if (opthdr->Magic != XIMAGE_NT_OPTIONAL_HDR32_MAGIC) {
-    return 1;
-  }
-  // Verify subsystem.
-  if (opthdr->Subsystem != XIMAGE_SUBSYSTEM_XBOX) {
-    return 1;
-  }
-
-  // Quick scan to determine bounds of sections.
-  size_t upper_address = 0;
-  const XIMAGE_SECTION_HEADER* sechdr = XIMAGE_FIRST_SECTION(nthdr);
-  for (size_t n = 0; n < filehdr->NumberOfSections; n++, sechdr++) {
-    const size_t physical_address = opthdr->ImageBase + sechdr->VirtualAddress;
-    upper_address =
-        std::max(upper_address, physical_address + sechdr->Misc.VirtualSize);
-  }
-
-  // Setup/load sections.
-  sechdr = XIMAGE_FIRST_SECTION(nthdr);
-  for (size_t n = 0; n < filehdr->NumberOfSections; n++, sechdr++) {
-    PESection section;
-    memcpy(section.name, sechdr->Name, sizeof(sechdr->Name));
-    section.name[8] = 0;
-    section.raw_address = sechdr->PointerToRawData;
-    section.raw_size = sechdr->SizeOfRawData;
-    section.address = base_address_ + sechdr->VirtualAddress;
-    section.size = sechdr->Misc.VirtualSize;
-    section.flags = sechdr->Characteristics;
-    pe_sections_.push_back(section);
-  }
-
-  // DumpTLSDirectory(pImageBase, pNTHeader, (PIMAGE_TLS_DIRECTORY32)0);
-  // DumpExportsSection(pImageBase, pNTHeader);
-  return 0;
+  xe_pe_view view;
+  const uint32_t size = image_size();
+  pe_sections_.size = 0;
+  if (!base_address_ || !size || !xe_pe_validate(memory()->TranslateVirtual(base_address_),
+        size, base_address_, &view)) return 1;
+  return xe_pe_sections_read(&pe_sections_, &view) ? 0 : 1;
 }
-
 void XexModule::ReadSecurityInfo() {
   switch (xex_format_) {
     case kFormatXex25: {
@@ -861,6 +799,7 @@ bool XexModule::LoadContinue() {
   finished_load_ = true;
 
   if (ReadPEHeaders()) {
+    finished_load_ = false;
     XELOGE("Failed to load XEX PE headers!");
     return false;
   }
@@ -1058,6 +997,8 @@ bool XexModule::Unload() {
     memory()->LookupHeap(base_address_)->Release(base_address_);
   }
 
+  pe_sections_.size = 0;
+  finished_load_ = false;
   xex_header_mem_.size = 0;
 
   return true;
@@ -1426,7 +1367,8 @@ std::vector<uint32_t> XexModule::FindStaticInitializers() const {
          ++begin_it) {
       uint32_t begin = *begin_it;
       const PESection* section = nullptr;
-      for (auto& candidate : pe_sections_) {
+      for (size_t section_index = 0; section_index < pe_sections_.size; ++section_index) {
+        const PESection& candidate = pe_sections_.data[section_index];
         if (!(candidate.flags & kXEPESectionContainsCode) &&
             begin >= candidate.address &&
             begin - candidate.address < candidate.raw_size) {
@@ -1554,13 +1496,15 @@ std::vector<uint32_t> XexModule::PreanalyzeCode() {
 
   uint32_t highest_exec_addr = 0;
 
-  for (auto&& sec : pe_sections_) {
+  for (size_t section_index = 0; section_index < pe_sections_.size; ++section_index) {
+    const PESection& sec = pe_sections_.data[section_index];
     if ((sec.flags & kXEPESectionContainsCode)) {
       highest_exec_addr =
           std::max<uint32_t>(highest_exec_addr, sec.address + sec.size);
     }
   }
   uint32_t high_8_aligned = highest_exec_addr & ~(8U - 1);
+  if (high_8_aligned <= low_8_aligned) return {};
   std::vector<uint32_t> funcstarts;
   funcstarts.reserve((high_8_aligned - low_8_aligned) / 8);
   {
@@ -1644,7 +1588,8 @@ std::vector<uint32_t> XexModule::PreanalyzeCode() {
     // has no .pdata entry and can follow the previous blr without padding, so
     // none of the passes above find it and it compiles on first call.
     auto in_code_section = [this](uint32_t address) {
-      for (auto& section : pe_sections_) {
+      for (size_t section_index = 0; section_index < pe_sections_.size; ++section_index) {
+        const PESection& section = pe_sections_.data[section_index];
         if ((section.flags & kXEPESectionContainsCode) &&
             address >= section.address &&
             address - section.address < section.size) {
@@ -1673,7 +1618,8 @@ std::vector<uint32_t> XexModule::PreanalyzeCode() {
     };
     // How far an addi/ori may follow the lis its value started from.
     constexpr uint32_t kConstantWindowBytes = 64;
-    for (auto& section : pe_sections_) {
+    for (size_t section_index = 0; section_index < pe_sections_.size; ++section_index) {
+      const PESection& section = pe_sections_.data[section_index];
       if (!(section.flags & kXEPESectionContainsCode)) {
         continue;
       }

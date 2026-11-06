@@ -1,0 +1,55 @@
+Bounded PE section snapshots
+===========================
+
+XexModule's PE parser now borrows little-endian wire records and checks the DOS
+extent, signed NT offset, fixed NT/optional header, Xbox/PPC32 identifiers,
+complete section table and resident raw/virtual section spans before publishing
+records. Reads are byte-based, including the existing exact four-byte key-retry
+probe, so unaligned wire pointers do not trigger typed-load UB. Address arithmetic
+must fit the guest's 32-bit exclusive endpoints used by existing consumers.
+Raw file offsets remain metadata; they are not treated as resident image offsets.
+No new arbitrary section-count cap is imposed beyond the wire and image extent.
+
+Owned C89 records replace the PE section vector. One checked initial allocation
+covers the complete validated table; subsequent parses reuse its high-water
+capacity. Each wire record decodes directly into its final owned slot instead of
+a temporary object followed by vector insertion/reallocation. The unused upper
+address scan is removed. Invalid parsing exposes no partial/stale section list;
+unload retires lookup visibility and destruction frees the owner. Failed PE
+parsing cannot set the successful-continuation flag. A missing/empty executable
+range returns before preanalysis reserve/scan, avoiding unsigned reserve-size
+underflow. Allocation failure leaves the owner intact (the module clears logical visibility first).
+
+This is intentionally not a borrowed guest-section registry: the guest can write
+to its header table, while existing users expect stable host metadata snapshots.
+No runtime instrumentation, extra lock, thread or frontend dependency is added.
+
+Validation:
+- GCC strict C89 -pedantic -Wall -Wextra -Werror, Linux ASan/UBSan.
+- Native MSVC /TC /W4 /WX C leaf/full-fixture compilation and leaf execution;
+  actual XexModule and private-parser bridge compilation with native MSVC.
+- Unaligned input, exact parsed fields/names, table view identity, retained owned
+  snapshots after source mutation, 1,000 reads with one initial allocation, and
+  injected failed growth preserving pointer/size/records.
+- Truncations, negative/overflowing NT offsets, header identifier/size faults,
+  overflowing section counts, late resident extent faults, guest-address wrap,
+  zero sections, repeated free and 10,000 deterministic wire mutations.
+- CPU-only actual XexModule Load/private ReadPEHeaders/GetPESection/Unload fixture,
+  with byte-exact section fields, unchanged snapshot after guest table mutation,
+  stable pointer on reread, repeated failed continuation, empty-code preanalysis,
+  late invalid-section rejection and unload retirement.
+  Thin C++ bridge obtains the private member pointer through explicit template
+  instantiation under [temp.explicit]; production interface has no test hook.
+- Full Windows static Make -j5 and prior normal-image/delta-module fixtures.
+
+Scope/limits:
+The actual core fixture is unsanitized; the C parser/storage tests are sanitized.
+It invokes the real private parser directly to avoid JIT/backend/frontend setup.
+It does not execute LoadContinue's import resolution, precompile guest code or
+launch a title. No gameplay speedup or whole-loader safety claim is made.
+Import strings/tables, PE directory contents and image/heap allocation ownership
+still need their own audits. Audio scheduling and GPU resource lifetime unchanged.
+
+Reproduce tools/tests/run_pe_tests.sh (sanitizers default), or
+tools\tests\run_pe_tests.cmd in an x64 Visual Studio tools prompt.
+After building core objects: tools/tests/run_pe_bridge_tests.sh (CPU-only).

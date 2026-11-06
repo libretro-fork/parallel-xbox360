@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- PE section discovery now checks DOS/NT/optional headers, complete table bounds and resident section spans using byte reads. Reusable C89 storage replaces the section vector and preserves owned snapshots across guest header changes. Repeated parsing reuses capacity, malformed input publishes no sections, and unload hides old records. Failed PE continuations remain failures on retry, and empty executable ranges skip preanalysis before reserve-size underflow. Imports and other PE directories remain separate work.
+
 - XEX delta patches now use bounded borrowed packet spans and verify the complete image hash chain before relocating or modifying the guest image. Invalid ranges and truncated blocks return errors. Encrypted patch scratch avoids zero-initialization immediately overwritten by decryption; synchronous LZX calls remove three wrapper allocations. Real synthetic plaintext/encrypted patches and normal compressed-image loading are checked offline. Decoder allocations remain, and patch application is not fully transactional.
 
 - XEX loading now uses owned reusable C89 storage for headers and patch data. Encrypted normal-compression images use one decrypt/compaction workspace across key retries instead of two full-size buffers; plain chunks borrow input directly. Added bounded header/security/table checks, SHA1 block-chain parsing and in-place-safe CBC. Plain and basic images avoid zeroing bytes immediately overwritten; holes and padding retain their previous zero-fill semantics. Six synthetic compression/encryption cases match all guest bytes offline. PE/import parsing, legacy delta patch paths and heap-reset ownership still require further work.
