@@ -1,4 +1,5 @@
 #include "core_spv_arena.h"
+#include "core_spv_string.h"
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -111,6 +112,63 @@ int xe_spv_arena_reserve_type_groups(xe_spv_arena *arena)
       if (!group || !xe_spv_group_reserve(group, 4, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE)) return 0;
    }
    return 1;
+}
+int xe_spv_arena_reserve_extensions(xe_spv_arena *arena, size_t count)
+{
+   xe_spv_object_state *state = object_state(arena);
+   xe_spv_group *group;
+   if (!state) return 0;
+   group = xe_spv_groups_get(&state->groups, XE_SPV_EXTENSION_GROUP_KEY,
+         XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
+   return group && xe_spv_group_reserve(group, count, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
+}
+xe_spv_record_view xe_spv_arena_extensions(const xe_spv_arena *arena)
+{
+   return xe_spv_arena_group_view(arena, XE_SPV_EXTENSION_GROUP_KEY);
+}
+int xe_spv_arena_add_extension(xe_spv_arena *arena, const char *name)
+{
+   xe_spv_object_state *state;
+   xe_spv_group *group;
+   xe_spv_record_view view;
+   xe_spv_extension *extension;
+   uint32_t *words;
+   size_t slot, bytes, word_count;
+   int found;
+   if (!arena->in_use || !name || !(state = object_state(arena))) return 0;
+   group = xe_spv_groups_get(&state->groups, XE_SPV_EXTENSION_GROUP_KEY,
+         XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE);
+   if (!group) return 0;
+   view.records = group->records; view.count = group->count;
+   slot = xe_spv_extensions_locate(view, name, &found);
+   if (found) {
+      extension = (xe_spv_extension *)group->records[slot];
+      if (!extension->active) extension->active = 1;
+      return 1;
+   }
+   bytes = strlen(name);
+   /* One opcode word plus a terminated literal string, within the 16-bit
+    * instruction length. Never allocate an oversized encoding. */
+   if (bytes > 4u * (65535u - 1u) - 1u || group->count == (size_t)-1 ||
+       !xe_spv_group_reserve(group, group->count + 1, XE_SPV_ARENA_ALLOC, XE_SPV_ARENA_FREE)) return 0;
+   word_count = bytes / 4 + 2;
+   extension = (xe_spv_extension *)xe_spv_arena_payload_realloc(arena, NULL, 0,
+         sizeof(*extension) + word_count * sizeof(uint32_t));
+   if (!extension) return 0;
+   extension->active = 1;
+   words = (uint32_t *)(extension + 1);
+   words[0] = ((uint32_t)word_count << 16) | XE_SPV_EXTENSION_OPCODE;
+   xe_spv_string_encode(words + 1, name, bytes);
+   if (slot < group->count) memmove(group->records + slot + 1, group->records + slot,
+         (group->count - slot) * sizeof(*group->records));
+   group->records[slot] = extension;
+   ++group->count;
+   return 1;
+}
+void xe_spv_arena_remove_extension(xe_spv_arena *arena, const char *name)
+{
+   xe_spv_extension *extension = xe_spv_extensions_find(xe_spv_arena_extensions(arena), name);
+   if (extension) extension->active = 0;
 }
 int xe_spv_arena_reserve_stacks(xe_spv_arena *arena, size_t loop_bytes)
 {

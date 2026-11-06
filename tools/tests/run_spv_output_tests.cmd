@@ -9,6 +9,10 @@ cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests
 if errorlevel 1 goto fail
 %OUT%\packet-unit.exe
 if errorlevel 1 goto fail
+cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_extensions_test.c /Fo%OUT%\extensions-unit.obj /Fe%OUT%\extensions-unit.exe
+if errorlevel 1 goto fail
+%OUT%\extensions-unit.exe
+if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /c libretro/core_spv_probe.c /Fo%OUT%\probe.obj
 if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_metadata_test.c /Fo%OUT%\metadata-unit.obj /Fe%OUT%\metadata-unit.exe /link %OUT%\probe.obj
@@ -145,6 +149,12 @@ cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /DFMT_HEADER_ONLY /I. /Isrc /Isrc/x
 if errorlevel 1 goto fail
 for %%V in (0 1 2 3) do (
  %OUT%\repeat.exe %OUT%\repeat-%%V.spv %%V
+ if errorlevel 1 goto fail
+)
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /I. /Isrc/xenia/gpu/spirv /Ithird_party/libretro-common/include tools/tests/core_spv_extensions_bridge.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/SpvPostProcess.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp /Fo%OUT%\ /Fe%OUT%\extensions.exe /link %OUT%\size.obj %OUT%\binary.obj %OUT%\operands.obj %OUT%\arena.obj
+if errorlevel 1 goto fail
+for %%V in (0 1) do (
+ %OUT%\extensions.exe %OUT%\extensions-%%V.bin %%V
  if errorlevel 1 goto fail
 )
 popd

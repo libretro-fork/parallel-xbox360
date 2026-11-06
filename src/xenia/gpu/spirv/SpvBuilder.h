@@ -184,10 +184,10 @@ public:
             emitNonSemanticShaderDebugSource = emitSourceText;
         }
     }
-    void addExtension(const char* ext) { extensions.insert(ext); }
+    void addExtension(const char* ext) { module.addExtension(ext); }
     void removeExtension(const char* ext)
     {
-        extensions.erase(ext);
+        module.removeExtension(ext);
     }
     void addIncorporatedExtension(const char* ext, SpvVersion incorporatedVersion)
     {
@@ -1041,7 +1041,6 @@ protected:
     bool restoreNonSemanticShaderDebugInfo = false;
     bool emitNonSemanticShaderDebugSource = false;
 
-    std::set<std::string> extensions;
     std::vector<const char*> sourceExtensions;
     // Own encoded metadata, never a pointer into a caller's temporary string.
     mutable xe_spv_plan emissionPlan = {};

@@ -1,0 +1,87 @@
+Encoded C89 extension metadata, 2026-11-06
+Parent: complete 8b54c209ee164070abff3b03f4a77cce7110d28d sources.
+
+The extension registry no longer owns std::set<std::string> nodes. A reserved
+C89 group key owns sorted pointer metadata; each unique name is encoded once
+as an active flag plus OpExtension wire words in the existing payload pool.
+Lookup compares the owned encoding to borrowed caller text. Output borrows the
+wire span, avoiding string re-encoding and temporary instruction storage.
+No instruction arena slots or result IDs are consumed.
+
+Disable clears the active flag; re-add reactivates the same blob, avoiding
+allocation and re-encoding. Distinct disabled names remain until lease reset;
+this bounds churn by unique names per module rather than add/remove count.
+Names are copied/encoded once on first insertion, so this is not zero-copy
+input ownership. Final module assembly still copies spans into the required
+contiguous output. The legacy type/CFG builder remains.
+
+Cold reserve: 16 pointers (128 bytes on tested x64) per workspace, allocated
+before compilation. More unique names grow metadata with checked rollback;
+payload high-water can grow too. New blobs share the operand payload pool and
+can interrupt a previous payload's last-span growth opportunity. Removed-name
+storage is not individually reclaimed during a lease. Reset retains pages and
+metadata capacity; owner close releases them. No universal RSS reduction or
+allocation-free translation claim is made.
+
+Measured GCC x64 Builder shrinks 1504 -> 1456 bytes. Ordinary warmed lookup
+fixtures retain 191706 -> 191834 tracked bytes, reflecting the cold pointer
+reserve. The replicated fixture retains 191800 -> 191834 tracked bytes; the old
+set node/string allocations disappear while encoded words fit existing pages.
+Tracked allocations are requested user storage, not allocator RSS/VRAM.
+
+100000 warmed replicated-composite lookups: old 100000 allocations / 3000000
+requested bytes; current zero allocations / zero requested bytes. Parent and
+current both use the repeated-source API, so these totals isolate the extension
+change rather than counting the already-removed staging vector. The other
+three repeated-source lookup modes remain allocation-free on both revisions.
+Independent warmed construction controls also stay allocation-free:
+  functions/module    parent retained    current retained
+  1                         51957               52085
+  71                        95688               95816
+  257                      228801              228929
+  constants/module
+  40                        52673               52801
+  640                      156825              156953
+  5120                     926433              926561
+All old/new control modules match byte-for-byte. These are tracked requested
+bytes, with the same +128-byte cold pointer reserve in each case. Elapsed CPU
+timings are deliberately not reported: independent Dolphin compiler jobs were
+active during final verification. No speed/FPS claim is made from contended
+measurements. Allocation counts do not depend on this timing interference.
+
+Coverage:
+- MSVC /TC /W4 /WX and strict C89 unit tests: 100 leases, 131 unique names,
+  owned input overwritten immediately, sorted order, stable encoded addresses,
+  1000 disable/re-add cycles per lease with no allocation, empty/high-byte names,
+  failed cold/metadata/payload allocations, and the 65535-word wire limit.
+- Public Builder snapshots compare full own-revision output to the old set,
+  including duplicate/removal, 10000 disable/re-add cycles, incorporated
+  promotion, 129-name growth, overwritten text and unsigned-byte ordering.
+  Both vector and sized C output adapters match. Valid standard-name output
+  passes spirv-val; arbitrary/empty extension names are byte-oracle cases only.
+- Native output suite and Make -j5 pass. Native geometry: 18432 modules,
+  109668864 output bytes; SHA256
+  427B071C7E7868566596FF55270BBCA9AAB31F54C714CA552E928DFE349E69E0.
+- Actual rebuilt guest translator: 1410 Tekken + 210 Tomb Raider cached shader
+  translations, both host-RT/interlock profiles, match parent bytes. These
+  fixtures contain 2 + 96 translations with control-flow labels.
+- Full WSL GCC13 ASan/UBSan suite passes (C -O2, C++ -O1). It checks
+  helper output against the complete parent, ownership/exception recovery,
+  type/constant/control-flow identities and both extension variants. The
+  deliberate post-reset extension read is detected as use-after-poison; all
+  existing retired typed/C instruction, payload and stack lifetime probes
+  remain detected. No unexpected sanitizer errors occur.
+
+No frontend/game was launched, installed DLL changed, or audio/resource
+retirement/shutdown code modified. Gameplay/FPS and other architectures are
+unmeasured.
+
+Reproduce snapshots: sh tools/tests/run_spv_extensions_compare.sh
+Reproduce lookup allocation benchmark: tools/tests/run_spv_repeat_compare.sh
+with BASELINE_ROOT=<complete parent>, BASELINE_REPEAT_API=1, PROFILE=1,
+TEST_SOURCE=tools/tests/core_spv_repeat_bench.cc, distinct TEST_BUILD_DIR.
+The baseline API flag matters: without it the historical harness deliberately
+uses the old vector adapter. Use core_spv_function_bench.cc and
+core_spv_constant_bench.cc with run_spv_binary_bench.sh, CAPTURE_OPERANDS=1 and
+the same complete parent for independent construction controls. Alternate
+parent/current executable order in seven pairs after compilation is terminal.

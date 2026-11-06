@@ -10,7 +10,10 @@ its classes does not satisfy this requirement. This migration is incomplete.
   Repeated hashing, exact-key matching and packet emission need no intermediary
   member array. Normal views and repeated sources share constant identity.
   Scalar smears and composite comparison/extraction remove temporary vectors.
-  Replicated mode still allocates a separate extension-string temporary.
+- Required extensions use sorted C89 pointer metadata over module-owned encoded
+  words. Lookup and output borrow the encoding; disable/re-add reactivates the
+  same blob without allocation. Unique names stay cached until lease reset.
+  Metadata/payload storage can still grow at new high-water marks.
 - Obsolete operand-only storage and its compatibility API are deleted. Packet
   growth/free/string code now belongs to the C89 packet implementation itself.
 - Module ID registration, packet lookup, type queries and checked pointer-storage

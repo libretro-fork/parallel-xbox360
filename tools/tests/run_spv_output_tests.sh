@@ -17,6 +17,8 @@ if test ! -f "$out/base/libretro/core_spv_arena.c"; then
  exit 1
 fi
 san=${SANITIZER-}
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_extensions_test.c" -o "$out/extensions-unit"
+"$out/extensions-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_packet_test.c" -o "$out/packet-unit"
 "$out/packet-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -c "$root/libretro/core_spv_probe.c" -o "$out/probe.o"
@@ -189,7 +191,15 @@ ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -include "$root/tools/tests/core_spv_ar
  "$root/tools/tests/core_spv_arena_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-plain.o" "$out/size.o" "$out/operands-fault.o" "$out/fault.o" -o "$out/arena-bridge"
 "$out/arena-bridge"
+${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" \
+ "$root/tools/tests/core_spv_extensions_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/SpvPostProcess.cpp" \
+ "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena.o" "$out/size.o" "$out/operands.o" -o "$out/extensions-bridge"
+for variant in 0 1; do "$out/extensions-bridge" "$out/extensions-$variant.bin" "$variant"; done
+if test -n "${SPIRV_VALIDATOR:-}"; then "$SPIRV_VALIDATOR" "$out/extensions-0.bin.last.spv"; fi
+
 case "$san" in *address*)
+ if "$out/extensions-unit" uaf > "$out/extensions-uaf.log" 2>&1; then echo 'missed retired extension'; exit 1; fi
+ grep -q 'use-after-poison' "$out/extensions-uaf.log"
  for lifetime in pop-uaf reset-uaf; do
   if "$out/stack-unit" "$lifetime" > "$out/stack-$lifetime.log" 2>&1; then echo 'missed retired stack frame'; exit 1; fi
   grep -q 'use-after-poison' "$out/stack-$lifetime.log"

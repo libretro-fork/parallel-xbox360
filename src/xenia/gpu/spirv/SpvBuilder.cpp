@@ -4509,6 +4509,18 @@ static void appendBinaryWord(xe_spv_count& out, unsigned int)
 {
     xe_spv_count_words(&out, 1);
 }
+static void appendEncodedWords(std::vector<unsigned int>& out, xe_spv_word_view words)
+{
+    out.insert(out.end(), words.words, words.words + words.count);
+}
+static void appendEncodedWords(xe_spv_binary& out, xe_spv_word_view words)
+{
+    xe_spv_binary_append(&out, words.words, words.count);
+}
+static void appendEncodedWords(xe_spv_count& out, xe_spv_word_view words)
+{
+    xe_spv_count_words(&out, words.count);
+}
 
 bool Builder::dumpSized(xe_spv_binary& out, xe_spv_plan* borrowedPlan) const
 {
@@ -4583,8 +4595,11 @@ template <class Output> void Builder::dumpInternal(Output& out, xe_spv_plan* pla
         appendBinaryWord(out, capabilityWords.words[cap]);
     }
 
-    for (auto it = extensions.cbegin(); it != extensions.cend(); ++it) {
-        appendStringInstruction(out, Op::OpExtension, it->c_str());
+    static_assert(static_cast<uint32_t>(Op::OpExtension) == XE_SPV_EXTENSION_OPCODE);
+    const xe_spv_record_view extensionRecords = module.extensionRecords();
+    for (size_t e = 0; e < extensionRecords.count; ++e) {
+        const auto* extension = static_cast<const xe_spv_extension*>(extensionRecords.records[e]);
+        if (extension->active) appendEncodedWords(out, xe_spv_extension_view(extension));
     }
 
     dumpInstructions(out, imports);

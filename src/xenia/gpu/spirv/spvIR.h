@@ -675,6 +675,11 @@ public:
     bool stackPop(unsigned kind) { return xe_spv_arena_stack_pop(arena, kind) != 0; }
     void stackClear(unsigned kind) noexcept { xe_spv_arena_stack_clear(arena, kind); }
     void clearStacks() noexcept { xe_spv_arena_clear_stacks(arena); }
+    void addExtension(const char* name) {
+        if (!xe_spv_arena_add_extension(arena, name)) throw std::bad_alloc();
+    }
+    void removeExtension(const char* name) { xe_spv_arena_remove_extension(arena, name); }
+    xe_spv_record_view extensionRecords() const { return xe_spv_arena_extensions(arena); }
     void addCapability(uint32_t value) {
         if (!xe_spv_arena_add_capability(arena, value)) throw std::bad_alloc();
     }

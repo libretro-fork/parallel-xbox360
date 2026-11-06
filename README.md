@@ -8,7 +8,7 @@ The Vulkan version probe writes its final SPIR-V words directly in C89 caller st
 
 Shader module ID/type queries borrow the C89 packet index directly. The obsolete operand-only storage API is removed; packet growth retains its pooled storage and checked allocation rollback. Pointer-storage queries reject missing or malformed records. The legacy builder's remaining module/type/CFG duties still need migration.
 
-Uniform shader composites borrow one scalar ID rather than staging repeated members in a vector. C89 source hashing/matching/emission preserves ordinary constant aliases and specialization identity; composite extraction borrows scalar operands/indices. Extension-string metadata can still allocate, and final contiguous SPIR-V assembly still copies packet words.
+Uniform shader composites borrow one scalar ID rather than staging repeated members in a vector. C89 source hashing/matching/emission preserves ordinary constant aliases and specialization identity; composite extraction borrows scalar operands/indices. Extension names now encode once into module-owned C89 payload storage. Sorted pointer metadata borrows those words for lookup and output; duplicates and disable/re-add cycles allocate nothing. The cold registry reserves 16 pointers, grows for additional unique names, and caches removed names until module reset. Final contiguous SPIR-V assembly still copies packet words. Measurements and lifetime coverage are in `tools/tests/spv_extension_bench_results.txt`.
 
 ## Savestate work in progress
 

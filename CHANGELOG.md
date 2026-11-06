@@ -4,7 +4,9 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
-- Uniform shader constants borrow one scalar ID for hashing, lookup and direct packet emission instead of allocating repeated-member vectors. Scalar smears and composite comparisons/extractions also avoid temporary ID/index vectors. Ordinary and specialization identities, replicated-composite rules and emitted shader bytes are preserved. Replicated mode still has separate extension-string allocation costs.
+- Shader extension metadata now uses owned C89 wire words instead of a string/set node per name. Duplicate lookups and disable/re-add operations reuse the same encoding; output borrows it without a temporary string buffer. Ordering, promotion and emitted bytes are preserved. Unique names remain cached until module reset, with checked registry/payload growth.
+
+- Uniform shader constants borrow one scalar ID for hashing, lookup and direct packet emission instead of allocating repeated-member vectors. Scalar smears and composite comparisons/extractions also avoid temporary ID/index vectors. Ordinary and specialization identities, replicated-composite rules and emitted shader bytes are preserved.
 
 - Removed the obsolete operand-only shader storage API. Module ID mapping, type queries and checked pointer-storage queries now use the C89 packet index directly, borrowing existing records without another lookup table or payload copy. Packet pooling, failure recovery and shader identity remain covered by the migrated storage tests.
 

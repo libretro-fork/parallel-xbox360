@@ -23,7 +23,10 @@ if test "${PROFILE:-0}" = 1; then
 fi
 for revision in parent current; do
  src="$root"; legacy=
- if test "$revision" = parent; then src="$baseline"; legacy=-DXE_SPV_REPEAT_LEGACY; fi
+ if test "$revision" = parent; then
+  src="$baseline"
+  if test "${BASELINE_REPEAT_API:-0}" != 1; then legacy=-DXE_SPV_REPEAT_LEGACY; fi
+ fi
  obj="$out/$revision"; mkdir -p "$obj"
  for unit in size binary operands arena; do
   unit_source="$src/libretro/core_spv_$unit.c"
