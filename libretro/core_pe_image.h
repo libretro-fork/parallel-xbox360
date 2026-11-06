@@ -13,7 +13,7 @@
 typedef struct xe_pe_view {
   const uint8_t *sections;
   size_t count;
-  uint32_t base;
+  uint32_t base, resident_size;
 } xe_pe_view;
 typedef struct xe_pe_sections {
   xe_pe_section *data;
@@ -48,10 +48,15 @@ static INLINE int xe_pe_validate(const uint8_t *p, size_t length,
     record = p + table + i * 40;
     size = xe_pe_u32(record + 8); address = xe_pe_u32(record + 12);
     raw = xe_pe_u32(record + 16);
-    /* Consumers walk resident raw/virtual spans; raw file offsets are metadata. */
-    if (address > length || size > length - address || raw > length - address) return 0;
+    /* Discardable PE tails may be omitted by XEX (SCIV .reloc). Keep strict
+     * guest-address overflow checks; only discardable snapshots are clipped. */
+    if (address > UINT32_MAX - base || size > UINT32_MAX - base - address ||
+        raw > UINT32_MAX - base - address) return 0;
+    if ((address > length || size > length - address || raw > length - address) &&
+        !(xe_pe_u32(record + 36) & 0x02000000U)) return 0;
   }
-  view->sections = p + table; view->count = count; view->base = base; return 1;
+  view->sections = p + table; view->count = count; view->base = base;
+  view->resident_size = (uint32_t)length; return 1;
 }
 /* Call only with a validated immutable view disjoint from this owner. Retain
  * snapshots, since guest writes can change the wire table after loading. */
@@ -74,6 +79,14 @@ static INLINE int xe_pe_sections_read(xe_pe_sections *s, const xe_pe_view *view)
     data->size = xe_pe_u32(record + 8); data->address = view->base + xe_pe_u32(record + 12);
     data->raw_size = xe_pe_u32(record + 16); data->raw_address = xe_pe_u32(record + 20);
     data->flags = xe_pe_u32(record + 36);
+    if (data->flags & 0x02000000U) {
+      uint32_t rva = xe_pe_u32(record + 12), available;
+      if (rva > view->resident_size) rva = view->resident_size;
+      available = view->resident_size - rva;
+      data->address = view->base + rva;
+      if (data->size > available) data->size = available;
+      if (data->raw_size > available) data->raw_size = available;
+    }
   }
   s->size = view->count; return 1;
 }

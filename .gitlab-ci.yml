@@ -44,6 +44,7 @@ default:
     - sh .ci/setup-linux-gcc.sh
     - export CC=gcc-14 CXX=g++-14
   script:
+    - sh tools/tests/run_pe_tests.sh
     - make -j "$NUMPROC" platform=linux-$(uname -m) BUILD_DIR="$BUILD_DIR" HOST_CC="$CC" AR=ar
     - strip --strip-unneeded "$LIBNAME"
 

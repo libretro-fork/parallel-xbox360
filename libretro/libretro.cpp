@@ -1402,7 +1402,7 @@ static bool xenia_setup_and_launch(const char *path) {
         if (XFAILED(status)) {
             xenia_log(RETRO_LOG_ERROR,
                       "Emulator::Setup failed 0x%08X\n", status);
-            xenia_emulator.reset();
+            xenia_stop_emulator();
             return false;
         }
 
@@ -1423,7 +1423,7 @@ static bool xenia_setup_and_launch(const char *path) {
         if (XFAILED(status)) {
             xenia_log(RETRO_LOG_ERROR,
                       "Emulator::SetupSubsystems failed 0x%08X\n", status);
-            xenia_emulator.reset();
+            xenia_stop_emulator();
             return false;
         }
 
@@ -1472,7 +1472,7 @@ static bool xenia_setup_and_launch(const char *path) {
         if (XFAILED(status)) {
             xenia_log(RETRO_LOG_ERROR,
                       "LaunchPath failed 0x%08X\n", status);
-            xenia_emulator.reset();
+            xenia_stop_emulator();
             return false;
         }
 
@@ -1481,11 +1481,11 @@ static bool xenia_setup_and_launch(const char *path) {
 
     } catch (const std::exception &e) {
         xenia_log(RETRO_LOG_ERROR, "Exception in setup: %s\n", e.what());
-        xenia_emulator.reset();
+        xenia_stop_emulator();
         return false;
     } catch (...) {
         xenia_log(RETRO_LOG_ERROR, "Unknown exception in setup!\n");
-        xenia_emulator.reset();
+        xenia_stop_emulator();
         return false;
     }
 }
@@ -2041,14 +2041,14 @@ RETRO_API void retro_run(void) {
     if (core_state.input_poll_cb) core_state.input_poll_cb();
 
     // Feed libretro input state into Xenia's HID system
-    if (lr_input_driver && core_state.input_state_cb)
+    if (game_loaded && lr_input_driver && core_state.input_state_cb)
         lr_input_driver->UpdateFromLibretro(core_state.input_state_cb, core_state.output_fps);
 
     if (xenia_emulator && xenia_emulator->kernel_state())
         xenia_emulator->kernel_state()->xam_state()->AdvanceUiNotifications(core_state.output_fps);
 
     // Frontend calls request guest vblanks, including the unlock multiplier.
-    if (lr_graphics)
+    if (game_loaded && lr_graphics)
         for (int i = 0; i < core_state.vblanks_per_run; i++)
             lr_graphics->LibretroVblank();
 
@@ -2056,7 +2056,9 @@ RETRO_API void retro_run(void) {
 
     update_audio();
     const auto video_start = std::chrono::steady_clock::now();
-    if (vulkan_hw_render_active)
+    if (!game_loaded)
+        core_state.video_cb(nullptr, 1280, 720, 1280 * sizeof(uint32_t));
+    else if (vulkan_hw_render_active)
         update_video_vulkan();
 #ifdef _WIN32
     else if (d3d12_hw_render_active)

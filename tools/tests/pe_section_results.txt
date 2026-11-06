@@ -3,7 +3,7 @@ Bounded PE section snapshots
 
 XexModule's PE parser now borrows little-endian wire records and checks the DOS
 extent, signed NT offset, fixed NT/optional header, Xbox/PPC32 identifiers,
-complete section table and resident raw/virtual section spans before publishing
+complete section table and ordinary resident raw/virtual spans before publishing
 records. Reads are byte-based, including the existing exact four-byte key-retry
 probe, so unaligned wire pointers do not trigger typed-load UB. Address arithmetic
 must fit the guest's 32-bit exclusive endpoints used by existing consumers.
@@ -53,3 +53,8 @@ still need their own audits. Audio scheduling and GPU resource lifetime unchange
 Reproduce tools/tests/run_pe_tests.sh (sanitizers default), or
 tools\tests\run_pe_tests.cmd in an x64 Visual Studio tools prompt.
 After building core objects: tools/tests/run_pe_bridge_tests.sh (CPU-only).
+
+Explicitly discardable PE sections may describe nonresident tails. Their owned
+snapshots clip addresses and raw/virtual lengths to the resident XEX extent;
+ordinary spans and all guest-address overflow remain checked. See the exact
+SCIV layout regression in core_pe_test.c and soulcalibur_startup_results.txt.

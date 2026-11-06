@@ -1,0 +1,72 @@
+Soulcalibur IV startup regressions
+=================================
+
+Reported crash
+--------------
+The supplied trace fails at xe_audio_cadence_next called by xe_input_begin_run
+from LibretroInputDriver::UpdateFromLibretro in retro_run. The matching local
+xenia.log identifies core 2e2d1ce and first reports Failed to load XEX PE headers,
+followed by complete emulator teardown. The failed LaunchPath path previously
+reset the emulator while retaining lr_input_driver/lr_graphics raw pointers.
+The next frontend call dereferenced a destroyed input driver.
+
+Loader cause and fix
+--------------------
+An offline probe reads the local ISO directory and passes default.xex through
+the real XexModule::Load and ReadPEHeaders methods. It starts Memory and a
+Processor object without backend/JIT setup; no game code or GPU is run.
+The resident image is 0x011e0000 bytes at 0x82000000. Its discardable .reloc
+section starts at RVA 0x01150200 with virtual size 0x000c6030, raw size 0x000c6200
+and flags 0x42000040. The trailing bytes exceed the resident image. The old C89
+preflight rejected this, while upstream ReadPEHeaders retains these PE records
+without imposing a resident-span bound.
+
+Preflight now permits nonresident tails only on IMAGE_SCN_MEM_DISCARDABLE
+(0x02000000) sections. Guest-address overflow, complete header/table bounds,
+identifiers and ordinary section bounds remain checked. Owned snapshots clip
+only discardable addresses/raw/virtual lengths to the resident image, so code
+and pdata consumers cannot walk into the omitted tail. Completely omitted
+sections get a zero-sized span at the resident end. Raw file offsets and wire
+headers are unchanged. SCIV relocation resident extent is 0x0008fe00 bytes.
+The real offline parser now returns success with that extent.
+
+All five setup/subsystem/launch/exception failure paths now use the existing
+normal stop function. It performs established shutdown/join cleanup and clears
+both borrowed pointers plus game_loaded. retro_run also requires a loaded game
+before updating HID, requesting guest vblanks or entering native video helpers. No new lock, timing policy,
+input buffering, audio conversion or frame pacing is introduced.
+
+Automated regression coverage
+-----------------------------
+core_pe_test.c contains synthetic PE headers with all ten exact SCIV section
+bounds. It contains no game executable bytes. The fixture fails against the
+pre-fix core_pe_image.h, and passes with the fix under GCC ASan/UBSan, MinGW and
+MSVC /TC /W4 /WX. It checks retained ordinary sections, clipped partial and fully
+omitted discardable sections, ordinary overruns, and overflowing flagged sections.
+The existing malformed/truncated/unaligned/OOM tests still pass. The real
+XexModule parser bridge also checks a synthetic discardable tail and its clipped
+owned record, catching integration failures beyond the standalone helper.
+
+The same fixture is wired before core builds in GitHub Linux x64/arm64 and MSVC
+Windows jobs, and in the GitLab Linux definitions. CI runs are not claimed from
+local results. Existing run_pe_tests.sh/.cmd execute the new regression.
+
+The Windows offline failed-launch fixture includes the real frontend TU, with
+C89 callbacks and no production test hooks. Poison HID/graphics pointers model the
+post-failure borrowed views while game_loaded is false; retro_run must not call
+it. The real stop helper clears poison HID/graphics views. Eight subsequent
+callback intervals deliver eight video callbacks and 6400 silent stereo frames
+with no HID state callback, GPU device or JIT initialization. This models the
+post-failure state; it does not execute a complete failed native graphics setup.
+
+Reproduce with:
+  sh tools/tests/run_pe_tests.sh
+  tools\tests\run_pe_tests.cmd (MSVC Developer Command Prompt)
+  sh tools/tests/run_failed_launch_bridge_tests.sh (MSYS2, built Windows objects)
+  sh tools/tests/run_pe_bridge_tests.sh (built core objects)
+
+Local checks include actual XEX/frontend MSVC compilation and a static Windows
+Make -j5 build. The installed core and running applications are left untouched.
+Full live Soulcalibur gameplay and upstream standalone replay remain untested.
+The optimization goal remains paused; this fix is isolated from its unfinished
+resolve-owner registry changes.

@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fixed Soulcalibur IV startup: XEX loading now accepts omitted tails of explicitly discardable PE sections and clips their resident snapshots, while retaining bounds checks for ordinary sections and guest-address overflow. Failed launches use the normal teardown path so stale input/graphics pointers cannot crash the next retro_run. Added the exact section-layout regression to Linux/Windows CI, plus an offline failed-launch callback test.
+
 - Resolve fault readback now captures final Vulkan copy records or compact D3D12 ranges directly into cold-reserved C89 storage, removing CPU metadata growth, relocation and the intermediate Vulkan range vector. Page-owner keys use libretro-common atomics, and access bounds clamp before addition to prevent wrap. Clipping, packed delivery and native ordering remain unchanged. CPU/reference, sanitizer and concurrency checks pass, including TSan; cold capacity increases for small workloads, and native staging/driver allocations remain.
 
 - D3D12 derives system constants directly into two inline CPU snapshots and swaps pointers on change, removing its vector shadow and duplicate 688-byte copy. Frame invalidation, failed-upload retries and required GPU upload copies are preserved. This trades bounded extra CPU storage for no shadow allocation; changed-draw CPU fixtures improve, while some rarely-changing GCC cases are slightly slower. No gameplay gain is claimed.

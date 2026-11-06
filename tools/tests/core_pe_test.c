@@ -28,7 +28,58 @@ static void fixture(uint8_t *p) {
 }
 #ifdef XE_PE_BRIDGE
 extern int xe_test_pe_module(const uint8_t *, size_t, const xe_pe_section *);
+void xe_test_pe_discardable_fixture(uint8_t *p) {
+  uint8_t *r=p+352;
+  memset(r,0,8);memcpy(r,".reloc",6);
+  put32(r+8,0x4000);put32(r+12,0xe000);put32(r+16,0x6000);
+  put32(r+36,0x42000040);
+}
 #endif
+/* Exact section bounds from SCIV; synthetic headers only, no game code/data. */
+static int soulcalibur_discardable_regression(void) {
+  static const struct record { char name[9]; uint32_t size,rva,raw,file,flags; } records[] = {
+    {".rdata",0xda394,0x400,0xda400,0x400,0x40000040},
+    {".pdata",0x2bc78,0xda800,0x2be00,0xda800,0x40000040},
+    {".text",0x5fdeec,0x110000,0x5fe000,0x106600,0x60000020},
+    {"PSFD00",0x5af0,0x70e000,0x5c00,0x704600,0x60000020},
+    {".data",0xa13df8,0x720000,0x15d800,0x70a200,0xc0000040},
+    {".XBMOVIE",12,0x1133e00,0x200,0x867a00,0xc0000040},
+    {".tls",0x71,0x1134000,0x200,0x867c00,0xc0000040},
+    {".idata",0x462,0x1140000,0x600,0x867e00,0xc0000040},
+    {".XBLD",0xb0,0x1150000,0x200,0x868400,0x42000040},
+    {".reloc",0xc6030,0x1150200,0xc6200,0x868600,0x42000040}
+  };
+  const size_t resident = 0x11e0000;
+  uint8_t *p = (uint8_t *)malloc(resident), *r;
+  xe_pe_sections owner = {NULL,0,0};
+  xe_pe_view view;
+  size_t i;
+  CHECK(p); memset(p,0,1024);
+  memcpy(p,"MZ\220\000",4); put32(p+60,0x108);
+  memcpy(p+0x108,"PE\000\000",4); put16(p+0x10c,0x1f2); put16(p+0x10e,10);
+  put16(p+0x11c,224); put16(p+0x11e,0x102); put16(p+0x120,0x10b); put16(p+0x164,14);
+  for(i=0;i<10;++i) {
+    r=p+0x200+i*40; memcpy(r,records[i].name,8);
+    put32(r+8,records[i].size); put32(r+12,records[i].rva);
+    put32(r+16,records[i].raw); put32(r+20,records[i].file); put32(r+36,records[i].flags);
+  }
+  CHECK(xe_pe_validate(p,resident,0x82000000U,&view));
+  CHECK(xe_pe_sections_read(&owner,&view) && owner.size==10);
+  CHECK(owner.data[9].address==0x83150200U && owner.data[9].size==0x8fe00 &&
+        owner.data[9].raw_size==0x8fe00 && owner.data[9].raw_address==0x868600);
+  CHECK(owner.data[4].size==0xa13df8 && owner.data[4].raw_size==0x15d800);
+  r=p+0x200+9*40;
+  put32(r+36,0x40000040); CHECK(!xe_pe_validate(p,resident,0x82000000U,&view));
+  put32(r+36,0x42000040); put32(r+12,0x1200000);
+  CHECK(xe_pe_validate(p,resident,0x82000000U,&view) && xe_pe_sections_read(&owner,&view));
+  CHECK(owner.data[9].address==0x831e0000U && !owner.data[9].size && !owner.data[9].raw_size);
+  put32(r+12,UINT32_MAX); CHECK(!xe_pe_validate(p,resident,0x82000000U,&view));
+  put32(r+12,0x1150200); put32(r+8,UINT32_MAX); CHECK(!xe_pe_validate(p,resident,0x82000000U,&view));
+  put32(r+8,0xc6030); put32(r+16,UINT32_MAX); CHECK(!xe_pe_validate(p,resident,0x82000000U,&view));
+  xe_pe_sections_free(&owner); free(p);
+  puts("SCIV PE regression: exact omitted discardable relocation tail accepted, resident snapshots clipped, resident overruns and address overflow rejected");
+  return 0;
+}
 int main(void) {
   xe_pe_sections owner = {NULL,0,0};
   xe_pe_view view, untouched;
@@ -100,6 +151,7 @@ int main(void) {
   CHECK(xe_pe_sections_read(&owner,&view) && !owner.size && owner.data==old);
   xe_pe_sections_free(&owner); xe_pe_sections_free(&owner);
   CHECK(!owner.data && !owner.size && !owner.capacity && releases==1);
+  CHECK(soulcalibur_discardable_regression()==0);
   puts("PE: unaligned borrowed tables, bounded spans, retained snapshots and allocation failure pass");
   return 0;
 }

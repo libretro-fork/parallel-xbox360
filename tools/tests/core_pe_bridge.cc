@@ -26,6 +26,7 @@ static_assert(offsetof(XIMAGE_DOS_HEADER, e_lfanew) == 60);
 static_assert(offsetof(XIMAGE_OPTIONAL_HEADER32, Subsystem) + 24 == 92);
 extern "C" void xe_test_prepare_delta(int, int, const uint8_t**, size_t*,
     const uint8_t**, size_t*, const uint8_t**);
+extern "C" void xe_test_pe_discardable_fixture(uint8_t*);
 extern "C" int xe_test_pe_module(const uint8_t* pe, size_t size,
     const xe_pe_section* expected) {
   const uint8_t *base, *patch, *unused;
@@ -50,6 +51,12 @@ extern "C" int xe_test_pe_module(const uint8_t* pe, size_t size,
   if (module.GetPESection(".text") != text) return 0;
   std::memcpy(guest, pe, size);
   if ((module.*read)() || module.GetPESection(".text") != text) return 0;
+  xe_test_pe_discardable_fixture(guest);
+  if ((module.*read)()) return 0;
+  const auto* reloc = module.GetPESection(".reloc");
+  if (!reloc || reloc->address != 0x8200e000 || reloc->size != 0x2000 ||
+      reloc->raw_size != 0x2000) return 0;
+  std::memcpy(guest, pe, size);
   std::memset(guest + 364, 255, 4);
   if (!(module.*read)() || module.GetPESection(".text")) return 0;
   if (module.LoadContinue() || module.LoadContinue()) return 0;
