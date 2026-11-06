@@ -1,0 +1,82 @@
+Vulkan descriptor-pool reusable ordered search (0121)
+===================================================
+
+Replace the usable std::multimap and its copied Page values with retained C89
+search nodes. The latest hot node stays outside the ordered index. Switching
+latest nodes moves a pointer; native-pool handles and borrowed counter spans
+remain in their existing owners. Full nodes are returned to the CPU free list;
+their native pools are still owned until the same GPU-safe Reset boundary.
+
+The index is an intrusive treap with parent links, a cached maximum and iterative
+rotations/erase. It preserves ascending key order and insertion order for equal
+keys, so descending traversal selects the newest equal maximum first, exactly
+like the previous reverse multimap. Priorities use deterministic xorshift state,
+with expected logarithmic insertion/removal (not a guaranteed worst-case bound).
+There is no recursion, runtime depth limit, page-count limit or key-range table.
+The existing scan of candidates with unsuitable descriptor-type budgets remains.
+
+Ownership/failure:
+- One command-processor owner; no concurrent queue or thread synchronization is
+  introduced. Native allocation sizes, descriptor budgets, failure retirement,
+  pool ownership, native queue/fence behavior and shutdown order are unchanged.
+- Warm 32 search nodes per allocator. Grow retained nonmoving pages at new live
+  high-water levels; reset rewinds them and forgets tree/free-list roots.
+- Reserve a search node and native ownership row before native creation. Failure
+  of either metadata page, native creation or initial set allocation cancels the
+  lease before invoking the logger. Constructor failure releases already-warmed
+  ownership storage. Registration/tree mutation after native success allocates
+  nothing and copies no Page or counter array.
+- Search metadata is not native ownership. Releasing a CPU node never destroys
+  the native pool or its descriptor sets. It may immediately represent another
+  pool while the old pool still has GPU users.
+
+Validation:
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror ASan/UBSan and MSVC /TC /W4 /WX:
+  204,800 insertions/removals with ascending, descending, duplicate and random
+  keys; parent links, heap order, descending tie order, ordinary seeded-tree
+  depth, failed warm/growth, rejected overlapping lease/reset/destroy, retained
+  addresses, balanced frees and no allocation after high-water warm.
+- Sanitized C++ reference: 300,000 rekeys over 4,096 live records match multimap
+  node-by-node including duplicates and recycled nodes.
+- Actual allocator compiled with fake device/logging dispatch: reference trace
+  1aed303f01c48a25 unchanged (970 native create calls, 1,478 set allocation calls,
+  1,267 successful sets). Sweep all ten C89 metadata-allocation failures and 233
+  logger failures with immediate retries in the same allocator; every native
+  pool is destroyed once. Zero C++ allocation calls remain in that fixture.
+- Pointer/integer Vulkan handles pass. Native MSVC production allocator/Vulkan
+  command processor compile; full Windows static Make -j5 passes. No actual GPU,
+  frontend, JIT or game is launched; rendering/post-unload GPU tests remain unrun.
+
+Paired CPU benchmark, no sanitizers:
+Same source compiles the prior 42576a353 allocator and current allocator against
+fake native dispatch. The old extracted source/header blobs match Git. Each
+sample processes 15M requests (10,000 repeats of 1,500 requests/three resets),
+five warm-up repeats, median of three CPU-time runs. Native errors disabled;
+"mixed" varies budgets/layout types, "hot" fits all requests in the latest pool.
+Instrumentation counts C++/C89 allocation calls. These are CPU fixtures, not
+native-driver/game traces, frame-time measurements or FPS improvements.
+
+Compiler/host                  Mixed prior/current ms     Hot prior/current ms
+GCC13.3 WSL Linux -O3               325.022 / 195.659          107.243 / 109.464
+MinGW16.2 Windows -O3               414.000 / 200.000          112.000 / 112.000
+MSVC x64 Windows /O2               488.000 / 251.000          117.000 / 114.000
+
+Hot results vary slightly by compiler; this is not a universal speedup claim.
+Mixed native trace 4e3449f0953801c9 and hot a2b440fcc5511ae2 match prior/current.
+Per 1,500 mixed requests, prior C++ allocations 702 (703 MSVC) plus five C89 page
+allocations become zero C++ plus twelve C89 page allocations. Hot prior has zero
+C++ (one MSVC sentinel) plus one C89 page; current zero C++ plus two C89 pages.
+Repeats construct a fresh allocator, so those C89 counts include cold warming.
+
+Storage limits/tradeoffs:
+A tested x64 search node is 56 bytes; each 32-node page is 1,800 bytes. Warming
+four allocators reserves 7,200 bytes of search pages. Free/high-water capacity is
+retained across explicit clears; this may retain more idle metadata than a
+cleared multimap. Native pools and new high-water CPU pages still allocate.
+No whole-core allocation-free, RSS reduction, leak-free or gameplay claim.
+
+Reproduce run_vk_pool_search_tests.sh/.cmd and run_vk_pool_owner_tests.sh/.cmd.
+run_vk_pool_search_bench.sh builds current; optionally set BASELINE_SOURCE_DIR to
+an extracted 42576a353 src directory to build/run prior with identical fixture.
+MSVC benchmark uses /O2 /EHsc /std:c++20 /DNDEBUG, test stub include path first,
+/FItools/tests/vk_pool_metadata_hooks.h, benchmark source and allocator source.

@@ -9,9 +9,9 @@ cl /nologo /TC /MD /O2 /W4 /WX %INC% tools/tests/core_vk_pool_owner_test.c /Fo%O
 if errorlevel 1 goto fail
 %OUT%\leaf.exe
 if errorlevel 1 goto fail
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG %INC% /c src/xenia/ui/vulkan/linked_type_descriptor_set_allocator.cc /Fo%OUT%\allocator.obj
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /FItools/tests/vk_pool_metadata_hooks.h %INC% /c src/xenia/ui/vulkan/linked_type_descriptor_set_allocator.cc /Fo%OUT%\allocator.obj
 if errorlevel 1 goto fail
-cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG %INC% tools/tests/vk_pool_owner_bridge.cc %OUT%\allocator.obj /Fo%OUT%\bridge.obj /Fe%OUT%\bridge.exe
+cl /nologo /MD /O2 /EHsc /std:c++20 /DNDEBUG /FItools/tests/vk_pool_metadata_hooks.h %INC% tools/tests/vk_pool_owner_bridge.cc %OUT%\allocator.obj /Fo%OUT%\bridge.obj /Fe%OUT%\bridge.exe
 if errorlevel 1 goto fail
 %OUT%\bridge.exe
 if errorlevel 1 goto fail

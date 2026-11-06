@@ -12,14 +12,12 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <map>
-#include <iterator>
-#include <utility>
 #include <new>
 
 #include "xenia/base/assert.h"
 #include "xenia/ui/vulkan/vulkan_device.h"
 #include "libretro/core_vk_pool_owner.h"
+#include "libretro/core_vk_pool_search.h"
 
 namespace xe {
 namespace ui {
@@ -78,12 +76,16 @@ class LinkedTypeDescriptorSetAllocator {
 #endif
     if (!xe_vk_pool_owner_configure(&pool_owner_, descriptor_size_count) ||
         !xe_vk_pool_owner_warm(&pool_owner_)) throw std::bad_alloc();
+    if (!xe_vk_pool_search_warm(&pages_usable_)) {
+      xe_vk_pool_owner_destroy(&pool_owner_);
+      throw std::bad_alloc();
+    }
   }
   LinkedTypeDescriptorSetAllocator(
       const LinkedTypeDescriptorSetAllocator& allocator) = delete;
   LinkedTypeDescriptorSetAllocator& operator=(
       const LinkedTypeDescriptorSetAllocator& allocator) = delete;
-  ~LinkedTypeDescriptorSetAllocator() { Reset(); xe_vk_pool_owner_destroy(&pool_owner_); }
+  ~LinkedTypeDescriptorSetAllocator() { Reset(); xe_vk_pool_search_destroy(&pages_usable_); xe_vk_pool_owner_destroy(&pool_owner_); }
 
   void Reset();
 
@@ -92,35 +94,18 @@ class LinkedTypeDescriptorSetAllocator {
                            uint32_t descriptor_type_count);
 
  private:
-  struct Page {
-    VkDescriptorPool pool;
-    VkDescriptorPoolSize* descriptors_remaining;
-    uint32_t descriptor_sets_remaining;
-  };
-
   const VulkanDevice* vulkan_device_;
 
   const VkDescriptorPoolSize* descriptor_pool_sizes_;
   uint32_t descriptor_pool_size_count_;
   uint32_t descriptor_sets_per_page_;
 
-  // Native ownership survives search-map allocation exceptions.
+  // Native ownership is independent of CPU search-node reuse.
   xe_vk_pool_owner pool_owner_{};
-  // Because allocations must be contiguous, overflow may happen even if a page
-  // still has free descriptors, so multiple pages may have free space.
-  // To avoid removing and re-adding the page to the map that keeps them sorted
-  // (the key is the maximum number of free descriptors remaining across all
-  // types - and lookups need to be made with the maximum of the requested
-  // number of descriptors across all types since it's pointless to check the
-  // pages that can't even potentially fit the largest amount of descriptors of
-  // a requested type, and unlike using the minimum as the key, this doesn't
-  // degenerate if, for example, 0 descriptors are requested for some type - and
-  // it changes at every allocation from a page), instead of always looking for
-  // a free space in the map, maintaining one page outside the map, and
-  // allocation attempts will be made from that page first.
-  std::multimap<uint32_t, Page> pages_usable_;
-  // Doesn't exist if page_usable_latest_.pool == VK_NULL_HANDLE.
-  Page page_usable_latest_ = {};
+  // Single-owner retained C89 search nodes; the latest hot page stays outside
+  // the ordered index. Equal maxima retain the old multimap's insertion order.
+  xe_vk_pool_search pages_usable_{};
+  xe_vk_pool_search_node* page_usable_latest_ = nullptr;
 };
 
 }  // namespace vulkan

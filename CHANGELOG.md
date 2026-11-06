@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan descriptor-pool search now uses retained C89 nodes instead of a multimap and copied page values. Switching active pages moves pointers, and insertion/removal no longer allocates. Native selection order and failure-safe ownership are preserved. Mixed-search CPU fixtures improve on GCC/MinGW/MSVC; hot-page results vary slightly. New metadata peaks and native pools still allocate.
+
 - Vulkan descriptor-pool counters now borrow stable spans from retained C89 ownership pages, removing a separate heap array for each pool. A paired failure-injection workload drops 805 C++ allocations while preserving the native allocation trace. Search-map and new high-water allocations remain; retained counter capacity can use more idle metadata.
 
 - Fixed a Vulkan descriptor-pool ownership leak when a C++ allocation fails after native pool creation. A retained C89 registry reserves ownership before creation, removes the full-pool vector and releases every pool at the existing reset boundary. Failure-injection fixtures reproduce the old leak and pass with the fix. Static descriptor-size tables are borrowed directly instead of allocated and copied. Search-map allocations remain.

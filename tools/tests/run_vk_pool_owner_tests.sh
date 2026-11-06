@@ -11,7 +11,7 @@ ${CC:-cc} -std=c89 -O1 -g -pedantic -Wall -Wextra -Werror $san \
  tools/tests/core_vk_pool_owner_test.c -o "$out/leaf"
 "$out/leaf"
 ${CXX:-c++} -std=c++20 -O1 -g -DNDEBUG -Wall -Wextra -Werror -Wno-unused-value $san \
- -Itools/tests/vk_pool_stubs -I. -Isrc -Ilibretro -Ithird_party/libretro-common/include \
+ -include tools/tests/vk_pool_metadata_hooks.h -Itools/tests/vk_pool_stubs -I. -Isrc -Ilibretro -Ithird_party/libretro-common/include \
  -isystem third_party/Vulkan-Headers/include \
  tools/tests/vk_pool_owner_bridge.cc src/xenia/ui/vulkan/linked_type_descriptor_set_allocator.cc -o "$out/bridge"
 "$out/bridge"
