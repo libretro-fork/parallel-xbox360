@@ -1,0 +1,118 @@
+Vulkan deferred command pages
+=============================
+
+Runtime scope
+-------------
+DeferredCommandBuffer uses the existing MSVC C89 command-page owner also used
+by D3D12, instead of vector<uintmax_t>. The default initial payload remains
+1 MiB. Packet layout checks rounded size and uint32 element representability
+before append. A packet never straddles pages. Earlier packets do not move when
+new pages are added. Reset clears page cursors, not packet payloads, retaining
+high-water pages for reuse. Cold and new-peak allocations remain; this is not a
+claim of allocation-free gameplay. Empty/small initial hints reserve at least
+one aligned element. Allocation failure throws at the thin C++ boundary and
+publishes no partial packet. The existing owner releases pages on teardown,
+including exceptional construction paths.
+
+Replay walks used pages in insertion order, borrowing their packet data. Native
+command state persists across pages. No recorded Vulkan command, barrier, queue,
+fence, resource lifetime or audio/frame-pacing policy is changed. This removes
+vector growth relocation and implicit resize zero-filling, not the necessary
+source-array ownership copies or native GPU payload transfers. Existing direct
+emplacement callers fill final native records without another temporary array.
+No runtime logging, counters, timers, locks or thread handoffs are added.
+
+Writer audit
+------------
+Audited the complete inline and out-of-line DeferredCommandBuffer writers and
+replay switch: render-pass/rendering headers, descriptors, vertex/index/pipeline
+binding, queries/conditional rendering, clears, buffer/image copies and blits,
+dispatch/draw, barriers, push constants, viewport/scissor/stencil/blend/depth
+state and debug labels. Consumed scalar fields and active array records are
+assigned or copied explicitly. Zero-argument packets do not consume payloads.
+Padding/inactive union bytes are not an input to replay. Explicit native
+VkRenderingInfo/debug-structure initialization in replay remains intact.
+
+Audited external emplacement in VulkanCommandProcessor (memexport),
+VulkanPrimitiveProcessor (index upload), VulkanSharedMemory (trace download),
+VulkanRenderTargetCache (stencil clear) and VulkanTextureCache (image upload).
+All consumed native record fields are filled before replay. Borrowed views are
+not retained beyond reset or teardown. Existing pNext/source ownership policy
+is unchanged. There is one GPU recording owner; no concurrent page mutation.
+
+Offline validation
+------------------
+- MSVC 19.44 /TC /O2 /W4 /WX and MinGW GCC 16.2 C89 fixtures pass.
+- GCC 13.3 -std=c89 -pedantic -Wall -Wextra -Werror + ASan/UBSan pass.
+  Vulkan SDK headers are system includes because those headers use newer C
+  syntax. The fixture/page implementation is compiled as C89.
+- 8,194 poisoned-storage packets use native VkBufferCopy and
+  VkRenderingAttachmentInfo types. Checks cover a 65,536-copy oversized packet,
+  page boundaries, all optional color/depth/stencil combinations, odd push-byte
+  tails, empty packets, alignment, all consumed fields, exact record order,
+  reset reuse without new allocation and balanced teardown.
+- This fixture mirrors private packet shapes to exercise storage; it does NOT
+  instantiate DeferredCommandBuffer, dispatch native Vulkan commands or test a
+  driver. No unconstructed emulator object is used as a mock.
+- Existing command-page tests pass: 65,536 layout cases, 40,000 exact replay
+  records, >8 MiB stable views, bounds/failure rollback and poison allocation;
+  C++ normal/throwing-owner teardown passes under sanitizers and MSVC.
+- Native MSVC compiles the actual Vulkan deferred buffer, D3D12 deferred list,
+  both command processors and shared-memory implementations. Existing upload,
+  memexport, descriptor ownership and release/acquire fixtures pass.
+- Windows static Make -j5 rebuild/link passes. Installed core is untouched.
+- No emulator/game/GPU run, driver validation, FPS, RSS or latency claim.
+
+Reproduction
+------------
+sh tools/tests/run_vk_command_storage_tests.sh
+sh tools/tests/run_command_stream_tests.sh
+Developer Command Prompt: tools\tests\run_vk_command_storage_tests.cmd
+Developer Command Prompt: tools\tests\run_command_stream_tests.cmd
+Benchmark (C++ only for legacy vector/reference and offline timing):
+  g++ -std=c++20 -O2 -Wall -Wextra -Werror -Ilibretro \
+    -Ithird_party/libretro-common/include \
+    -isystem third_party/Vulkan-Headers/include \
+    tools/tests/core_vk_command_storage_bench.cc -o vk-storage-bench
+  ./vk-storage-bench
+  cl /nologo /MD /O2 /EHsc /std:c++20 /W4 /WX /Ilibretro \
+    /Ithird_party/libretro-common/include /Ithird_party/Vulkan-Headers/include \
+    tools/tests/core_vk_command_storage_bench.cc
+(Shell line continuations above use backslash; join lines for cmd.exe.)
+
+Measurement details and limits
+-----------------------------
+Same process, seven interleaved paired samples, median microseconds per complete
+record + CPU replay. 1 MiB initial payload, native 24-byte VkBufferCopy records,
+checked consumed-field checksum, noinline producer and consumer (GCC noipa).
+Old path uses actual vector reserve/resize, including its implicit zero fill.
+Benchmark-only steady_clock measures host time; no core timer is introduced.
+Timing excludes cold population. Allocation/retained-capacity/relocation counts
+come from that cold population; repeat loops assert no warmed allocations.
+Requested retained bytes exclude allocator overhead; page headers are included.
+Single desktop measurements are not a production GPU replay benchmark.
+core_vk_command_storage_bench.cc
+MSVC 1944 x64 /O2, 7 interleaved samples, median record+CPU-replay us; 1 MiB initial payload; native VkBufferCopy; no Vulkan/device/gameplay calls
+small-warm: 8192 packets x 1 copies; vector 29.29 us, pages 22.73 us (1.29x); cold allocations 1/1, retained bytes 1048576/1048608, growth-relocated bytes 0/0; warm allocations 0/0
+many-small-growth: 32768 packets x 1 copies; vector 117.29 us, pages 89.77 us (1.31x); cold allocations 3/2, retained bytes 2359296/2097216, growth-relocated bytes 2621360/0; warm allocations 0/0
+medium-growth: 8192 packets x 16 copies; vector 153.72 us, pages 89.10 us (1.73x); cold allocations 4/4, retained bytes 3538944/4194432, growth-relocated bytes 4979936/0; warm allocations 0/0
+oversized: 1 packets x 65536 copies; vector 46.59 us, pages 37.65 us (1.24x); cold allocations 2/2, retained bytes 1572896/2621536, growth-relocated bytes 0/0; warm allocations 0/0
+
+GCC 16.2.0 x64 -O2, 7 interleaved samples, median record+CPU-replay us; 1 MiB initial payload; native VkBufferCopy; no Vulkan/device/gameplay calls
+small-warm: 8192 packets x 1 copies; vector 26.94 us, pages 22.01 us (1.22x); cold allocations 1/1, retained bytes 1048576/1048608, growth-relocated bytes 0/0; warm allocations 0/0
+many-small-growth: 32768 packets x 1 copies; vector 109.36 us, pages 88.33 us (1.24x); cold allocations 2/2, retained bytes 2097088/2097216, growth-relocated bytes 1048544/0; warm allocations 0/0
+medium-growth: 8192 packets x 16 copies; vector 93.58 us, pages 86.83 us (1.08x); cold allocations 3/4, retained bytes 4193280/4194432, growth-relocated bytes 3144960/0; warm allocations 0/0
+oversized: 1 packets x 65536 copies; vector 43.57 us, pages 35.38 us (1.23x); cold allocations 2/2, retained bytes 1572896/2621536, growth-relocated bytes 0/0; warm allocations 0/0
+
+GCC 13.3.0 x64 -O2, 7 interleaved samples, median record+CPU-replay us; 1 MiB initial payload; native VkBufferCopy; no Vulkan/device/gameplay calls
+small-warm: 8192 packets x 1 copies; vector 35.22 us, pages 22.57 us (1.56x); cold allocations 1/1, retained bytes 1048576/1048608, growth-relocated bytes 0/0; warm allocations 0/0
+many-small-growth: 32768 packets x 1 copies; vector 141.42 us, pages 90.74 us (1.56x); cold allocations 2/2, retained bytes 2097088/2097216, growth-relocated bytes 1048544/0; warm allocations 0/0
+medium-growth: 8192 packets x 16 copies; vector 104.08 us, pages 90.47 us (1.15x); cold allocations 3/4, retained bytes 4193280/4194432, growth-relocated bytes 3144960/0; warm allocations 0/0
+oversized: 1 packets x 65536 copies; vector 46.23 us, pages 37.23 us (1.24x); cold allocations 2/2, retained bytes 1572896/2621536, growth-relocated bytes 0/0; warm allocations 0/0
+
+Pages improve these tested CPU cases, while requested retained storage grows
+in some cases. The oversized case retains the unused initial 1 MiB page beside
+its oversized packet; the old vector releases its former allocation. Medium
+page workloads can use more cold allocations than GNU vector geometric growth.
+Both implementations already have zero warmed allocations at a stable peak.
+No claim is made about all workloads, driver compilation or gameplay stutter.

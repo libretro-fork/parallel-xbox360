@@ -13,7 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <vector>
+#include "libretro/core_command_stream.h"
 
 #include "xenia/base/assert.h"
 #include "xenia/base/math.h"
@@ -784,11 +784,13 @@ class DeferredCommandBuffer {
   };
 
   void* WriteCommand(Command command, size_t arguments_size_bytes);
+  void ExecutePage(VkCommandBuffer command_buffer, const xe_command_page* page);
 
   const VulkanCommandProcessor& command_processor_;
 
-  // uintmax_t to ensure uint64_t and pointer alignment of all structures.
-  std::vector<uintmax_t> command_stream_;
+  // Stable aligned packets. Reset retains high-water pages without clearing
+  // payloads; writers initialize every consumed argument, not padding bytes.
+  xe_command_stream_owner command_stream_;
 };
 
 }  // namespace vulkan

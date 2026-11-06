@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan deferred recording now uses reusable C89 pages instead of a growing vector. This removes packet zero-filling and relocation copies during growth, keeps earlier argument views stable, and retains warmed storage across reset. Native command ordering is unchanged. CPU fixtures improve on MSVC, MinGW and GCC; page slack can increase retained memory and new peaks still allocate. GPU/gameplay performance remains unmeasured.
+
 - Memexport tracking now marks and clears bitmap words in C89 and borrows copy runs instead of allocating per-backend vectors. Vulkan counts runs with word operations and fills final native copy records directly, removing its intermediate region vector and memcpy. D3D12 emits runs in one pass. Exact copy/barrier bounds and existing fence/readback ordering are preserved; native command-storage growth still allocates at new peaks.
 
 - Shared-memory upload generation now writes directly into cold-allocated C89 storage sized from the guest page aperture. Fixed the valid 65,536-range boundary, removed undefined wide shifts and the remaining FixedVMemVector template, and bounded partial bitmap refreshes. Validity readers and all writers now use libretro-common atomics while preserving required watch synchronization and native GPU ordering. Range-record storage no longer grows during play; refresh helpers may still allocate. Offline fixtures and builds pass, while TSan could not start on this host.

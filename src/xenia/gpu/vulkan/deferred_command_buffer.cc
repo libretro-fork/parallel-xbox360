@@ -10,6 +10,7 @@
 #include "xenia/gpu/vulkan/deferred_command_buffer.h"
 
 #include <cstring>
+#include <new>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/math.h"
@@ -25,20 +26,31 @@ namespace vulkan {
 DeferredCommandBuffer::DeferredCommandBuffer(
     const VulkanCommandProcessor& command_processor, size_t initial_size)
     : command_processor_(command_processor) {
-  command_stream_.reserve(initial_size / sizeof(uintmax_t));
+  size_t initial_bytes = (initial_size / sizeof(uintmax_t)) * sizeof(uintmax_t);
+  if (!initial_bytes) initial_bytes = sizeof(uintmax_t);
+  if (!xe_command_stream_init(&command_stream_, initial_bytes)) {
+    throw std::bad_alloc();
+  }
 }
 
-void DeferredCommandBuffer::Reset() { command_stream_.clear(); }
+void DeferredCommandBuffer::Reset() { xe_command_stream_reset(&command_stream_); }
 
 void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+  for (const xe_command_page* page = command_stream_.first; page; page = page->next) {
+    if (page->used) ExecutePage(command_buffer, page);
+  }
+}
 
+void DeferredCommandBuffer::ExecutePage(VkCommandBuffer command_buffer,
+                                       const xe_command_page* page) {
   const ui::vulkan::VulkanDevice::Functions& dfn =
       command_processor_.GetVulkanDevice()->functions();
-  const uintmax_t* stream = command_stream_.data();
-  size_t stream_remaining = command_stream_.size();
+  const uintmax_t* stream = reinterpret_cast<const uintmax_t*>(
+      xe_command_page_const_data(page));
+  size_t stream_remaining = page->used / sizeof(uintmax_t);
   while (stream_remaining) {
     const CommandHeader& header =
         *reinterpret_cast<const CommandHeader*>(stream);
@@ -546,16 +558,20 @@ void DeferredCommandBuffer::CmdVkBeginRendering(
 
 void* DeferredCommandBuffer::WriteCommand(Command command,
                                           size_t arguments_size_bytes) {
-  size_t arguments_size_elements =
-      (arguments_size_bytes + sizeof(uintmax_t) - 1) / sizeof(uintmax_t);
-  size_t offset = command_stream_.size();
-  command_stream_.resize(offset + kCommandHeaderSizeElements +
-                         arguments_size_elements);
-  CommandHeader& header =
-      *reinterpret_cast<CommandHeader*>(command_stream_.data() + offset);
+  uint32_t argument_elements;
+  size_t packet_bytes;
+  const size_t header_bytes = kCommandHeaderSizeElements * sizeof(uintmax_t);
+  if (!xe_command_packet_layout(arguments_size_bytes, header_bytes,
+                                &argument_elements, &packet_bytes)) {
+    throw std::bad_alloc();
+  }
+  uint8_t* packet = static_cast<uint8_t*>(
+      xe_command_stream_append(&command_stream_, packet_bytes));
+  if (!packet) throw std::bad_alloc();
+  CommandHeader& header = *reinterpret_cast<CommandHeader*>(packet);
   header.command = command;
-  header.arguments_size_elements = uint32_t(arguments_size_elements);
-  return command_stream_.data() + (offset + kCommandHeaderSizeElements);
+  header.arguments_size_elements = argument_elements;
+  return packet + header_bytes;
 }
 
 }  // namespace vulkan
