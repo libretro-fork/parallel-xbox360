@@ -2,9 +2,9 @@ Stable Vulkan descriptor reuse records
 ======================================
 
 Single-layout and constants descriptor metadata now uses a C89 single-owner
-paged store. Each handle stays in one stable node. A pending FIFO preserves its
-usage frame; completed nodes move by relinking to the same per-layout free LIFO
-order as the old deque-to-vector path. Collection receives frame_completed_ at
+paged store. Each handle stays in one stable node. A pending frame FIFO stores each
+usage frame once. Each batch links handles in reverse use order; completion
+splices the whole batch onto the free list in the same LIFO order as before. Collection receives frame_completed_ at
 the existing NewFrame point. No queue wait, completion threshold or GPU lifetime
 boundary changes. The C owner never destroys a Vulkan descriptor or pool.
 
@@ -13,8 +13,9 @@ cannot strand a newly allocated GPU handle. Native allocation failure cancels
 the lease; a thin C++ scope guard also cancels on existing allocator exceptions.
 Commit is allocation-free. Single-layout enum bounds are checked before indexing.
 
-Three pools (two single layouts and constants) each warm a 128-node metadata
-page in SetupContext. A page is an allocation granule, not a handle-count cap.
+Three pools (two single layouts and constants) each warm 128 handle records and
+eight frame records in SetupContext. Both stores use nonmoving pages; their
+page sizes are allocation granules, not count caps.
 New demand grows with nonmoving pages; normal recycling does not allocate.
 Reset at the existing native-pool reset boundary retains CPU pages, clears
 queue roots/cursor and invalidates handles lazily when virgin nodes are leased.
@@ -42,20 +43,36 @@ Validation:
 - Prior CPU GPU-retirement fixture (200,000 lifetime/order/backpressure cases)
   passes under sanitizers. No actual GPU/device/post-unload harness is launched.
 
+Grouped-frame follow-up:
+Handles now contain only next+handle (16 bytes on tested x64, previously 24).
+A 32-byte batch stores next/frame/head/tail. Collection is O(completed batches),
+with no descriptor counter update or descriptor walk. The internal collect return
+value counts batches; renderer callers ignore it. Appending at the batch head
+and splicing its tail onto the existing free head preserves exact legacy order.
+A lease pins its referenced pending batch against collection. Private new-frame
+leases survive collection draining the previous tail; cancellation returns unused
+frame metadata. Both page sets retain capacity across reset. Allocation failure
+of either page type, partial warm-up and new-frame rollback are tested.
+Canceled empty rows use a separate CPU-slot list so they cannot hide reusable
+native handles collected during the lease. The fixture checks this ordering.
+
 Offline CPU measurements (instrumented allocation counts, no sanitizers):
 32M leases, 64 per frame, two frames pending, three pools, 1000 warm-up frames;
-median of three std::clock measurements on this machine, same workload checksum.
+median of three std::clock measurements on this machine, matching checksums.
+The same benchmark source compiled with the committed a6c7c4695 header supplies
+"prior C89" (the extracted header's Git blob was checked). Current header supplies
+"grouped C89". Minor native-clock differences should not be treated as significant.
 
-Compiler/host              Legacy ms    C89 ms    Ratio   Timed metadata allocs
-GCC 13.3 / WSL Linux -O3     78.037     60.011    1.30x   1,351,935 -> 0
-MinGW 16.2 / Windows -O3     95.000     60.000    1.58x   1,351,935 -> 0
-MSVC x64 / Windows /O2      132.000     69.000    1.91x           0 -> 0
+Compiler/host              Legacy ms    Prior C89 ms   Grouped C89 ms
+GCC 13.3 / WSL Linux -O3     77.324          58.529           54.187
+MinGW 16.2 / Windows -O3     94.000          55.000           47.000
+MSVC x64 / Windows /O2      131.000          68.000           66.000
 
-MSVC's legacy containers already reuse their warmed blocks; its measured CPU
-improvement is not an allocation-count reduction. Counting allocator hooks add
-instrumentation to allocation events; these microbenchmarks are not an actual
-renderer trace, hardware cycle limit or prediction of game FPS/latency.
-
+Timed metadata allocations: legacy GCC/MinGW 1,351,935; legacy MSVC 0; both C89
+versions 0. MSVC's old containers already retain warmed blocks. Counting hooks
+instrument allocation events; timings are not renderer/game traces or FPS gains.
+Warmed requested metadata including three owners: prior C89 9,432 bytes, grouped
+C89 7,320 bytes (22.4% less). This is requested storage, not measured process RSS.
 Limits:
 This pool is owned by one command processor; it is not a concurrent MPMC queue.
 Completed-frame correctness still depends on the backend's existing GPU fence
@@ -63,7 +80,8 @@ tracking. No driver, JIT, frontend or game is launched. Actual GPU rendering and
 post-unload validation remain unrun under the no-launch restriction.
 Warmed capacity is retained (including across explicit cache clears); this can
 retain more idle CPU metadata than a cleared deque, trading memory for avoiding
-repeated heap calls. On the tested 64-bit ABI each 128-node page is about 3 KiB.
+repeated heap calls. On tested 64-bit builds each
+128-handle page requests 2,056 bytes and each eight-frame page 264 bytes.
 New high-water demand still allocates metadata and native descriptor creation
 still allocates as before. No whole-core allocation-free/RSS/FPS claim.
 Shutdown ordering, audio timing and frontend pacing are unchanged.

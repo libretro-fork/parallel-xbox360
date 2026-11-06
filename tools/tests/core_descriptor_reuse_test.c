@@ -3,8 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 static unsigned allocations,releases;
+static unsigned successful, fail_at;
 static int fail_alloc;
-static void *allocate(size_t n) { ++allocations; return fail_alloc ? NULL : malloc(n); }
+static void *allocate(size_t n) {
+  void *p;
+  ++allocations; if(fail_alloc || allocations==fail_at) return NULL;
+  p=malloc(n); if(p) ++successful; return p;
+}
 static void release(void *p) { if(p) ++releases; free(p); }
 #define XE_DESCRIPTOR_REUSE_ALLOC allocate
 #define XE_DESCRIPTOR_REUSE_FREE release
@@ -23,18 +28,18 @@ int main(void) {
     node=xe_descriptor_reuse_acquire(&pool,10); CHECK(node && !node->handle);
     node->handle=i+1; CHECK(xe_descriptor_reuse_commit(&pool));
   }
-  CHECK(allocations==before); first=pool.head;
+  CHECK(allocations==before); first=pool.head->tail;
   CHECK(!xe_descriptor_reuse_acquire(&pool,9));
   CHECK(!xe_descriptor_reuse_collect(&pool,9));
   fail_alloc=1;
-  CHECK(!xe_descriptor_reuse_acquire(&pool,10) && !pool.leased && pool.head==first);
-  CHECK(first->handle==1 && first->frame==10);
+  CHECK(!xe_descriptor_reuse_acquire(&pool,11) && !pool.leased && pool.head->tail==first && pool.free_frames);
+  CHECK(first->handle==1 && pool.head->frame==10 && pool.head->head->handle==128);
   fail_alloc=0;
   node=xe_descriptor_reuse_acquire(&pool,11); CHECK(node && !node->handle);
   CHECK(!xe_descriptor_reuse_commit(&pool)); node->handle=129;
   CHECK(xe_descriptor_reuse_commit(&pool));
-  CHECK(pool.head==first && first->handle==1);
-  CHECK(xe_descriptor_reuse_collect(&pool,10)==128);
+  CHECK(pool.head->tail==first && first->handle==1);
+  CHECK(xe_descriptor_reuse_collect(&pool,10)==1);
   node=xe_descriptor_reuse_acquire(&pool,12); CHECK(node && node->handle==128);
   CHECK(!xe_descriptor_reuse_reset(&pool) && pool.leased==node);
   CHECK(!xe_descriptor_reuse_acquire(&pool,12));
@@ -44,7 +49,7 @@ int main(void) {
   xe_descriptor_reuse_cancel(&pool);
   CHECK(xe_descriptor_reuse_acquire(&pool,12)==node && node->handle==129);
   CHECK(xe_descriptor_reuse_commit(&pool));
-  CHECK(xe_descriptor_reuse_collect(&pool,12)==2);
+  CHECK(xe_descriptor_reuse_collect(&pool,12)==1);
   CHECK(xe_descriptor_reuse_reset(&pool));
   node=xe_descriptor_reuse_acquire(&pool,1); CHECK(node==first && !node->handle);
   xe_descriptor_reuse_cancel(&pool);
@@ -55,12 +60,41 @@ int main(void) {
       if(!node->handle) node->handle=++native_allocations;
       CHECK(xe_descriptor_reuse_commit(&pool));
     }
-    CHECK(xe_descriptor_reuse_collect(&pool,frame)==128);
+    CHECK(xe_descriptor_reuse_collect(&pool,frame)==1);
     if(!(frame%1000)) CHECK(xe_descriptor_reuse_reset(&pool));
   }
   CHECK(allocations==before && native_allocations==1280);
   xe_descriptor_reuse_destroy(&pool); xe_descriptor_reuse_destroy(&pool);
-  CHECK(!pool.pages && !pool.head && !pool.free && releases==2);
+  CHECK(!pool.pages && !pool.frame_pages && !pool.head && !pool.free && releases==successful);
+  /* Partial warm-up owns its successful first page, even if frame storage fails. */
+  fail_at=allocations+2;
+  CHECK(!xe_descriptor_reuse_warm(&pool) && pool.pages && !pool.frame_pages);
+  fail_at=0; CHECK(xe_descriptor_reuse_warm(&pool));
+  for(frame=1;frame<=8;++frame) {
+    node=xe_descriptor_reuse_acquire(&pool,frame); CHECK(node);
+    node->handle=frame; CHECK(xe_descriptor_reuse_commit(&pool));
+  }
+  fail_alloc=1;
+  CHECK(!xe_descriptor_reuse_acquire(&pool,9) && !pool.leased && pool.next_slot==8);
+  fail_alloc=0;
+  node=xe_descriptor_reuse_acquire(&pool,9); CHECK(node);
+  node->handle=9; CHECK(xe_descriptor_reuse_commit(&pool));
+  /* A live lease referencing the last pending batch pins that batch, while
+   * earlier completed batches may be retired. Cancellation releases the pin. */
+  node=xe_descriptor_reuse_acquire(&pool,9); CHECK(node && !node->handle);
+  CHECK(xe_descriptor_reuse_collect(&pool,9)==8 && pool.head->frame==9);
+  xe_descriptor_reuse_cancel(&pool);
+  CHECK(pool.unused && !pool.unused->handle);
+  CHECK(xe_descriptor_reuse_collect(&pool,9)==1);
+  node=xe_descriptor_reuse_acquire(&pool,10); CHECK(node && node->handle==9);
+  CHECK(!xe_descriptor_reuse_collect(&pool,UINT64_MAX));
+  CHECK(xe_descriptor_reuse_commit(&pool));
+  node=xe_descriptor_reuse_acquire(&pool,11); CHECK(node && node->handle==8);
+  CHECK(xe_descriptor_reuse_collect(&pool,10)==1 && !pool.tail);
+  CHECK(xe_descriptor_reuse_commit(&pool));
+  CHECK(xe_descriptor_reuse_collect(&pool,UINT64_MAX)==1);
+  xe_descriptor_reuse_destroy(&pool);
+  CHECK(releases==successful);
 #ifdef XE_REUSE_BRIDGE
   CHECK(xe_test_descriptor_reuse_reference());
 #endif

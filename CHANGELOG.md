@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan descriptor reuse now retires completed frame batches by list splice instead of walking every handle. Per-handle records shrink from 24 to 16 bytes on tested 64-bit builds; the benchmark's warmed metadata request falls from 9,432 to 7,320 bytes including owners. Lease cancellation, exact free-list order and existing completion thresholds are preserved. No GPU/gameplay performance claim is made.
+
 - Vulkan single-layout and constant descriptor reuse replaces three free-list vectors and two pending deques with stable C89 records. Pending handles become reusable only after the existing completed-frame check; context setup warms metadata and pool resets retain its capacity. Native allocation failures and C++ exceptions release metadata leases safely. CPU metadata benchmarks improve on tested GCC/MinGW/MSVC builds; no gameplay speedup is claimed.
 
 - Vulkan descriptor image scratch now uses checked C89 storage and fills final Vulkan records once, preserving every API field while removing the vector and redundant initialization stores. Both renderers publish resolve-submission indices through libretro-common release/acquire operations without changing GPU completion waits. D3D12's one-shot PIX capture flag also uses common atomics. Storage growth still allocates; CPU fixtures and builds do not certify gameplay performance.

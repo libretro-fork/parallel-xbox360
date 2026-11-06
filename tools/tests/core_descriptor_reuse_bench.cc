@@ -7,8 +7,8 @@
 #include <memory>
 #include <vector>
 #include <utility>
-static size_t old_allocations,new_allocations;
-static void* page_allocate(size_t n) { ++new_allocations; return std::malloc(n); }
+static size_t old_allocations,new_allocations,new_bytes;
+static void* page_allocate(size_t n) { ++new_allocations; new_bytes+=n; return std::malloc(n); }
 #define XE_DESCRIPTOR_REUSE_ALLOC page_allocate
 #define XE_DESCRIPTOR_REUSE_FREE std::free
 #include "core_descriptor_reuse.h"
@@ -22,7 +22,7 @@ template<class T> struct CountAllocator {
   template<class U> bool operator!=(const CountAllocator<U>&) const { return false; }
 };
 struct Used { uint64_t frame; unsigned layout; uint64_t handle; };
-struct Result { double ms; size_t allocations; uint64_t sum; };
+struct Result { double ms; size_t allocations; uint64_t sum; size_t bytes; };
 static Result legacy() {
   std::deque<Used,CountAllocator<Used>> used;
   using Constant=std::pair<uint64_t,uint64_t>;
@@ -52,10 +52,11 @@ static Result legacy() {
   std::clock_t start=std::clock();
   for(uint64_t f=1001;f<=501000;++f) step(f);
   double ms=1000.0*(std::clock()-start)/CLOCKS_PER_SEC;
-  return {ms,old_allocations-before,sum};
+  return {ms,old_allocations-before,sum,0};
 }
 static Result stable() {
   xe_descriptor_reuse pools[3]{};
+  size_t bytes_before=new_bytes;
   uint64_t id=0,sum=0;
   for(auto& pool:pools) if(!xe_descriptor_reuse_warm(&pool)) std::abort();
   auto step=[&](uint64_t frame) {
@@ -72,24 +73,28 @@ static Result stable() {
   };
   for(uint64_t f=1;f<=1000;++f) step(f);
   size_t before=new_allocations;
+  size_t warmed_bytes=new_bytes-bytes_before+sizeof(pools);
   std::clock_t start=std::clock();
   for(uint64_t f=1001;f<=501000;++f) step(f);
   double ms=1000.0*(std::clock()-start)/CLOCKS_PER_SEC;
   size_t count=new_allocations-before;
   for(auto& pool:pools) xe_descriptor_reuse_destroy(&pool);
-  return {ms,count,sum};
+  return {ms,count,sum,warmed_bytes};
 }
 int main() {
   double old_times[3],new_times[3];
   size_t old_count=0,new_count=0;
+  size_t bytes=0;
   for(unsigned i=0;i<3;++i) {
     Result a=legacy(),b=stable();
     if(a.sum!=b.sum) return 1;
     old_times[i]=a.ms; new_times[i]=b.ms; old_count=a.allocations; new_count=b.allocations;
+    bytes=b.bytes;
   }
   std::sort(old_times,old_times+3); std::sort(new_times,new_times+3);
   std::printf("32M leases, two frames pending, three pools, 1000 warm-up frames; median of 3 CPU runs\n"
       "legacy %.3f ms, %zu metadata allocations; C89 %.3f ms, %zu metadata allocations; ratio %.2fx\n",
       old_times[1],old_count,new_times[1],new_count,old_times[1]/new_times[1]);
+  std::printf("C89 warmed metadata incl. owners: %zu bytes; record: %zu bytes\n",bytes,sizeof(xe_descriptor_reuse_node));
   return new_count ? 1 : 0;
 }

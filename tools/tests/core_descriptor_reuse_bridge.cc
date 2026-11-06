@@ -14,6 +14,7 @@ extern "C" int xe_test_descriptor_reuse_reference() {
   std::vector<VkDescriptorSet> free[3];
   uint64_t old_id=UINT64_C(1)<<48,new_id=old_id;
   uint32_t random=12345;
+  unsigned exceptions=0;
   bool ok=true;
   for(auto& pool:pools) if(!xe_descriptor_reuse_warm(&pool)) ok=false;
   for(uint64_t frame=1;frame<=10000 && ok;++frame) {
@@ -46,7 +47,7 @@ extern "C" int xe_test_descriptor_reuse_reference() {
           node->handle=++new_id;
         }
         if((VkDescriptorSet)node->handle!=expected || !xe_descriptor_reuse_commit(pools+kind)) ok=false;
-      } catch(int) { threw=true; }
+      } catch(int) { threw=true; ++exceptions; }
       if(threw!=failure || pools[kind].leased) ok=false;
     }
     /* Reset only after this fixture's simulated GPU drain; stale handle values
@@ -58,6 +59,7 @@ extern "C" int xe_test_descriptor_reuse_reference() {
     if(old_id!=new_id) ok=false;
   }
   for(auto& pool:pools) xe_descriptor_reuse_destroy(&pool);
+  if(!exceptions) ok=false;
   if(ok) std::puts("Descriptor reference: 320,000 Vulkan-handle events match legacy FIFO/LIFO, failures and pool resets");
   return ok;
 }
