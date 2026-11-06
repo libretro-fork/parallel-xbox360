@@ -16,7 +16,7 @@ enum { XE_POOL_SEARCH_SLOTS = 32 };
 typedef struct xe_vk_pool_search_node {
   struct xe_vk_pool_search_node *left, *right, *parent;
   VkDescriptorPool pool;
-  VkDescriptorPoolSize *descriptors_remaining;
+  uint32_t *descriptors_remaining;
   uint32_t descriptor_sets_remaining, key, priority;
 } xe_vk_pool_search_node;
 typedef struct xe_vk_pool_search_page {

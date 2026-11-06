@@ -10,7 +10,6 @@
 #ifndef XENIA_UI_VULKAN_LINKED_TYPE_DESCRIPTOR_SET_ALLOCATOR_H_
 #define XENIA_UI_VULKAN_LINKED_TYPE_DESCRIPTOR_SET_ALLOCATOR_H_
 
-#include <algorithm>
 #include <cstdint>
 #include <new>
 

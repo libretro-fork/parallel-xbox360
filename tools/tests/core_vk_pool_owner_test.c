@@ -21,7 +21,7 @@ static VKAPI_ATTR void VKAPI_CALL destroy_pool(VkDevice device, VkDescriptorPool
 int main(void) {
   xe_vk_pool_owner s = {0};
   xe_vk_pool_record *r, *first;
-  VkDescriptorPoolSize *counts, *first_counts;
+  uint32_t *counts, *first_counts;
   size_t t;
   size_t i, epoch, before = 0;
   CHECK(!xe_vk_pool_owner_configure(&s, (size_t)-1));
@@ -36,8 +36,7 @@ int main(void) {
   first_counts = xe_vk_pool_owner_counts(&s);
   CHECK(first_counts);
   for (t = 0; t < 3; ++t) {
-    first_counts[t].type = VK_DESCRIPTOR_TYPE_SAMPLER;
-    first_counts[t].descriptorCount = (uint32_t)t + 9;
+    first_counts[t] = (uint32_t)t + 9;
   }
   CHECK(first && !xe_vk_pool_owner_acquire(&s));
   CHECK(!xe_vk_pool_owner_commit(&s));
@@ -57,7 +56,7 @@ int main(void) {
   r = xe_vk_pool_owner_acquire(&s); CHECK(r);
   xe_vk_pool_owner_cancel(&s);
   CHECK(s.count == 64 && first->pool == (VkDescriptorPool)(uintptr_t)1);
-  CHECK(first_counts[2].descriptorCount == 11);
+  CHECK(first_counts[2] == 11);
   CHECK(xe_vk_pool_owner_reset(&s, (VkDevice)(uintptr_t)1, destroy_pool));
   CHECK(destroyed == 64 && !destroy_error);
   for (epoch = 0; epoch < 1001; ++epoch) {
@@ -68,12 +67,11 @@ int main(void) {
       counts = xe_vk_pool_owner_counts(&s); CHECK(counts);
       if (!i) CHECK(r == first && counts == first_counts);
       for (t = 0; t < 3; ++t) {
-        counts[t].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        counts[t].descriptorCount = (uint32_t)(i + t);
+        counts[t] = (uint32_t)(i + t);
       }
       r->pool = (VkDescriptorPool)(uintptr_t)(i + 1); CHECK(xe_vk_pool_owner_commit(&s));
     }
-    CHECK(first_counts[0].descriptorCount == 0 && first_counts[2].descriptorCount == 2);
+    CHECK(first_counts[0] == 0 && first_counts[2] == 2);
     CHECK(xe_vk_pool_owner_reset(&s, (VkDevice)(uintptr_t)1, destroy_pool));
     CHECK(!destroy_error && expected == 257);
   }
@@ -84,10 +82,9 @@ int main(void) {
   r = xe_vk_pool_owner_acquire(&s); CHECK(r);
   counts = xe_vk_pool_owner_counts(&s); CHECK(counts);
   for (t = 0; t < 17; ++t) {
-    counts[t].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    counts[t].descriptorCount = (uint32_t)t;
+    counts[t] = (uint32_t)t;
   }
-  CHECK(counts[16].descriptorCount == 16);
+  CHECK(counts[16] == 16);
   xe_vk_pool_owner_cancel(&s);
   CHECK(xe_vk_pool_owner_destroy(&s) && allocations == frees);
   puts("Pool ownership: 257,000 retained-record lifetimes, growth failure, cancel, lease gates and exact-once destruction pass");

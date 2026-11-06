@@ -1,0 +1,71 @@
+Vulkan descriptor budget policy and count-only storage (0122)
+===========================================================
+
+Move native allocator budget matching, fit/full checks, spending, maxima and
+initialization into MSVC C89 helpers. The C++ file retains native dispatch,
+existing failure logging and ownership/index transitions. The prepared request
+borrows immutable request/type tables and caches indices for one/two-type
+requests. Larger requests use generic lookup; there is no two-type limit.
+Only cold fallback computes request maxima or checks whether a new pool is full.
+MSVC keeps the helpers inline; common fit/spend paths avoid generic loops.
+
+Because candidate checks now use the shared type table, mutable pool budgets no
+longer need duplicate VkDescriptorType values. Each counter span is uint32_t[],
+not VkDescriptorPoolSize[]. Initialize only counts, and spend directly in that
+span. Remove repeated type-ID writes and halve counter payload from eight to
+four bytes per type. No temporary counter conversion buffer is introduced.
+Native VkDescriptorPoolCreateInfo still borrows the original Vulkan type table.
+Native pool sizes, descriptor selection/full policy and GPU ownership are intact.
+
+Storage/lifetime:
+- Plan is stack metadata with borrowed tables, no allocation or payload copy.
+  Requests/type order must stay immutable until Allocate returns. Mutable count
+  arrays keep the owner's configured table order and remain stable in C89 pages.
+- Counter page requests on tested x64: 520 + 64*types*4 bytes, previously
+  520 + 64*types*8. The four core tables have 1,1,2,2 types: warmed owner pages
+  request 3,616 instead of 5,152 bytes, saving 1,536 bytes of requested storage.
+  This is not process RSS. Retained capacity and new peak/native allocations
+  otherwise follow the previous implementation. No allocation-free core claim.
+- Only successful native allocations spend counters; exact type exhaustion or
+  the last set slot retires the search node. Full native pools stay owned until
+  the existing GPU-safe reset. Unsupported/oversized types use dedicated pools.
+
+Offline verification:
+- Strict GCC C89 -pedantic -Wall -Wextra -Werror ASan/UBSan and native MSVC
+  /TC /W4 /WX: 300,000 independent scalar cases with permuted table/request order,
+  cached one/two requests, generic requests, unknown/oversized types, zero slots,
+  final slots, exact exhaustion, maxima and counter conservation. Explicit
+  seventeen-request initialization and UINT32_MAX boundary cases pass.
+- Retained-owner tests now exercise count-only views across growth/reset with
+  three/seventeen configured types; stable pointers, lease gates, checked sizing,
+  no post-warm allocation and balanced frees still pass.
+- Actual allocator fake-dispatch trace remains 1aed303f01c48a25: 970 native-create
+  calls, 1,478 set allocation calls, 1,267 successful sets. Zero C++ new calls;
+  all ten C89 metadata failures and 233 logger failures pass with immediate retry
+  and exact-once destruction. Pointer/integer Vulkan handle forms pass.
+- Native MSVC production allocator/Vulkan command processor compile and full
+  Windows static Make -j5 passes. No GPU, game, frontend or JIT is launched.
+  Actual rendering/post-unload GPU validation remains unrun.
+
+Paired CPU measurements against 49d8306ec:
+Same fake-dispatch workload as vk_pool_search_results.txt: 15M requests/sample,
+median three CPU-time runs, five warm-up repeats, errors disabled, identical
+fixture code/flags for prior/current. Freeze the prior allocator .h/.cc AND its
+core_vk_pool_owner.h/core_vk_pool_search.h to preserve the old counter layout.
+Both old/new native traces match: mixed 4e3449f0953801c9, hot a2b440fcc5511ae2.
+No compiler/gameplay/frame-time claim beyond these CPU fixtures.
+
+Compiler/host                 Mixed prior/current ms    Hot prior/current ms
+GCC13.3 WSL Linux -O3              196.661 / 188.431         109.813 / 93.201
+MinGW16.2 Windows -O3              207.000 / 192.000         112.000 / 96.000
+MSVC x64 Windows /O2              249.000 / 238.000         114.000 / 107.000
+
+Allocation counts are unchanged: zero C++ and twelve cold C89 page allocations
+per mixed 1,500 requests; zero C++ and two C89 page allocations per hot workload.
+The count-storage saving changes allocation sizes, not the number of page calls.
+
+Reproduce run_vk_pool_budget_tests.sh/.cmd and run_vk_pool_owner_tests.sh/.cmd.
+For paired run_vk_pool_search_bench.sh, extract the prior allocator files to
+BASELINE_SOURCE_DIR/xenia/ui/vulkan, and the prior two core headers to
+BASELINE_SOURCE_DIR/libretro so that baseline include lookup cannot pick up the
+new counter ABI. Production uses no test stubs or metadata allocation hooks.

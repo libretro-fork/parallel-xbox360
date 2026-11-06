@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan descriptor budgets now use borrowed C89 request plans and count-only mutable storage. Removed duplicate descriptor-type IDs and their initialization copies, halving counter payload and saving 1,536 bytes across the four warmed owner pools on tested x64 builds. Native allocation traces and failure cleanup remain unchanged; paired CPU fixtures improve on GCC/MinGW/MSVC. Gameplay gains are unmeasured.
+
 - Vulkan descriptor-pool search now uses retained C89 nodes instead of a multimap and copied page values. Switching active pages moves pointers, and insertion/removal no longer allocates. Native selection order and failure-safe ownership are preserved. Mixed-search CPU fixtures improve on GCC/MinGW/MSVC; hot-page results vary slightly. New metadata peaks and native pools still allocate.
 
 - Vulkan descriptor-pool counters now borrow stable spans from retained C89 ownership pages, removing a separate heap array for each pool. A paired failure-injection workload drops 805 C++ allocations while preserving the native allocation trace. Search-map and new high-water allocations remain; retained counter capacity can use more idle metadata.

@@ -4,6 +4,7 @@
 #ifndef XE_CORE_VK_POOL_OWNER_H
 #define XE_CORE_VK_POOL_OWNER_H
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <vulkan/vulkan_core.h>
 #include <retro_inline.h>
@@ -27,9 +28,9 @@ typedef struct xe_vk_pool_owner {
 static INLINE int xe_vk_pool_owner_configure(xe_vk_pool_owner *s, size_t types) {
   if (s->pages || s->leased || s->count) return 0;
   if (types > (((size_t)-1 - sizeof(xe_vk_pool_page)) /
-      sizeof(VkDescriptorPoolSize)) / XE_POOL_OWNER_SLOTS) return 0;
+      sizeof(uint32_t)) / XE_POOL_OWNER_SLOTS) return 0;
   s->type_count = types;
-  s->page_bytes = sizeof(xe_vk_pool_page) + types * XE_POOL_OWNER_SLOTS * sizeof(VkDescriptorPoolSize);
+  s->page_bytes = sizeof(xe_vk_pool_page) + types * XE_POOL_OWNER_SLOTS * sizeof(uint32_t);
   return 1;
 }
 static INLINE xe_vk_pool_record *xe_vk_pool_owner_acquire(xe_vk_pool_owner *s) {
@@ -53,9 +54,9 @@ static INLINE xe_vk_pool_record *xe_vk_pool_owner_acquire(xe_vk_pool_owner *s) {
 }
 /* The leased slot's counter view never moves. The owner retains its page.
  * Caller initializes every counter before first use after acquire/reset. */
-static INLINE VkDescriptorPoolSize *xe_vk_pool_owner_counts(xe_vk_pool_owner *s) {
+static INLINE uint32_t *xe_vk_pool_owner_counts(xe_vk_pool_owner *s) {
   if (!s->leased || !s->type_count) return NULL;
-  return (VkDescriptorPoolSize *)(s->cursor + 1) + s->next_slot * s->type_count;
+  return (uint32_t *)(s->cursor + 1) + s->next_slot * s->type_count;
 }
 static INLINE int xe_vk_pool_owner_commit(xe_vk_pool_owner *s) {
   if (!s->leased || s->leased->pool == VK_NULL_HANDLE) return 0;
