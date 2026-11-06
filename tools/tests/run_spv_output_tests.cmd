@@ -5,6 +5,10 @@ for %%R in ("%~dp0..\..") do set ROOT=%%~fR
 pushd "%ROOT%"
 set OUT=build\tests\spv-output-msvc
 if not exist %OUT% mkdir %OUT%
+cl /nologo /TC /MD /O2 /W4 /WX /I. /Ithird_party/libretro-common/include tools/tests/core_spv_export_cases_test.c /Fo%OUT%\export-cases-unit.obj /Fe%OUT%\export-cases-unit.exe
+if errorlevel 1 goto fail
+%OUT%\export-cases-unit.exe
+if errorlevel 1 goto fail
 cl /nologo /TC /MD /O2 /W4 /WX /Ithird_party/libretro-common/include tools/tests/core_spv_mask_test.c /Fo%OUT%\mask-unit.obj /Fe%OUT%\mask-unit.exe
 if errorlevel 1 goto fail
 %OUT%\mask-unit.exe

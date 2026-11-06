@@ -9,6 +9,7 @@
 
 #include "xenia/gpu/spirv_shader_translator.h"
 #include "libretro/core_spv_mask.h"
+#include "libretro/core_spv_export_cases.h"
 
 #include "xenia/gpu/spirv/GLSL.std.450.h"
 #include "xenia/base/assert.h"
@@ -143,7 +144,8 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
               address_validation_value)),
       spv::SelectionControlDontFlattenMask, *builder_, 2, 1);
 
-  using EMIdArray = std::array<spv::Id, ucode::kMaxMemExportElementCount>;
+  static_assert(ucode::kMaxMemExportElementCount == XE_SPV_EXPORT_REGISTERS);
+  typedef uint32_t EMIdArray[XE_SPV_EXPORT_REGISTERS];
 
   // Load the original eM.
   EMIdArray eM_original;
@@ -196,15 +198,14 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
 
   // Perform format packing.
 
-  auto flush_nan = [&](const EMIdArray& eM) -> EMIdArray {
-    EMIdArray eM_flushed;
+  auto flush_nan = [&](const EMIdArray* eM, EMIdArray* eM_flushed) {
     {
       uint32_t eM_remaining = export_eM, eM_index;
       while (xe_spv_mask_take(&eM_remaining, &eM_index)) {
-        spv::Id element_unflushed = eM[eM_index];
+        spv::Id element_unflushed = (*eM)[eM_index];
         unsigned int component_count =
             builder_->getNumComponents(element_unflushed);
-        eM_flushed[eM_index] = builder_->createTriOp(
+        (*eM_flushed)[eM_index] = builder_->createTriOp(
             spv::OpSelect, type_float_vectors_[component_count - 1],
             builder_->createUnaryOp(spv::OpIsNan,
                                     type_bool_vectors_[component_count - 1],
@@ -212,60 +213,58 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
             const_float_vectors_0_[component_count - 1], element_unflushed);
       }
     }
-    return eM_flushed;
   };
 
   auto make_float_constant_vectors =
-      [&](float value) -> std::array<spv::Id, 4> {
-    std::array<spv::Id, 4> const_vectors;
-    const_vectors[0] = builder_->makeFloatConstant(value);
+      [&](float value, uint32_t (*const_vectors)[4]) {
+    (*const_vectors)[0] = builder_->makeFloatConstant(value);
     id_scratch_.count = 0;
-    ScratchPush(&id_scratch_, const_vectors[0]);
+    ScratchPush(&id_scratch_, (*const_vectors)[0]);
     for (unsigned int component_count_minus_1 = 1; component_count_minus_1 < 4;
          ++component_count_minus_1) {
-      ScratchPush(&id_scratch_, const_vectors[0]);
-      const_vectors[component_count_minus_1] = builder_->makeCompositeConstantView(
+      ScratchPush(&id_scratch_, (*const_vectors)[0]);
+      (*const_vectors)[component_count_minus_1] = builder_->makeCompositeConstantView(
           type_float_vectors_[component_count_minus_1], xe_spv_scratch_view(&id_scratch_));
     }
-    return const_vectors;
   };
-  std::array<spv::Id, 4> const_float_vectors_minus_1 =
-      make_float_constant_vectors(-1.0f);
-  std::array<spv::Id, 4> const_float_vectors_minus_0_5 =
-      make_float_constant_vectors(-0.5f);
-  std::array<spv::Id, 4> const_float_vectors_0_5 =
-      make_float_constant_vectors(0.5f);
+  uint32_t const_float_vectors_minus_1[4];
+  make_float_constant_vectors(-1.0f, &const_float_vectors_minus_1);
+  uint32_t const_float_vectors_minus_0_5[4];
+  make_float_constant_vectors(-0.5f, &const_float_vectors_minus_0_5);
+  uint32_t const_float_vectors_0_5[4];
+  make_float_constant_vectors(0.5f, &const_float_vectors_0_5);
 
   // The widths must be without holes (R, RG, RGB, RGBA), and expecting the
   // widths to add up to the size of the stored texel (8, 16 or 32 bits), as the
   // unused upper bits will contain junk from the sign extension of X if the
   // number is signed.
-  auto pack_8_16_32 = [&](std::array<uint32_t, 4> widths) -> EMIdArray {
+  auto pack_8_16_32 = [&](const uint32_t (*widths)[4], EMIdArray* eM_packed) {
     unsigned int component_count;
-    std::array<uint32_t, 4> offsets{};
-    for (component_count = 0; component_count < widths.size();
+    uint32_t offsets[4] = {0, 0, 0, 0};
+    for (component_count = 0; component_count < 4;
          ++component_count) {
-      if (!widths[component_count]) {
+      if (!(*widths)[component_count]) {
         break;
       }
       // Only formats for which max + 0.5 can be represented exactly.
-      assert(widths[component_count] <= 23);
+      assert((*widths)[component_count] <= 23);
       if (component_count) {
         offsets[component_count] =
-            offsets[component_count - 1] + widths[component_count - 1];
+            offsets[component_count - 1] + (*widths)[component_count - 1];
       }
     }
     assert_not_zero(component_count);
 
     // Extract the needed components.
-    EMIdArray eM_unflushed = eM_swapped;
+    EMIdArray short_components;
+    const EMIdArray* eM_unflushed = &eM_swapped;
     if (component_count < 4) {
       if (component_count == 1) {
         {
           uint32_t eM_remaining = export_eM, eM_index;
           while (xe_spv_mask_take(&eM_remaining, &eM_index)) {
-            eM_unflushed[eM_index] = builder_->createCompositeExtract(
-                eM_unflushed[eM_index], type_float_, 0);
+            short_components[eM_index] = builder_->createCompositeExtract(
+                eM_swapped[eM_index], type_float_, 0);
           }
         }
       } else {
@@ -277,16 +276,18 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
         {
           uint32_t eM_remaining = export_eM, eM_index;
           while (xe_spv_mask_take(&eM_remaining, &eM_index)) {
-            eM_unflushed[eM_index] = builder_->createRvalueSwizzleView(
+            short_components[eM_index] = builder_->createRvalueSwizzleView(
                 spv::NoPrecision, type_float_vectors_[component_count - 1],
-                eM_unflushed[eM_index], xe_spv_scratch_view(&literal_scratch_));
+                eM_swapped[eM_index], xe_spv_scratch_view(&literal_scratch_));
           }
         }
       }
+      eM_unflushed = &short_components;
     }
 
     // Flush NaNs.
-    EMIdArray eM_flushed = flush_nan(eM_unflushed);
+    EMIdArray eM_flushed;
+    flush_nan(eM_unflushed, &eM_flushed);
 
     // Convert to integers.
     SpirvBuilder::IfBuilder if_signed(
@@ -303,7 +304,7 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
         for (unsigned int component_index = 0;
              component_index < component_count; ++component_index) {
           ScratchPush(&id_scratch_, builder_->makeFloatConstant(
-              float((uint32_t(1) << (widths[component_index] - 1)) - 1)));
+              float((uint32_t(1) << ((*widths)[component_index] - 1)) - 1)));
         }
         spv::Id const_max_value =
             component_count > 1
@@ -370,7 +371,7 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
         for (unsigned int component_index = 0;
              component_index < component_count; ++component_index) {
           ScratchPush(&id_scratch_, builder_->makeFloatConstant(
-              float((uint32_t(1) << widths[component_index]) - 1)));
+              float((uint32_t(1) << (*widths)[component_index]) - 1)));
         }
         spv::Id const_max_value =
             component_count > 1
@@ -425,34 +426,32 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
       }
     }
 
-    // Pack into a 32-bit value, and pad to a 4-component vector for the phi.
-    EMIdArray eM_packed;
+    // Pack directly in the case slot, padding to a 4-component vector for phi.
     {
       uint32_t eM_remaining = export_eM, eM_index;
       while (xe_spv_mask_take(&eM_remaining, &eM_index)) {
         spv::Id element_unpacked = eM_unpacked[eM_index];
-        eM_packed[eM_index] = component_count > 1
+        (*eM_packed)[eM_index] = component_count > 1
                                   ? builder_->createCompositeExtract(
                                         element_unpacked, type_uint_, 0)
                                   : element_unpacked;
         for (unsigned int component_index = 1; component_index < component_count;
              ++component_index) {
-          eM_packed[eM_index] = builder_->createQuadOp(
-              spv::OpBitFieldInsert, type_uint_, eM_packed[eM_index],
+          (*eM_packed)[eM_index] = builder_->createQuadOp(
+              spv::OpBitFieldInsert, type_uint_, (*eM_packed)[eM_index],
               builder_->createCompositeExtract(element_unpacked, type_uint_,
                                                component_index),
               builder_->makeUintConstant(offsets[component_index]),
-              builder_->makeUintConstant(widths[component_index]));
+              builder_->makeUintConstant((*widths)[component_index]));
         }
         id_scratch_.count = 0;
         ScratchResize(&id_scratch_, 4, const_uint_0_);
-        xe_spv_scratch_data(&id_scratch_)[0] = eM_packed[eM_index];
-        eM_packed[eM_index] =
+        xe_spv_scratch_data(&id_scratch_)[0] = (*eM_packed)[eM_index];
+        (*eM_packed)[eM_index] =
             builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
       }
     }
 
-    return eM_packed;
   };
 
   SpirvBuilder::SwitchBuilder format_switch(
@@ -461,21 +460,19 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
                             builder_->makeUintConstant(6)),
       spv::SelectionControlDontFlattenMask, *builder_);
 
-  struct FormatCase {
-    EMIdArray eM_packed;
-    uint32_t element_bytes_log2;
-    spv::Id phi_parent;
+  xe_spv_export_cases& format_cases = memexport_cases_;
+  format_cases.count = 0;
+  auto reserve_format_case = [&](uint32_t element_bytes_log2) {
+    xe_spv_export_case* result =
+        xe_spv_export_case_begin(&format_cases, element_bytes_log2);
+    if (!result) throw std::bad_alloc();
+    return result;
   };
-  std::vector<FormatCase> format_cases;
-  // Must be called at the end of the switch case segment for the correct phi
-  // parent.
-  auto add_format_case = [&](const EMIdArray& eM_packed,
-                             uint32_t element_bytes_log2) {
-    FormatCase& format_case = format_cases.emplace_back();
-    format_case.eM_packed = eM_packed;
-    format_case.element_bytes_log2 = element_bytes_log2;
-    format_case.phi_parent = builder_->getBuildPoint()->getId();
-  };
+  // Constant widths are borrowed; no per-format array copy or initialization.
+  static const uint32_t widths[12][4] = {
+      {8, 0, 0, 0}, {5, 5, 5, 1}, {5, 6, 5, 0}, {5, 5, 6, 0},
+      {8, 8, 8, 8}, {10, 10, 10, 2}, {8, 8, 0, 0}, {4, 4, 4, 4},
+      {11, 11, 10, 0}, {10, 11, 11, 0}, {16, 0, 0, 0}, {16, 16, 0, 0}};
 
   // k_8, k_8_A, k_8_B
   format_switch.makeBeginCase(
@@ -485,22 +482,38 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
       static_cast<unsigned int>(xenos::ColorFormat::k_8_A));
   format_switch.addCurrentCaseLiteral(
       static_cast<unsigned int>(xenos::ColorFormat::k_8_B));
-  add_format_case(pack_8_16_32({8}), 0);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(0);
+    pack_8_16_32(&widths[0], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_1_5_5_5
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_1_5_5_5));
-  add_format_case(pack_8_16_32({5, 5, 5, 1}), 1);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(1);
+    pack_8_16_32(&widths[1], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_5_6_5
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_5_6_5));
-  add_format_case(pack_8_16_32({5, 6, 5}), 1);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(1);
+    pack_8_16_32(&widths[2], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_6_5_5
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_6_5_5));
-  add_format_case(pack_8_16_32({5, 5, 6}), 1);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(1);
+    pack_8_16_32(&widths[3], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_8_8_8_8, k_8_8_8_8_A, k_8_8_8_8_AS_16_16_16_16
   format_switch.makeBeginCase(
@@ -510,55 +523,88 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
       static_cast<unsigned int>(xenos::ColorFormat::k_8_8_8_8_A));
   format_switch.addCurrentCaseLiteral(
       static_cast<unsigned int>(xenos::ColorFormat::k_8_8_8_8_AS_16_16_16_16));
-  add_format_case(pack_8_16_32({8, 8, 8, 8}), 2);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(2);
+    pack_8_16_32(&widths[4], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_2_10_10_10, k_2_10_10_10_AS_16_16_16_16
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_2_10_10_10));
   format_switch.addCurrentCaseLiteral(static_cast<unsigned int>(
       xenos::ColorFormat::k_2_10_10_10_AS_16_16_16_16));
-  add_format_case(pack_8_16_32({10, 10, 10, 2}), 2);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(2);
+    pack_8_16_32(&widths[5], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_8_8
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_8_8));
-  add_format_case(pack_8_16_32({8, 8}), 1);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(1);
+    pack_8_16_32(&widths[6], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_4_4_4_4
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_4_4_4_4));
-  add_format_case(pack_8_16_32({4, 4, 4, 4}), 1);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(1);
+    pack_8_16_32(&widths[7], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_10_11_11, k_10_11_11_AS_16_16_16_16
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_10_11_11));
   format_switch.addCurrentCaseLiteral(
       static_cast<unsigned int>(xenos::ColorFormat::k_10_11_11_AS_16_16_16_16));
-  add_format_case(pack_8_16_32({11, 11, 10}), 2);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(2);
+    pack_8_16_32(&widths[8], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_11_11_10, k_11_11_10_AS_16_16_16_16
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_11_11_10));
   format_switch.addCurrentCaseLiteral(
       static_cast<unsigned int>(xenos::ColorFormat::k_11_11_10_AS_16_16_16_16));
-  add_format_case(pack_8_16_32({10, 11, 11}), 2);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(2);
+    pack_8_16_32(&widths[9], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_16
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_16));
-  add_format_case(pack_8_16_32({16}), 1);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(1);
+    pack_8_16_32(&widths[10], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_16_16
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_16_16));
-  add_format_case(pack_8_16_32({16, 16}), 2);
+  {
+    xe_spv_export_case* format_case = reserve_format_case(2);
+    pack_8_16_32(&widths[11], &format_case->packed);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
+  }
 
   // k_16_16_16_16
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_16_16_16_16));
   {
     // Flush NaNs.
-    EMIdArray fixed16_flushed = flush_nan(eM_swapped);
+    EMIdArray fixed16_flushed;
+    flush_nan(&eM_swapped, &fixed16_flushed);
 
     // Convert to integers.
     SpirvBuilder::IfBuilder if_signed(
@@ -678,7 +724,8 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
     }
 
     // Pack into two 32-bit values, and pad to a 4-component vector for the phi.
-    EMIdArray fixed16_packed;
+    xe_spv_export_case* format_case = reserve_format_case(3);
+    EMIdArray* fixed16_packed = &format_case->packed;
     spv::Id const_uint_16 = builder_->makeUintConstant(16);
     {
       uint32_t eM_remaining = export_eM, eM_index;
@@ -699,12 +746,12 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
              ++component_index) {
           ScratchPush(&id_scratch_, const_uint_0_);
         }
-        fixed16_packed[eM_index] =
+        (*fixed16_packed)[eM_index] =
             builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
       }
     }
 
-    add_format_case(fixed16_packed, 3);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
   }
 
   // Xbox 360 float16 uses extended range: exponent 31 is a large finite value,
@@ -714,7 +761,8 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_16_FLOAT));
   {
-    EMIdArray format_packed_16_float;
+    xe_spv_export_case* format_case = reserve_format_case(1);
+    EMIdArray* format_packed_16_float = &format_case->packed;
     {
       uint32_t eM_remaining = export_eM, eM_index;
       while (xe_spv_mask_take(&eM_remaining, &eM_index)) {
@@ -727,18 +775,19 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
         id_scratch_.count = 0;
         ScratchResize(&id_scratch_, 4, const_uint_0_);
         xe_spv_scratch_data(&id_scratch_)[0] = format_packed_16_float_x;
-        format_packed_16_float[eM_index] =
+        (*format_packed_16_float)[eM_index] =
             builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
       }
     }
-    add_format_case(format_packed_16_float, 1);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
   }
 
   // k_16_16_FLOAT
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_16_16_FLOAT));
   {
-    EMIdArray format_packed_16_16_float;
+    xe_spv_export_case* format_case = reserve_format_case(2);
+    EMIdArray* format_packed_16_16_float = &format_case->packed;
     {
       uint32_t eM_remaining = export_eM, eM_index;
       while (xe_spv_mask_take(&eM_remaining, &eM_index)) {
@@ -752,18 +801,19 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
         id_scratch_.count = 0;
         ScratchResize(&id_scratch_, 4, const_uint_0_);
         xe_spv_scratch_data(&id_scratch_)[0] = format_packed_16_16_float_xy;
-        format_packed_16_16_float[eM_index] =
+        (*format_packed_16_16_float)[eM_index] =
             builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
       }
     }
-    add_format_case(format_packed_16_16_float, 2);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
   }
 
   // k_16_16_16_16_FLOAT
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_16_16_16_16_FLOAT));
   {
-    EMIdArray format_packed_16_16_16_16_float;
+    xe_spv_export_case* format_case = reserve_format_case(3);
+    EMIdArray* format_packed_16_16_16_16_float = &format_case->packed;
     {
       uint32_t eM_remaining = export_eM, eM_index;
       while (xe_spv_mask_take(&eM_remaining, &eM_index)) {
@@ -783,56 +833,59 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
         ScratchPush(&id_scratch_, format_packed_16_16_16_16_float_xy_zw[1]);
         ScratchPush(&id_scratch_, const_uint_0_);
         ScratchPush(&id_scratch_, const_uint_0_);
-        format_packed_16_16_16_16_float[eM_index] =
+        (*format_packed_16_16_16_16_float)[eM_index] =
             builder_->createCompositeConstructView(type_uint4_, xe_spv_scratch_view(&id_scratch_));
       }
     }
-    add_format_case(format_packed_16_16_16_16_float, 3);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
   }
 
   // k_32_FLOAT
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_32_FLOAT));
   {
-    EMIdArray format_packed_32_float;
+    xe_spv_export_case* format_case = reserve_format_case(2);
+    EMIdArray* format_packed_32_float = &format_case->packed;
     {
       uint32_t eM_remaining = export_eM, eM_index;
       while (xe_spv_mask_take(&eM_remaining, &eM_index)) {
-        format_packed_32_float[eM_index] = builder_->createUnaryOp(
+        (*format_packed_32_float)[eM_index] = builder_->createUnaryOp(
             spv::OpBitcast, type_uint4_, eM_swapped[eM_index]);
       }
     }
-    add_format_case(format_packed_32_float, 2);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
   }
 
   // k_32_32_FLOAT
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_32_32_FLOAT));
   {
-    EMIdArray format_packed_32_32_float;
+    xe_spv_export_case* format_case = reserve_format_case(3);
+    EMIdArray* format_packed_32_32_float = &format_case->packed;
     {
       uint32_t eM_remaining = export_eM, eM_index;
       while (xe_spv_mask_take(&eM_remaining, &eM_index)) {
-        format_packed_32_32_float[eM_index] = builder_->createUnaryOp(
+        (*format_packed_32_32_float)[eM_index] = builder_->createUnaryOp(
             spv::OpBitcast, type_uint4_, eM_swapped[eM_index]);
       }
     }
-    add_format_case(format_packed_32_32_float, 3);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
   }
 
   // k_32_32_32_32_FLOAT
   format_switch.makeBeginCase(
       static_cast<unsigned int>(xenos::ColorFormat::k_32_32_32_32_FLOAT));
   {
-    EMIdArray format_packed_32_32_32_32_float;
+    xe_spv_export_case* format_case = reserve_format_case(4);
+    EMIdArray* format_packed_32_32_32_32_float = &format_case->packed;
     {
       uint32_t eM_remaining = export_eM, eM_index;
       while (xe_spv_mask_take(&eM_remaining, &eM_index)) {
-        format_packed_32_32_32_32_float[eM_index] = builder_->createUnaryOp(
+        (*format_packed_32_32_32_32_float)[eM_index] = builder_->createUnaryOp(
             spv::OpBitcast, type_uint4_, eM_swapped[eM_index]);
       }
     }
-    add_format_case(format_packed_32_32_32_32_float, 4);
+    format_case->phi_parent = builder_->getBuildPoint()->getId();
   }
 
   format_switch.makeEndSwitch();
@@ -848,9 +901,11 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
       // Default case for an invalid format.
       eM_packed_phi->addIdOperand(const_uint4_0_);
       eM_packed_phi->addIdOperand(format_switch.getDefaultPhiParent());
-      for (const FormatCase& format_case : format_cases) {
-        eM_packed_phi->addIdOperand(format_case.eM_packed[eM_index]);
-        eM_packed_phi->addIdOperand(format_case.phi_parent);
+      const xe_spv_export_case* format_case = format_cases.data;
+      const xe_spv_export_case* case_end = format_case + format_cases.count;
+      for (; format_case != case_end; ++format_case) {
+        eM_packed_phi->addIdOperand(format_case->packed[eM_index]);
+        eM_packed_phi->addIdOperand(format_case->phi_parent);
       }
       eM_packed[eM_index] = eM_packed_phi->getResultId();
       builder_->getBuildPoint()->addInstruction(std::move(eM_packed_phi));
@@ -864,10 +919,12 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
     // conditional, skipped).
     element_bytes_log2_phi->addIdOperand(builder_->makeUintConstant(5));
     element_bytes_log2_phi->addIdOperand(format_switch.getDefaultPhiParent());
-    for (const FormatCase& format_case : format_cases) {
+    const xe_spv_export_case* format_case = format_cases.data;
+    const xe_spv_export_case* case_end = format_case + format_cases.count;
+    for (; format_case != case_end; ++format_case) {
       element_bytes_log2_phi->addIdOperand(
-          builder_->makeUintConstant(format_case.element_bytes_log2));
-      element_bytes_log2_phi->addIdOperand(format_case.phi_parent);
+          builder_->makeUintConstant(format_case->element_bytes_log2));
+      element_bytes_log2_phi->addIdOperand(format_case->phi_parent);
     }
     element_bytes_log2 = element_bytes_log2_phi->getResultId();
     builder_->getBuildPoint()->addInstruction(

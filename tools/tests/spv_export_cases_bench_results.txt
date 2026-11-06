@@ -1,0 +1,72 @@
+Memory-export format storage, 2026-11-06
+Parent: 205d19125207a9600e391b6cea3c72ee550e1ee5.
+
+The format switch always generates 19 known format branches, independent of
+guest shader complexity. Replace its growable vector with 536 bytes of bounded
+C89 per-translator workspace: 19 x (five uint32 IDs + size + parent), plus the count.
+The workspace is initialized once during translator construction, then resets
+only its count per export. Each translation worker owns its translator; no new
+locking or shared mutable storage is introduced. This is a bound on the emitter's
+own fixed format list, not a guest shader cap.
+Overflow or an invalid size is rejected; C++ interop propagates exhaustion via
+the translator's existing allocation-failure mechanism.
+
+Packed IDs are generated directly into their final case slots. The generator
+borrows constant width tables and full-width source IDs; component extraction
+only writes the selected lanes. NaN/constant-vector helpers write caller storage
+instead of returning std::array objects. Inactive IDs are not copied or read.
+All std::vector/std::array uses are removed from this source, not the core.
+
+Verification:
+- Native MSVC /TC /O2 /W4 /WX C89 storage test and actual C++ export source pass.
+- Strict GCC C89 ASan/UBSan storage test passes all masks, capacity/size rejection,
+  canaries and untouched inactive IDs. This is not a fully sanitized translator.
+- Static Windows Make -j5 compiles and links the core.
+- All 256 actual-microcode translations match the parent's length-prefixed bytes
+  exactly; all 256 modules pass spirv-val. Includes every register mask, both
+  shader stages, host-RT/interlock and 1x1/2x3 scale profiles (248 export cases).
+- Rebuilt production translator matches 1,410 cached Tekken and 210 cached Tomb
+  translations, including control-flow cases, against existing byte references.
+- No game/frontend/GPU launch, installed-DLL replacement, audio timing change,
+  or GPU retirement/synchronization change.
+
+Actual translation benchmark: tools/tests/core_spv_memexport_bench.cc.
+The historical ExportToMemory source is rebuilt against the SAME current public
+headers, class definition and production compiler/ABI flags as the new core,
+using run_spv_export_reference.sh and tools/tests/Makefile. Its object
+(SHA256 A7BCF89308A6E19B2DB01D0EF4758EC446BB70788F640E4A8E1BBE24112F9E3C)
+overrides only ExportToMemory in a separate reference executable. No old class
+layout is linked into the new core. Both full 256-module benchmark streams also
+match the whole parent's pre-change fixture. The reference also carries the new
+workspace field (unused by its algorithm), isolating warm translation cost.
+Cold construction, added retention and real-game behavior are not timed.
+
+After warm-up, each sample measures 1,024 translations, 992 with memory export.
+Seven alternating parent/current samples, after all compiler jobs were terminal:
+                   C++ requests   Requested bytes    CPU median/range (ms)
+Parent             506128         10070144           60.720 / 60.554..60.936
+Current            500176          8320256           60.137 / 59.896..60.573
+
+Six ordinary C++ requests and 1,764 requested bytes avoided per export translation
+(5,952 requests / 1,749,888 bytes per measured sample). Capture covers ordinary
+new/new[], not C allocation, aligned allocation, total RSS or VRAM. Many other
+allocation requests remain. CPU ranges overlap: no measurable speedup is claimed.
+GCC's outer ExportToMemory stack reservation drops from 0x458 to 0x428 bytes
+(-48); both save eight general registers, and the new version also saves XMM6.
+This does not establish fewer spills or cache misses. A stack-local table
+prototype increased the call frame and showed a small slowdown, so it was
+replaced with retained storage before delivery. MinGW sizeof(translator) grows
+from 3,032 to 3,568 bytes (+536). That is bounded per-owner retention, not an RSS
+measurement or a reduction in cold object size.
+
+Reproduce: build the current core, then run tools/tests/run_spv_export_reference.sh
+with a separate TEST_BUILD_DIR. It extracts the pinned parent's algorithm only
+and compiles it using the production Make flags and CURRENT headers. Use its
+reference.o with MEMEXPORT_REFERENCE_OBJECT in tools/tests/run_spv_memexport_tests.sh,
+PROFILE=1 and separate TEST_BUILD_DIRs for reference/current. Never reuse an old
+object compiled with the parent's class definition. Run both executables in
+seven alternating pairs after compilation ends; set SPV_GUEST_OUTPUT to separate
+streams and compare them. Normal fixture mode accepts SPV_MEMEXPORT_VALIDATE_DIR
+for per-module spirv-val checks. The C89 unit is included in the existing output
+suite's sh/cmd runners. On Windows use the matching MinGW runtime on PATH; native
+C89 checks use the VS x64 developer prompt.

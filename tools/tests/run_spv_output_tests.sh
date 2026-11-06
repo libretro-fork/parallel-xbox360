@@ -17,6 +17,8 @@ if test ! -f "$out/base/libretro/core_spv_arena.c"; then
  exit 1
 fi
 san=${SANITIZER-}
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root" -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_export_cases_test.c" -o "$out/export-cases-unit"
+"$out/export-cases-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_mask_test.c" -o "$out/mask-unit"
 "$out/mask-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_decorations_test.c" -o "$out/decorations-unit"

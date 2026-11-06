@@ -16,9 +16,9 @@ objects=${CORE_OBJECTS:-"$root/build/make/$platform/objects.rsp"}
 source="$root/tools/tests/core_spv_memexport_bridge.cc"
 mkdir -p "$out"
 out=$(CDPATH= cd -- "$out" && pwd)
-# An optional saved parent memexport object isolates callback changes while
-# retaining the fixed fragment-coordinate declaration in the current core.
-# Valid for this cut only: public translator/storage layouts are unchanged.
+# An optional reference object overrides only ExportToMemory. Compile it with
+# the SAME current public headers and ABI as the core; never mix class layouts.
+# run_spv_export_reference.sh builds the historical algorithm this way.
 set --
 if test -n "${MEMEXPORT_REFERENCE_OBJECT:-}"; then set -- "$MEMEXPORT_REFERENCE_OBJECT"; fi
 if test "${PROFILE:-0}" = 1; then

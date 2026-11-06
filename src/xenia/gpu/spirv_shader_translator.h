@@ -23,6 +23,7 @@
 #include "xenia/gpu/shader_translator.h"
 #include "xenia/gpu/spirv/InstructionArena.h"
 #include "libretro/core_spv_scratch.h"
+#include "libretro/core_spv_export_cases.h"
 #include "libretro/core_spv_plan.h"
 #include "xenia/gpu/spirv_builder.h"
 #include "xenia/gpu/xenos.h"
@@ -1502,6 +1503,10 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // the exec-level predicate value, and can't merge two execs with the same
   // predicate condition anymore.
   bool cf_exec_predicate_written_;
+
+  // Single-owner translation workspace, reset before every export. No IDs escape
+  // this call; each worker already owns its translator and builder exclusively.
+  xe_spv_export_cases memexport_cases_ = {};
 };
 
 }  // namespace gpu
