@@ -1401,3 +1401,14 @@ JOB_POOL_TEST_OUT enable native ASan. Four workers attempt 200,000 stale
 completions; the actual adapter exercises 20,000 rearm cycles as well as its
 existing lease, ordering, copy-budget, cancellation and teardown checks.
 See pipeline_completion_results.txt for the remaining callbacks and waits.
+
+Borrowed memory restore plans
+-----------------------------
+`run_heap_state_tests.sh` or `.cmd` tests C89 metadata preflight, sparse run
+coverage, alias-only records and uint32 host-commit splitting. Native ASan uses
+HEAP_STATE_TEST_FLAGS=/fsanitize=address /Zi with a separate HEAP_STATE_TEST_OUT.
+The actual `memory_state_test.cc` fixture additionally rejects truncated or
+malformed final-heap input before touching earlier live RAM and restores freed
+virtual/physical allocations. It uses Memory only, with no GPU or guest JIT.
+Its optional argument is only for reproducing the archived partial-mutation
+behavior with the archived memory object. See heap_state_results.txt.

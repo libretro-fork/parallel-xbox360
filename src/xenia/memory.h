@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "xenia/base/memory.h"
+#include "libretro/core_heap_state.h"
 #include "xenia/base/mutex.h"
 #include "xenia/cpu/mmio_handler.h"
 #include "xenia/guest_pointers.h"
@@ -270,6 +271,9 @@ class BaseHeap {
   void Reset();
 
  protected:
+  friend class Memory;
+  bool PrepareRestore(ByteStream* stream,bool contents,xe_heap_state* view);
+  bool RestorePrepared(const xe_heap_state& view);
   BaseHeap();
 
   void Initialize(Memory* memory, uint8_t* membase, HeapType heap_type,

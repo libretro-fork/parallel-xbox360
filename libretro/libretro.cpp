@@ -1936,7 +1936,7 @@ RETRO_API bool retro_load_game_special(unsigned, const struct retro_game_info *,
 }
 
 RETRO_API size_t retro_serialize_size(void) {
-    return 0; // Save-states not yet supported for an Xbox 360 emulator
+    return 0; // Pending complete subsystem capture, validation and restore.
 }
 RETRO_API bool retro_serialize(void *, size_t) { return false; }
 RETRO_API bool retro_unserialize(const void *, size_t) { return false; }

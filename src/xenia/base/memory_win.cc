@@ -195,7 +195,7 @@ bool QueryProtect(void* base_address, size_t& length, PageAccess& access_out) {
 
   NTSTATUS query_result = NtQueryVirtualMemoryPointer.invoke<NTSTATUS>(
       (HANDLE)0xFFFFFFFFFFFFFFFFLL, (PVOID)base_address,
-      0 /* MemoryBasicInformation*/, &info, length, &ResultLength);
+      0 /* MemoryBasicInformation*/, &info, sizeof(info), &ResultLength);
   SIZE_T result = query_result >= 0 ? ResultLength : 0;
 #else
   SIZE_T result = VirtualQuery(base_address, &info, sizeof(info));

@@ -1624,11 +1624,15 @@ bool Memory::Save(ByteStream* stream) {
 bool Memory::Restore(ByteStream* stream) {
   XELOGD("Restoring memory...");
   if (stream->Read<uint32_t>() != make_fourcc("MEM2")) return false;
-  return heaps_.v00000000.Restore(stream) && heaps_.v40000000.Restore(stream) &&
-      heaps_.v80000000.Restore(stream) && heaps_.v90000000.Restore(stream) &&
-      heaps_.physical.Restore(stream) && heaps_.v7F000000.Restore(stream, false) &&
-      heaps_.vA0000000.Restore(stream, false) && heaps_.vC0000000.Restore(stream, false) &&
-      heaps_.vE0000000.Restore(stream, false);
+  // Validate every heap and borrow every payload before mutating the first.
+  BaseHeap* heaps[] = {&heaps_.v00000000,&heaps_.v40000000,
+      &heaps_.v80000000,&heaps_.v90000000,&heaps_.physical,&heaps_.v7F000000,
+      &heaps_.vA0000000,&heaps_.vC0000000,&heaps_.vE0000000};
+  xe_heap_state views[9];
+  size_t i;
+  for(i=0;i<9;++i) if(!heaps[i]->PrepareRestore(stream,i<5,&views[i])) return false;
+  for(i=0;i<9;++i) if(!heaps[i]->RestorePrepared(views[i])) return false;
+  return true;
 }
 
 uint32_t FromPageAccess(xe::memory::PageAccess protect) {
@@ -1782,41 +1786,40 @@ bool BaseHeap::Save(ByteStream* stream, bool contents) {
   return true;
 }
 
-bool BaseHeap::Restore(ByteStream* stream, bool contents) {
-  XELOGD("Heap {:08X}-{:08X}", heap_base_, heap_base_ + (heap_size_ - 1));
+// Native bitfield ABI only; validation and run planning use C89 scalars.
+static void DecodeHeapStatePage(const void* bytes,xe_heap_page* out) {
+  PageEntry page;
+  std::memcpy(&page,bytes,sizeof(page));
+  out->base=page.base_address;out->count=page.region_page_count;
+  out->state=page.state;out->reserved=page.reserved;
+}
+
+bool BaseHeap::PrepareRestore(ByteStream* stream,bool contents,xe_heap_state* view) {
   if (stream->Read<uint32_t>() != heap_base_ ||
       stream->Read<uint32_t>() != page_size_ ||
       stream->Read<uint32_t>() != page_table_.size()) return false;
-  const auto* entries = static_cast<const uint8_t*>(
-      stream->ReadView(page_table_.size() * sizeof(PageEntry)));
-  size_t data_bytes = 0;
-  uint32_t unreserved = 0;
-  for (size_t i = 0; i < page_table_.size(); i++) {
-    PageEntry saved;
-    std::memcpy(&saved, entries + i * sizeof(PageEntry), sizeof(saved));
-    if (saved.reserved || (saved.state &&
-        (!saved.region_page_count || saved.base_address > i ||
-         saved.base_address >= page_table_.size() ||
-         saved.region_page_count > page_table_.size() - saved.base_address ||
-         i - saved.base_address >= saved.region_page_count))) return false;
-    if (!saved.state) ++unreserved;
-    if (contents && (saved.state & kMemoryAllocationCommit)) {
-      if (data_bytes > SIZE_MAX - page_size_) return false;
-      data_bytes += page_size_;
-    }
-  }
-  // All metadata and data bounds are checked before changing this heap.
-  stream->Require(data_bytes);
-  std::memcpy(page_table_.data(), entries, page_table_.size() * sizeof(PageEntry));
-  unreserved_page_count_ = unreserved;
-  for (size_t i = 0; i < page_table_.size(); ++i) {
-    const PageEntry& page = page_table_[i];
-    if (!(page.state & kMemoryAllocationCommit)) continue;
-    if (contents) {
-      if (!CommitHostPages(static_cast<uint32_t>(i), 1,
-                           kMemoryProtectRead | kMemoryProtectWrite)) return false;
-      stream->Read(TranslateRelative(i * page_size_), page_size_);
-    }
+  const void* entries=stream->ReadView(page_table_.size()*sizeof(PageEntry));
+  xe_heap_state plan;
+  if(!xe_heap_state_plan(&plan,entries,page_table_.size(),sizeof(PageEntry),
+          page_size_,contents,DecodeHeapStatePage)) return false;
+  plan.data=static_cast<const unsigned char*>(stream->ReadView(plan.data_bytes));
+  *view=plan;return true;
+}
+
+bool BaseHeap::Restore(ByteStream* stream, bool contents) {
+  xe_heap_state view;
+  return PrepareRestore(stream,contents,&view) && RestorePrepared(view);
+}
+
+bool BaseHeap::RestorePrepared(const xe_heap_state& view) {
+  std::memcpy(page_table_.data(),view.entries,page_table_.size()*sizeof(PageEntry));
+  unreserved_page_count_=view.unreserved;
+  xe_heap_scan scan={0,0};
+  xe_heap_run run;
+  while(xe_heap_state_next(&view,&scan,&run)) {
+    if(!CommitHostPages(run.first,run.count,kMemoryProtectRead|kMemoryProtectWrite)) return false;
+    std::memcpy(TranslateRelative(size_t(run.first)*page_size_),
+                view.data+run.offset,run.bytes);
   }
   // Apply like protections in runs, after every neighbour's metadata is in
   // place. This also handles hosts whose page is larger than a guest page.

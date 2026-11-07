@@ -1,0 +1,64 @@
+Borrowed whole-memory preflight and restore runs (0156)
+======================================================
+The previous Memory::Restore applied each heap immediately. A malformed later
+heap could therefore fail after earlier live RAM and allocation tables had
+already changed. Memory::Restore now prepares all nine records first, borrowing
+their metadata and payload in nine fixed stack views. No payload allocation,
+concatenation or metadata staging is introduced. The caller must keep the input
+immutable and alive through replay, with all guest memory writers quiescent.
+
+core_heap_state.h holds the MSVC C89 validation and sparse run iterator. Native
+PageEntry bitfield decoding stays in a small memcpy-based ABI adapter, avoiding
+alignment assumptions or changing the existing native record format. Original
+region/count/state/reserved-bit and data-length checks remain. Failed plans
+publish nothing. Physical bytes remain serialized once, with four aliases
+restoring metadata and protection only.
+
+After preflight, replay copies each heap's allocation table into its owned final
+table, commits contiguous committed-page runs, and copies their borrowed payload
+straight into final RAM. A run may cross guest allocation/protection boundaries:
+all saved committed pages temporarily need read/write access, and the existing
+per-page protection grouping applies final access after every payload is copied.
+Native commit byte counts are uint32, so large runs split before multiplication
+overflow. The necessary input-to-RAM copy remains; this is not zero-copy RAM
+restoration. Save still reads page by page to preserve actual watched host access.
+
+This provides invalid-format rejection before any heap changes. It does not
+roll back a host commit/protection/allocation failure during replay. Existing
+free-block map rebuilding may allocate; no allocation-free full-state claim.
+No new lock, normal gameplay work, GPU synchronization or profiling counter.
+Other system components still require a complete validated state controller;
+retro_serialize_size/retro_serialize/retro_unserialize remain unsupported.
+
+Checks and exact coverage are recorded with the published batch. C89 fixtures
+cover all 256 eight-page sparse patterns (including unaligned records), alias
+metadata, invalid-region/reserved/state/count/null/overflow rejection, unchanged
+failed-plan output, contiguous 16-page merging and uint32 commit splitting.
+The actual native Memory fixture uses real virtual and physical RAM, checks
+malformed final-heap non-mutation, and roundtrips after freeing allocations.
+No frontend, game, GPU device or guest JIT is needed for that fixture.
+
+Actual RAM fixture initially caught an existing Windows QueryProtect bug: the
+NtQueryVirtualMemory result buffer is MEMORY_BASIC_INFORMATION, but the supplied
+length was the caller's page/region length. It now supplies sizeof(info), matching
+the existing VirtualQuery fallback. The caller length remains an output region
+size. The real fixture queries an actual saved read-only page using a 4096-byte
+input length, so that regression is covered alongside restore protection.
+
+Final validation on Windows:
+- Strict GNU C89/pedantic and MSVC /TC /W4 /WX fixture pass; MSVC ASan pass.
+  Reserved-only, commit-only and empty-table cases are covered as well.
+- Actual current GNU production-object Memory fixture passes malformed-late-heap
+  non-mutation and all-byte virtual/physical roundtrip after freeing allocations.
+  The second virtual page is saved read-only and real host protection is checked
+  after restore, across a merged committed run.
+- The same fixture with archived 6c7449766 memory.cc reproduces partial earlier
+  RAM mutation for both invalid inputs, then passes valid roundtrip. Its unchanged
+  object is inserted ahead of current core.a; no replacement of unrelated
+  objects or current Windows query fix. Link map confirms Memory::Restore is
+  supplied by that archived object. Baseline mode is a bug-reproduction control.
+- Actual memory.cc and memory_win.cc MSVC syntax checks and full Windows static
+  Make -j5 build pass. Actual full RAM fixture is GNU, without sanitizers;
+  native ASan coverage is the C89 planner. No full MSVC RAM-runtime or TSan claim.
+- Linux CI now explicitly invokes the heap and job-pool unit runners; Windows
+  invokes the new heap unit runner. Full component fixtures remain separate.
