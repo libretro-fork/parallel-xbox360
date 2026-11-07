@@ -3,6 +3,7 @@
 #include "edram_dump.h"
 #include "edram_format.h"
 #include "guest_resources.h"
+#include "../../../../libretro/core_resolve_native_loads.h"
 #include <dxil_module.h>
 #include <dxil_function.h>
 
@@ -99,7 +100,7 @@ static int emit_direct_resolve(XeDxilAlu *s, const XeDxilEdramDumpOptions *o,
   unsigned tile_height = (16 * scale_y) >> (o->msaa >= 1);
   unsigned pixels = 8 / words, pixels_per_store = 4 / words, bpp_log2 = words == 2 ? 3 : 2;
   unsigned scaled = !o->native_layout && (o->scale_x > 1 || o->scale_y > 1);
-  unsigned i, j, blocks, group_x, group_y, second_offset;
+  unsigned i, j, blocks, group_x, group_y, second_offset, load_index;
   info = xe_dxil_cbuffer_word(s, constants, ic(s, 2));
   coordinate = xe_dxil_cbuffer_word(s, constants, ic(s, 3));
   dest_info = xe_dxil_cbuffer_word(s, constants, ic(s, 4));
@@ -133,12 +134,15 @@ static int emit_direct_resolve(XeDxilAlu *s, const XeDxilEdramDumpOptions *o,
       !dxil_emit_branch(s->module, condition, blocks, blocks + 1)) return 0;
   s->module->cur_emitting_func->basic_block_ids[blocks] = (int)s->module->cur_emitting_func->curr_block;
   for (i = 0; i < pixels; ++i) {
-    pixel_x = add(s, source_x, ic(s, i));
-    if (scaled && i < scale_x / 2) pixel_x = add(s, pixel_x,
-      fill_bias(s, add(s, dest_x, ic(s, i)), scale_x / 2, fill_enabled));
-    if (o->native_source && scaled) pixel_x = bin(s, DXIL_BINOP_UDIV, pixel_x, ic(s, o->scale_x));
-    if (!load_and_pack(s, o, texture, stencil, pixel_x, source_y, sample, pixel)) return 0;
-    for (j = 0; j < words; ++j) packed[i * words + j] = pixel[j];
+    load_index = xe_resolve_native_load_index(pixels, o->scale_x, o->native_source && scaled, i);
+    if (load_index == i) {
+      pixel_x = add(s, source_x, ic(s, i));
+      if (scaled && i < scale_x / 2) pixel_x = add(s, pixel_x,
+        fill_bias(s, add(s, dest_x, ic(s, i)), scale_x / 2, fill_enabled));
+      if (o->native_source && scaled) pixel_x = bin(s, DXIL_BINOP_UDIV, pixel_x, ic(s, o->scale_x));
+      if (!load_and_pack(s, o, texture, stencil, pixel_x, source_y, sample, pixel)) return 0;
+    }
+    for (j = 0; j < words; ++j) packed[i * words + j] = load_index == i ? pixel[j] : packed[load_index * words + j];
   }
   swap = equal(s, field(s, dest_info, 24, 1), 1); format = field(s, info, 24, 15);
   swap8 = bor(s, equal(s, format, 0), equal(s, format, 1));

@@ -11,6 +11,7 @@
 
 #include <initializer_list>
 #include "libretro/core_spv_words.h"
+#include "libretro/core_resolve_native_loads.h"
 
 #include "xenia/gpu/spirv/GLSL.std.450.h"
 
@@ -996,17 +997,22 @@ bool BuildEdramDumpShaderSpirv(
                 kEdramDumpShaderResolvePixelsPerStore * 2);
     for (uint32_t i = 0; i < pixels_per_thread; ++i) {
       spv::Id pixel_packed[2] = {};
-      spv::Id pixel_x =
-          i ? add(source_pixel_x, builder.makeUintConstant(i)) : source_pixel_x;
-      if (i < fill_extent_x) {
-        pixel_x = add(pixel_x, fill_bias_x[i]);
+      uint32_t load_index = xe_resolve_native_load_index(pixels_per_thread,
+          options.resolution_scale_x, source_native_in_scaled_dest, i);
+      if (load_index == i) {
+        spv::Id pixel_x =
+            i ? add(source_pixel_x, builder.makeUintConstant(i)) : source_pixel_x;
+        if (i < fill_extent_x) {
+          pixel_x = add(pixel_x, fill_bias_x[i]);
+        }
+        if (source_native_in_scaled_dest) {
+          pixel_x = divide_down(pixel_x, options.resolution_scale_x);
+        }
+        load_and_pack(pixel_x, source_pixel_y, source_sample_id, pixel_packed);
       }
-      if (source_native_in_scaled_dest) {
-        pixel_x = divide_down(pixel_x, options.resolution_scale_x);
-      }
-      load_and_pack(pixel_x, source_pixel_y, source_sample_id, pixel_packed);
       for (uint32_t j = 0; j < dwords_per_pixel; ++j) {
-        run_packed[i * dwords_per_pixel + j] = pixel_packed[j];
+        run_packed[i * dwords_per_pixel + j] = load_index == i
+            ? pixel_packed[j] : run_packed[load_index * dwords_per_pixel + j];
       }
     }
 

@@ -1245,3 +1245,28 @@ The EDRAM matrix also repeats with 32x16 generation scales, exercising a fill ba
 Compact-record checks enforce the 64-byte instruction size on 64-bit hosts, final/non-polymorphic record types and disabled copy assignment. The builder fixture exercises construction and teardown of instructions, blocks, functions and owned operand words under ASan/UBSan. Allocation capture also reports cumulative requested C++ and arena-page bytes plus peak live tracked payload; allocator-internal headers, C operand buffers, process RSS and GPU memory are outside that metric. Arena page headers/padding and the startup reserve are included. The baseline and current binaries use the same profiling adapter.
 
 Instruction-arena tests cover 131,072 aligned/reused slots, overlapping-lease rejection, refusal to close active storage, initial/growth allocation failures, orphan cleanup and a 60,200-record typed lifetime loop. A fault-injected C operand allocator verifies normal, orphan and exception cleanup with zero live blocks, failed operand growth preserving old data, parameter-record teardown and pending-owner-before-builder reset. ASan runs deliberately invalid C and typed access after retirement and must report use-after-poison. The 5,248-module corpus preallocates 2,048 instruction slots and checks no page growth during generation; all modules and function/view variants match the archived source. Arena occupancy/page counts are queried from allocator state on demand, with no duplicate release profiling counters.
+
+Native-fragment resolve load sharing
+-----------------------------------
+`run_resolve_native_loads_tests.sh` (or `.cmd` in a VS developer prompt) runs
+C89 independent coordinate/bit-pattern equivalence checks. The shell runner
+uses ASan/UBSan by default; set SANITIZER= on MinGW without those runtimes.
+
+`run_resolve_loads_emit_tests.sh` compares actual SPIR-V and DXIL production
+emitters with baseline 5fa800e99 (override BASELINE_COMMIT). It builds serially,
+counts SPIR-V image-fetch instructions / test-hooked DXIL texture-load emission,
+and requires unaffected variants to remain byte-identical. It requires the
+baseline commit locally. SPIRV_VALIDATOR and DXIL_VALIDATOR optionally specify
+standalone validator executables. Normal core builds require neither tool.
+`run_resolve_loads_emit_tests.cmd` builds the current actual emitters with MSVC;
+set RESOLVE_EMIT_FLAGS=/fsanitize=address /Zi and a separate RESOLVE_EMIT_OUT
+for native sanitizer coverage. All trace/inspection algorithms are C89; the
+SPIR-V bridge only adapts existing C++ interfaces.
+
+Optional Windows Microsoft validation: from an x64 VS prompt with the Windows
+SDK, `run_dxil_validation_tests.cmd <path-to-dxil.dll> <shader-list.txt>` validates
+each listed file through the SDK COM API, without creating a graphics device.
+The DLL path and one-path-per-line list are explicit development inputs; no
+compiler/validator DLL is required by the core. C89 owns test file I/O and the
+COM bridge borrows each buffer only during its synchronous Validate call.
+See resolve_native_loads_results.txt for exact coverage and limits.

@@ -1,0 +1,76 @@
+Native-fragment direct-resolve load sharing (0144)
+=================================================
+
+Change
+------
+Both production emitters use core_resolve_native_loads.h (MSVC C89) to reuse
+already packed source values within a direct resolve's 4/8-pixel run. Native
+source texels replicated into a scaled destination have identical coordinates
+within aligned min(scale_x, run_width) segments when scale_x is a supported
+power of two. Source tile widths and resolve offsets are scale multiples;
+run widths are powers of two and divide the tile width. Half-pixel fill only
+moves reads within the same guest pixel. Arithmetic wrap is modulo 2^32 and
+does not break alignment for these scales. The helper falls back for odd or
+out-of-range scales, non-native sources and unsupported run widths.
+
+At 4x, eligible 32bpp runs emit two texture fetch/pack sequences instead of
+eight; 64bpp runs emit one instead of four. Depth/stencil use two views, so
+16 fetches become four. These are static EMITTED fetch counts, not a measured
+number of physical transactions: a driver might already optimize duplicates.
+
+SPIR-V reuses existing SSA IDs in the eight-word stack run; C89 DXIL reuses
+existing XeDxilValue entries. No new buffer, allocation, GPU branch, CPU/GPU
+round trip, staging transfer, dispatch, barrier or pipeline-key dimension is
+added. Source Y, selected sample, packers, precision, red/blue swapping,
+endianness, tiled addresses, full vector stores and destination coverage remain
+unchanged. No runtime float quantization or audio/runloop path is changed.
+
+Coverage and measurements
+-------------------------
+C89 scalar reference: 1319488 runs / 7721168 pixel coordinates, all 1..32 scales,
+32/64bpp runs, 1/2/4x MSAA geometry, tile/source origins, all resolve-X offsets,
+fill enabled/disabled, UINT32 wrapping and randomized arbitrary input bits.
+Each reused coordinate must equal its independently evaluated original one;
+packed-word provenance is checked using arbitrary integer/float/depth patterns.
+Invalid/non-native inputs keep individual loads. Native MSVC /TC/W4/WX, MSVC
+ASan and MinGW GCC strict C89 pass. This checks reuse equivalence, not an
+independent reimplementation of the existing floating-point format packers.
+
+Actual production SPIR-V: 1764 modules spanning 14 color/depth variants, three
+MSAA modes, seven scales, three source/destination layouts, dump/direct modes.
+All exact OpImageFetch counts match; 1596 unaffected variants are byte-identical
+to 5fa800e99. All 1764 current variants pass spirv-val. GCC fixture aggregate
+size falls from 16039860 B to 15483708 B. This is total test shader size, not a
+shader cache size or GPU-memory measurement. MSVC and MSVC ASan matrices pass
+with the same load counts and SPIR-V aggregate size.
+
+Actual production DXIL: 1512 modules (native emitter rejects scale_x >16).
+Test-only calls intercept textureLoad emission in edram_dump.c; there is NO
+release instrumentation. Counts match and 1344 unaffected variants remain
+byte-identical under GCC. Aggregate GCC fixture size: 5274120 -> 5121356 B.
+MSVC and MSVC ASan matrices also pass; their aggregate sizes differ slightly,
+so no cross-compiler binary equality claim is made. Microsoft IDxcValidator
+from the installed dxil.dll accepts every current GCC (1512), MSVC (1512) and
+MSVC ASan (1512) fixture. No Vulkan/D3D12 device or GPU work is created.
+
+The source emitter test runner extracts seven existing production static
+helpers; it does not mock their bodies. The SPIR-V C++ bridge is ABI glue only;
+all matrix/coordinate/binary algorithms are C89. Windows SDK COM adaptation is
+also isolated from the C89 optional validator/file runner. Validators are
+optional development tools, not new runtime or build requirements. Make host
+DXIL fixture prerequisites include the new shared header to avoid stale tests.
+
+Limits
+------
+This applies only to native source fragments in a scaled direct resolve.
+All-native resolves normally select native output; scaled source fragments
+need every distinct host texel. Format-converting resolves still use the
+existing EDRAM dump/copy path. The optimization adds no conversion shortcut.
+At 4x, actual benefit depends on native/scaled ownership mixtures, driver
+optimization and the workload. Dark Souls II mixtures and GPU timings remain
+unmeasured; no gameplay FPS, register-pressure or texture-bandwidth gain is
+claimed. Whole-emulator mid-game allocation freedom is not established.
+
+Windows static Make -j5 and committed version verification: see journal.
+Remote CI/Linux/ARM execution and real GPU output/timing are not claimed.
+Installed core DLL, frontend pacing, audio and content-close lifecycle untouched.
