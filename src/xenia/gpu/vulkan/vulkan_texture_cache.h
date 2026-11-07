@@ -20,6 +20,7 @@
 #include "xenia/gpu/vulkan/vulkan_shader.h"
 #include "xenia/gpu/vulkan/vulkan_shared_memory.h"
 #include "xenia/ui/vulkan/vulkan_texture_memory.h"
+#include "libretro/core_vk_source_views.h"
 
 namespace xe {
 namespace gpu {
@@ -430,6 +431,10 @@ class VulkanTextureCache final : public TextureCache {
   // Sparse scaled resolve helper functions
   bool InitializeSparseScaledResolve();
   bool InitializeScaledResolveFallback();
+  static VkBuffer GetScaledSourceBuffer(void* context, uint32_t index);
+  bool PrepareLoadSource(bool scaled, uint32_t address, uint32_t length,
+                        VkDescriptorSet& descriptor, VkDescriptorBufferInfo& info,
+                        uint32_t& shader_offset);
   void ShutdownSparseScaledResolve();
   size_t GetScaledResolveSparseBufferCount() const;
   std::array<size_t, 2> GetPossibleScaledResolveBufferIndices(
@@ -524,6 +529,9 @@ class VulkanTextureCache final : public TextureCache {
   // cache.
   VkDescriptorPool shared_memory_persistent_descriptor_pool_ = VK_NULL_HANDLE;
   VkDescriptorSet shared_memory_persistent_descriptor_set_ = VK_NULL_HANDLE;
+  // Immutable descriptors borrow the scaled buffers through texture-cache shutdown.
+  xe_vk_source_bank scaled_source_bank_ = {};
+  uint64_t source_max_range_ = 0, source_min_alignment_ = 0;
 
   // Accumulated mask of fetch constants whose host image views were rewritten,
   // consumed by the command processor to decide texture descriptor set reuse.

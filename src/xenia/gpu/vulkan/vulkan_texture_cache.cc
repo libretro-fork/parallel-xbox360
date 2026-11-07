@@ -507,6 +507,10 @@ VulkanTextureCache::~VulkanTextureCache() {
   // textures before destroying the heap.
   DestroyAllTextures(true);
 
+  const xe_vk_source_functions source_functions = {dfn.vkCreateDescriptorPool,
+      dfn.vkDestroyDescriptorPool, dfn.vkAllocateDescriptorSets, dfn.vkUpdateDescriptorSets};
+  xe_vk_source_bank_close(&scaled_source_bank_, device, &source_functions);
+
   // Clean up sparse scaled resolve resources (heaps and sparse buffers)
   ShutdownSparseScaledResolve();
 
@@ -1398,14 +1402,9 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
   const VkDevice device = vulkan_device->device();
   VulkanSharedMemory& vulkan_shared_memory =
       static_cast<VulkanSharedMemory&>(shared_memory());
-  // Bind the whole shared memory buffer persistently when possible (passing the
-  // texture's byte offset via guest_offset) instead of allocating and writing
-  // per-load source descriptors. Scaled resolve textures read from separate
-  // scaled buffers, so they always use transient descriptors.
-  const bool use_persistent_source =
-      shared_memory_persistent_descriptor_set_ != VK_NULL_HANDLE &&
-      !texture_key.scaled_resolve;
-  std::array<VkWriteDescriptorSet, 3> write_descriptor_sets;
+  // Destination remains per-load scratch; source descriptors can borrow an
+  // immutable whole shared/scaled buffer with a rebased shader byte offset.
+  VkWriteDescriptorSet write_descriptor_sets[3];
   uint32_t write_descriptor_set_count = 0;
   VkDescriptorSet descriptor_set_dest =
       command_processor_.AllocateSingleTransientDescriptor(
@@ -1434,178 +1433,45 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
         &write_descriptor_set_dest_buffer_info;
     write_descriptor_set_dest.pTexelBufferView = nullptr;
   }
-  // TODO(Triang3l): Use a single 512 MB shared memory binding if possible.
   VkDescriptorSet descriptor_set_source_base = VK_NULL_HANDLE;
   VkDescriptorSet descriptor_set_source_mips = VK_NULL_HANDLE;
-  VkDescriptorBufferInfo write_descriptor_set_source_base_buffer_info;
-  VkDescriptorBufferInfo write_descriptor_set_source_mips_buffer_info;
+  uint32_t source_base_offset = 0, source_mips_offset = 0;
+  VkDescriptorBufferInfo source_base_info, source_mips_info;
   if (level_first == 0) {
-    if (use_persistent_source) {
-      descriptor_set_source_base = shared_memory_persistent_descriptor_set_;
-    } else {
-      descriptor_set_source_base =
-          command_processor_.AllocateSingleTransientDescriptor(
-              VulkanCommandProcessor::SingleTransientDescriptorLayout ::
-                  kStorageBuffer);
-      if (!descriptor_set_source_base) {
-        return false;
-      }
-    }
-    if (texture_key.scaled_resolve) {
-      // For scaled textures, read from scaled resolve buffers
-      uint32_t guest_address = texture_key.base_page << 12;
-      uint32_t guest_size = vulkan_texture.GetGuestBaseSize();
-
-      // Ensure the scaled buffer exists
-      if (EnsureScaledResolveMemoryCommitted(guest_address, guest_size)) {
-        // Make the range current
-        if (MakeScaledResolveRangeCurrent(guest_address, guest_size)) {
-          VkBuffer scaled_buffer = GetCurrentScaledResolveBuffer();
-          if (scaled_buffer != VK_NULL_HANDLE) {
-            // Calculate offset within the scaled buffer
-            uint32_t draw_resolution_scale_area =
-                draw_resolution_scale_x() * draw_resolution_scale_y();
-            uint64_t scaled_offset =
-                uint64_t(guest_address) * draw_resolution_scale_area;
-            uint64_t buffer_relative_offset =
-                scaled_offset - GetCurrentScaledResolveBufferBaseOffset();
-
-            write_descriptor_set_source_base_buffer_info.buffer = scaled_buffer;
-            write_descriptor_set_source_base_buffer_info.offset =
-                buffer_relative_offset;
-            // Align because shaders use up to 16-byte loads for multiple
-            // blocks at once.
-            write_descriptor_set_source_base_buffer_info.range = xe::align(
-                guest_size * draw_resolution_scale_area, uint32_t(16));
-          } else {
-            XELOGE(
-                "Scaled resolve texture load: Failed to get current scaled "
-                "buffer for texture at 0x{:08X}",
-                guest_address);
-            return false;
-          }
-        } else {
-          XELOGE(
-              "Scaled resolve texture load: Failed to make range current for "
-              "texture at 0x{:08X}",
-              guest_address);
-          return false;
-        }
-      } else {
-        XELOGE(
-            "Scaled resolve texture load: Failed to ensure scaled memory for "
-            "texture at 0x{:08X}",
-            guest_address);
-        return false;
-      }
-    } else if (!use_persistent_source) {
-      // Regular unscaled texture - use shared memory
-      write_descriptor_set_source_base_buffer_info.buffer =
-          vulkan_shared_memory.buffer();
-      write_descriptor_set_source_base_buffer_info.offset =
-          texture_key.base_page << 12;
-      // Align (primarily the last row of linear textures) because shaders use
-      // up to 16-byte loads for multiple blocks at once.
-      write_descriptor_set_source_base_buffer_info.range =
-          xe::align(vulkan_texture.GetGuestBaseSize(), uint32_t(16));
-    }
-    if (!use_persistent_source) {
-      VkWriteDescriptorSet& write_descriptor_set_source_base =
-          write_descriptor_sets[write_descriptor_set_count++];
-      write_descriptor_set_source_base.sType =
-          VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-      write_descriptor_set_source_base.pNext = nullptr;
-      write_descriptor_set_source_base.dstSet = descriptor_set_source_base;
-      write_descriptor_set_source_base.dstBinding = 0;
-      write_descriptor_set_source_base.dstArrayElement = 0;
-      write_descriptor_set_source_base.descriptorCount = 1;
-      write_descriptor_set_source_base.descriptorType =
-          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-      write_descriptor_set_source_base.pImageInfo = nullptr;
-      write_descriptor_set_source_base.pBufferInfo =
-          &write_descriptor_set_source_base_buffer_info;
-      write_descriptor_set_source_base.pTexelBufferView = nullptr;
+    if (!PrepareLoadSource(texture_key.scaled_resolve,
+        texture_key.base_page << 12, vulkan_texture.GetGuestBaseSize(),
+        descriptor_set_source_base, source_base_info, source_base_offset)) return false;
+    if (source_base_info.buffer != VK_NULL_HANDLE) {
+      VkWriteDescriptorSet& write = write_descriptor_sets[write_descriptor_set_count++];
+      write = {};
+      write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      write.dstSet = descriptor_set_source_base;
+      write.descriptorCount = 1;
+      write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      write.pBufferInfo = &source_base_info;
     }
   }
-  // Set up the mips source: scaled resolve buffer or shared memory.
   if (level_last != 0) {
-    if (use_persistent_source) {
-      descriptor_set_source_mips = shared_memory_persistent_descriptor_set_;
-    } else {
-      descriptor_set_source_mips =
-          command_processor_.AllocateSingleTransientDescriptor(
-              VulkanCommandProcessor::SingleTransientDescriptorLayout ::
-                  kStorageBuffer);
-      if (!descriptor_set_source_mips) {
-        return false;
-      }
-      if (texture_key.scaled_resolve) {
-        // Scaled resolved mips live in the scaled buffer, like the base.
-        uint32_t guest_address = texture_key.mip_page << 12;
-        uint32_t guest_size = vulkan_texture.GetGuestMipsSize();
-        if (EnsureScaledResolveMemoryCommitted(guest_address, guest_size) &&
-            MakeScaledResolveRangeCurrent(guest_address, guest_size)) {
-          VkBuffer scaled_buffer = GetCurrentScaledResolveBuffer();
-          if (scaled_buffer != VK_NULL_HANDLE) {
-            uint32_t draw_resolution_scale_area =
-                draw_resolution_scale_x() * draw_resolution_scale_y();
-            uint64_t scaled_offset =
-                uint64_t(guest_address) * draw_resolution_scale_area;
-            uint64_t buffer_relative_offset =
-                scaled_offset - GetCurrentScaledResolveBufferBaseOffset();
-            write_descriptor_set_source_mips_buffer_info.buffer = scaled_buffer;
-            write_descriptor_set_source_mips_buffer_info.offset =
-                buffer_relative_offset;
-            write_descriptor_set_source_mips_buffer_info.range = xe::align(
-                guest_size * draw_resolution_scale_area, uint32_t(16));
-          } else {
-            XELOGE(
-                "Scaled resolve texture load: Failed to get current scaled "
-                "buffer for mips at 0x{:08X}",
-                guest_address);
-            return false;
-          }
-        } else {
-          XELOGE(
-              "Scaled resolve texture load: Failed to make range current for "
-              "mips at 0x{:08X}",
-              guest_address);
-          return false;
-        }
-      } else {
-        // Regular unscaled texture - use shared memory
-        write_descriptor_set_source_mips_buffer_info.buffer =
-            vulkan_shared_memory.buffer();
-        write_descriptor_set_source_mips_buffer_info.offset =
-            texture_key.mip_page << 12;
-        // Align (primarily the last row of a linear packed mip tail) because
-        // shaders use up to 16-byte loads for multiple blocks at once.
-        write_descriptor_set_source_mips_buffer_info.range =
-            xe::align(vulkan_texture.GetGuestMipsSize(), uint32_t(16));
-      }
-      VkWriteDescriptorSet& write_descriptor_set_source_mips =
-          write_descriptor_sets[write_descriptor_set_count++];
-      write_descriptor_set_source_mips.sType =
-          VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-      write_descriptor_set_source_mips.pNext = nullptr;
-      write_descriptor_set_source_mips.dstSet = descriptor_set_source_mips;
-      write_descriptor_set_source_mips.dstBinding = 0;
-      write_descriptor_set_source_mips.dstArrayElement = 0;
-      write_descriptor_set_source_mips.descriptorCount = 1;
-      write_descriptor_set_source_mips.descriptorType =
-          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-      write_descriptor_set_source_mips.pImageInfo = nullptr;
-      write_descriptor_set_source_mips.pBufferInfo =
-          &write_descriptor_set_source_mips_buffer_info;
-      write_descriptor_set_source_mips.pTexelBufferView = nullptr;
+    if (!PrepareLoadSource(texture_key.scaled_resolve,
+        texture_key.mip_page << 12, vulkan_texture.GetGuestMipsSize(),
+        descriptor_set_source_mips, source_mips_info, source_mips_offset)) return false;
+    if (source_mips_info.buffer != VK_NULL_HANDLE) {
+      VkWriteDescriptorSet& write = write_descriptor_sets[write_descriptor_set_count++];
+      write = {};
+      write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      write.dstSet = descriptor_set_source_mips;
+      write.descriptorCount = 1;
+      write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      write.pBufferInfo = &source_mips_info;
     }
   }
-  if (write_descriptor_set_count) {
-    dfn.vkUpdateDescriptorSets(device, write_descriptor_set_count,
-                               write_descriptor_sets.data(), 0, nullptr);
+  dfn.vkUpdateDescriptorSets(device, write_descriptor_set_count,
+                            write_descriptor_sets, 0, nullptr);
+  if (!texture_key.scaled_resolve) {
+    // Scaled loads bind separate buffers. Leave shared-memory dependencies
+    // pending until a command actually reads shared memory, as on D3D12.
+    vulkan_shared_memory.Use(VulkanSharedMemory::Usage::kRead);
   }
-  vulkan_shared_memory.Use(VulkanSharedMemory::Usage::kRead);
-
   // Submit the copy buffer population commands.
 
   DeferredCommandBuffer& command_buffer =
@@ -1650,13 +1516,9 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
           kLoadDescriptorSetIndexSource, 1, &descriptor_set_source, 0, nullptr);
     }
 
-    // With the whole buffer bound persistently, guest_offset is relative to the
-    // buffer origin; with a per-load source descriptor, it's already offset to
-    // the texture's base or mip page, so it stays relative to that.
-    load_constants.guest_offset =
-        use_persistent_source
-            ? ((is_base ? texture_key.base_page : texture_key.mip_page) << 12)
-            : 0;
+    // The source origin is either in the immutable whole-buffer descriptor's
+    // shader offset, or already applied by the transient subrange descriptor.
+    load_constants.guest_offset = is_base ? source_base_offset : source_mips_offset;
     if (!is_base) {
       load_constants.guest_offset +=
           guest_layout.mip_offsets_bytes[level] *
@@ -2486,6 +2348,9 @@ bool VulkanTextureCache::Initialize() {
   const VkDevice device = vulkan_device->device();
   const ui::vulkan::VulkanDevice::Properties& device_properties =
       vulkan_device->properties();
+
+  source_max_range_ = device_properties.maxStorageBufferRange;
+  source_min_alignment_ = device_properties.minStorageBufferOffsetAlignment;
 
   // C89 texture-memory heap.
 
@@ -3432,6 +3297,19 @@ bool VulkanTextureCache::Initialize() {
     return false;
   }
 
+  static_assert(kMaxScaledResolveSparseBuffers <= XE_VK_SOURCE_BANK_CAPACITY);
+  const xe_vk_source_functions source_functions = {dfn.vkCreateDescriptorPool,
+      dfn.vkDestroyDescriptorPool, dfn.vkAllocateDescriptorSets, dfn.vkUpdateDescriptorSets};
+  uint32_t source_count = sparse_scaled_resolve_supported_
+      ? uint32_t(GetScaledResolveSparseBufferCount())
+      : uint32_t(scaled_resolve_fallback_.buffer != VK_NULL_HANDLE);
+  // Optional: pool/limit failures keep the existing per-range binding path.
+  xe_vk_source_bank_init(&scaled_source_bank_, device, &source_functions,
+      load_descriptor_set_layout_storage_buffer, source_count,
+      sparse_scaled_resolve_supported_ ? kScaledResolveSparseBufferSize
+                                      : scaled_resolve_fallback_.size,
+      source_max_range_, GetScaledSourceBuffer, this);
+
   return true;
 }
 
@@ -3742,6 +3620,55 @@ xenos::ClampMode VulkanTextureCache::NormalizeClampMode(
                : xenos::ClampMode::kMirroredRepeat;
   }
   return clamp_mode;
+}
+
+VkBuffer VulkanTextureCache::GetScaledSourceBuffer(void* context, uint32_t index) {
+  auto& cache = *static_cast<VulkanTextureCache*>(context);
+  if (cache.sparse_scaled_resolve_supported_) {
+    return index < cache.scaled_resolve_sparse_buffers_.size() &&
+           cache.scaled_resolve_sparse_buffers_[index]
+        ? cache.scaled_resolve_sparse_buffers_[index]->buffer() : VK_NULL_HANDLE;
+  }
+  return index == 0 ? cache.scaled_resolve_fallback_.buffer : VK_NULL_HANDLE;
+}
+
+bool VulkanTextureCache::PrepareLoadSource(bool scaled, uint32_t address,
+    uint32_t length, VkDescriptorSet& descriptor, VkDescriptorBufferInfo& info,
+    uint32_t& shader_offset) {
+  VkBuffer buffer;
+  uint64_t capacity, offset, bytes;
+  VkDescriptorSet persistent;
+  if (scaled) {
+    if (!EnsureScaledResolveMemoryCommitted(address, length, 4) ||
+        !MakeScaledResolveRangeCurrent(address, length, 4)) return false;
+    buffer = GetCurrentScaledResolveBuffer();
+    capacity = GetCurrentScaledResolveBufferSize();
+    uint32_t area = draw_resolution_scale_x() * draw_resolution_scale_y();
+    offset = uint64_t(address) * area - GetCurrentScaledResolveBufferBaseOffset();
+    bytes = uint64_t(length) * area;
+    persistent = xe_vk_source_bank_get(&scaled_source_bank_,
+        uint32_t(GetScaledResolveCurrentBufferIndex()), buffer, capacity);
+  } else {
+    buffer = static_cast<VulkanSharedMemory&>(shared_memory()).buffer();
+    capacity = SharedMemory::kBufferSize; offset = address; bytes = length;
+    persistent = shared_memory_persistent_descriptor_set_;
+  }
+  xe_gpu_source_view view;
+  if (buffer == VK_NULL_HANDLE || !xe_gpu_source_view_plan(capacity, offset,
+      bytes, source_max_range_, source_min_alignment_, persistent != VK_NULL_HANDLE,
+      &view)) return false;
+  shader_offset = view.shader_offset;
+  info.buffer = VK_NULL_HANDLE;
+  if (view.persistent) {
+    descriptor = persistent;
+  } else {
+    descriptor = command_processor_.AllocateSingleTransientDescriptor(
+        VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageBuffer);
+    if (descriptor == VK_NULL_HANDLE) return false;
+    info.buffer = buffer; info.offset = view.descriptor_offset;
+    info.range = view.descriptor_range;
+  }
+  return true;
 }
 
 bool VulkanTextureCache::InitializeScaledResolveFallback() {

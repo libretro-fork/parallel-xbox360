@@ -1,0 +1,89 @@
+Immutable scaled texture-load source views (0145)
+=================================================
+
+Change
+------
+Vulkan used transient source descriptors for every scaled texture reload even
+when all views referenced the same long-lived sparse VkBuffer. The shader then
+received guest_offset zero because the descriptor itself began at the texture.
+Unscaled shared memory already supported a persistent whole-buffer descriptor;
+D3D12 already passes source addresses without per-load source descriptors.
+
+A fixed MSVC C89 descriptor bank now creates one immutable source set for each
+scaled sparse buffer, or the single non-sparse backing if its full size fits
+the device's maxStorageBufferRange. Setup is cold and optional. Smaller limits,
+pool/allocation failure, unknown buffer identity or size mismatch retain the
+range-descriptor path. No extension, newer API or bindless feature is needed.
+The C bank has 32 slots (536 B x64); current maximum 7x7 scaling needs at most
+24 overlapping sparse windows. The cached device limits add 16 B. This reserves
+metadata even if the bank is unused; native descriptor storage is additional.
+
+A checked C89 planner rebases the texture origin from the descriptor into the
+existing uint32 shader byte-offset constant. It checks 64-bit extent arithmetic,
+16-byte vector tails, device range/alignment limits and shader-address overflow.
+No source data or shader code is copied or changed. Needed aligned 128-bit loads
+name identical bytes; mip/array relative offsets remain added to the same origin.
+Base and mip levels inside one sparse window now share one source set, avoiding
+a redundant bind. Destinations retain their existing transient scratch views.
+
+Vulkan no longer calls shared-memory Use(kRead) for scaled loads, whose actual
+sources are different buffers. Native-buffer writes stay pending until a real
+native-buffer consumer/writer supplies its own dependency. D3D12 already limits
+UseForReading to unscaled loads. Existing scaled-write visibility, scratch and
+image barriers, render-pass ending, native CPU invalidation watches and all
+RequestRange calls are preserved. No watch-only coherence shortcut was taken.
+
+Lifetime and failure behavior
+-----------------------------
+Sets are written once at initialization and never updated/reset while borrowed.
+They reference actual buffer handles, not their current sparse-memory mappings.
+Sparse residency and range-current selection still precede each load. Pool
+teardown happens before the referenced scaled buffers are destroyed, through
+the established texture-cache destructor path. Cold allocation failure destroys
+its pool, clears handles and leaves the transient path usable. Double close is
+safe. Buffer/size identity checks refuse stale bank lookups. The bank owns no
+native buffer or physical memory and introduces no waits, locks or atomics.
+
+Source arithmetic contract: texture_load.xesli adds guest_offset AFTER scaled
+tiling and intra-group addressing, matching D3D12's root source-address path.
+The kernels use supplied block extents, not the source descriptor length, to
+select needed output. A whole-buffer binding may expose otherwise ignored
+padding lanes; required aligned loads remain in the original padded range.
+Sparse resources retain SPARSE_RESIDENCY_BIT, so unbound accesses are safe
+(unspecified values without residencyNonResidentStrict), not new allocations.
+No ignored padding value is relied on for valid texel output. Actual GPU output
+and driver behavior are not proven by the offline address test.
+References:
+https://docs.vulkan.org/spec/latest/chapters/sparsemem.html
+https://docs.vulkan.org/refpages/latest/refpages/source/VkDescriptorBufferInfo.html
+https://docs.vulkan.org/spec/latest/chapters/limits.html
+
+Verification
+------------
+C89 fake Vulkan API tests verify all consumed create/allocate/write fields,
+capacities 1..32, missing buffers, max-range rejection, create and partial-set
+allocation failures, repeated initialization, close/reinit and double close.
+320000 warmed identity-checked lookups make no Vulkan create/allocate/update
+calls. One million address pairs cover every integer scale axis 1..7 through
+random area combinations, overlapping 1 GiB sparse-window origins, 2 GiB
+bindings, constrained-driver range fallback, tails and >4 GiB physical offsets.
+Every aligned 16-byte load containing a requested byte is also checked. Invalid
+arithmetic, alignment and 32-bit shader-wrap cases fail without publishing a
+partial plan. A bank miss retains valid transient planning.
+
+MSVC /TC/W4/WX, MSVC AddressSanitizer and MinGW strict C89 tests: PASS.
+Native MSVC /Zs of actual VulkanTextureCache and D3D12TextureCache: PASS.
+Static Windows Make -j5 and committed version check: recorded in journal.
+No Vulkan/D3D12 device, GPU work, game, JIT or RetroArch is started. Remote CI,
+Linux/ARM execution, live content close, GPU output and timings are unclaimed.
+
+Remaining work
+--------------
+This removes source descriptor churn, not pixel transfers. Texture conversion
+still writes scratch, optional storage-image blit and final sampled image;
+residency/native allocation can still grow at new high-water demand. Native
+RequestRange uploads remain coupled to existing CPU-write invalidation. The
+536 B bank and native persistent sets can use more cold storage than transient
+views alone. No FPS, whole-core allocation-free or end-to-end zero-copy claim.
+Dark Souls II at 4x / RTX 5090 still needs representative GPU measurements.
+Installed core DLL and audio/frontend pacing/content-close ordering unchanged.

@@ -1270,3 +1270,13 @@ The DLL path and one-path-per-line list are explicit development inputs; no
 compiler/validator DLL is required by the core. C89 owns test file I/O and the
 COM bridge borrows each buffer only during its synchronous Validate call.
 See resolve_native_loads_results.txt for exact coverage and limits.
+
+Immutable Vulkan source views
+-----------------------------
+`run_source_views_tests.sh` (or `.cmd` in a VS developer prompt) checks the
+production C89 descriptor bank and source-view planner. Shell sanitizers are
+on by default; use SANITIZER= on MinGW without those runtimes. Native sanitizer
+flags: SOURCE_VIEW_TEST_FLAGS=/fsanitize=address /Zi, with a separate
+SOURCE_VIEW_TEST_OUT. Fake Vulkan function-table calls verify actual native
+structures and cold failures without creating a Vulkan device. See
+source_views_results.txt for coverage, resource lifetime and remaining copies.
