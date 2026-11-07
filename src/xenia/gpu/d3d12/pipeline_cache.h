@@ -11,6 +11,7 @@
 #define XENIA_GPU_D3D12_PIPELINE_CACHE_H_
 
 #include "libretro/core_pipeline_publication.h"
+#include "libretro/core_pipeline_retire.h"
 #include <cstdio>
 #include <deque>
 #include <functional>
@@ -475,6 +476,7 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
     // Concrete handles and packed control flags use C89 common atomics.
     // Draws pin the loaded handle; flags alone cannot identify its placeholder.
     xe_pipeline_publication publication{};
+    xe_pipeline_retire_slot* retirement = nullptr;
     Pipeline() { xe_pipeline_publication_init(&publication); }
     Pipeline(const Pipeline&) = delete;
     Pipeline& operator=(const Pipeline&) = delete;
@@ -528,9 +530,8 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   // thread, paired with the submission they may still be referenced by. Real
   // releases happen in ProcessDeferredDestructions once the GPU has passed it.
   void ProcessDeferredDestructions();
-  std::mutex deferred_destroy_mutex_;
-  std::vector<std::pair<ID3D12PipelineState*, uint64_t>>
-      deferred_destroy_pipelines_;
+  xe_pipeline_retire_pool* retirement_pool_ = nullptr;
+  static void DestroyRetiredPipeline(void* opaque, uint64_t handle);
 };
 inline bool PipelineCache::PipelineDescription::operator==(
     const PipelineDescription& other) const {

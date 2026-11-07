@@ -116,6 +116,9 @@ bool VulkanPipelineCache::precise_interpolation_supported() const {
 }
 
 bool VulkanPipelineCache::Initialize() {
+  // Cold reservation storage. If unavailable/full, the early async predicate
+  // selects the existing synchronous path before shader/layout preparation.
+  if (!retirement_pool_) retirement_pool_ = xe_pipeline_retire_new(16384);
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
 
@@ -406,17 +409,9 @@ void VulkanPipelineCache::Shutdown() {
       dfn.vkDestroyPipeline(device, pipeline, nullptr);
   });
 
-  // Process any remaining deferred destructions (force destroy all since
-  // device should be idle at shutdown).
-  {
-    std::lock_guard<std::mutex> lock(deferred_destroy_mutex_);
-    for (const auto& pipeline_pair : deferred_destroy_pipelines_) {
-      if (pipeline_pair.first != VK_NULL_HANDLE) {
-        dfn.vkDestroyPipeline(device, pipeline_pair.first, nullptr);
-      }
-    }
-    deferred_destroy_pipelines_.clear();
-  }
+  // Creators are joined and the GPU is idle in the upstream shutdown order.
+  xe_pipeline_retire_free(retirement_pool_, &DestroyRetiredPipeline, this);
+  retirement_pool_ = nullptr;
 
   // Destroy all pipelines.
   last_pipeline_ = nullptr;
@@ -597,7 +592,8 @@ bool VulkanPipelineCache::EnsureShadersTranslated(
 
 bool VulkanPipelineCache::CanCreatePipelineAsync(bool has_pixel_shader) const {
   return cvars::async_shader_compilation && creation_queue_.has_threads() &&
-         has_pixel_shader && placeholder_pixel_shader_ != VK_NULL_HANDLE;
+         has_pixel_shader && placeholder_pixel_shader_ != VK_NULL_HANDLE &&
+         xe_pipeline_retire_available(retirement_pool_) != 0;
 }
 
 const VulkanPipelineCache::PipelineLayoutProvider*
@@ -761,6 +757,9 @@ bool VulkanPipelineCache::ConfigurePipeline(
         use_interpreter);
     bool make_placeholder = use_interpreter || vertex_shader->is_translated();
     if (make_placeholder) {
+      pipeline_pair.second.retirement =
+          xe_pipeline_retire_reserve(retirement_pool_);
+      assert_not_null(pipeline_pair.second.retirement);
       // Set is_placeholder BEFORE creating the pipeline to avoid a race with
       // the creation thread checking this flag.
       xe_pipeline_flag_store(&pipeline_pair.second.publication, XE_PIPELINE_PLACEHOLDER, true);
@@ -795,6 +794,8 @@ bool VulkanPipelineCache::ConfigurePipeline(
             use_interpreter ? "interpreter" : "real-VS",
             vertex_shader->shader().ucode_data_hash(),
             pixel_shader ? pixel_shader->shader().ucode_data_hash() : 0);
+        xe_pipeline_retire_cancel(pipeline_pair.second.retirement);
+        pipeline_pair.second.retirement = nullptr;
         // No placeholder - fall through to queue-only (drop until ready).
         xe_pipeline_flag_store(&pipeline_pair.second.publication, XE_PIPELINE_PLACEHOLDER, false);
         xe_pipeline_flag_store(&pipeline_pair.second.publication, XE_PIPELINE_INTERPRETER, false);
@@ -2295,15 +2296,12 @@ void VulkanPipelineCache::StoreCreatedPipeline(
           (uint64_t)(pipeline));
 
   if (old_pipeline != VK_NULL_HANDLE) {
-    // We're replacing a placeholder pipeline with the real one.
-    // Queue the old placeholder for deferred destruction, recording the
-    // current submission number so we only destroy after the GPU is done.
-    uint64_t current_submission = command_processor_.GetCurrentSubmission();
-    {
-      std::lock_guard<std::mutex> lock(deferred_destroy_mutex_);
-      deferred_destroy_pipelines_.emplace_back(old_pipeline,
-                                               current_submission);
-    }
+    // A placeholder reserves metadata before creation. The successful creator
+    // transfers it exactly once, after its final entry access to the slot.
+    const int transferred = xe_pipeline_retire_transfer(
+        &creation_arguments.pipeline->second.retirement, (uint64_t)old_pipeline,
+        command_processor_.GetCurrentSubmission());
+    assert_true(transferred);
   }
 
   // Mark as no longer a placeholder (for the case where we just created real).
@@ -2320,46 +2318,16 @@ void VulkanPipelineCache::StoreCreatedPipeline(
   }
 }
 
+void VulkanPipelineCache::DestroyRetiredPipeline(void* opaque, uint64_t handle) {
+  auto* self = static_cast<VulkanPipelineCache*>(opaque);
+  const auto* device = self->command_processor_.GetVulkanDevice();
+  device->functions().vkDestroyPipeline(device->device(), (VkPipeline)handle, nullptr);
+}
+
 void VulkanPipelineCache::ProcessDeferredDestructions() {
-  std::vector<VkPipeline> pipelines_to_destroy;
-
-  uint64_t completed_submission = command_processor_.GetCompletedSubmission();
-
-  {
-    std::lock_guard<std::mutex> lock(deferred_destroy_mutex_);
-    if (deferred_destroy_pipelines_.empty()) {
-      return;
-    }
-
-    // Only destroy pipelines whose submission has completed on the GPU.
-    // Keep pipelines that are still potentially in-flight.
-    auto it = deferred_destroy_pipelines_.begin();
-    while (it != deferred_destroy_pipelines_.end()) {
-      if (it->second <= completed_submission) {
-        // This submission has completed, safe to destroy.
-        pipelines_to_destroy.push_back(it->first);
-        it = deferred_destroy_pipelines_.erase(it);
-      } else {
-        ++it;
-      }
-    }
-  }
-
-  if (pipelines_to_destroy.empty()) {
-    return;
-  }
-
-  // Destroy pipelines now that we know GPU is done with them.
-  const ui::vulkan::VulkanDevice* vulkan_device =
-      command_processor_.GetVulkanDevice();
-  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
-  VkDevice device = vulkan_device->device();
-
-  for (VkPipeline pipeline : pipelines_to_destroy) {
-    if (pipeline != VK_NULL_HANDLE) {
-      dfn.vkDestroyPipeline(device, pipeline, nullptr);
-    }
-  }
+  xe_pipeline_retire_collect(retirement_pool_,
+      command_processor_.GetCompletedSubmission(), SIZE_MAX,
+      &DestroyRetiredPipeline, this);
 }
 
 void VulkanPipelineCache::InitializeShaderStorage(

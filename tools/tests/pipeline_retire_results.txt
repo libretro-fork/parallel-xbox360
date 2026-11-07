@@ -1,0 +1,46 @@
+Native placeholder retirement (0174)
+==================================
+Both renderers reserve retirement metadata on the GPU owner before creating
+an asynchronous placeholder. A creator exchanges the concrete handle, consumes
+its entry reservation, and publishes only the displaced handle and submission
+number through libretro-common's intrusive MPSC stack. The GPU owner drains
+that handoff and destroys handles only after the existing completion index
+permits it. Publication does not copy a pipeline entry or native resource.
+
+The replacement removes two std::mutex fields, two growing retirement vectors,
+two temporary collection vectors, and vector erase/shifting. Reserve, cancel,
+publish and collect perform no heap allocation. Initialization allocates a
+pool plus 16,384 32-byte records (512 KiB) per active backend. The publication
+head is separated from owner bookkeeping by 128 bytes; slot storage is not
+cache-line isolated. Native entries grow by one pointer: Vulkan 40 bytes and
+D3D12 216 bytes on the tested Windows x64 ABI.
+
+An unavailable or exhausted pool disables async creation in the early predicate,
+before shader/layout preparation. Existing synchronous creation then applies;
+there is no new capacity wait or draw-skip fallback. Failed placeholder creation
+returns its reservation on the owner. A failed real replacement keeps the
+placeholder and reservation with its native entry until shutdown. Creators join
+and the GPU is idle before pool teardown. Unpublished handles remain entry-owned;
+metadata copy/move never clones the reservation. The transfer helper rejects a
+second publication without accessing a potentially recycled slot.
+
+Verification on Windows x64:
+- GNU static Makefile core build, make -j5: PASS.
+- MSVC CMake/Ninja core build, --parallel 5: PASS.
+- GNU strict C89 -O2 -Wall -Wextra -Werror: PASS.
+- Linux GCC strict C89 with AddressSanitizer and UndefinedBehaviorSanitizer
+  in WSL (Codex-RetroArch-Tests): PASS.
+- MSVC /TC /O2 /W4 /WX and MSVC AddressSanitizer: PASS.
+- Concurrent fixture: eight publishers, GPU-owner collection with an 11-handle
+  budget, 512 reservations reused for twenty rounds: PASS.
+- Completion gates, future-before-ready traversal, zero budget, pool exhaustion,
+  cancellation, zero-handle metadata return, transfer rejection, shutdown with
+  unpublished metadata, missing-destructor retention/retry: PASS.
+- Native D3D12/Vulkan metadata-copy and publication fixture, including 20,000
+  immediate failure retries and concurrent independent flag writers: PASS.
+
+CI runners include the new C89 fixture. Remote CI, full Linux core build, native GPU
+execution of this candidate, gameplay FPS and memory/performance measurements
+have not been completed here. Other pipeline/shader allocations and locks remain.
+This change does not establish allocation-free gameplay, solve the independently
+reported intermittent frontend close crash, or modify audio scheduling.

@@ -92,6 +92,7 @@ PipelineCache::PipelineCache(D3D12CommandProcessor& command_processor,
 PipelineCache::~PipelineCache() { Shutdown(); }
 
 bool PipelineCache::Initialize() {
+  if (!retirement_pool_) retirement_pool_ = xe_pipeline_retire_new(16384);
   // Shared guest feature/modification settings; native stages read raw ucode.
   if (!guest_shader_cache_.Initialize()) {
     return false;
@@ -193,13 +194,9 @@ void PipelineCache::Shutdown() {
   // Shut down the persistent shader / pipeline storage.
   ShutdownShaderStorage();
 
-  // Release placeholder pipelines that were swapped out but not yet reaped (the
-  // creation threads are joined, so no more can be queued). The GPU is idle by
-  // shutdown, so there is nothing to wait for.
-  for (auto& deferred : deferred_destroy_pipelines_) {
-    deferred.first->Release();
-  }
-  deferred_destroy_pipelines_.clear();
+  // Creators are joined and the GPU is idle in the upstream shutdown order.
+  xe_pipeline_retire_free(retirement_pool_, &DestroyRetiredPipeline, nullptr);
+  retirement_pool_ = nullptr;
 
   // Destroy all pipelines.
   current_pipeline_ = nullptr;
@@ -448,27 +445,16 @@ void PipelineCache::EndSubmission() {
   // asynchronously. Bindless draws use a placeholder pipeline meanwhile.
   // Bindful draws are skipped until the pipeline is ready. This avoids
   // frame-time spikes from blocking on pipeline creation.
-  creation_queue_.Notify();
+}
+
+void PipelineCache::DestroyRetiredPipeline(void*, uint64_t handle) {
+  reinterpret_cast<ID3D12PipelineState*>(uintptr_t(handle))->Release();
 }
 
 void PipelineCache::ProcessDeferredDestructions() {
-  std::vector<ID3D12PipelineState*> pipelines_to_destroy;
-  uint64_t completed_submission = command_processor_.GetCompletedSubmission();
-  {
-    std::lock_guard<std::mutex> lock(deferred_destroy_mutex_);
-    auto it = deferred_destroy_pipelines_.begin();
-    while (it != deferred_destroy_pipelines_.end()) {
-      if (it->second <= completed_submission) {
-        pipelines_to_destroy.push_back(it->first);
-        it = deferred_destroy_pipelines_.erase(it);
-      } else {
-        ++it;
-      }
-    }
-  }
-  for (ID3D12PipelineState* pipeline : pipelines_to_destroy) {
-    pipeline->Release();
-  }
+  xe_pipeline_retire_collect(retirement_pool_,
+      command_processor_.GetCompletedSubmission(), SIZE_MAX,
+      &DestroyRetiredPipeline, nullptr);
 }
 
 bool PipelineCache::IsCreatingPipelines() { return creation_queue_.IsBusy(); }
@@ -939,7 +925,8 @@ bool PipelineCache::ConfigurePipeline(
   // Only use async when there's a pixel shader - VS-only pipelines are fast
   // to compile and don't benefit from async (vertex shaders are small).
   bool use_async = cvars::async_shader_compilation &&
-                   creation_queue_.has_threads() && pixel_shader != nullptr;
+                   creation_queue_.has_threads() && pixel_shader != nullptr &&
+                   xe_pipeline_retire_available(retirement_pool_) != 0;
   // An immediate hot-swap placeholder pipeline needs the real vertex shader and
   // a root signature that does not depend on the (not-yet-translated) pixel
   // shader. Only bindless mode has such a fixed root signature, so the
@@ -1168,10 +1155,16 @@ bool PipelineCache::ConfigurePipeline(
       // real VS + no-op PS, or (interpreter) the ucode interpreter VS + no-op/
       // debug PS with both real shaders deferred. The creation thread swaps in
       // the real pipeline when translation finishes.
+      new_pipeline->retirement = xe_pipeline_retire_reserve(retirement_pool_);
+      assert_not_null(new_pipeline->retirement);
       ID3D12PipelineState* placeholder_state = CreateD3D12Pipeline(
           runtime_description, make_interpreter
                                    ? PipelinePlaceholderMode::kInterpreter
                                    : PipelinePlaceholderMode::kRealVertex);
+      if (!placeholder_state) {
+        xe_pipeline_retire_cancel(new_pipeline->retirement);
+        new_pipeline->retirement = nullptr;
+      }
       // Published before state so a draw that loads the placeholder out of
       // state always sees it here too, and pins this concrete PSO rather than
       // the swappable handle - the real pipeline must never run against
@@ -2191,9 +2184,10 @@ void PipelineCache::StoreCreatedPipeline(Pipeline* pipeline,
             (uint64_t)(uintptr_t)(state))));
     xe_pipeline_flag_store(&pipeline->publication, XE_PIPELINE_PLACEHOLDER, false);
     if (old_state != nullptr) {
-      std::lock_guard<std::mutex> lock(deferred_destroy_mutex_);
-      deferred_destroy_pipelines_.emplace_back(
-          old_state, command_processor_.GetCurrentSubmission());
+      const int transferred = xe_pipeline_retire_transfer(
+          &pipeline->retirement, (uint64_t)(uintptr_t)old_state,
+          command_processor_.GetCurrentSubmission());
+      assert_true(transferred);
     }
     xe_pipeline_flag_store(&pipeline->publication, XE_PIPELINE_PENDING, false);
     return;

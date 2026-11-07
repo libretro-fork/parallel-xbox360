@@ -11,6 +11,7 @@
 #define XENIA_GPU_VULKAN_VULKAN_PIPELINE_STATE_CACHE_H_
 
 #include "libretro/core_pipeline_publication.h"
+#include "libretro/core_pipeline_retire.h"
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -61,6 +62,7 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
 
   struct Pipeline {
     xe_pipeline_publication publication{};
+    xe_pipeline_retire_slot* retirement = nullptr;
     // Owned by the command processor; layout is published before its handle.
     retro_atomic_ptr_t pipeline_layout{nullptr};
     explicit Pipeline(const PipelineLayoutProvider* provider) {
@@ -68,6 +70,7 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
       retro_atomic_store_relaxed_ptr(&pipeline_layout,
           const_cast<PipelineLayoutProvider*>(provider));
     }
+    // Metadata copies do not duplicate the original entry's reserved slot.
     Pipeline(const Pipeline& other) {
       xe_pipeline_publication_copy(&publication, &other.publication);
       retro_atomic_ptr_init(&pipeline_layout,
@@ -521,8 +524,8 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
   // Pipelines are only destroyed after the GPU submission that might reference
   // them has completed (tracked via submission numbers from command processor).
   void ProcessDeferredDestructions();
-  std::vector<std::pair<VkPipeline, uint64_t>> deferred_destroy_pipelines_;
-  std::mutex deferred_destroy_mutex_;
+  xe_pipeline_retire_pool* retirement_pool_ = nullptr;
+  static void DestroyRetiredPipeline(void* opaque, uint64_t handle);
 
   // Shader and pipeline storage.
   uint32_t shader_storage_title_id_ = 0;

@@ -67,8 +67,13 @@ extern "C" int xe_pipeline_native_clone(unsigned backend,void *p){
 #endif
   }
   auto* entry=static_cast<NativeVK::Pipeline*>(p);
+  auto* original=entry->retirement;
+  auto* sentinel=reinterpret_cast<xe_pipeline_retire_slot*>(uintptr_t(0x1230));
+  entry->retirement=sentinel;
   NativeVK::Pipeline copy(*entry),moved(std::move(copy));
-  return xe_pipeline_handle_load(&entry->publication)==xe_pipeline_handle_load(&moved.publication) &&
+  const bool sole_owner=entry->retirement==sentinel && !copy.retirement && !moved.retirement;
+  entry->retirement=original;
+  return sole_owner && xe_pipeline_handle_load(&entry->publication)==xe_pipeline_handle_load(&moved.publication) &&
       xe_pipeline_placeholder_load(&entry->publication)==xe_pipeline_placeholder_load(&moved.publication) &&
       xe_pipeline_flags_load(&entry->publication)==xe_pipeline_flags_load(&moved.publication) &&
       retro_atomic_load_acquire_ptr(&entry->pipeline_layout)==retro_atomic_load_acquire_ptr(&moved.pipeline_layout);
