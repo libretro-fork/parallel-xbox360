@@ -36,9 +36,6 @@ class XContentContainerDevice : public Device {
   static std::unique_ptr<XContentContainerHeader> ReadContainerHeader(
       const std::filesystem::path& file_path);
 
-  static std::unique_ptr<XContentContainerHeader> ReadContainerHeader(
-      FILE* host_file);
-
   ~XContentContainerDevice() override;
 
   bool Initialize() override;
@@ -106,7 +103,7 @@ class XContentContainerDevice : public Device {
 
   Entry* ResolvePath(const std::string_view path) override;
   void Dump(StringBuffer* string_buffer) override;
-  Result ReadHeaderAndVerify(FILE* header_file);
+  Result ReadHeaderAndVerify();
 
   void SetName(std::string name) { name_ = name; }
   const std::string& GetName() const { return name_; }

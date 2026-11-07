@@ -1,0 +1,60 @@
+XContent package header VFS (0177)
+=================================
+Behavior reference: WizzardSK/xenia-libretro commit7708da9f5aee8580355b616b4d3e585ca56acb9a
+(Edge-origin failed package-open handle leak). This is an independent C89/VFS
+adaptation, not a cherry-pick of its stdio/filesystem implementation.
+
+CreateContentDevice now probes signature + big-endian volume type using one
+read-only common VFS handle. Minimum size and field bounds are preflighted;
+only eight bytes are requested on a supported package. No full header is
+allocated/read simply to select STFS versus SVOD. Invalid magic/type, size,
+seek/read errors and close failures cannot publish a type.
+
+Initialize reads directly into the already-owned header, closes that handle
+before SetupContainer/LoadHostFiles, then validates the magic and publishes
+files_total_size_. It no longer allocates/replaces a second header or leaks
+the successful header FILE. The factory's short-file/failed-read FILE leaks are
+also removed. The FILE* reader overload is deleted (no external callers).
+Standalone ReadContainerHeader(path) uses the same checked VFS transfer into
+its final typed allocation. File size comes from the open handle, rather than
+a separate path stat; there is no whole-package slurp or payload staging.
+
+On the tested native ABI sizeof(XContentContainerHeader)=38,682 bytes and the
+volume type occupies four bytes at offset937 (0x3A9). The factory+Initialize
+header sequence requests 38,690 bytes instead of77,364 and uses one header
+allocation instead of three. These counts exclude separate signature detection,
+metadata extraction and payload mounting elsewhere. A common RFILE wrapper and
+UTF-8 path conversion can still allocate; this is not allocation-free mounting.
+The constructor retains its original zero-initialized public header state.
+
+Verification:
+- MSVC core build, --parallel5: PASS.
+- GNU static Makefile core build, make-j5: PASS.
+- Native MSVC /TC /W4 /WX C89 driver + actual container bridge: PASS.
+- Native MinGW strict C89 driver + actual container bridge: PASS.
+- Linux GCC ASan+UBSan C89 helper/common-VFS fixture: PASS.
+- Linux G++ actual container implementation compilation: PASS.
+- Scoped MSVC ASan actual container implementation, bridge and C89 driver: PASS.
+  STL string/vector annotations are disabled to match the remaining release
+  libraries; this is not full-core ASan.
+- The same native fixture against parentc7f2d2e68 container implementation
+  fails on the VFS-only path; rebuilt with the new owner it passes. Parent
+  components are linked against the same unchanged dependency libraries.
+
+The adversarial frontend VFS has no native file behind its UTF-8 content:// URI.
+It checks all three signatures, both supported types, a high-byte unsupported
+type, exact probe/read byte counts, INT64_MAX logical file size, 1..7 byte reads,
+EINTR retry, EOF after a prefix, read errors/oversized returns, size/open/seek
+failures and wrong seek results, close errors, no type/size publication on
+failure, and exactly one close attempt per successful open. Actual factory and
+ReadContainerHeader paths are exercised. A minimal container subclass runs the
+real Initialize but replaces payload mounting; it verifies that header failure
+never reaches payload hooks and success keeps the original destination address.
+
+No std::filesystem exists/is_directory/file_size or stdio open/read/close remains
+in xcontent_container_device.cc. Existing std::filesystem::path-typed public ABI
+and UTF-8 conversion are still interoperability boundaries; fragment/payload I/O,
+directory traversal, remaining path objects and container-tree synchronization
+are separate migration work. No audio/video pacing, sleeps, threads or GPU waits
+are added. Remote CI, full Linux core build and live-game mounting have not been
+run for this patch; no gameplay/FPS benefit is claimed.

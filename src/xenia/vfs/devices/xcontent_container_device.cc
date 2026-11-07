@@ -9,6 +9,9 @@
 
 #include "xenia/vfs/devices/xcontent_container_device.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/string.h"
+#include "libretro/core_package_header.h"
+#include <cstddef>
 #include "xenia/vfs/devices/xcontent_devices/stfs_container_device.h"
 #include "xenia/vfs/devices/xcontent_devices/svod_container_device.h"
 
@@ -18,38 +21,14 @@ namespace vfs {
 std::unique_ptr<XContentContainerDevice>
 XContentContainerDevice::CreateContentDevice(
     const std::string_view mount_path, const std::filesystem::path& host_path) {
-  if (!std::filesystem::exists(host_path)) {
-    XELOGE("Path to XContent container does not exist: {}", host_path);
-    return nullptr;
-  }
+  static_assert(sizeof(decltype(XContentMetadata::volume_type)) == 4);
+  const auto path = xe::path_to_utf8(host_path);
+  unsigned volume;
+  if (xe_package_probe_type(path.c_str(), sizeof(XContentContainerHeader),
+          offsetof(XContentContainerHeader, content_metadata) +
+          offsetof(XContentMetadata, volume_type), &volume) != 1) return nullptr;
 
-  if (std::filesystem::is_directory(host_path)) {
-    return nullptr;
-  }
-
-  FILE* host_file = xe::filesystem::OpenFile(host_path, "rb");
-  if (!host_file) {
-    XELOGE("Error opening XContent file.");
-    return nullptr;
-  }
-
-  const uint64_t package_size = std::filesystem::file_size(host_path);
-  if (package_size < sizeof(XContentContainerHeader)) {
-    return nullptr;
-  }
-
-  const auto header = XContentContainerDevice::ReadContainerHeader(host_file);
-  if (header == nullptr) {
-    return nullptr;
-  }
-
-  fclose(host_file);
-
-  if (!header->content_header.is_magic_valid()) {
-    return nullptr;
-  }
-
-  switch (header->content_metadata.volume_type) {
+  switch (static_cast<XContentVolumeType>(volume)) {
     case XContentVolumeType::kStfs:
       return std::make_unique<StfsContainerDevice>(mount_path, host_path);
       break;
@@ -74,27 +53,11 @@ XContentContainerDevice::XContentContainerDevice(
 XContentContainerDevice::~XContentContainerDevice() {}
 
 bool XContentContainerDevice::Initialize() {
-  if (!std::filesystem::exists(host_path_)) {
-    XELOGE("Path to XContent container does not exist: {}", host_path_);
-    return false;
-  }
-
-  if (std::filesystem::is_directory(host_path_)) {
-    return false;
-  }
-
   XELOGI("Loading XContent header file: {}", host_path_);
-  auto header_file = xe::filesystem::OpenFile(host_path_, "rb");
-  if (!header_file) {
-    XELOGE("Error opening XContent header file.");
-    return false;
-  }
-
-  auto header_loading_result = ReadHeaderAndVerify(header_file);
+  auto header_loading_result = ReadHeaderAndVerify();
   if (header_loading_result != Result::kSuccess) {
     XELOGE("Error reading XContent header: {}",
            static_cast<int32_t>(header_loading_result));
-    fclose(header_file);
     return false;
   }
 
@@ -111,33 +74,10 @@ bool XContentContainerDevice::Initialize() {
 std::unique_ptr<XContentContainerHeader>
 XContentContainerDevice::ReadContainerHeader(
     const std::filesystem::path& file_path) {
-  if (!std::filesystem::exists(file_path)) {
-    return {};
-  }
-
-  if (std::filesystem::file_size(file_path) < sizeof(XContentContainerHeader)) {
-    return {};
-  }
-
-  auto header_file = xe::filesystem::OpenFile(file_path, "rb");
-  if (!header_file) {
-    return {};
-  }
-
-  auto header = ReadContainerHeader(header_file);
-  fclose(header_file);
-  return header;
-}
-
-std::unique_ptr<XContentContainerHeader>
-XContentContainerDevice::ReadContainerHeader(FILE* host_file) {
-  std::unique_ptr<XContentContainerHeader> header =
-      std::make_unique<XContentContainerHeader>();
-
-  // Read header & check signature
-  if (fread(header.get(), sizeof(XContentContainerHeader), 1, host_file) != 1) {
+  const auto path = xe::path_to_utf8(file_path);
+  std::unique_ptr<XContentContainerHeader> header(new XContentContainerHeader);
+  if (xe_package_read_header(path.c_str(), header.get(), sizeof(*header), nullptr) != 1)
     return nullptr;
-  }
   return header;
 }
 
@@ -187,24 +127,14 @@ kernel::xam::XCONTENT_AGGREGATE_DATA XContentContainerDevice::content_header()
   return ContentDataFromHeader(*header_);
 }
 
-XContentContainerDevice::Result XContentContainerDevice::ReadHeaderAndVerify(
-    FILE* header_file) {
-  files_total_size_ = std::filesystem::file_size(host_path_);
-  if (files_total_size_ < sizeof(XContentContainerHeader)) {
-    return Result::kTooSmall;
-  }
-
-  auto header = ReadContainerHeader(header_file);
-  if (header == nullptr) {
-    return Result::kReadError;
-  }
-
-  if (!header->content_header.is_magic_valid()) {
-    // Unexpected format.
-    return Result::kFileMismatch;
-  }
-
-  header_ = std::move(header);
+XContentContainerDevice::Result XContentContainerDevice::ReadHeaderAndVerify() {
+  const auto path = xe::path_to_utf8(host_path_);
+  uint64_t size;
+  int result = xe_package_read_header(path.c_str(), header_.get(), sizeof(*header_), &size);
+  if (!result) return Result::kTooSmall;
+  if (result < 0) return Result::kReadError;
+  if (!header_->content_header.is_magic_valid()) return Result::kFileMismatch;
+  files_total_size_ = size;
   return Result::kSuccess;
 }
 

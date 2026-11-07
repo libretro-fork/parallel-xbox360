@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- XContent header I/O now uses bounded libretro-common VFS reads and closes every opened header handle on success and failure. Container selection reads only the signature and volume type; initialization fills its existing header directly. This removes the failed-open/successful-initialize handle leaks, two temporary header allocations and redundant full-header reads. Payload mounting and legacy path-typed interfaces remain separate work.
+
 - Vulkan/D3D12 shader binding records use one exact-size C89 owner and borrowed views instead of two final vectors. Native DXIL publication also removes two temporary vectors and compares already-published layouts in place. MSVC x64 shader metadata shrinks by 24 bytes. First publication still allocates; generation serialization and audio scheduling remain.
 
 - Vulkan/D3D12 pipeline workers use direct callbacks with a borrowed owner instead of three std::function wrappers. Requests retain their existing C89 slot and publication lifetime, and worker contexts retain their joined-worker destruction. GNU x64 adapter metadata shrinks from 144 to 80 bytes; synthetic throughput results are mixed and no gameplay gain is established.
