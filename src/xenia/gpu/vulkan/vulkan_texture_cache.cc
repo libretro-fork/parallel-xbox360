@@ -8,6 +8,8 @@
  */
 
 #include "xenia/gpu/vulkan/vulkan_texture_cache.h"
+#include "libretro/core_spv_image_sink.h"
+#include "libretro/core_texture_image_atlas.h"
 #include "libretro/core_gpu_resolve.h"
 
 #include <algorithm>
@@ -474,6 +476,15 @@ VulkanTextureCache::~VulkanTextureCache() {
     if (load_pipeline != VK_NULL_HANDLE) {
       dfn.vkDestroyPipeline(device, load_pipeline, nullptr);
     }
+  }
+  for (VkPipeline image_pipeline : image_load_pipelines_) {
+    if (image_pipeline) dfn.vkDestroyPipeline(device, image_pipeline, nullptr);
+  }
+  for (VkPipeline image_pipeline : image_load_pipelines_scaled_) {
+    if (image_pipeline) dfn.vkDestroyPipeline(device, image_pipeline, nullptr);
+  }
+  if (image_load_pipeline_layout_) {
+    dfn.vkDestroyPipelineLayout(device, image_load_pipeline_layout_, nullptr);
   }
   if (load_pipeline_layout_ != VK_NULL_HANDLE) {
     dfn.vkDestroyPipelineLayout(device, load_pipeline_layout_, nullptr);
@@ -1330,12 +1341,22 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
     // Decompressing guest blocks.
     host_x_blocks_per_thread *= block_width;
   }
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  xe_texture_image_atlas image_atlas = {};
+  VkPipeline image_pipeline = texture_key.scaled_resolve
+      ? image_load_pipelines_scaled_[load_shader] : image_load_pipelines_[load_shader];
+  bool image_geometry_valid = image_pipeline && !is_3d &&
+      !vulkan_texture.force_load_3d_tiling();
   VkDeviceSize host_buffer_size = 0;
   struct HostLayout {
     VkDeviceSize offset_bytes;
     VkDeviceSize slice_size_bytes;
     uint32_t x_pitch_blocks;
     uint32_t y_pitch_blocks;
+    xe_texture_image_level image;
   };
   HostLayout host_layout_base;
   // Indexing is the same as for guest stored mips:
@@ -1378,41 +1399,151 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
         (level_guest_y_extent_texels_unscaled * texture_resolution_scale_y +
          (host_block_height - 1)) /
         host_block_height;
+    if (image_geometry_valid && !xe_texture_image_add(&image_atlas,
+        level_host_layout.x_pitch_blocks, level_host_layout.y_pitch_blocks,
+        load_shader_info.bytes_per_host_block,
+        vulkan_device->properties().maxImageDimension2D, &level_host_layout.image)) {
+      image_geometry_valid = false;
+    }
     level_host_layout.slice_size_bytes =
         VkDeviceSize(load_shader_info.bytes_per_host_block) *
         level_host_layout.x_pitch_blocks * level_host_layout.y_pitch_blocks *
         level_guest_z_extent_texels;
     host_buffer_size += level_host_layout.slice_size_bytes * array_size;
   }
-  VulkanCommandProcessor::ScratchBufferAcquisition scratch_buffer_acquisition(
-      command_processor_.AcquireScratchGpuBuffer(
-          host_buffer_size, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-          VK_ACCESS_SHADER_WRITE_BIT));
-  VkBuffer scratch_buffer = scratch_buffer_acquisition.buffer();
-  if (scratch_buffer == VK_NULL_HANDLE) {
-    return false;
+  // Plan logical mip copies before choosing the decode destination. An integer
+  // staging image keeps the final destination a plain sampled image. Eligible
+  // loads populate it directly; the fallback retains scratch and the blit.
+  //
+  // Plan the levels first. Each level's scratch layout is worked out once here
+  // and reused below. The direct path stacks stored levels; the blit stacks
+  // logical levels. Both write disjoint rows. A level whose
+  // extent is not a whole number of blocks cannot be expressed as a copy out of
+  // the staging image (the destination always receives a multiple of the block
+  // size), so a compressed texture's smallest levels - and everything under
+  // them - stay on the copy.
+  struct BlitLevel {
+    uint32_t level;
+    uint32_t offset_blocks;
+    uint32_t pitch_blocks;
+    uint32_t slice_blocks;
+    uint32_t dest_offset_y;
+    uint32_t size_blocks_x;
+    uint32_t size_blocks_y;
+    uint32_t atlas_x, atlas_y;
+  };
+  BlitLevel blit_levels[xenos::kTextureMaxMips];
+  uint32_t blit_level_count = 0;
+  uint32_t blit_staging_columns = 0;
+  uint32_t blit_staging_rows = 0;
+  VkFormat blit_staging_format = GetScratchBlitStagingFormat(texture_key);
+  if (blit_staging_format != VK_FORMAT_UNDEFINED) {
+    for (uint32_t level = level_first; level <= level_last; ++level) {
+      const HostLayout& level_host_layout =
+          level != 0 ? host_layout_mips[std::min(level, level_packed)]
+                     : host_layout_base;
+      VkDeviceSize level_buffer_offset = level_host_layout.offset_bytes;
+      if (level >= level_packed) {
+        uint32_t level_offset_blocks_x, level_offset_blocks_y, level_offset_z;
+        texture_util::GetPackedMipOffset(width, height, depth, guest_format,
+                                         level, level_offset_blocks_x,
+                                         level_offset_blocks_y, level_offset_z);
+        uint32_t level_offset_host_blocks_x =
+            texture_resolution_scale_x * level_offset_blocks_x;
+        uint32_t level_offset_host_blocks_y =
+            texture_resolution_scale_y * level_offset_blocks_y;
+        if (!host_format.block_compressed) {
+          level_offset_host_blocks_x *= block_width;
+          level_offset_host_blocks_y *= block_height;
+        }
+        level_buffer_offset += load_shader_info.bytes_per_host_block *
+                               (level_offset_host_blocks_x +
+                                level_host_layout.x_pitch_blocks *
+                                    (level_offset_host_blocks_y +
+                                     level_host_layout.y_pitch_blocks *
+                                         VkDeviceSize(level_offset_z)));
+      }
+      // Same clamp the copy applies - the mip extent is scale-then-reduce while
+      // the scratch footprint is reduce-then-scale.
+      uint32_t level_texels_x = std::min(
+          std::max((width * texture_resolution_scale_x) >> level, UINT32_C(1)),
+          level_host_layout.x_pitch_blocks * host_block_width);
+      uint32_t level_texels_y = std::min(
+          std::max((height * texture_resolution_scale_y) >> level, UINT32_C(1)),
+          level_host_layout.y_pitch_blocks * host_block_height);
+      if ((level_texels_x % host_block_width) ||
+          (level_texels_y % host_block_height)) {
+        break;
+      }
+      BlitLevel& blit_level = blit_levels[blit_level_count++];
+      blit_level.level = level;
+      blit_level.offset_blocks =
+          uint32_t(level_buffer_offset / load_shader_info.bytes_per_host_block);
+      blit_level.pitch_blocks = level_host_layout.x_pitch_blocks;
+      blit_level.slice_blocks = uint32_t(level_host_layout.slice_size_bytes /
+                                         load_shader_info.bytes_per_host_block);
+      blit_level.dest_offset_y = blit_staging_rows;
+      blit_level.size_blocks_x = level_texels_x / host_block_width;
+      blit_level.size_blocks_y = level_texels_y / host_block_height;
+      if (image_geometry_valid && !xe_texture_image_origin(&level_host_layout.image,
+          level_buffer_offset - level_host_layout.offset_bytes,
+          load_shader_info.bytes_per_host_block, blit_level.size_blocks_x,
+          blit_level.size_blocks_y, &blit_level.atlas_x, &blit_level.atlas_y)) {
+        image_geometry_valid = false;
+      }
+      blit_staging_columns =
+          std::max(blit_staging_columns, blit_level.size_blocks_x);
+      blit_staging_rows += blit_level.size_blocks_y;
+    }
+    if (!blit_level_count) {
+      blit_staging_format = VK_FORMAT_UNDEFINED;
+    }
+  }
+  VkImage blit_staging_image = VK_NULL_HANDLE;
+  VkImageView image_load_view = VK_NULL_HANDLE;
+  VkDescriptorSet descriptor_set_dest = VK_NULL_HANDLE;
+  bool image_load = image_pipeline && image_geometry_valid &&
+      blit_staging_format != VK_FORMAT_UNDEFINED &&
+      blit_level_count == level_last - level_first + 1;
+  if (image_load) {
+    if (AcquireScratchBlitStagingImage(
+            GetScratchBlitShaderIndex(load_shader_info.bytes_per_host_block),
+            blit_staging_format, image_atlas.width, image_atlas.height, array_size,
+            blit_staging_image, image_load_view)) {
+      descriptor_set_dest = command_processor_.AllocateSingleTransientDescriptor(
+          VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageBufferAndStorageImage);
+    }
+    image_load = descriptor_set_dest != VK_NULL_HANDLE;
+    if (!image_load) blit_staging_image = VK_NULL_HANDLE;
+  }
+  VkPipelineLayout load_layout = image_load ? image_load_pipeline_layout_ : load_pipeline_layout_;
+  if (image_load) pipeline = image_pipeline;
+  VulkanCommandProcessor::ScratchBufferAcquisition scratch_buffer_acquisition;
+  VkBuffer scratch_buffer = VK_NULL_HANDLE;
+  if (!image_load) {
+    scratch_buffer_acquisition = command_processor_.AcquireScratchGpuBuffer(
+        host_buffer_size, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+    scratch_buffer = scratch_buffer_acquisition.buffer();
+    if (!scratch_buffer) return false;
   }
 
   // Begin loading.
   // TODO(Triang3l): Going from one descriptor to another on per-array-layer
   // or even per-8-depth-slices level to stay within maxStorageBufferRange.
-  const ui::vulkan::VulkanDevice* const vulkan_device =
-      command_processor_.GetVulkanDevice();
-  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
-  const VkDevice device = vulkan_device->device();
   VulkanSharedMemory& vulkan_shared_memory =
       static_cast<VulkanSharedMemory&>(shared_memory());
-  // Destination remains per-load scratch; source descriptors can borrow an
+  // Destination is either the decode image or per-load scratch; sources borrow an
   // immutable whole shared/scaled buffer with a rebased shader byte offset.
   VkWriteDescriptorSet write_descriptor_sets[3];
   uint32_t write_descriptor_set_count = 0;
-  VkDescriptorSet descriptor_set_dest =
-      command_processor_.AllocateSingleTransientDescriptor(
-          VulkanCommandProcessor::SingleTransientDescriptorLayout ::
-              kStorageBuffer);
-  if (!descriptor_set_dest) {
-    return false;
+  if (!image_load) {
+    descriptor_set_dest = command_processor_.AllocateSingleTransientDescriptor(
+        VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageBuffer);
+    if (!descriptor_set_dest) return false;
   }
+  VkDescriptorImageInfo write_dest_image_info = {};
+  write_dest_image_info.imageView = image_load_view;
+  write_dest_image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
   VkDescriptorBufferInfo write_descriptor_set_dest_buffer_info;
   {
     write_descriptor_set_dest_buffer_info.buffer = scratch_buffer;
@@ -1423,14 +1554,14 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
     write_descriptor_set_dest.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write_descriptor_set_dest.pNext = nullptr;
     write_descriptor_set_dest.dstSet = descriptor_set_dest;
-    write_descriptor_set_dest.dstBinding = 0;
+    write_descriptor_set_dest.dstBinding = image_load ? 1 : 0;
     write_descriptor_set_dest.dstArrayElement = 0;
     write_descriptor_set_dest.descriptorCount = 1;
     write_descriptor_set_dest.descriptorType =
-        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    write_descriptor_set_dest.pImageInfo = nullptr;
+        image_load ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write_descriptor_set_dest.pImageInfo = image_load ? &write_dest_image_info : nullptr;
     write_descriptor_set_dest.pBufferInfo =
-        &write_descriptor_set_dest_buffer_info;
+        image_load ? nullptr : &write_descriptor_set_dest_buffer_info;
     write_descriptor_set_dest.pTexelBufferView = nullptr;
   }
   VkDescriptorSet descriptor_set_source_base = VK_NULL_HANDLE;
@@ -1483,10 +1614,34 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
       depth_or_array_size, FormatInfo::GetName(guest_format),
       host_format_is_signed ? 1 : 0, texture_key.scaled_resolve ? 1 : 0);
 
+  if (image_load) {
+    ScratchBlitStagingImage& blit_staging = scratch_blit_staging_[
+        GetScratchBlitShaderIndex(load_shader_info.bytes_per_host_block)];
+    VkImage staging_image = blit_staging_image;
+      // The staging image stays in GENERAL for life. vkCmdCopyImage reads
+      // that layout and STORAGE usage rules out compression anyway, so a
+      // TRANSFER_SRC round trip would only cost a transition of the whole
+      // image, which is grown to the largest upload of its size class.
+      bool staging_initialized = blit_staging.layout == VK_IMAGE_LAYOUT_GENERAL;
+      command_processor_.PushImageMemoryBarrier(
+          staging_image,
+          // Only the initialising transition needs every layer.
+          staging_initialized
+              ? ui::vulkan::util::InitializeSubresourceRange(
+                    VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, array_size)
+              : ui::vulkan::util::InitializeSubresourceRange(),
+          staging_initialized ? VK_PIPELINE_STAGE_TRANSFER_BIT
+                              : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+          staging_initialized ? VK_ACCESS_TRANSFER_READ_BIT : 0,
+          VK_ACCESS_SHADER_WRITE_BIT, blit_staging.layout,
+          VK_IMAGE_LAYOUT_GENERAL);
+      blit_staging.layout = VK_IMAGE_LAYOUT_GENERAL;
+  }
   command_processor_.BindExternalComputePipeline(pipeline);
 
   command_buffer.CmdVkBindDescriptorSets(
-      VK_PIPELINE_BIND_POINT_COMPUTE, load_pipeline_layout_,
+      VK_PIPELINE_BIND_POINT_COMPUTE, load_layout,
       kLoadDescriptorSetIndexDestination, 1, &descriptor_set_dest, 0, nullptr);
 
   VkDescriptorSet descriptor_set_source_current = VK_NULL_HANDLE;
@@ -1512,7 +1667,7 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
     if (descriptor_set_source_current != descriptor_set_source) {
       descriptor_set_source_current = descriptor_set_source;
       command_buffer.CmdVkBindDescriptorSets(
-          VK_PIPELINE_BIND_POINT_COMPUTE, load_pipeline_layout_,
+          VK_PIPELINE_BIND_POINT_COMPUTE, load_layout,
           kLoadDescriptorSetIndexSource, 1, &descriptor_set_source, 0, nullptr);
     }
 
@@ -1566,27 +1721,41 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
     // TODO(Triang3l): host_offset relative to the storage buffer origin.
     const HostLayout& level_host_layout =
         is_base ? host_layout_base : host_layout_mips[level];
-    load_constants.host_offset = uint32_t(level_host_layout.offset_bytes);
+    load_constants.host_offset = image_load ? 0 : uint32_t(level_host_layout.offset_bytes);
     load_constants.host_pitch = load_shader_info.bytes_per_host_block *
                                 level_host_layout.x_pitch_blocks;
 
-    command_buffer.CmdVkPushConstants(load_pipeline_layout_,
+    command_buffer.CmdVkPushConstants(load_layout,
                                       VK_SHADER_STAGE_COMPUTE_BIT, 0,
                                       sizeof(load_constants), &load_constants);
 
+    xe_texture_image_push image_constants = {};
+    if (image_load) {
+      image_constants.y = level_host_layout.image.y;
+      image_constants.reciprocal = level_host_layout.image.reciprocal;
+      command_buffer.CmdVkPushConstants(load_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+          sizeof(LoadConstants), sizeof(image_constants), &image_constants);
+    }
     uint32_t level_array_slice_stride_bytes_scaled =
         level_guest_layout.array_slice_stride_bytes *
         (texture_resolution_scale_x * texture_resolution_scale_y);
     for (uint32_t slice = 0; slice < array_size; ++slice) {
       if (slice != 0) {
         command_buffer.CmdVkPushConstants(
-            load_pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT,
+            load_layout, VK_SHADER_STAGE_COMPUTE_BIT,
             offsetof(LoadConstants, guest_offset),
             sizeof(load_constants.guest_offset), &load_constants.guest_offset);
-        command_buffer.CmdVkPushConstants(
-            load_pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT,
-            offsetof(LoadConstants, host_offset),
-            sizeof(load_constants.host_offset), &load_constants.host_offset);
+        if (image_load) {
+          image_constants.layer = slice;
+          command_buffer.CmdVkPushConstants(load_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+              sizeof(LoadConstants) + offsetof(xe_texture_image_push, layer),
+              sizeof(image_constants.layer), &image_constants.layer);
+        } else {
+          command_buffer.CmdVkPushConstants(
+              load_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+              offsetof(LoadConstants, host_offset),
+              sizeof(load_constants.host_offset), &load_constants.host_offset);
+        }
       }
       command_processor_.SubmitBarriers(true);
       // Debug: show dispatch info with source offset
@@ -1597,96 +1766,20 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
       command_buffer.CmdVkDispatch(group_count_x, group_count_y,
                                    load_constants.size_blocks[2]);
       load_constants.guest_offset += level_array_slice_stride_bytes_scaled;
-      load_constants.host_offset +=
-          uint32_t(level_host_layout.slice_size_bytes);
+      if (!image_load) {
+        load_constants.host_offset += uint32_t(level_host_layout.slice_size_bytes);
+      }
     }
   }
-
-  // Move the loaded blocks into the texture. The shader fills an integer
-  // staging image an order of magnitude faster than vkCmdCopyBufferToImage
-  // fills the destination on NVIDIA, and the image-to-image copy that follows
-  // leaves the destination a plain sampled image that keeps its compression.
-  //
-  // Plan the levels first. Each level's scratch layout is worked out once here
-  // and reused by the copy below, and levels are stacked down the staging image
-  // so the whole chain dispatches without barriers between them. A level whose
-  // extent is not a whole number of blocks cannot be expressed as a copy out of
-  // the staging image (the destination always receives a multiple of the block
-  // size), so a compressed texture's smallest levels - and everything under
-  // them - stay on the copy.
-  struct BlitLevel {
-    uint32_t level;
-    uint32_t offset_blocks;
-    uint32_t pitch_blocks;
-    uint32_t slice_blocks;
-    uint32_t dest_offset_y;
-    uint32_t size_blocks_x;
-    uint32_t size_blocks_y;
-  };
-  std::array<BlitLevel, xenos::kTextureMaxMips> blit_levels;
-  uint32_t blit_level_count = 0;
-  uint32_t blit_staging_columns = 0;
-  uint32_t blit_staging_rows = 0;
-  VkFormat blit_staging_format = GetScratchBlitStagingFormat(texture_key);
-  if (blit_staging_format != VK_FORMAT_UNDEFINED) {
-    for (uint32_t level = level_first; level <= level_last; ++level) {
-      const HostLayout& level_host_layout =
-          level != 0 ? host_layout_mips[std::min(level, level_packed)]
-                     : host_layout_base;
-      VkDeviceSize level_buffer_offset = level_host_layout.offset_bytes;
-      if (level >= level_packed) {
-        uint32_t level_offset_blocks_x, level_offset_blocks_y, level_offset_z;
-        texture_util::GetPackedMipOffset(width, height, depth, guest_format,
-                                         level, level_offset_blocks_x,
-                                         level_offset_blocks_y, level_offset_z);
-        uint32_t level_offset_host_blocks_x =
-            texture_resolution_scale_x * level_offset_blocks_x;
-        uint32_t level_offset_host_blocks_y =
-            texture_resolution_scale_y * level_offset_blocks_y;
-        if (!host_format.block_compressed) {
-          level_offset_host_blocks_x *= block_width;
-          level_offset_host_blocks_y *= block_height;
-        }
-        level_buffer_offset += load_shader_info.bytes_per_host_block *
-                               (level_offset_host_blocks_x +
-                                level_host_layout.x_pitch_blocks *
-                                    (level_offset_host_blocks_y +
-                                     level_host_layout.y_pitch_blocks *
-                                         VkDeviceSize(level_offset_z)));
-      }
-      // Same clamp the copy applies - the mip extent is scale-then-reduce while
-      // the scratch footprint is reduce-then-scale.
-      uint32_t level_texels_x = std::min(
-          std::max((width * texture_resolution_scale_x) >> level, UINT32_C(1)),
-          level_host_layout.x_pitch_blocks * host_block_width);
-      uint32_t level_texels_y = std::min(
-          std::max((height * texture_resolution_scale_y) >> level, UINT32_C(1)),
-          level_host_layout.y_pitch_blocks * host_block_height);
-      if ((level_texels_x % host_block_width) ||
-          (level_texels_y % host_block_height)) {
-        break;
-      }
-      BlitLevel& blit_level = blit_levels[blit_level_count++];
-      blit_level.level = level;
-      blit_level.offset_blocks =
-          uint32_t(level_buffer_offset / load_shader_info.bytes_per_host_block);
-      blit_level.pitch_blocks = level_host_layout.x_pitch_blocks;
-      blit_level.slice_blocks = uint32_t(level_host_layout.slice_size_bytes /
-                                         load_shader_info.bytes_per_host_block);
-      blit_level.dest_offset_y = blit_staging_rows;
-      blit_level.size_blocks_x = level_texels_x / host_block_width;
-      blit_level.size_blocks_y = level_texels_y / host_block_height;
-      blit_staging_columns =
-          std::max(blit_staging_columns, blit_level.size_blocks_x);
-      blit_staging_rows += blit_level.size_blocks_y;
-    }
-    if (!blit_level_count) {
-      blit_staging_format = VK_FORMAT_UNDEFINED;
-    }
+  if (image_load) {
+    command_processor_.PushImageMemoryBarrier(
+        blit_staging_image, ui::vulkan::util::InitializeSubresourceRange(
+            VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, array_size),
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+        VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
   }
-  VkImage blit_staging_image = VK_NULL_HANDLE;
-
-  if (blit_staging_format != VK_FORMAT_UNDEFINED) {
+  if (!image_load && blit_staging_format != VK_FORMAT_UNDEFINED) {
     uint32_t blit_shader_index =
         GetScratchBlitShaderIndex(load_shader_info.bytes_per_host_block);
     ScratchBlitStagingImage& blit_staging =
@@ -1849,7 +1942,9 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
     // texel per host block, so this moves the blocks without conversion. For a
     // compressed destination the extent is in staging texels and the
     // destination receives extent times the block dimensions.
-    std::array<VkImageCopy, xenos::kTextureMaxMips> blit_copy_regions;
+    VkImageCopy* blit_copy_regions = command_buffer.CmdCopyImageEmplace(
+        blit_staging_image, VK_IMAGE_LAYOUT_GENERAL, vulkan_texture.image(),
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, blit_level_count);
     for (uint32_t i = 0; i < blit_level_count; ++i) {
       const BlitLevel& blit_level = blit_levels[i];
       VkImageCopy& blit_copy_region = blit_copy_regions[i];
@@ -1858,7 +1953,8 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
       blit_copy_region.srcSubresource.mipLevel = 0;
       blit_copy_region.srcSubresource.baseArrayLayer = 0;
       blit_copy_region.srcSubresource.layerCount = array_size;
-      blit_copy_region.srcOffset.y = int32_t(blit_level.dest_offset_y);
+      blit_copy_region.srcOffset.x = image_load ? int32_t(blit_level.atlas_x) : 0;
+      blit_copy_region.srcOffset.y = int32_t(image_load ? blit_level.atlas_y : blit_level.dest_offset_y);
       blit_copy_region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
       blit_copy_region.dstSubresource.mipLevel = blit_level.level;
       blit_copy_region.dstSubresource.baseArrayLayer = 0;
@@ -1867,10 +1963,7 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
       blit_copy_region.extent.height = blit_level.size_blocks_y;
       blit_copy_region.extent.depth = 1;
     }
-    command_buffer.CmdVkCopyImage(blit_staging_image, VK_IMAGE_LAYOUT_GENERAL,
-                                  vulkan_texture.image(),
-                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                  blit_level_count, blit_copy_regions.data());
+
   }
   if (copy_level_first <= level_last) {
     VkBufferImageCopy* copy_regions =
@@ -3057,6 +3150,45 @@ bool VulkanTextureCache::Initialize() {
   }
 
   InitializeScratchBlit();
+
+  static_assert(sizeof(LoadConstants) == 40);
+  static_assert(sizeof(xe_texture_image_push) == 12);
+
+  load_descriptor_set_layouts[kLoadDescriptorSetIndexDestination] =
+      command_processor_.GetSingleTransientDescriptorLayout(
+          VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageBufferAndStorageImage);
+  load_pipeline_layout_push_constant_range.size =
+      sizeof(LoadConstants) + sizeof(xe_texture_image_push);
+  if (dfn.vkCreatePipelineLayout(device, &load_pipeline_layout_create_info,
+          nullptr, &image_load_pipeline_layout_) == VK_SUCCESS) {
+    xe_spv_sink_workspace sink_workspace = {};
+    xe_spv_binary sink_code = {};
+    for (size_t i = 0; i < kLoadShaderCount; ++i) {
+      unsigned bytes = GetLoadShaderInfo(LoadShaderIndex(i)).bytes_per_host_block;
+      uint32_t image_class = GetScratchBlitShaderIndex(bytes);
+      if (!load_shaders_needed[i] || image_class == UINT32_MAX ||
+          !scratch_blit_pipelines_[image_class] ||
+          i == kLoadShaderIndexDepthUnorm || i == kLoadShaderIndexDepthFloat) continue;
+      const auto& code = load_shader_code[i];
+      if (xe_spv_image_sink(&sink_workspace, &sink_code, code.first,
+              code.second / sizeof(uint32_t), bytes)) {
+        image_load_pipelines_[i] = ui::vulkan::util::CreateComputePipeline(
+            vulkan_device, image_load_pipeline_layout_, sink_code.words,
+            sink_code.count * sizeof(uint32_t));
+      }
+      const auto& scaled_code = load_shader_code_scaled[i];
+      if (scaled_code.first && xe_spv_image_sink(&sink_workspace, &sink_code,
+              scaled_code.first, scaled_code.second / sizeof(uint32_t), bytes)) {
+        image_load_pipelines_scaled_[i] = ui::vulkan::util::CreateComputePipeline(
+            vulkan_device, image_load_pipeline_layout_, sink_code.words,
+            sink_code.count * sizeof(uint32_t));
+      }
+    }
+    xe_spv_binary_close(&sink_code);
+    xe_spv_sink_close(&sink_workspace);
+  } else {
+    image_load_pipeline_layout_ = VK_NULL_HANDLE;
+  }
 
   // Null images as a replacement for unneeded bindings and for bindings for
   // which the real image hasn't been created.

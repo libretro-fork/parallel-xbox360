@@ -1295,3 +1295,16 @@ GPU_DIVIDE_TEST_FLAGS=/fsanitize=address /Zi and a separate GPU_DIVIDE_TEST_OUT.
 The actual-emitter matrix above additionally checks no variable-divisor GPU
 division remains, and the native DXIL hook verifies the UMul opcode and high
 result index. These hooks exist only in test builds. See gpu_divide_results.txt.
+
+Direct texture image sinks
+--------------------------
+`run_spv_image_sink_tests.sh` or `.cmd` checks the production C89 raw-SPIR-V
+rewrite against all 33 compatible shipped templates. The test verifies every
+original source/decode/control instruction survives byte-for-byte, interprets
+the inserted sink operations with arbitrary decoded words and aligned offsets,
+and checks atlas/packed-copy bounds, malformed input and clean teardown.
+SPIRV_VALIDATOR optionally validates each output for Vulkan 1.2. Shell
+sanitizers default on; set SANITIZER= for MinGW without those runtimes.
+Native ASan: IMAGE_SINK_TEST_FLAGS=/fsanitize=address /Zi and a separate
+IMAGE_SINK_TEST_OUT. Output modules remain available for independent validation.
+See spv_image_sink_results.txt for production eligibility and remaining copies.

@@ -1,0 +1,78 @@
+Direct Vulkan texture decode to integer image (0147)
+===================================================
+
+Production change
+-----------------
+Eligible uploads become guest/shared/scaled buffer -> integer image compute
+-> sampled image copy. They do not acquire the GPU scratch buffer, record its
+write/read dependency, allocate a second blit descriptor, or dispatch a second
+buffer-to-image shader. The final sampled image keeps its existing usage and
+format; adding STORAGE to it can compromise compression and was avoided.
+D3D12 already uses decode -> transfer, without Vulkan's intermediate image
+population dispatch. This Vulkan-specific pass removal changes no D3D12 path.
+
+A cold C89 SPIR-V transform retains IDs and byte-for-byte instructions for
+source reads, format conversion, endian conversion and control flow. It
+recognizes four contiguous scalar output stores in the same basic block and
+replaces each 128-bit tuple with 4/2/1 R32/RGBA16/RGBA32_UINT image stores.
+RGBA16 splits existing packed words into low/high 16-bit components without
+rounding. No shader language parser, glslang, Mesa or compiler dependency.
+Pointer aliases, unexpected output patterns and incomplete tuples are rejected
+before output publication. It is a scanner for validated owned templates,
+not a replacement validator/security boundary for arbitrary guest SPIR-V.
+
+Stored-level atlas rows preserve the existing padded pitch and packed-mip
+positions. Push constants append atlas row/layer/exact reciprocal at bytes
+40/44/48; all original offsets stay intact. The shader uses the shared exact
+u32 multiply-high div/mod sequence. Each dispatch's host offset is zero;
+array layer selection is explicit. Bounds/overflow planning is C89 with fixed
+native metadata; final VkImageCopy records construct in their deferred packet,
+removing the intermediate native copy array.
+
+Optional image pipelines compile during texture-cache initialization and are
+destroyed before their layout on shutdown. Workspace/output capacity is reused
+across these cold rewrites and released after initialization. Transient image
+descriptors, retained image growth, retirement and completion indices keep the
+existing lifetime. No queue wait, fence readback or release logging is added.
+
+Eligibility and costs
+---------------------
+Host blocks 4/8/16 bytes, non-depth 2D/array/cube loads, all requested logical
+mips expressible as complete host-block image copies, supported storage-image
+formats and valid atlas bounds. Includes normal/scaled raw blocks, expanded
+formats and software-decompressed RGBA8 data. 3D/3D-as-2D, depth, 1/2-byte host
+blocks and partial-block compressed mip chains keep the existing buffer path.
+Pipeline/descriptor/image allocation failure or unexpected templates also
+retain that path. Existing image byte/dimension/layer limits remain.
+
+Additional cold pipelines and sink address arithmetic have costs. An atlas of
+whole stored levels may be larger than the legacy logical-level staging image;
+the existing bounded retained image can still grow during play. Whole-chain
+fallback for partial-block mips remains work. There is no claim that all
+allocations, copies, staging, intermediate metadata or C++ have disappeared.
+
+Offline evidence
+----------------
+- All 33 compatible actual binary templates rewritten and validated for
+  Vulkan 1.2, including 4 depth templates tested mechanically but excluded
+  from production image copies because depth has no color-aspect alias.
+- 4,224 interpretations per compiler run of actual inserted instructions:
+  32,256 image writes, arbitrary decoded words and aligned u32 offsets,
+  exact pitch division including divisor one, origin rows and array layers.
+  Every original non-output instruction survives byte-for-byte in order.
+- 882 atlas/packed-region bounds checks per run, plus invalid pitch/extents,
+  overflow and unchanged-output-on-failure checks.
+- Truncation, malformed header/length, broken tuples, 16,500 structural bit
+  mutations, repeat rewriting and double teardown checks.
+- Both cold allocation failures checked for every template; all owner counts
+  return to baseline. Successful cold rewrite uses two allocations, and a
+  repeated rewrite retains both buffers without allocating.
+- MSVC /TC /W4 /WX, native MSVC ASan and MinGW strict C89 checks PASS.
+  All 33 output modules byte-identical across those three configurations.
+- Native MSVC syntax checks of both texture-cache TUs PASS.
+- Full static Windows Make build and final incremental build (-j5) PASS.
+
+No Vulkan device, game, JIT or RetroArch was launched. Numeric sink and
+instruction equivalence do not establish full rendered-image equivalence or
+measure GPU time, register pressure, bandwidth, frame pacing or FPS. No
+installed core was replaced. Hardware measurements remain necessary.

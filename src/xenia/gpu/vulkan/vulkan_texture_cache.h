@@ -517,6 +517,9 @@ class VulkanTextureCache final : public TextureCache {
       scratch_blit_pipelines_{};
 
   VkPipelineLayout load_pipeline_layout_ = VK_NULL_HANDLE;
+  VkPipelineLayout image_load_pipeline_layout_ = VK_NULL_HANDLE;
+  VkPipeline image_load_pipelines_[kLoadShaderCount] = {};
+  VkPipeline image_load_pipelines_scaled_[kLoadShaderCount] = {};
   std::array<VkPipeline, kLoadShaderCount> load_pipelines_{};
   std::array<VkPipeline, kLoadShaderCount> load_pipelines_scaled_{};
 

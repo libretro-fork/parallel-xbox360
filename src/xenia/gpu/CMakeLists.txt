@@ -5,6 +5,7 @@ add_library(xenia-spirv-writer STATIC
   spirv/InReadableOrder.cpp
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_packet.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_binary.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_spv_image_sink.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_arena.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_size.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_probe.c"

@@ -1,5 +1,7 @@
 # parallel_xbox360 libretro core
 
+Eligible Vulkan texture loads now decode directly into an integer staging image, removing the scratch-buffer write/read, its dependency, and the second compute dispatch. A checked C89 raw-SPIR-V rewrite preserves the existing decoder and source instructions. Stored-level atlas rows retain packed-mip offsets and array layers; the final image-to-image copy keeps the sampled image free of storage usage. Small-block, 3D, depth, partial-block mip chains, unsupported devices and allocation failures retain the buffer path. Staging image growth, the final copy, cold pipeline compilation and driver allocations remain. See [sink equivalence and limits](tools/tests/spv_image_sink_results.txt); GPU timing and rendered output have not been measured.
+
 EDRAM dump/direct-resolve shaders in both renderers use exact reciprocal-based source-pitch division. The CPU supplies one additional constant when binding the pitch; GPU address calculation uses 32-bit multiply-high and a bounded correction. This preserves the integer quotient/remainder across the full 32-bit input range, including pitch one, without shader int64 or approximate floating point. It adds one constant update per pitch bind; it does not remove pixel transfers or establish a measured 4x GPU/FPS improvement. See [division coverage and limits](tools/tests/gpu_divide_results.txt).
 
 A [libretro](https://www.libretro.com/) core of [Xenia Edge](https://github.com/has207/xenia-edge), the Xbox 360 emulator, for RetroArch and other libretro frontends.
