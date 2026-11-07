@@ -4,6 +4,7 @@
 #include <string.h>
 #include "core_vk_source_views.h"
 #include "core_gpu_resolve_view.h"
+#include "core_gpu_resolve_destination.h"
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"line %u: %s\n",(unsigned)__LINE__,#x); exit(1); } } while (0)
 static VkDevice device;
 static unsigned creates, allocates, writes, destroys, live, fail_create, fail_allocate, missing;
@@ -231,9 +232,70 @@ static void resolve_view_tests(void) {
   printf("resolve views: 1000000 intervals, %u range / %u persistent / %u fallback; bounds, alignment, failure publication PASS\n",
       transient,persistent,rejected);
 }
+
+typedef struct destination_probe {
+  unsigned native_calls, scaled_calls, fail;
+  uint32_t base, start, length, prefix;
+} destination_probe;
+static int native_destination(void *p, uint32_t start, uint32_t length) {
+  destination_probe *d=(destination_probe *)p;
+  ++d->native_calls;d->start=start;d->length=length;return !d->fail;
+}
+static int scaled_destination(void *p, uint32_t base, uint32_t start,
+    uint32_t length, uint32_t prefix) {
+  destination_probe *d=(destination_probe *)p;
+  ++d->scaled_calls;d->base=base;d->start=start;d->length=length;d->prefix=prefix;
+  return !d->fail;
+}
+static void destination_tests(void) {
+  static const xe_gpu_resolve_destination_ops ops={native_destination,scaled_destination};
+  xe_gpu_resolve_destination_ops absent_ops;
+  destination_probe d;
+  uint32_t base,start,length,prefix,expected,i;unsigned scaled;
+  const uint32_t capacity=UINT32_C(0x20000000);
+  for(i=0;i<1000000;++i) {
+    base=random_word()%(capacity-1);
+    start=base+random_word()%(capacity-base);
+    length=1+random_word()%(capacity-start);
+    expected=start-base+length;
+    for(scaled=0;scaled<2;++scaled) {
+      memset(&d,0,sizeof(d));prefix=0;
+      CHECK(xe_gpu_resolve_destination_prepare(&ops,&d,capacity,base,start,length,scaled,&prefix));
+      CHECK(prefix==expected && d.start==start && d.length==length);
+      CHECK(d.native_calls==(unsigned)!scaled && d.scaled_calls==scaled);
+      if(scaled) CHECK(d.base==base && d.prefix==expected);
+      /* A failed scaled preparation must not retry/upload native storage. */
+      memset(&d,0,sizeof(d));d.fail=1;prefix=123;
+      CHECK(!xe_gpu_resolve_destination_prepare(&ops,&d,capacity,base,start,length,scaled,&prefix));
+      CHECK(prefix==123 && d.native_calls==(unsigned)!scaled && d.scaled_calls==scaled);
+    }
+  }
+  memset(&d,0,sizeof(d));prefix=123;
+#define REJECT_DEST(b,s,n,c,o,out) do { \
+  CHECK(!xe_gpu_resolve_destination_prepare(o,&d,c,b,s,n,1,out)); \
+  CHECK(!d.native_calls && !d.scaled_calls && prefix==123); \
+} while(0)
+  REJECT_DEST(2,1,1,capacity,&ops,&prefix);
+  REJECT_DEST(0,capacity,1,capacity,&ops,&prefix);
+  REJECT_DEST(0,capacity-2,3,capacity,&ops,&prefix);
+  REJECT_DEST(0,0,0,capacity,&ops,&prefix);
+  REJECT_DEST(0,UINT32_MAX,2,UINT64_MAX,&ops,&prefix);
+  REJECT_DEST(0,0,1,capacity,NULL,&prefix);
+  REJECT_DEST(0,0,1,capacity,&ops,NULL);
+  absent_ops=ops;absent_ops.scaled_prepare=NULL;
+  REJECT_DEST(0,0,1,capacity,&absent_ops,&prefix);
+  absent_ops=ops;absent_ops.native_range=NULL;
+  CHECK(!xe_gpu_resolve_destination_prepare(&absent_ops,&d,capacity,0,0,1,0,&prefix));
+  CHECK(!d.native_calls && !d.scaled_calls && prefix==123);
+#undef REJECT_DEST
+  CHECK(xe_gpu_resolve_destination_prepare(&ops,&d,UINT64_MAX,0,0,UINT32_MAX,1,&prefix));
+  CHECK(prefix==UINT32_MAX);
+  printf("resolve destinations: 2000000 native/scaled intervals plus failure paths; no scaled native upload/fallback PASS\n");
+}
+
 int main(void) {
   device = (VkDevice)(uintptr_t)3; layout = (VkDescriptorSetLayout)(uintptr_t)5;
-  bank_tests(); view_tests(); resolve_view_tests();
+  bank_tests(); view_tests(); resolve_view_tests(); destination_tests();
   printf("source views: 1000000 address pairs, 320000 immutable lookups, cold failure/reinit/double-close PASS; bank %lu bytes\n",
       (unsigned long)sizeof(xe_vk_source_bank));
   return 0;

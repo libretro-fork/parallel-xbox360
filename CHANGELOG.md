@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Scaled two-pass Vulkan resolves no longer request/upload unused native guest-memory backing. Failed scaled destination preparation now rejects the resolve instead of binding native storage to a scaled shader. Both backends use checked destination extents; Vulkan avoids duplicate scaled-residency preparation and widens descriptor-length multiplication to 64 bits. Existing shaders, conversion, barriers and audio timing remain unchanged; gameplay GPU-time gains are unmeasured.
+
 - APU client callbacks and render credits use generation-checked libretro-common atomics in place of per-client callback mutexes and native semaphores. Retiring clients retain borrowed arguments until callbacks finish, then reclaim the driver and guest wrapper before slot reuse. Failed driver creation releases its guest allocation; invalid client indices reject safely. Removed unused partial audio-only state APIs. Existing audio timing/conversion and the shared producer mutex remain; complete libretro savestates are still unfinished.
 
 - Audio queue/driver checkpoints now retain unread PCM, pause/volume bits and native resampler continuation state under exclusive quiescence. Capture borrows up to two SPSC spans without consuming them; restore reuses existing final ring storage, with a copy-free exact-live-view path. Format/phase/alias mismatches, stopped streams and active frontend leases reject. This is component state support; full libretro savestates remain unfinished, and ordinary audio pacing/conversion is unchanged.

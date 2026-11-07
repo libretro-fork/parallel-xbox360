@@ -11,6 +11,7 @@
 #include <new>
 #include "libretro/core_gpu_divide.h"
 #include "libretro/core_resolve_dispatch.h"
+#include "libretro/core_gpu_resolve_destination.h"
 
 #include <cstdint>
 #include <cstring>
@@ -1375,25 +1376,25 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
       const draw_util::ResolveCopyShaderInfo& copy_shader_info =
           draw_util::resolve_copy_shader_info[size_t(copy_shader)];
 
-      // Make sure there is memory to write to.
-      bool copy_dest_committed;
-      if (copy_dest_scaled) {
-        // Committing starting with the beginning of the potentially written
-        // extent, but making the buffer containing the base current as the
-        // beginning of the bound buffer is the base.
-        copy_dest_committed = texture_cache.EnsureScaledResolveMemoryCommitted(
-                                  resolve_info.copy_dest_extent_start,
-                                  resolve_info.copy_dest_extent_length) &&
-                              texture_cache.MakeScaledResolveRangeCurrent(
-                                  resolve_info.copy_dest_base,
-                                  resolve_info.copy_dest_extent_start -
-                                      resolve_info.copy_dest_base +
-                                      resolve_info.copy_dest_extent_length);
-      } else {
-        copy_dest_committed =
-            shared_memory.RequestRange(resolve_info.copy_dest_extent_start,
-                                       resolve_info.copy_dest_extent_length);
-      }
+      struct Destination {
+        D3D12SharedMemory* native;
+        D3D12TextureCache* scaled;
+      } destination = {&shared_memory, &texture_cache};
+      static const xe_gpu_resolve_destination_ops destination_ops = {
+          [](void* p, uint32_t start, uint32_t length) -> int {
+            return static_cast<Destination*>(p)->native->RequestRange(start, length);
+          },
+          [](void* p, uint32_t base, uint32_t start, uint32_t length,
+             uint32_t prefix) -> int {
+            auto* cache = static_cast<Destination*>(p)->scaled;
+            return cache->EnsureScaledResolveMemoryCommitted(start, length) &&
+                   cache->MakeScaledResolveRangeCurrent(base, prefix);
+          }};
+      uint32_t dest_length;
+      const bool copy_dest_committed = xe_gpu_resolve_destination_prepare(
+          &destination_ops, &destination, SharedMemory::kBufferSize,
+          resolve_info.copy_dest_base, resolve_info.copy_dest_extent_start,
+          resolve_info.copy_dest_extent_length, copy_dest_scaled, &dest_length) != 0;
       if (copy_dest_committed) {
         command_list.D3DSetComputeRootSignature(
             copy_native ? resolve_copy_native_root_signature_

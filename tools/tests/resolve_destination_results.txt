@@ -1,0 +1,49 @@
+Resolve destination residency selection (0168)
+============================================
+Vulkan two-pass scaled resolves previously called shared_memory.RequestRange
+unconditionally. That can commit native GPU backing, take a global critical
+region, scan dirty guest pages and upload them, even though output goes only to
+scaled storage. D3D12 and Vulkan's direct path already avoid this native request.
+
+Both two-pass backends now use a C89 checked destination-preparation policy with
+borrowed static native adapters. It validates nonempty aperture bounds and the
+base-to-write-end prefix before calling exactly one native or scaled preparer.
+A scaled failure cannot call the native preparer. Output prefix publishes only
+on success; no heap, temporary pixel buffer, copying or additional lock is added.
+D3D12 retains its existing extent commit plus prefix window selection.
+Vulkan uses MakeCurrent's existing residency guarantee instead of a duplicate
+Ensure immediately beforehand; sparse and ordinary implementations both ensure
+the selected range. The final scaled buffer must exist before destination
+binding or dispatch. Failure no longer binds native memory to a scaled shader.
+Scaled descriptor length multiplies in 64 bits instead of overflowing u32.
+
+No shader bytecode/generation, sample format, quantization, addressing constants,
+resolution, conversion, render-target dump pass, clear behavior, readback,
+barrier masks/ranges or CPU/GPU waits change. Transient descriptors and full
+buffer barriers in this fallback path still remain. This is removal of redundant
+destination upload/preparation, not elimination of every resolve intermediate.
+Direct resolve behavior is unchanged. No new profiling/logging in release.
+
+Tests extend the existing strict C89 source-view fixture with two million
+native/scaled intervals, selected-adapter call counts/arguments and failed
+preparation checks. Malformed/wrapped/empty ranges and missing callbacks reject
+without calling adapters or modifying output. Existing immutable descriptor bank,
+source address and resolve view oracles remain. Native adapters are compiled
+against real backend interfaces; the policy test uses instrumented fake residency
+callbacks and does not execute Vulkan or D3D12 dispatches. No rendered image,
+GPU pass timing, Dark Souls II FPS, bandwidth or residency saving is measured.
+
+Local Windows x64 validation: full static Make -j5 and native MSVC CMake
+--parallel 5 PASS, including both real backend translation units and core link.
+GNU strict C89 and MSVC /TC /W4 /WX normal + AddressSanitizer policy/source-view
+fixtures PASS. Existing one-million address-pair/resolve-interval checks and
+320000 immutable bank lookups also PASS. A controlled external header variant
+reintroduced a native request before scaled preparation; the residency-call
+oracle rejected it at the scaled native-call assertion (expected exit 1).
+This negative variant is not production code and does not execute any GPU.
+The existing CI source-view jobs include these cases; remote CI is unrun.
+
+Shared-memory invalidation remains through MarkRangeAsResolved/RangeWrittenByGpu,
+matching the already-existing direct scaled path and D3D12 scaled path. No guest
+memory is borrowed beyond its existing ownership rules. Shader bytecode files
+are unchanged. No frontend/game/GPU/JIT or installed-core overwrite occurred.
