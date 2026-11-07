@@ -316,7 +316,7 @@ SOURCES_C += $(addprefix third_party/libretro-common/,formats/xml/rxml.c hash/lr
  rthreads/retro_procbarrier.c)
 
 SOURCES_C += libretro/core_gpu_retire.c libretro/core_gpu_spans.c libretro/core_vk_heap.c
-SOURCES_C += libretro/core_gpu_worklist.c
+SOURCES_C += libretro/core_gpu_worklist.c libretro/core_gpu_uav.c
 SOURCES_C += libretro/core_bitmap.c
 
 SOURCES_C += libretro/core_pause_gate.c libretro/core_cache_writer.c libretro/core_pipeline_order.c libretro/core_job_pool.c

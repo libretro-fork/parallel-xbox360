@@ -1402,7 +1402,10 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
         // Destination and constants.
         if (copy_dest_scaled) {
           texture_cache.TransitionCurrentScaledResolveRange(
-              D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+              D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+              resolve_info.copy_dest_base,
+              resolve_info.copy_dest_extent_start,
+              resolve_info.copy_dest_extent_length);
           command_list.D3DSetComputeRootUnorderedAccessView(
               1, texture_cache.GetCurrentScaledResolveRangeGPUAddress());
 
@@ -1426,12 +1429,8 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
         command_processor_.SubmitBarriers();
         command_list.D3DDispatch(copy_group_count_x, copy_group_count_y, 1);
 
-        // Order the resolve with other work using the destination as a UAV.
-        if (copy_dest_scaled) {
-          texture_cache.MarkCurrentScaledResolveRangeUAVWritesCommitNeeded();
-        } else {
-          shared_memory.MarkUAVWritesCommitNeeded();
-        }
+        // Scaled writes were recorded during access preparation; publish native writes.
+        if (!copy_dest_scaled) shared_memory.MarkUAVWritesCommitNeeded();
 
         // Invalidate textures and mark the range as scaled if needed.
         texture_cache.MarkRangeAsResolved(resolve_info.copy_dest_extent_start,
@@ -3685,7 +3684,10 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
 
   if (copy_dest_scaled) {
     texture_cache.TransitionCurrentScaledResolveRange(
-        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        resolve_info.copy_dest_base,
+        resolve_info.copy_dest_extent_start,
+        resolve_info.copy_dest_extent_length);
   } else {
     shared_memory.UseForWriting();
   }
@@ -3896,11 +3898,7 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
     }
   }
 
-  if (copy_dest_scaled) {
-    texture_cache.MarkCurrentScaledResolveRangeUAVWritesCommitNeeded();
-  } else {
-    shared_memory.MarkUAVWritesCommitNeeded();
-  }
+  if (!copy_dest_scaled) shared_memory.MarkUAVWritesCommitNeeded();
 
   command_processor_.PopDebugMarker();
   return true;

@@ -583,7 +583,7 @@ void D3D12TextureCache::BeginSubmission(uint64_t new_submission_index) {
       ScaledResolveVirtualBuffer* scaled_resolve_buffer =
           scaled_resolve_2gb_buffers_[i].get();
       if (scaled_resolve_buffer) {
-        scaled_resolve_buffer->ClearUAVBarrierPending();
+        scaled_resolve_buffer->ClearUAVWrites();
       }
     }
     std::memset(scaled_resolve_1gb_buffer_indices_, UINT8_MAX,
@@ -1343,7 +1343,7 @@ bool D3D12TextureCache::MakeScaledResolveRangeCurrent(
       command_processor_.PushAliasingBarrier(
           gigabyte_current_buffer->resource(), new_buffer_resource);
       // An aliasing barrier synchronizes and flushes everything.
-      gigabyte_current_buffer->ClearUAVBarrierPending();
+      gigabyte_current_buffer->ClearUAVWrites();
     }
     scaled_resolve_1gb_buffer_indices_[i] = new_buffer_index;
   }
@@ -1354,13 +1354,15 @@ bool D3D12TextureCache::MakeScaledResolveRangeCurrent(
 }
 
 void D3D12TextureCache::TransitionCurrentScaledResolveRange(
-    D3D12_RESOURCE_STATES new_state) {
+    D3D12_RESOURCE_STATES new_state, uint32_t write_base, uint32_t write_start,
+    uint32_t write_length) {
   assert_true(IsDrawResolutionScaled());
   ScaledResolveVirtualBuffer& buffer = GetCurrentScaledResolveBuffer();
-  command_processor_.PushTransitionBarrier(
-      buffer.resource(), buffer.SetResourceState(new_state), new_state);
+  D3D12_RESOURCE_STATES old_state = buffer.resource_state();
+  bool needs_uav = buffer.PrepareAccess(new_state, write_base, write_start, write_length);
+  command_processor_.PushTransitionBarrier(buffer.resource(), old_state, new_state);
+  if (needs_uav) command_processor_.PushUAVBarrier(buffer.resource());
 }
-
 D3D12_GPU_VIRTUAL_ADDRESS
 D3D12TextureCache::GetCurrentScaledResolveRangeGPUAddress() const {
   assert_true(IsDrawResolutionScaled());

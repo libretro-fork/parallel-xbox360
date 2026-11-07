@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fixed missing D3D12 ordering between overlapping scaled-resolve UAV writes. A bounded C89 table replaces the unread pending-write flag, keeps the existing state/alias transitions and permits independent footprints without an extra UAV barrier. Footprints include expanded tiled groups and binding-base phase. Offline byte-scoreboard, MSVC/ASan and backend compile checks pass; gameplay/GPU behavior still needs hardware validation.
+
 - Vulkan and D3D12 direct resolves skip fully rejected workgroups outside the destination rectangle, preserving the original shaders and all potentially writing threads. Shared C89 planning avoids allocation and division; actual benefit depends on tile padding. Vulkan scaled direct resolves now publish compute writes across sparse-buffer aliases. Offline equivalence, MSVC/ASan and static Make checks pass; gameplay/GPU timing remains unmeasured.
 
 - Multi-disc playlists now use frontend VFS, reject incomplete reads instead of publishing a partial list, and avoid temporary C++ path/string/vector copies. Multiple guest disc requests are answered in order, including before shutdown joins; callback path bytes survive reentrant edits. The frontend disc module uses C89/common primitives with a retained control lock. Windows rooted joins preserve UNC server names. No gameplay performance improvement is claimed.

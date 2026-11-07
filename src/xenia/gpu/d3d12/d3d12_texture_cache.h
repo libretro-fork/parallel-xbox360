@@ -11,6 +11,7 @@
 #define XENIA_GPU_D3D12_D3D12_TEXTURE_CACHE_H_
 
 #include <array>
+#include "libretro/core_gpu_uav.h"
 #include <functional>
 #include <memory>
 #include <unordered_map>
@@ -143,11 +144,12 @@ class D3D12TextureCache final : public TextureCache {
   // Returns the GPU address of the range specified in the last successful
   // MakeScaledResolveRangeCurrent call.
   D3D12_GPU_VIRTUAL_ADDRESS GetCurrentScaledResolveRangeGPUAddress() const;
-  void TransitionCurrentScaledResolveRange(D3D12_RESOURCE_STATES new_state);
-  void MarkCurrentScaledResolveRangeUAVWritesCommitNeeded() {
-    assert_true(IsDrawResolutionScaled());
-    GetCurrentScaledResolveBuffer().SetUAVBarrierPending();
+  // UAV uses supply their written guest-byte span; other states need none.
+  void TransitionCurrentScaledResolveRange(D3D12_RESOURCE_STATES new_state) {
+    TransitionCurrentScaledResolveRange(new_state, 0, 0, 0);
   }
+  void TransitionCurrentScaledResolveRange(D3D12_RESOURCE_STATES new_state,
+      uint32_t write_base, uint32_t write_start, uint32_t write_length);
   // Accessors for scaled resolve range info (for readback resolve path).
   uint64_t GetCurrentScaledResolveRangeStartScaled() const {
     return scaled_resolve_current_range_start_scaled_;
@@ -672,29 +674,24 @@ class D3D12TextureCache final : public TextureCache {
    public:
     explicit ScaledResolveVirtualBuffer(ID3D12Resource* resource,
                                         D3D12_RESOURCE_STATES resource_state)
-        : resource_(resource), resource_state_(resource_state) {}
+        : resource_(resource) {
+      xe_gpu_uav_init(&uav_writes_, uint32_t(resource_state));
+    }
     ID3D12Resource* resource() const { return resource_.Get(); }
-    D3D12_RESOURCE_STATES SetResourceState(D3D12_RESOURCE_STATES new_state) {
-      D3D12_RESOURCE_STATES old_state = resource_state_;
-      if (old_state == D3D12_RESOURCE_STATE_UNORDERED_ACCESS) {
-        uav_barrier_pending_ = false;
-      }
-      resource_state_ = new_state;
-      return old_state;
+    D3D12_RESOURCE_STATES resource_state() const {
+      return D3D12_RESOURCE_STATES(uav_writes_.resource_state);
     }
-    // After writing through a UAV.
-    void SetUAVBarrierPending() {
-      if (resource_state_ == D3D12_RESOURCE_STATE_UNORDERED_ACCESS) {
-        uav_barrier_pending_ = true;
-      }
+    bool PrepareAccess(D3D12_RESOURCE_STATES next, uint32_t base,
+                       uint32_t start, uint32_t length) {
+      return xe_gpu_uav_prepare(&uav_writes_, uint32_t(next),
+          next == D3D12_RESOURCE_STATE_UNORDERED_ACCESS, start, length, base) != 0;
     }
-    // After an aliasing barrier (which is even stronger than an UAV barrier).
-    void ClearUAVBarrierPending() { uav_barrier_pending_ = false; }
+    // Alias barriers and ExecuteCommandLists boundaries order prior uses.
+    void ClearUAVWrites() { xe_gpu_uav_clear(&uav_writes_); }
 
    private:
     Microsoft::WRL::ComPtr<ID3D12Resource> resource_;
-    D3D12_RESOURCE_STATES resource_state_;
-    bool uav_barrier_pending_ = false;
+    xe_gpu_uav uav_writes_;
   };
 
   explicit D3D12TextureCache(const RegisterFile& register_file,

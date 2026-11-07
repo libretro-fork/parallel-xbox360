@@ -1,0 +1,72 @@
+D3D12 scaled UAV write epochs (0141)
+====================================
+Problem
+- ScaledResolveVirtualBuffer set uav_barrier_pending_ after writes but no code
+  read it. SetResourceState cleared it even for UAV -> UAV, while the command
+  processor skips equal-state transition barriers. Overlapping resolves could
+  therefore execute without the required UAV ordering. Native shared memory
+  already had a separate, working commit/transition implementation.
+
+Implementation
+- core_gpu_uav.c/.h owns the resource-state token and a fixed 32-span write
+  history in MSVC C89. The C++ wrapper only owns the COM resource and adapts
+  Direct3D state/barrier calls. No C++ atomics, locks or owning callbacks added.
+- Prepare records planned writes before dispatch. Overlapping footprints require
+  a resource UAV barrier; independent footprints retain their epoch and avoid
+  that extra barrier. Real resource transitions order previous access and reset
+  history. Existing alias-barrier sites reset the source resource's history,
+  and the existing separate ExecuteCommandLists boundary resets are preserved.
+  Neither transitions nor alias barriers are removed or narrowed.
+- Direct and fallback resolves supply the destination binding base plus the
+  potentially modified guest-byte extent from GetResolveInfo. Read-state callers
+  keep the one-argument adapter. A mistaken UAV request without a valid span
+  conservatively requires barriers rather than forgetting an unknown write.
+- Raw guest-byte spans alone are insufficient. Scaled shaders rearrange complete
+  64/128-byte groups. Normalize each footprint outwards to 128-byte groups
+  RELATIVE TO THE SHADER BINDING BASE. This covers partial 3D tiled tails and
+  differently phased bases, including unaligned bases, without assuming every
+  base is 128-byte aligned. Adjacent complete same-base groups remain separate.
+- The group-size bound follows the existing SPIR-V/DXIL emitter addressing:
+  gx = bpp_log2 >= 3 ? 5 - bpp_log2 : 4;
+  gy = 3 - min(bpp_log2, 2). For bpp_log2 0..4, guest groups occupy 64/128 bytes.
+  Source formats, samples, precision, tiled addressing and shaders are unchanged.
+- Merge only touching/overlapping footprint intervals; never widen across gaps.
+  On 32 disjoint slots being exhausted, order the GPU epoch and reuse the table.
+  Bad ranges/overflow/end-rounding beyond the 512 MiB aperture retain an opaque
+  pending epoch and force conservative ordering. No CPU waits are introduced.
+- 268 bytes per existing scaled virtual buffer, no new allocation events. Init
+  writes only count/unknown/state metadata; retained span storage is not cleared.
+  This is a bounded RSS tradeoff, not an RSS reduction or allocation-free-core
+  claim. Existing D3D12 barrier-vector/deferred command storage remains separate.
+
+Verification
+- Actual C implementation against a dense per-byte physical-group scoreboard:
+  1000000 operations with state changes, alias resets, different base phases,
+  overlaps and independent writes. The seeded run checks 319779 ordered state
+  transitions, 121256 additional UAV barriers and 678801 UAV preparations that
+  need no additional UAV barrier (including those already ordered by transition).
+- Directed tests: all 128 base phases; disjoint raw spans sharing one expanded
+  group; overlap across different phases; partial groups; exact aperture end;
+  invalid/overflow ranges; opaque epochs; transitive interval merging; fixed-table
+  exhaustion; 100000 adjacent complete-group writes with retained single-span
+  storage; initialization over poisoned storage and state-token preservation.
+- Strict MinGW GCC C89 -pedantic -Werror, native MSVC /TC /O2 /W4 /WX and native
+  MSVC AddressSanitizer pass. Native production D3D12 texture/render-target cache
+  /Zs checks pass. The full Windows static Make -j5 build passes; mailbox checks are recorded at release.
+- Initial raw-span candidate passed its narrower oracle but failed the added
+  scaled-footprint regression; it was never shipped. Final tests exercise the
+  corrected binding-base-aware footprints. No installed DLL was replaced.
+- Microsoft synchronization reference:
+  https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_resource_uav_barrier
+  https://learn.microsoft.com/en-us/windows/win32/direct3d12/using-resource-barriers-to-synchronize-resource-states-in-direct3d-12
+
+Limits
+- GPU-owner metadata, not a thread-safe queue. No multi-threaded ownership claim.
+- No game, GPU device, RetroArch or JIT was started. Hardware D3D12 validation,
+  gameplay accuracy, actual barrier costs and FPS gains remain unmeasured.
+- The old path omitted necessary barriers, so timing against that path would not
+  prove an accuracy-preserving speedup. This change restores ordering and avoids
+  indiscriminate barriers for footprints proved independent by the planner.
+- Vulkan's existing scaled barriers are unchanged in this batch. Its lazy/range
+  synchronization, converting-resolve EDRAM round trips, barrier-container storage
+  and remaining renderer allocations/transfers remain ongoing goal work.
