@@ -226,8 +226,7 @@ bool XmaDecoder::CaptureState(xe_xma_decoder_view* out) const {
   if (!out) return false;
   out->state.version = 0;
   if (context_mode_ != XE_XMA_MODE_RAW || !context_data_first_ptr_ ||
-      (retro_atomic_load_acquire_int(&worker_running_) &&
-       (!is_paused() || !xe_pause_gate_wait_workers(pause_gate_.get(), 1, 0))) ||
+      !StateQuiescent() ||
       !context_bitmap_.CaptureState(out->free_slots, sizeof(out->free_slots)))
     return false;
   out->state.mode = context_mode_;
@@ -249,6 +248,135 @@ bool XmaDecoder::CaptureState(xe_xma_decoder_view* out) const {
     return false;
   }
   return true;
+}
+
+bool XmaDecoder::StateQuiescent() const {
+  return !retro_atomic_load_acquire_int(&worker_running_) ||
+      (is_paused() && xe_pause_gate_wait_workers(pause_gate_.get(), 1, 0));
+}
+
+bool XmaDecoder::StageStorageValid(const xe_xma_decoder_stage* stage) const {
+  uint32_t i;
+  if (!stage || context_mode_ != XE_XMA_MODE_RAW ||
+      !xe_xma_state_disjoint(stage, sizeof(*stage), this, sizeof(*this))) return false;
+  for (i = 0; i < kContextCount; ++i) {
+    if (!contexts_[i] || !xe_xma_state_disjoint(stage, sizeof(*stage),
+          contexts_[i], sizeof(XmaContextNew))) return false;
+  }
+  return true;
+}
+
+bool XmaDecoder::StateRegistersValid(const uint32_t* registers) const {
+  uint32_t physical, i;
+  if (!registers || (uintptr_t)registers > UINTPTR_MAX - sizeof(register_file_.values))
+    return false;
+  if (registers != register_file_.values &&
+      !xe_xma_state_disjoint(registers, sizeof(register_file_.values), this, sizeof(*this)))
+    return false;
+  for (i = 0; i < kContextCount; ++i) {
+    if (!contexts_[i] || !xe_xma_state_disjoint(registers, sizeof(register_file_.values),
+          contexts_[i], sizeof(XmaContextNew))) return false;
+  }
+  // Read through memcpy: external state backing need not be word-aligned.
+  memcpy(&physical, (const uint8_t*)registers + XmaRegister::ContextArrayAddress * 4, 4);
+  return physical == memory()->GetPhysicalAddress(context_data_first_ptr_);
+}
+
+bool XmaDecoder::PrepareState(const xe_xma_decoder_view* source,
+                              xe_xma_decoder_stage* stage) const {
+  uint32_t i, c;
+  if (!StageStorageValid(stage) || stage->owner || stage->state.version ||
+      !StateQuiescent() || !xe_xma_decoder_view_valid(source,
+          context_data_first_ptr_, context_data_last_ptr_) ||
+      !StateRegistersValid(source->registers) ||
+      !xe_xma_state_disjoint(stage, sizeof(*stage), source, sizeof(*source)) ||
+      !xe_xma_state_disjoint(stage, sizeof(*stage), source->registers,
+          sizeof(register_file_.values))) return false;
+  // Validate all aliases before writing the output arena. Input pointers are
+  // native borrowed views, not trusted merely because metadata is well-shaped.
+  for (i = 0; i < kContextCount; ++i) {
+    if (stage->owners[i].candidate || stage->owners[i].owner ||
+        !xe_xma_state_disjoint(stage, sizeof(*stage), source->owners[i].pcm,
+            source->owners[i].pcm_bytes)) return false;
+    for (c = 0; c < 2; ++c) {
+      if (!xe_xma_state_disjoint(stage, sizeof(*stage), source->owners[i].codec.history[c],
+            source->owners[i].codec.history_bytes[c])) return false;
+    }
+  }
+  stage->state = source->state;
+  stage->owner = this;
+  stage->registers = source->registers;
+  memcpy(stage->free_slots, source->free_slots, sizeof(stage->free_slots));
+  for (i = 0; i < kContextCount; ++i) {
+    if (!static_cast<const XmaContextNew*>(contexts_[i])->PrepareState(
+          &source->owners[i], &stage->owners[i])) {
+      DiscardState(stage);
+      return false;
+    }
+  }
+  if (!CanCommitState(stage)) {
+    DiscardState(stage);
+    return false;
+  }
+  return true;
+}
+
+bool XmaDecoder::CanCommitState(const xe_xma_decoder_stage* stage) const {
+  uint32_t i, j, free_bit;
+  const XmaContextNew* context;
+  uint64_t current_slots[5];
+  if (!StageStorageValid(stage) || stage->owner != this || !StateQuiescent() ||
+      !xe_xma_decoder_state_valid(&stage->state, context_data_first_ptr_, context_data_last_ptr_) ||
+      !StateRegistersValid(stage->registers) ||
+      !xe_xma_state_disjoint(stage, sizeof(*stage), stage->registers,
+          sizeof(register_file_.values)) ||
+      !context_bitmap_.CaptureState(current_slots, sizeof(current_slots))) return false;
+  for (i = 0; i < kContextCount; ++i) {
+    context = static_cast<const XmaContextNew*>(contexts_[i]);
+    if (!context->CanCommitState(&stage->owners[i])) return false;
+    free_bit = (uint32_t)((stage->free_slots[i / 64] >> (63 - (i & 63))) & 1);
+    if (free_bit == stage->owners[i].state.allocated ||
+        !xe_xma_state_disjoint(stage->owners[i].pcm, stage->owners[i].pcm_bytes,
+            stage, sizeof(*stage))) return false;
+    for (j = 0; j < kContextCount; ++j) {
+      if (stage->owners[i].candidate == stage->owners[j].previous ||
+          (i != j && stage->owners[i].candidate == stage->owners[j].candidate)) return false;
+    }
+    // Own-frame restore may overlap and uses memmove. Cross-owner aliases must
+    // not be overwritten by an earlier commit or a released codec/frame.
+    for (j = 0; stage->owners[i].pcm_bytes && j < kContextCount; ++j) {
+      if (i == j && stage->owners[i].pcm_bytes &&
+          (uintptr_t)stage->owners[i].pcm >= (uintptr_t)context->raw_frame_ &&
+          (uintptr_t)stage->owners[i].pcm - (uintptr_t)context->raw_frame_ <=
+              sizeof(context->raw_frame_) - stage->owners[i].pcm_bytes) continue;
+      if (!xe_xma_state_disjoint(stage->owners[i].pcm, stage->owners[i].pcm_bytes,
+            contexts_[j], sizeof(XmaContextNew))) return false;
+    }
+    if (!xe_xma_state_disjoint(stage->owners[i].pcm, stage->owners[i].pcm_bytes,
+          this, sizeof(*this))) return false;
+  }
+  return true;
+}
+
+bool XmaDecoder::CommitState(xe_xma_decoder_stage* stage) {
+  uint32_t i;
+  if (!CanCommitState(stage)) return false;
+  // This is the only remaining fallible operation; it checks before storing.
+  // Exclusive ownership prevents observers seeing the intermediate map/owners.
+  if (!context_bitmap_.RestoreState(stage->free_slots, sizeof(stage->free_slots))) return false;
+  for (i = 0; i < kContextCount; ++i)
+    static_cast<XmaContextNew*>(contexts_[i])->CommitPreparedState(&stage->owners[i]);
+  if (stage->registers != register_file_.values)
+    memmove(register_file_.values, stage->registers, sizeof(register_file_.values));
+  memset(stage, 0, sizeof(*stage));
+  return true;
+}
+
+void XmaDecoder::DiscardState(xe_xma_decoder_stage* stage) {
+  uint32_t i;
+  if (!stage) return;
+  for (i = 0; i < kContextCount; ++i) XmaContextNew::DiscardState(&stage->owners[i]);
+  memset(stage, 0, sizeof(*stage));
 }
 
 void XmaDecoder::WorkerThreadMain() {

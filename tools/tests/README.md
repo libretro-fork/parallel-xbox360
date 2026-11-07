@@ -1491,3 +1491,10 @@ changes. Conversion fully initializes its frame span; consumers cannot select
 unused tails. See xma_decoder_state_results.txt for the legacy-index negative
 control and byte-identical real-stream regression. Bitmap sanitizer runs can use
 BITMAP_TEST_FLAGS and a separate BITMAP_TEST_OUT; generated PDBs stay in that output.
+
+Raw XMA decoder state transactions use the existing decoder-state runners.
+They exercise all-owner prepare/preflight/commit/discard, late-slot failure and
+stale identity with unchanged prefix backing, allocation-map agreement, known
+storage-alias rejection and repeated use of caller-owned staging. Native borrowed
+input must remain immutable under exclusive quiescence. These do not enable the
+libretro serialization ABI or restore guest RAM/other subsystems.

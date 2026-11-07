@@ -68,10 +68,14 @@ class XmaContextNew : public XmaContext {
   // by contract and must be committed/discarded before either owner is destroyed.
   bool CaptureState(xe_xma_owner_view* out) const;
   bool PrepareState(const xe_xma_owner_view* view, xe_xma_owner_stage* stage) const;
+  bool CanCommitState(const xe_xma_owner_stage* stage) const;
   bool CommitState(xe_xma_owner_stage* stage);
   static void DiscardState(xe_xma_owner_stage* stage);
 
  private:
+  friend class XmaDecoder;
+  // Only after all owners preflight under the same exclusive state operation.
+  void CommitPreparedState(xe_xma_owner_stage* stage);
   friend struct XmaContextWritebackTest;
   friend struct XmaContextStreamTest;
   void ClearLocked(XMA_CONTEXT_DATA* data);

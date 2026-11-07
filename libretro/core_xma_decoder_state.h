@@ -18,15 +18,40 @@ typedef struct xe_xma_decoder_view {
  uint64_t free_slots[5];
  xe_xma_owner_view owners[XE_XMA_CONTEXTS];
 } xe_xma_decoder_view;
+/* Runtime resource owner, never a wire record. Zero initialize, never copy, and
+ * discard before destroying the decoder. Registers/PCM remain borrowed and
+ * immutable until commit/discard (an owner's own PCM may restore in place).
+ * Keep this caller-owned arena off small guest/worker stacks. */
+typedef struct xe_xma_decoder_stage {
+ xe_xma_decoder_state state;
+ const void *owner;
+ const uint32_t *registers;
+ uint64_t free_slots[5];
+ xe_xma_owner_stage owners[XE_XMA_CONTEXTS];
+} xe_xma_decoder_stage;
+static INLINE int xe_xma_state_disjoint(const void *a,size_t an,
+      const void *b,size_t bn)
+{
+ uintptr_t x=(uintptr_t)a,y=(uintptr_t)b;
+ if ((!a && an) || (!b && bn) || x>UINTPTR_MAX-an || y>UINTPTR_MAX-bn) return 0;
+ if (!an || !bn) return 1;
+ return x>=y ? x-y>=bn : y-x>=an;
+}
+static INLINE int xe_xma_decoder_state_valid(const xe_xma_decoder_state *state,
+      uint32_t first,uint32_t last)
+{
+ if (!state || state->version!=1 || state->mode!=XE_XMA_MODE_RAW ||
+       state->count!=XE_XMA_CONTEXTS || !first || (first&63) ||
+       first>UINT32_MAX-(XE_XMA_CONTEXTS*64-1) ||
+       last!=first+XE_XMA_CONTEXTS*64-1 || state->context_first!=first ||
+       state->context_last!=last) return 0;
+ return 1;
+}
 static INLINE int xe_xma_decoder_view_valid(const xe_xma_decoder_view *view,
       uint32_t first,uint32_t last)
 {
  uint32_t i,offset,bytes,free_bit;
- if (!view || view->state.version!=1 || view->state.mode!=XE_XMA_MODE_RAW ||
-       view->state.count!=XE_XMA_CONTEXTS || !first || (first&63) ||
-       first>UINT32_MAX-(XE_XMA_CONTEXTS*64-1) ||
-       last!=first+XE_XMA_CONTEXTS*64-1 || view->state.context_first!=first ||
-       view->state.context_last!=last || !view->registers ||
+ if (!view || !xe_xma_decoder_state_valid(&view->state,first,last) || !view->registers ||
        view->register_bytes!=XE_XMA_REGISTERS*sizeof(uint32_t) ||
        (uintptr_t)view->registers>UINTPTR_MAX-view->register_bytes) return 0;
  for(i=0;i<XE_XMA_CONTEXTS;++i) {

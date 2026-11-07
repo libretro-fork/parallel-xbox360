@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Decoder-wide raw XMA restore prepares all 320 replacement codecs before changing live state, rejects stale final owners and unsafe PCM aliases, and commits the allocation map, owners and registers only after preflight. Staging uses fixed caller-owned C89 storage, borrows registers/pending PCM and adopts prepared codec backing. No decoding-loop allocation or audio scheduling change is added. Complete libretro savestates remain unfinished.
+
 - Pending XMA PCM now uses the layout of the frame actually decoded, so guest mono/stereo changes cannot select unrelated data or wrap a source offset. Converted PCM uses a fixed C array and no redundant 2 KiB pre-clear. Format-change byte oracles and a controlled negative variant validate the fix; 24 non-silent stream variants remain byte-identical and nine owner snapshot replays pass. Audio scheduling and conversion arithmetic are unchanged.
 
 - Raw XMA capture borrows registers and records all 320 owners with allocation-map agreement, including history/PCM retained by released contexts. Capture requires an active worker to acknowledge its pause; zero-timeout acknowledgment probes no longer read a clock. Added allocation-free quiescent bitmap state I/O, froze the actual cold decoder style and reset stale allocation bits on table rebuild. Native capture/ASan fixtures and bitmap concurrency checks pass. Decoder-wide restore and complete libretro savestates remain unfinished; ordinary audio scheduling is unchanged.

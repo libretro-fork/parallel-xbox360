@@ -55,6 +55,10 @@ class XmaDecoder {
 
   // Exclusive state owner: guest/control callers must also be stopped.
   bool CaptureState(xe_xma_decoder_view* out) const;
+  bool PrepareState(const xe_xma_decoder_view* view, xe_xma_decoder_stage* stage) const;
+  bool CanCommitState(const xe_xma_decoder_stage* stage) const;
+  bool CommitState(xe_xma_decoder_stage* stage);
+  static void DiscardState(xe_xma_decoder_stage* stage);
 
   void SignalWork() {
     if (work_event_) {
@@ -68,6 +72,9 @@ class XmaDecoder {
   bool InitializeContexts(uint32_t mode);
 
  private:
+  bool StateQuiescent() const;
+  bool StageStorageValid(const xe_xma_decoder_stage* stage) const;
+  bool StateRegistersValid(const uint32_t* registers) const;
   void WorkerThreadMain();
 
   static uint32_t MMIOReadRegisterThunk(void* ppc_context, XmaDecoder* as,

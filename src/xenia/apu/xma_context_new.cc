@@ -142,8 +142,7 @@ bool XmaContextNew::PrepareState(const xe_xma_owner_view* source,
   return true;
 }
 
-bool XmaContextNew::CommitState(xe_xma_owner_stage* stage) {
-  AVCodecContext* previous;
+bool XmaContextNew::CanCommitState(const xe_xma_owner_stage* stage) const {
   uint32_t offset, bytes;
   if (!stage || stage->owner != this || !stage->candidate ||
       stage->previous != av_context_ || stage->state.id != id_ ||
@@ -160,6 +159,19 @@ bool XmaContextNew::CommitState(xe_xma_owner_stage* stage) {
   } else if (avcodec_is_open(stage->candidate) ||
              stage->candidate->sample_rate ||
              stage->candidate->ch_layout.nb_channels) return false;
+  return true;
+}
+
+bool XmaContextNew::CommitState(xe_xma_owner_stage* stage) {
+  if (!CanCommitState(stage)) return false;
+  CommitPreparedState(stage);
+  return true;
+}
+
+void XmaContextNew::CommitPreparedState(xe_xma_owner_stage* stage) {
+  AVCodecContext* previous;
+  uint32_t bytes = stage->state.pending_blocks * 256;
+  uint32_t offset = bytes ? stage->state.channels * 1024 - bytes : 0;
   // Consume borrowed PCM before freeing any old codec or frame backing.
   // Codec history already resides in the candidate's final storage.
   if (bytes) memmove(raw_frame_ + offset, stage->pcm, bytes);
@@ -176,7 +188,6 @@ bool XmaContextNew::CommitState(xe_xma_owner_stage* stage) {
   memset(stage, 0, sizeof(*stage));
   av_frame_unref(av_frame_); // Old output is scratch; pending PCM is above.
   avcodec_free_context(&previous);
-  return true;
 }
 
 void XmaContextNew::DiscardState(xe_xma_owner_stage* stage) {

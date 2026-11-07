@@ -9,6 +9,7 @@ using xe::X_STATUS;
 namespace xe {namespace apu {
 struct XmaContextStreamTest {
  static void *raw(XmaContextNew *context) {return context->raw_frame_;}
+ static const void *codec(XmaContextNew *context) {return context->av_context_;}
 };
 }}
 class ColdDecoder : public xe::apu::XmaDecoder {
@@ -55,6 +56,16 @@ class ColdDecoder : public xe::apu::XmaDecoder {
   }
   const void *registers() const {return register_file_.values;}
   void inconsistent(unsigned index) {contexts_[index]->set_is_allocated(!contexts_[index]->is_allocated());}
+  const void *codec(unsigned index) {
+    return xe::apu::XmaContextStreamTest::codec(static_cast<xe::apu::XmaContextNew*>(contexts_[index]));
+  }
+  bool rotate(unsigned index) {
+    xe_xma_owner_view view={};xe_xma_owner_stage stage={};
+    xe::apu::XmaContextNew *context=static_cast<xe::apu::XmaContextNew*>(contexts_[index]);
+    if(!context->CaptureState(&view) || !context->PrepareState(&view,&stage)) return false;
+    if(context->CommitState(&stage)) return true;
+    context->DiscardState(&stage);return false;
+  }
 };
 struct DecoderFixture {
  xe::Memory memory;
@@ -107,3 +118,15 @@ extern "C" int xe_xma_decoder_test_stream(void *p,const void *packet,unsigned ch
 
 extern "C" void *xe_xma_decoder_test_raw(void *p) {return static_cast<DecoderFixture*>(p)->decoder.raw();}
 extern "C" const void *xe_xma_decoder_test_drain(void *p,unsigned stereo) {return static_cast<DecoderFixture*>(p)->decoder.drain(stereo);}
+extern "C" int xe_xma_decoder_test_prepare(void *p,const xe_xma_decoder_view *v,xe_xma_decoder_stage *s) {
+ return static_cast<DecoderFixture*>(p)->decoder.PrepareState(v,s);
+}
+extern "C" int xe_xma_decoder_test_ready(void *p,const xe_xma_decoder_stage *s) {
+ return static_cast<DecoderFixture*>(p)->decoder.CanCommitState(s);
+}
+extern "C" int xe_xma_decoder_test_commit(void *p,xe_xma_decoder_stage *s) {
+ return static_cast<DecoderFixture*>(p)->decoder.CommitState(s);
+}
+extern "C" void xe_xma_decoder_test_discard(xe_xma_decoder_stage *s) {xe::apu::XmaDecoder::DiscardState(s);}
+extern "C" const void *xe_xma_decoder_test_codec(void *p,unsigned i) {return static_cast<DecoderFixture*>(p)->decoder.codec(i);}
+extern "C" int xe_xma_decoder_test_rotate(void *p,unsigned i) {return static_cast<DecoderFixture*>(p)->decoder.rotate(i);}

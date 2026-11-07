@@ -1,4 +1,4 @@
-All-slot raw XMA capture and quiescent allocation-map state (0163)
+All-slot raw XMA capture and transactional restore (0163/0164)
 ===============================================================
 XmaDecoder::CaptureState covers 320 modern/raw owners, not just allocated slots.
 The caller supplies fixed/reusable xe_xma_decoder_view storage; no large local
@@ -11,8 +11,8 @@ Failed capture clears version; a partially filled output must never be consumed.
 C89 structural checks validate count/mode/base range, register span shape, owner
 slot IDs/guest addresses, basic owner layout and allocation-map agreement. A set
 bitmap bit means free; slot zero is the high bit. These checks are NOT complete
-codec-payload validation or a restore implementation. Every codec still needs
-candidate preparation/validation before a future decoder-wide/global commit.
+codec-payload validation. Decoder-wide PrepareState performs full candidate
+preparation/validation before any live commit.
 
 The actual context style is frozen once by the cold factory and recorded in the
 owner. Capture never reads a mutable config string to decide a derived-type cast.
@@ -100,8 +100,7 @@ before any MMIO/kernel-worker initialization. Only offline XMA audio decoding
 runs; no guest CPU/JIT, GPU device, frontend or installed core is started/replaced.
 No game/FPS/latency improvement is inferred from these metadata changes.
 
-Unfinished: prepare all 320 candidate resources, preflight every live identity,
-then commit registers/bitmap/owners together under exclusive ownership; cover
+Unfinished: complete the global state orchestrator and cover
 remaining decoder styles and other APU/media/client/cadence state, then complete
 GPU/CPU/IO/timer/frontend-clock orchestration. Libretro serialization is disabled.
 
@@ -114,3 +113,31 @@ Set DECODER_STATE_OBJECT to those objects, DECODER_STATE_FLAGS to the same flags
 and a separate DECODER_STATE_OUT. The runner supplies the clock-adapted gate.
 Bitmap tests use run_bitmap_tests.sh/.cmd with the same scalar atomic ABI.
 Do not edit live build inputs or mix old class-layout archives with new headers.
+
+Decoder-wide raw transaction (0164 work):
+PrepareState creates 320 replacement codec resources before live mutation; a late
+FFmpeg checkpoint failure discards the entire prepared prefix. CanCommitState
+preflights every owner/candidate/previous identity, root layout, register mapping,
+allocation-bit agreement and known mutable-storage aliases under exclusive
+quiescence. Commit validates the bitmap before its first store, applies the
+already-preflighted owner transitions with no fallible calls, and copies registers
+only when the source is external. No observer may run during these steps.
+The fixed caller-owned C89 stage is a native resource owner, never copied or
+serialized and never placed on a small worker stack. Register/PCM input remains
+borrowed and immutable until commit/discard, except an owner's own PCM may restore
+in place with memmove. Cross-owner PCM aliases and register aliases into owner
+objects are rejected. Arbitrary pointer provenance is a caller obligation: these
+are native views, not an untrusted-pointer wire parser. Discard is idempotent for
+valid stages and must precede decoder destruction. Codec resource allocation is
+confined to explicit state preparation, not normal decode or commit. Guest RAM
+and the rest of the emulated system must be restored by the future orchestrator.
+
+Added production-object fixture cases: malformed codec history metadata at final
+slot after successful prefix preparation, final-owner stale identity, mismatched
+final allocation bit, output-stage input alias, bad context-array register mapping,
+cross-owner pending PCM, complete candidate discard, repeated stage reuse,
+external-register restore, and in-place borrowed-register/PCM restore. Success
+checks all 320 owner metadata/history/PCM spans, allocation words and 64KiB register
+bytes. Failure checks unchanged live content and the first codec identity, so
+content-equivalent prefix replacement cannot disguise a partial commit.
+Extension validation: full GNU Make -j5 and native MSVC core builds pass. Expanded GNU C89, native /TC /W4 /WX and scoped native ASan transaction drivers pass, including all-cold owners, mono/stereo pending PCM, released history, duplicate/borrowed-live codec rejection and clock-free quiescence. The 24-variant real stream remains byte-identical to the baseline (770048 bytes, SHA256 above); nine real owner replays pass. The x64 C89 stage-size probe measures 25680 bytes (80 per child), with no runtime scratch allocation. Candidate codecs still allocate during explicit state preparation. No fault-injected allocator failure or whole-core leak-freedom claim is made.
