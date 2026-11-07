@@ -27,7 +27,7 @@ class NopAudioSystem : public AudioSystem {
 
   std::string name() const override { return "NOP"; }
 
-  X_STATUS CreateDriver(size_t index, xe::threading::Semaphore* semaphore,
+  X_STATUS CreateDriver(size_t index, const xe_apu_credit_sink* credits,
                         AudioDriver** out_driver) override;
   AudioDriver* CreateDriver(xe::threading::Semaphore* semaphore,
                             uint32_t frequency, uint32_t channels,

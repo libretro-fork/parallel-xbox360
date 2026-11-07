@@ -15,3 +15,9 @@ extern "C" int xe_driver_state_capture(void *p,xe_audio_driver_view *v) {return 
 extern "C" int xe_driver_state_ready(void *p,const xe_audio_driver_view *v) {return static_cast<LibretroAudioDriver*>(p)->CanRestoreState(v);}
 extern "C" int xe_driver_state_restore(void *p,const xe_audio_driver_view *v) {return static_cast<LibretroAudioDriver*>(p)->RestoreState(v);}
 extern "C" void xe_driver_state_stop(void *p) {static_cast<LibretroAudioDriver*>(p)->Shutdown();}
+extern "C" void *xe_driver_state_new_credit(const xe_apu_credit_sink *credits) {
+  LibretroAudioSystem::set_output_channels(2);
+  LibretroAudioDriver *driver=new(std::nothrow) LibretroAudioDriver(nullptr,nullptr,48000,6,true,credits);
+  if(driver && !driver->Initialize()) {delete driver;return nullptr;}
+  return driver;
+}

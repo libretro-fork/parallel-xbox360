@@ -15,7 +15,6 @@
 #include "xenia/apu/audio_driver.h"
 #include "xenia/apu/xma_decoder.h"
 #include "xenia/base/assert.h"
-#include "xenia/base/byte_stream.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
@@ -58,11 +57,10 @@ AudioSystem::AudioSystem(cpu::Processor* processor)
                               static_cast<uint32_t>(kMinimumQueuedFrames),
                               static_cast<uint32_t>(kMaximumQueuedFrames));
 
-  for (size_t i = 0; i < kMaximumClientCount; ++i) {
-    client_semaphores_[i] = xe::threading::Semaphore::Create(0, queued_frames_);
-  }
+  client_lifetimes_.reset(xe_apu_clients_new(queued_frames_));
+  if (!client_lifetimes_) throw std::bad_alloc();
   pending_work_event_ = xe::threading::Event::CreateAutoResetEvent(false);
-  assert_not_null(pending_work_event_);
+  if (!pending_work_event_) throw std::bad_alloc();
 
   xma_decoder_ = std::make_unique<xe::apu::XmaDecoder>(processor_);
   static const xe_state_stage stages[] = {
@@ -134,17 +132,20 @@ void AudioSystem::WorkerThreadMain() {
             .count());
 
     size_t client_index = kMaximumClientCount;
+    uint64_t selected_token = 0;
     uint64_t earliest_pump_us = std::numeric_limits<uint64_t>::max();
     {
       std::lock_guard<std::mutex> clients_lock(clients_mutex_);
 
       for (size_t i = 0; i < kMaximumClientCount; ++i) {
-        if (!clients_[i].in_use ||
+        uint64_t token;
+        if (!xe_apu_clients_active(client_lifetimes_.get(), (unsigned)i, &token) ||
             clients_[i].next_pump_us >= earliest_pump_us) {
           continue;
         }
         earliest_pump_us = clients_[i].next_pump_us;
         client_index = i;
+        selected_token = token;
       }
 
       if (client_index != kMaximumClientCount) {
@@ -194,48 +195,28 @@ void AudioSystem::WorkerThreadMain() {
 
     if (is_paused() || !retro_atomic_load_acquire_int(&worker_running_)) continue;
 
-    // Submit only if the host has a free output slot; otherwise drop (the host
-    // queue is full, so it is already well buffered).
-    if (xe::threading::Wait(client_semaphores_[client_index].get(), false,
-                            std::chrono::milliseconds(0)) !=
-        xe::threading::WaitResult::kSuccess) {
-      continue;
-    }
-
-    // UnregisterClient waits on this after clearing in_use.
-    std::lock_guard<std::mutex> cb_lk(clients_[client_index].callback_mutex);
-
     uint32_t client_callback = 0;
     uint32_t client_callback_arg = 0;
-    {
-      std::lock_guard<std::mutex> clients_lock(clients_mutex_);
-      if (clients_[client_index].in_use) {
-        client_callback = clients_[client_index].callback;
-        client_callback_arg = clients_[client_index].wrapped_callback_arg;
+    uint64_t lease;
+    if (!BeginClientCallback(client_index, selected_token, &client_callback,
+                             &client_callback_arg, &lease)) continue;
+    try {
+      if (client_callback) {
+        SCOPE_profile_cpu_i("apu", "xe::apu::AudioSystem->client_callback");
+        uint64_t args[] = {client_callback_arg};
+        processor_->Execute(worker_thread_->thread_state(), client_callback, args,
+                            xe::countof(args));
       }
+    } catch (...) {
+      EndClientCallback(client_index, lease);
+      retro_atomic_store_release_int(&worker_running_, 0);
+      throw;
     }
-
-    if (client_callback) {
-      SCOPE_profile_cpu_i("apu", "xe::apu::AudioSystem->client_callback");
-      uint64_t args[] = {client_callback_arg};
-      processor_->Execute(worker_thread_->thread_state(), client_callback, args,
-                          xe::countof(args));
-    }
+    EndClientCallback(client_index, lease);
   }
   retro_atomic_store_release_int(&worker_running_, 0);
 
   // TODO(benvanik): call module API to kill?
-}
-
-int AudioSystem::FindFreeClient() {
-  for (int i = 0; i < kMaximumClientCount; i++) {
-    auto& client = clients_[i];
-    if (!client.in_use) {
-      return i;
-    }
-  }
-
-  return -1;
 }
 
 void AudioSystem::Initialize() {}
@@ -253,250 +234,166 @@ void AudioSystem::StopWorker() {
 }
 
 void AudioSystem::Shutdown() {
+  size_t i;
   StopWorker();
+  for (i = 0; i < kMaximumClientCount; ++i) UnregisterClient(i);
+}
 
-  // Unregister all active clients to shut down their audio drivers before
-  // the semaphores are destroyed with this AudioSystem.
-  uint32_t wrapped_callback_args[kMaximumClientCount] = {};
-  {
-    std::lock_guard<std::mutex> clients_lock(clients_mutex_);
-    for (size_t i = 0; i < kMaximumClientCount; ++i) {
-      if (clients_[i].in_use) {
-        DestroyDriver(clients_[i].driver);
-        wrapped_callback_args[i] = clients_[i].wrapped_callback_arg;
-        clients_[i].driver = nullptr;
-        clients_[i].callback = 0;
-        clients_[i].callback_arg = 0;
-        clients_[i].wrapped_callback_arg = 0;
-        clients_[i].in_use = false;
-      }
-    }
-  }
-  // Outside clients_mutex_, as the heap takes the global lock.
-  for (uint32_t wrapped_callback_arg : wrapped_callback_args) {
-    if (wrapped_callback_arg) {
-      memory()->SystemHeapFree(wrapped_callback_arg);
-    }
-  }
+void AudioSystem::ClearClientSlot(size_t index) {
+  ClientSlot& client = clients_[index];
+  client.driver = nullptr;
+  client.callback = client.callback_arg = client.wrapped_callback_arg = 0;
+  client.next_pump_us = 0;
+  retro_atomic_store_relaxed_int(&client.frames_submitted, 0);
+  retro_atomic_store_relaxed_int(&client.frames_processed, 0);
+  retro_atomic_store_relaxed_int(&client.frames_dropped, 0);
 }
 
 X_STATUS AudioSystem::RegisterClient(uint32_t callback, uint32_t callback_arg,
                                      size_t* out_index) {
-  // Outside clients_mutex_, as the heap takes the global lock.
+  unsigned index;
+  uint64_t token;
+  xe_apu_credit_sink credits;
+  AudioDriver* driver = nullptr;
+  X_STATUS result;
+  CollectRetiredClients();
+  // The memory heap takes the global critical region; never hold clients_mutex_.
   uint32_t ptr = memory()->SystemHeapAlloc(0x4);
+  if (!ptr) return X_STATUS_UNSUCCESSFUL;
   xe::store_and_swap<uint32_t>(memory()->TranslateVirtual(ptr), callback_arg);
-
   std::unique_lock<std::mutex> clients_lock(clients_mutex_);
-
-  auto index = FindFreeClient();
-  assert_true(index >= 0);
-  if (index < 0) {
+  if (!xe_apu_clients_reserve(client_lifetimes_.get(), &index, &token)) {
     clients_lock.unlock();
     memory()->SystemHeapFree(ptr);
     return X_STATUS_UNSUCCESSFUL;
   }
-
-  auto client_semaphore = client_semaphores_[index].get();
-  auto ret = client_semaphore->Release(queued_frames_, nullptr);
-  assert_true(ret);
-
-  AudioDriver* driver;
-  auto result = CreateDriver(index, client_semaphore, &driver);
-  if (XFAILED(result)) {
-    XELOGE("AudioSystem::RegisterClient: CreateDriver failed for index={}",
-           index);
-    clients_lock.unlock();
-    memory()->SystemHeapFree(ptr);
-    return result;
+  credits.owner = client_lifetimes_.get(); credits.index = index; credits.token = token;
+  try {
+    result = CreateDriver(index, &credits, &driver);
+  } catch (...) {
+    result = X_STATUS_UNSUCCESSFUL;
   }
-  assert_not_null(driver);
-  XELOGI(
-      "AudioSystem::RegisterClient: driver created for index={}, driver={:p}",
-      index, (void*)driver);
-
+  if (XFAILED(result) || !driver) {
+    clients_lock.unlock();
+    if (driver) DestroyDriver(driver);
+    memory()->SystemHeapFree(ptr);
+    xe_apu_clients_abandon(client_lifetimes_.get(), index, token);
+    return XFAILED(result) ? result : X_STATUS_UNSUCCESSFUL;
+  }
   clients_[index].driver = driver;
   clients_[index].callback = callback;
   clients_[index].callback_arg = callback_arg;
   clients_[index].wrapped_callback_arg = ptr;
-  clients_[index].in_use = true;
   clients_[index].next_pump_us = 0;
   retro_atomic_store_relaxed_int(&clients_[index].frames_submitted, 0);
   retro_atomic_store_relaxed_int(&clients_[index].frames_processed, 0);
   retro_atomic_store_relaxed_int(&clients_[index].frames_dropped, 0);
-
-  // Wake the worker to include this client in the output readiness scan.
-  pending_work_event_->Set();
-
-  XELOGI("AudioSystem::RegisterClient: client {} registered successfully",
-         index);
-
-  if (out_index) {
-    *out_index = index;
+  if (!xe_apu_clients_publish(client_lifetimes_.get(), index, token, queued_frames_)) {
+    ClearClientSlot(index);
+    clients_lock.unlock();
+    DestroyDriver(driver);
+    memory()->SystemHeapFree(ptr);
+    xe_apu_clients_abandon(client_lifetimes_.get(), index, token);
+    return X_STATUS_UNSUCCESSFUL;
   }
-
+  pending_work_event_->Set();
+  if (out_index) *out_index = index;
   return X_STATUS_SUCCESS;
 }
 
 void AudioSystem::SubmitFrame(size_t index, float* samples) {
+  uint64_t token;
   SCOPE_profile_cpu_f("apu");
-
+  // Still serializes SPSC producers; callback lifetime no longer uses this lock.
   std::lock_guard<std::mutex> clients_lock(clients_mutex_);
-  assert_true(index < kMaximumClientCount);
-  if (index >= kMaximumClientCount || !clients_[index].in_use ||
-      !clients_[index].driver) {
-    XELOGW(
-        "SubmitFrame called for invalid/unregistered client index {} "
-        "(in_use={}, driver={:p})",
-        index, index < kMaximumClientCount ? clients_[index].in_use : false,
-        index < kMaximumClientCount ? (void*)clients_[index].driver : nullptr);
-
-    // Submit silence instead of dropping the frame to maintain the callback
-    // chain.  If we don't submit anything, the audio driver's OnBufferEnd
-    // callback will never fire, causing the semaphore to leak.
-    if (index < kMaximumClientCount && clients_[index].driver) {
-      static float silence[apu::AudioDriver::kFrameSamplesMax] = {0};
-      retro_atomic_fetch_add_int(&clients_[index].frames_dropped, 1);
-      (clients_[index].driver)->SubmitFrame(silence);
-    } else if (index < kMaximumClientCount) {
-      // Tick the semaphore so the worker doesn't stall on a dead client.
-      client_semaphores_[index]->Release(1, nullptr);
-    }
-    return;
-  }
+  if (index >= kMaximumClientCount || !samples ||
+      !xe_apu_clients_active(client_lifetimes_.get(), (unsigned)index, &token) ||
+      !clients_[index].driver) return;
   retro_atomic_fetch_add_int(&clients_[index].frames_submitted, 1);
   retro_atomic_fetch_add_int(&clients_[index].frames_processed, 1);
-  (clients_[index].driver)->SubmitFrame(samples);
+  clients_[index].driver->SubmitFrame(samples);
 }
 
-bool AudioSystem::GetClientPerformance(size_t index,
-                                       ClientPerformance* out_perf) {
-  if (index >= kMaximumClientCount || !out_perf) {
+bool AudioSystem::GetClientPerformance(size_t index, ClientPerformance* out_perf) {
+  uint64_t token, after;
+  ClientPerformance result;
+  if (!out_perf || index >= kMaximumClientCount ||
+      !xe_apu_clients_active(client_lifetimes_.get(), (unsigned)index, &token)) return false;
+  result.frames_submitted = (uint32_t)retro_atomic_load_relaxed_int(&clients_[index].frames_submitted);
+  result.frames_processed = (uint32_t)retro_atomic_load_relaxed_int(&clients_[index].frames_processed);
+  result.frames_dropped = (uint32_t)retro_atomic_load_relaxed_int(&clients_[index].frames_dropped);
+  if (!xe_apu_clients_active(client_lifetimes_.get(), (unsigned)index, &after) || after != token)
     return false;
-  }
-
-  if (!clients_[index].in_use) {
-    return false;
-  }
-
-  out_perf->frames_submitted = static_cast<uint32_t>(retro_atomic_load_relaxed_int(&clients_[index].frames_submitted));
-  out_perf->frames_processed = static_cast<uint32_t>(retro_atomic_load_relaxed_int(&clients_[index].frames_processed));
-  out_perf->frames_dropped = static_cast<uint32_t>(retro_atomic_load_relaxed_int(&clients_[index].frames_dropped));
+  *out_perf = result;
   return true;
+}
+
+bool AudioSystem::BeginClientCallback(size_t index, uint64_t expected,
+                                      uint32_t* callback, uint32_t* argument,
+                                      uint64_t* lease) {
+  uint64_t current;
+  std::lock_guard<std::mutex> clients_lock(clients_mutex_);
+  if (index >= kMaximumClientCount || !callback || !argument || !lease ||
+      !xe_apu_clients_active(client_lifetimes_.get(), (unsigned)index, &current) ||
+      current != expected || !clients_[index].driver ||
+      !xe_apu_clients_acquire(client_lifetimes_.get(), (unsigned)index, lease)) return false;
+  *callback = clients_[index].callback;
+  *argument = clients_[index].wrapped_callback_arg;
+  return true;
+}
+
+void AudioSystem::EndClientCallback(size_t index, uint64_t lease) {
+  // Callback return only publishes readiness; no guest heap work on this path.
+  if (index < kMaximumClientCount)
+    xe_apu_clients_release(client_lifetimes_.get(), (unsigned)index, lease);
+}
+
+void AudioSystem::CollectRetiredClients() {
+  uint64_t token;
+  unsigned i;
+  for (i = 0; i < kMaximumClientCount; ++i)
+    if (xe_apu_clients_collect(client_lifetimes_.get(), i, &token)) CleanupClient(i, token);
+}
+
+void AudioSystem::CleanupClient(size_t index, uint64_t token) {
+  AudioDriver* driver;
+  uint32_t argument;
+  {
+    std::lock_guard<std::mutex> clients_lock(clients_mutex_);
+    driver = clients_[index].driver;
+    argument = clients_[index].wrapped_callback_arg;
+    ClearClientSlot(index);
+  }
+  // No callback/submitter can use these; the slot stays unavailable until finish.
+  DestroyDriver(driver);
+  if (argument) memory()->SystemHeapFree(argument);
+  if (!xe_apu_clients_finish(client_lifetimes_.get(), (unsigned)index, token))
+    XELOGE("AudioSystem: stale client cleanup for {}", index);
 }
 
 void AudioSystem::UnregisterClient(size_t index) {
-  SCOPE_profile_cpu_f("apu");
+  const bool self = worker_thread_ && kernel::XThread::IsInThread(worker_thread_.get());
+  UnregisterClientInternal(index, self);
+}
 
-  assert_true(index < kMaximumClientCount);
-  AudioDriver* driver_to_destroy;
+void AudioSystem::UnregisterClientInternal(size_t index, bool self) {
+  uint64_t token;
+  int action;
+  if (index >= kMaximumClientCount) return;
   {
     std::lock_guard<std::mutex> clients_lock(clients_mutex_);
-    XELOGI(
-        "AudioSystem::UnregisterClient: index={}, driver={:p}", index,
-        index < kMaximumClientCount ? (void*)clients_[index].driver : nullptr);
-    driver_to_destroy = clients_[index].driver;
-    // Leak wrapped_callback_arg: in-flight callback may hold this pointer.
-    clients_[index].driver = nullptr;
-    clients_[index].callback = 0;
-    clients_[index].callback_arg = 0;
-    clients_[index].wrapped_callback_arg = 0;
-    clients_[index].in_use = false;
+    action = xe_apu_clients_retire(client_lifetimes_.get(), (unsigned)index, &token);
+    if (action == XE_APU_RETIRE_NONE) return;
     clients_[index].next_pump_us = 0;
-    retro_atomic_store_relaxed_int(&clients_[index].frames_submitted, 0);
-    retro_atomic_store_relaxed_int(&clients_[index].frames_processed, 0);
-    retro_atomic_store_relaxed_int(&clients_[index].frames_dropped, 0);
   }
-
-  // Wait for any in-flight callback; can't hold clients_mutex_ (callback
-  // re-enters).
-  {
-    std::lock_guard<std::mutex> lk(clients_[index].callback_mutex);
+  if (action == XE_APU_RETIRE_OWN) CleanupClient(index, token);
+  else if (!self) {
+    xe_apu_clients_wait_callback(client_lifetimes_.get(), (unsigned)index, token, -1);
+    if (xe_apu_clients_claim_cleanup(client_lifetimes_.get(), (unsigned)index, token))
+      CleanupClient(index, token);
   }
-
-  DestroyDriver(driver_to_destroy);
-
-  // Drain the semaphore of its count.
-  auto client_semaphore = client_semaphores_[index].get();
-  xe::threading::WaitResult wait_result;
-  do {
-    wait_result = xe::threading::Wait(client_semaphore, false,
-                                      std::chrono::milliseconds(0));
-  } while (wait_result == xe::threading::WaitResult::kSuccess);
-  assert_true(wait_result == xe::threading::WaitResult::kTimeout);
-}
-
-bool AudioSystem::Save(ByteStream* stream) {
-  stream->Write(kAudioSaveSignature);
-
-  // Count the number of used clients first.
-  // Any gaps should be handled gracefully.
-  uint32_t used_clients = 0;
-  for (int i = 0; i < kMaximumClientCount; i++) {
-    if (clients_[i].in_use) {
-      used_clients++;
-    }
-  }
-
-  stream->Write(used_clients);
-  for (uint32_t i = 0; i < kMaximumClientCount; i++) {
-    auto& client = clients_[i];
-    if (!client.in_use) {
-      continue;
-    }
-
-    stream->Write(i);
-    stream->Write(client.callback);
-    stream->Write(client.callback_arg);
-    stream->Write(client.wrapped_callback_arg);
-  }
-
-  return true;
-}
-
-bool AudioSystem::Restore(ByteStream* stream) {
-  if (stream->Read<uint32_t>() != kAudioSaveSignature) {
-    XELOGE("AudioSystem::Restore - Invalid magic value!");
-    return false;
-  }
-
-  uint32_t num_clients = stream->Read<uint32_t>();
-  for (uint32_t i = 0; i < num_clients; i++) {
-    auto id = stream->Read<uint32_t>();
-    assert_true(id < kMaximumClientCount);
-
-    auto& client = clients_[id];
-
-    // Reset the semaphore and recreate the driver ourselves.
-    if (client.driver) {
-      UnregisterClient(id);
-    }
-
-    client.callback = stream->Read<uint32_t>();
-    client.callback_arg = stream->Read<uint32_t>();
-    client.wrapped_callback_arg = stream->Read<uint32_t>();
-
-    client.in_use = true;
-    client.next_pump_us = 0;
-
-    auto client_semaphore = client_semaphores_[id].get();
-    auto ret = client_semaphore->Release(queued_frames_, nullptr);
-    assert_true(ret);
-
-    AudioDriver* driver = nullptr;
-    auto status = CreateDriver(id, client_semaphore, &driver);
-    if (XFAILED(status)) {
-      XELOGE(
-          "AudioSystem::Restore - Call to CreateDriver failed with status "
-          "{:08X}",
-          status);
-      return false;
-    }
-
-    assert_not_null(driver);
-    client.driver = driver;
-  }
-
-  return true;
+  // A borrowed self-unregister keeps resources until callback return and a cold
+  // register/unregister/shutdown collector. The slot is unavailable meanwhile.
 }
 
 void AudioSystem::Pause() {

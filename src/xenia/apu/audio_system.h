@@ -12,6 +12,7 @@
 
 #include "libretro/core_pause_gate.h"
 #include "libretro/core_state_control.h"
+#include "libretro/core_apu_clients.h"
 #include <retro_atomic.h>
 #include <mutex>
 
@@ -24,8 +25,6 @@
 
 namespace xe {
 namespace apu {
-
-constexpr fourcc_t kAudioSaveSignature = make_fourcc("XAUD");
 
 class AudioDriver;
 class XmaDecoder;
@@ -75,9 +74,6 @@ class AudioSystem {
                                     uint32_t frequency, uint32_t channels,
                                     bool need_format_conversion) = 0;
 
-  bool Save(ByteStream* stream);
-  bool Restore(ByteStream* stream);
-
   bool is_paused() const { return xe_pause_gate_is_paused(pause_gate_.get()) != 0; }
   void Pause();
   bool PauseForState(int64_t timeout_us);
@@ -91,9 +87,14 @@ class AudioSystem {
   void WorkerThreadMain();
 
   virtual X_STATUS CreateDriver(size_t index,
-                                xe::threading::Semaphore* semaphore,
+                                const xe_apu_credit_sink* credits,
                                 AudioDriver** out_driver) = 0;
   virtual void DestroyDriver(AudioDriver* driver) = 0;
+  bool BeginClientCallback(size_t index,uint64_t expected,uint32_t* callback,
+                           uint32_t* argument,uint64_t* lease);
+  void EndClientCallback(size_t index,uint64_t lease);
+  void UnregisterClientInternal(size_t index,bool self);
+  void CollectRetiredClients();
 
   Memory* memory_ = nullptr;
   cpu::Processor* processor_ = nullptr;
@@ -103,30 +104,27 @@ class AudioSystem {
   retro_atomic_int_t worker_running_{0};
   kernel::object_ref<kernel::XHostThread> worker_thread_;
 
-  // Guards clients_. The global lock is never taken while holding it, so its
-  // holders can't delay the pump.
+  // Binding metadata and SPSC submissions remain serialized. Guest callbacks
+  // execute outside this lock; their lifetime uses generation-checked leases.
   std::mutex clients_mutex_;
-  static constexpr size_t kMaximumClientCount = 8;
+  std::unique_ptr<xe_apu_clients,decltype(&xe_apu_clients_free)> client_lifetimes_{
+      nullptr,&xe_apu_clients_free};
+  static constexpr size_t kMaximumClientCount = XE_APU_CLIENT_COUNT;
   struct ClientSlot {
     AudioDriver* driver = nullptr;
     uint32_t callback = 0;
     uint32_t callback_arg = 0;
     uint32_t wrapped_callback_arg = 0;
-    bool in_use = false;
     uint64_t next_pump_us = 0;
     retro_atomic_int_t frames_submitted{0};
     retro_atomic_int_t frames_processed{0};
     retro_atomic_int_t frames_dropped{0};
-    // Held by worker during Execute; UnregisterClient waits on it.
-    std::mutex callback_mutex;
   };
   ClientSlot clients_[kMaximumClientCount];
 
   xe_state_control pause_control_{};
-  int FindFreeClient();
-
-  std::unique_ptr<xe::threading::Semaphore>
-      client_semaphores_[kMaximumClientCount];
+  void CleanupClient(size_t index,uint64_t token);
+  void ClearClientSlot(size_t index);
   // Wakes the worker to re-scan clients on register, shutdown, and pause.
   std::unique_ptr<xe::threading::Event> pending_work_event_;
 

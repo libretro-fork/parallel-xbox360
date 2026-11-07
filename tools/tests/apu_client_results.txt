@@ -1,0 +1,59 @@
+APU callback lifetime / render-credit ownership (0167)
+====================================================
+A fixed eight-slot C89 table packs generation, callback lease, retirement state
+and bounded credits into one libretro-common 64-bit atomic word. No native client
+semaphore or callback mutex remains. Reserve/publish/failure-abandon and retirement
+advance generations; delayed credits and callback releases reject after reuse.
+Callback acquire consumes one credit atomically; active SubmitFrame returns one.
+The existing host compatibility schedule and PCM conversion are unchanged.
+
+Retirement stops new callbacks/submissions. An outstanding callback retains its
+guest wrapper and driver until its lease ends. Callback return only publishes
+readiness. A cold register/unregister/shutdown caller claims cleanup, releases the
+driver and guest allocation, then publishes the slot free. Self-unregister does
+not wait on itself; retention is bounded by eight slots. External unregister
+waits for callback borrowing to end, not another owner's heap cleanup. The table
+and AudioSystem must outlive all callback/control/driver users, as required by
+existing stop/join ordering. One shared C++ metadata/producer mutex remains: it
+also serializes SPSC producers and is not removed without a separate redesign.
+Media-player semaphore and current scheduling clocks/waits remain. No claim of
+whole-APU lock freedom, complete savestates or changed gameplay cadence is made.
+
+Register checks guest allocation failure, failed/thrown/null driver factories
+and capacity exhaustion, releases the guest wrapper and abandons unpublished
+slots. Unregister/submit/stats validate indices; inactive/NULL submissions do not
+manufacture silence/credits. Performance counters use generation validation,
+not an unlocked plain in-use flag; counters remain approximate concurrent stats.
+Unused callback-only Save/Restore methods were removed; no global state callback
+is enabled by this work.
+
+Coverage fixtures:
+- Strict C89 manager tests: capacity/credit bounds 1/4/8/64, stale generations,
+  wrap, failed publication, cleanup ownership, zero-time clock-free queries,
+  forced notification-before-wait and 8000 concurrent registration lifetimes.
+- Native actual AudioSystem with Memory and an uninitialized Processor facade:
+  factory failures, guest page reclamation, eight-slot exhaustion, callback
+  borrow, self-retirement, stale selection/release/credit, reuse, bounds and
+  actual credit accounting. This does not execute guest callbacks or start any
+  audio worker, frontend, GPU or JIT; self identity is simulated in the fixture.
+- Actual LibretroAudioDriver credit binding and 18 exact PCM/resampler state
+  continuation cases. Optional GNU linked allocator counters cover the existing
+  initialized submission/checkpoint intervals, not every OS allocation API.
+- Optional APU_CLIENT_BENCH compares legacy native semaphore wait/release with
+  packed acquire/credit-return/release. Seven alternating 100000-step runs after
+  warmup report a median component time only; no whole-core/FPS implication.
+
+Local Windows x64 results: full MinGW Make -j5 and native MSVC CMake --parallel 5
+pass. GNU strict C89 and native /TC /W4 /WX manager tests pass, including native
+ASan. Actual AudioSystem fixture passes GNU/MSVC and scoped ASan; the latter
+instruments audio_system.cc, the C89 table and fixture, with other archives
+ordinary. Actual driver + queue + table and 18 continuation fixtures pass native
+scoped ASan and ordinary GNU/MSVC. GNU linked allocator counters report zero
+calls in the initialized continuation intervals. These are scoped checks, not
+whole-core sanitizer or gameplay coverage. CI runners are wired, remote CI unrun.
+
+Native release component benchmark, with owned builds stopped: legacy semaphore
+wait/release median 318.85 ns/step; packed lease/credit-return/release 11.03 ns/step
+(28.91x ratio). This excludes the old callback mutex and compares only completion
+credit bookkeeping, not the entire audio callback, frame time or game FPS.
+No live game or installed core replacement was performed.

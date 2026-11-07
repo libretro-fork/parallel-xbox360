@@ -30,7 +30,7 @@ class AudioDriver {
   virtual bool Initialize() = 0;
   virtual void Shutdown() = 0;
 
-  // The worker checks capacity before invoking one guest render callback.
+  // Producer-side queue readiness; guest callback scheduling uses render credits.
   virtual bool CanSubmitFrame() const { return true; }
   virtual void SubmitFrame(float* samples) = 0;
   virtual void Pause() = 0;

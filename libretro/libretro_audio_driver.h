@@ -36,7 +36,8 @@ class LibretroAudioDriver : public AudioDriver {
   // upstream's SDL driver takes them.
   LibretroAudioDriver(LibretroAudioSystem* system,
                       xe::threading::Semaphore* semaphore, uint32_t frequency,
-                      uint32_t channels, bool need_format_conversion);
+                      uint32_t channels, bool need_format_conversion,
+                      const xe_apu_credit_sink* credits = nullptr);
   ~LibretroAudioDriver() override;
 
   bool Initialize() override;
@@ -60,6 +61,7 @@ class LibretroAudioDriver : public AudioDriver {
   xe_audio_group* group_ = nullptr;
   bool registry_required_ = false;
   xe::threading::Semaphore* semaphore_ = nullptr;
+  xe_apu_credit_sink credits_{};
   uint32_t frequency_ = 48000;
   uint32_t channels_ = 6;
   // The output's channels, 2 or 6, as the audio system's when made.
@@ -100,7 +102,7 @@ class LibretroAudioSystem : public AudioSystem {
   xe_audio_group* group() const { return group_.get(); }
 
  protected:
-  X_STATUS CreateDriver(size_t index, xe::threading::Semaphore* semaphore,
+  X_STATUS CreateDriver(size_t index, const xe_apu_credit_sink* credits,
                          AudioDriver** out_driver) override;
 
  private:

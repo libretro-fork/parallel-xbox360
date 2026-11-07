@@ -1,5 +1,6 @@
 /* Exact native PCM/resampler continuation; MSVC C89. */
 #include "libretro/core_audio_driver_state.h"
+#include "libretro/core_apu_clients.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,7 @@ int xe_driver_state_capture(void *,xe_audio_driver_view *);
 int xe_driver_state_ready(void *,const xe_audio_driver_view *);
 int xe_driver_state_restore(void *,const xe_audio_driver_view *);
 void xe_driver_state_stop(void *);
+void *xe_driver_state_new_credit(const xe_apu_credit_sink *);
 #define CHECK(x) do {if(!(x)){fprintf(stderr,"driver state line %u\n",(unsigned)__LINE__);exit(1);}} while(0)
 #ifdef XE_AUDIO_CHECKPOINT_ALLOC_TEST
 static size_t allocation_calls,free_calls;
@@ -53,12 +55,29 @@ static void samples(unsigned planar,unsigned pass) {
     else {memcpy(&bits,&f,4);p=(unsigned char *)&input[i];p[0]=(unsigned char)(bits>>24);p[1]=(unsigned char)(bits>>16);p[2]=(unsigned char)(bits>>8);p[3]=(unsigned char)bits;}
   }
 }
+static void real_credit_driver(void) {
+  xe_apu_clients *clients=xe_apu_clients_new(8);
+  xe_apu_credit_sink sink;uint64_t token,lease;unsigned index,count;void *driver;
+  CHECK(clients);CHECK(xe_apu_clients_reserve(clients,&index,&token));
+  CHECK(xe_apu_clients_publish(clients,index,token,1));
+  sink.owner=clients;sink.index=index;sink.token=token;
+  driver=xe_driver_state_new_credit(&sink);CHECK(driver);
+  CHECK(xe_apu_clients_acquire(clients,index,&lease));
+  CHECK(xe_apu_clients_credits(clients,index,token,&count) && !count);
+  xe_driver_state_submit(driver,input);
+  CHECK(xe_apu_clients_credits(clients,index,token,&count) && count==1);
+  CHECK(xe_apu_clients_release(clients,index,lease)==0);
+  xe_driver_state_free(driver);
+  CHECK(xe_apu_clients_retire(clients,index,&token)==XE_APU_RETIRE_OWN);
+  CHECK(xe_apu_clients_finish(clients,index,token));xe_apu_clients_free(clients);
+}
 int main(void) {
   static const unsigned rates[]={48000,44100,32000};
   unsigned r,channels,output,planar,count=0;void *driver;uint64_t bits;
 #ifdef XE_AUDIO_CHECKPOINT_ALLOC_TEST
   size_t before_alloc,before_free;
 #endif
+  real_credit_driver();
   for(r=0;r<3;++r) for(channels=2;channels<=6;channels+=4)
     for(output=2;output<=6;output+=4) for(planar=0;planar<=(unsigned)(channels==6);++planar) {
     driver=xe_driver_state_new(rates[r],channels,output,planar);CHECK(driver);

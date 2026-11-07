@@ -25,7 +25,7 @@ NopAudioSystem::NopAudioSystem(cpu::Processor* processor)
 NopAudioSystem::~NopAudioSystem() = default;
 
 X_STATUS NopAudioSystem::CreateDriver(size_t index,
-                                      xe::threading::Semaphore* semaphore,
+                                      const xe_apu_credit_sink* credits,
                                       AudioDriver** out_driver) {
   return X_STATUS_NOT_IMPLEMENTED;
 }

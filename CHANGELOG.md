@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- APU client callbacks and render credits use generation-checked libretro-common atomics in place of per-client callback mutexes and native semaphores. Retiring clients retain borrowed arguments until callbacks finish, then reclaim the driver and guest wrapper before slot reuse. Failed driver creation releases its guest allocation; invalid client indices reject safely. Removed unused partial audio-only state APIs. Existing audio timing/conversion and the shared producer mutex remain; complete libretro savestates are still unfinished.
+
 - Audio queue/driver checkpoints now retain unread PCM, pause/volume bits and native resampler continuation state under exclusive quiescence. Capture borrows up to two SPSC spans without consuming them; restore reuses existing final ring storage, with a copy-free exact-live-view path. Format/phase/alias mismatches, stopped streams and active frontend leases reject. This is component state support; full libretro savestates remain unfinished, and ordinary audio pacing/conversion is unchanged.
 
 - XMA codec format changes now open the replacement before releasing the live decoder. Allocation/open failures retain its configuration and history, and decoding restores input/loop controls instead of consuming the frame. Matching formats keep the allocation-free path. Fault-injection regressions cover cold/warm replacement, guest cursor preservation and successful retry; audio scheduling remains unchanged.
