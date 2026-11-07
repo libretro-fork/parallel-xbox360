@@ -401,11 +401,10 @@ uint32_t TextureCache::GuestToHostSwizzle(uint32_t guest_swizzle,
 void TextureCache::RequestTextures(uint32_t used_texture_mask) {
   const auto& regs = register_file();
 
-  // Clear the aggregate flag, but invalidate only actually used outdated
-  // bindings below to avoid resyncing all slots on unrelated texture updates.
+  // Inspect only used per-texture atomic hints, avoiding a shared aggregate
+  // exchange and resyncs of unrelated slots.
   {
     SCOPE_profile_cpu_i("gpu", "TextureCache::InvalidateOutdatedBindings");
-    texture_became_outdated_.exchange(false, std::memory_order_acquire);
     InvalidateUsedOutdatedBindings(used_texture_mask);
   }
 
@@ -585,8 +584,7 @@ bool TextureCache::AnyUsedTextureRequestWorkPending(
 bool TextureCache::IsBindingOutdatedForUse(
     const TextureBinding& binding) const {
   auto is_texture_outdated = [](const Texture* texture) {
-    return texture && (texture->base_outdated_lockless() ||
-                       texture->mips_outdated_lockless());
+    return texture && texture->outdated_mask_lockless();
   };
   return is_texture_outdated(binding.texture) ||
          is_texture_outdated(binding.texture_signed);
@@ -676,8 +674,9 @@ TextureCache::Texture::Texture(TextureCache& texture_cache,
   }
 
   // Never try to upload data that doesn't exist.
-  base_outdated_ = guest_layout().base.level_data_extent_bytes != 0;
-  mips_outdated_ = guest_layout().mips_total_extent_bytes != 0;
+  xe_texture_dirty_init(&outdated_,
+      (guest_layout().base.level_data_extent_bytes ? XE_TEXTURE_DIRTY_BASE : 0) |
+      (guest_layout().mips_total_extent_bytes ? XE_TEXTURE_DIRTY_MIPS : 0));
 }
 
 TextureCache::Texture::~Texture() {
@@ -704,9 +703,10 @@ TextureCache::Texture::~Texture() {
 bool TextureCache::Texture::MakeUpToDateAndWatch(
     const global_unique_lock_type& global_lock) {
   SharedMemory& shared_memory = texture_cache().shared_memory();
-  const bool watch_base = base_outdated_;
-  const bool watch_mips = mips_outdated_;
   assert_true(global_lock.owns_lock());
+  const unsigned outdated = xe_texture_dirty_load_locked(&outdated_);
+  const bool watch_base = (outdated & XE_TEXTURE_DIRTY_BASE) != 0;
+  const bool watch_mips = (outdated & XE_TEXTURE_DIRTY_MIPS) != 0;
   if (watch_base &&
       !shared_memory.IsRangeValid(
           key().base_page << 12, xe::align(GetGuestBaseSize(), UINT32_C(16)))) {
@@ -720,17 +720,17 @@ bool TextureCache::Texture::MakeUpToDateAndWatch(
 
   if (watch_base) {
     assert_not_zero(GetGuestBaseSize());
-    base_outdated_ = false;
     base_watch_handle_ = shared_memory.WatchMemoryRange(
         key().base_page << 12, GetGuestBaseSize(), TextureCache::WatchCallback,
         this, nullptr, 0);
+    xe_texture_dirty_update_locked(&outdated_, 0, XE_TEXTURE_DIRTY_BASE);
   }
   if (watch_mips) {
     assert_not_zero(GetGuestMipsSize());
-    mips_outdated_ = false;
     mips_watch_handle_ = shared_memory.WatchMemoryRange(
         key().mip_page << 12, GetGuestMipsSize(), TextureCache::WatchCallback,
         this, nullptr, 1);
+    xe_texture_dirty_update_locked(&outdated_, 0, XE_TEXTURE_DIRTY_MIPS);
   }
   return true;
 }
@@ -767,14 +767,15 @@ void TextureCache::Texture::MarkAsUsed() {
 
 void TextureCache::Texture::WatchCallback(
     [[maybe_unused]] const global_unique_lock_type& global_lock, bool is_mip) {
+  assert_true(global_lock.owns_lock());
   if (is_mip) {
     assert_not_zero(GetGuestMipsSize());
-    mips_outdated_ = true;
     mips_watch_handle_ = nullptr;
+    xe_texture_dirty_update_locked(&outdated_, XE_TEXTURE_DIRTY_MIPS, 0);
   } else {
     assert_not_zero(GetGuestBaseSize());
-    base_outdated_ = true;
     base_watch_handle_ = nullptr;
+    xe_texture_dirty_update_locked(&outdated_, XE_TEXTURE_DIRTY_BASE, 0);
   }
 }
 
@@ -783,8 +784,6 @@ void TextureCache::WatchCallback(const global_unique_lock_type& global_lock,
                                  bool invalidated_by_gpu) {
   Texture& texture = *static_cast<Texture*>(context);
   texture.WatchCallback(global_lock, argument != 0);
-  texture.texture_cache().texture_became_outdated_.store(
-      true, std::memory_order_release);
 }
 
 void TextureCache::DestroyAllTextures(bool from_destructor) {
@@ -934,8 +933,7 @@ void TextureCache::LoadTexturesData(Texture** textures, uint32_t n_textures) {
   uint32_t likely_outdated = 0;
   for (uint32_t i = 0; i < n_textures; ++i) {
     Texture* current = textures[i];
-    if (current->base_outdated_lockless() ||
-        current->mips_outdated_lockless()) {
+    if (current->outdated_mask_lockless()) {
       ++likely_outdated;
     }
   }
@@ -1058,10 +1056,9 @@ void TextureCache::LoadTexturesData(Texture** textures, uint32_t n_textures) {
 }
 bool TextureCache::LoadTextureData(Texture& texture) {
   SCOPE_profile_cpu_f("gpu");
-  // Lockless pre-check: if texture appears up-to-date, skip the lock.
-  // This is safe because worst case is a false positive (we acquire lock
-  // unnecessarily), never a false negative.
-  if (!texture.base_outdated_lockless() && !texture.mips_outdated_lockless()) {
+  // An atomic clean hint skips this reload scan. Dirty hints are rechecked
+  // under the shared-memory critical region before reading/uploading data.
+  if (!texture.outdated_mask_lockless()) {
     return true;
   }
 

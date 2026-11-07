@@ -1,0 +1,41 @@
+Texture invalidation hints (0169)
+================================
+The GPU pre-checks previously read plain base/mip booleans while memory-watch
+callbacks wrote them under the shared-memory global critical region. The GPU
+readers did not hold that lock. A cache-wide std::atomic<bool> exchange cleared
+an aggregate flag on texture requests, but its result was discarded and no other
+reader used it; its release store did not make all unlocked plain reads valid.
+
+A C89 four-byte libretro-common atomic mask replaces the booleans. Post-publication
+writers retain the existing global critical region, use relaxed loads plus
+release stores, and preserve the other level's bit. No locked RMW or new lock is
+needed. GPU hints acquire-load the mask; paired checks use one load. Authoritative
+reload scans recheck under the existing lock. Watch handles and object lifetime
+are still protected by their original protocol, not by this word. Clean flags
+publish after watch registration; callback dirty flags publish after handle
+clearing. The dead aggregate atomic exchange/store and std::atomic field are gone.
+
+Layout probes: Texture stays648 bytes on local MSVC and MinGW x64. TextureCache
+shrinks2264->2256 bytes MSVC and2288->2280 MinGW. No added per-frame allocation,
+PCM/pixel copy, buffer, shader conversion or timing/pacing change.
+
+Tests exhaust4096 masked transitions plus20000 two-phase publication/clear
+handshakes. An actual TextureCache/SharedMemory fixture uses real texture watches,
+RangeWrittenByGpu and MakeUpToDateAndWatch without any graphics device/frontend
+or guest CPU/JIT. Native publication exercises20000 invalidation/rearm handshakes
+with a concurrent reader. The stand-in UploadRanges always fails, so no emulated
+GPU upload is used. Memory mappings/registration are real cold native objects.
+Common-eventcount waits and deadlines exist only in the test driver.
+
+Windows x64 validation: full GNU Make -j5 and native MSVC CMake --parallel5
+PASS. GNU strict C89, MSVC /TC /W4 /WX and MSVC ASan transition/concurrency tests
+PASS. Actual TextureCache/SharedMemory fixtures PASS in GNU, native MSVC and
+scoped native ASan. The latter instruments texture_cache.cc, shared_memory.cc,
+the C89 driver and native bridge; the rest of the core archives remain ordinary.
+Both native and standalone fixtures perform20000 handshakes each. Existing CI
+now invokes the C89 and actual native fixtures; remote CI is unrun.
+
+No ThreadSanitizer/weak-memory hardware run or whole-cache race-freedom proof,
+rendered-image or gameplay/FPS gain is claimed. Test synchronization/deadlines
+are not part of the release helper. No installed DLL overwrite or frontend,
+graphics device or guest JIT launch occurred.

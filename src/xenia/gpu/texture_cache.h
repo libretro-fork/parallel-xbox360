@@ -11,7 +11,7 @@
 #define XENIA_GPU_TEXTURE_CACHE_H_
 
 #include <array>
-#include <atomic>
+#include "libretro/core_texture_dirty.h"
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -303,16 +303,20 @@ class TextureCache {
     uint64_t last_usage_time() const { return last_usage_time_; }
 
     bool base_outdated(const global_unique_lock_type& global_lock) const {
-      return base_outdated_;
+      return (xe_texture_dirty_load_locked(&outdated_) & XE_TEXTURE_DIRTY_BASE) != 0;
     }
     bool mips_outdated(const global_unique_lock_type& global_lock) const {
-      return mips_outdated_;
+      return (xe_texture_dirty_load_locked(&outdated_) & XE_TEXTURE_DIRTY_MIPS) != 0;
     }
-    // Lockless accessors for pre-check optimization.
-    // Safe to read without lock - worst case is false positive (outdated when
-    // not).
-    bool base_outdated_lockless() const { return base_outdated_; }
-    bool mips_outdated_lockless() const { return mips_outdated_; }
+    // Acquire the per-texture hint; ownership and watch handles still require
+    // the global critical region. Authoritative reload scans recheck there.
+    unsigned outdated_mask_lockless() const { return xe_texture_dirty_load(&outdated_); }
+    bool base_outdated_lockless() const {
+      return (outdated_mask_lockless() & XE_TEXTURE_DIRTY_BASE) != 0;
+    }
+    bool mips_outdated_lockless() const {
+      return (outdated_mask_lockless() & XE_TEXTURE_DIRTY_MIPS) != 0;
+    }
     bool MakeUpToDateAndWatch(const global_unique_lock_type& global_lock);
 
     void WatchCallback(const global_unique_lock_type& global_lock, bool is_mip);
@@ -359,12 +363,9 @@ class TextureCache {
     // texture is 2D.
     bool force_load_3d_tiling_ = false;
 
-    // These are to be accessed within the global critical region to synchronize
-    // with shared memory.
-    // Whether the recent base level data needs reloading from the memory.
-    bool base_outdated_ = false;
-    // Whether the recent mip data needs reloading from the memory.
-    bool mips_outdated_ = false;
+    // Writers hold the existing global critical region. The GPU's unlocked
+    // pre-checks read this single common atomic word, never plain booleans.
+    xe_texture_dirty outdated_{};
     // Watch handles for the memory ranges.
     SharedMemory::WatchHandle base_watch_handle_ = nullptr;
     SharedMemory::WatchHandle mips_watch_handle_ = nullptr;
@@ -794,10 +795,6 @@ class TextureCache {
   Texture* texture_used_first_ = nullptr;
   Texture* texture_used_last_ = nullptr;
 
-  // Whether a texture has become outdated (a memory watch has been triggered),
-  // so need to recheck if textures aren't outdated, disregarding whether fetch
-  // constants have been changed.
-  std::atomic<bool> texture_became_outdated_{false};
 
   std::array<TextureBinding, xenos::kTextureFetchConstantCount>
       texture_bindings_;
