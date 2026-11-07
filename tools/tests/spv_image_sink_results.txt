@@ -1,6 +1,11 @@
 Direct Vulkan texture decode to integer image (0147)
 ===================================================
 
+Follow-up 0148 replaces the whole-chain partial-block fallback below with a
+stored-level image prefix and compact buffer suffix. These 0147 implementation
+notes describe the initial all-image path; see texture_image_mips_results.txt
+for the current mixed-chain policy and additional checks.
+
 Production change
 -----------------
 Eligible uploads become guest/shared/scaled buffer -> integer image compute

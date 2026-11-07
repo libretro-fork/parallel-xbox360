@@ -254,18 +254,128 @@ static void atlas_test(void) {
   CHECK(!xe_texture_image_add(&atlas,1,1,4,16384,&level));
   CHECK(!xe_texture_image_add(&atlas,16,UINT32_MAX,4,16384,&level));
   CHECK(!xe_texture_image_add(&atlas,16,1,2,16384,&level));
+  CHECK(!xe_texture_image_add(&atlas,UINT32_MAX/4+1,1,4,UINT32_MAX,&level));
   CHECK(!memcmp(&before,&atlas,sizeof(atlas)) && !memcmp(&saved,&level,sizeof(level)));
   x = 99; y = 98;
   CHECK(!xe_texture_image_origin(&level,UINT64_MAX,8,1,1,&x,&y));
   CHECK(x == 99 && y == 98);
   printf("PASS: %u atlas/packed-region bounds\n",trials);
 }
+static unsigned logical_key(unsigned level, unsigned packed) {
+  return !level ? 0 : 1 + (level < packed ? level : packed);
+}
+static void split_test(void) {
+  xe_texture_load_layout base, mips[15], *layout;
+  xe_texture_blit_level copies[15];
+  xe_texture_image_plan plan, before;
+  unsigned first, last, packed, packed_case, complete, bytes, layers;
+  unsigned loop_first, loop_last, loop, i, j, wanted, image_group[16];
+  unsigned cases = 0, addresses = 0;
+  uint64_t total, cursor, origin, local, old_address, compact;
+  int result;
+  current = "stored mip split";
+  for (first = 0; first < 15; ++first) for (last = first; last < 15; ++last)
+  for (packed_case = 0; packed_case < 16; ++packed_case) for (complete = 0; complete <= last-first+1; ++complete)
+  for (bytes = 4; bytes <= 16; bytes *= 2) for (layers = 1; layers <= 6; layers += 5) {
+    packed = packed_case == 15 ? UINT32_MAX : packed_case;
+    memset(&base,0,sizeof(base)); memset(mips,0,sizeof(mips)); memset(copies,0,sizeof(copies));
+    loop_first = packed ? (first < packed ? first : packed) : (first ? 1 : 0);
+    loop_last = packed ? (last < packed ? last : packed) : (last ? 1 : 0);
+    total = 0;
+    for (loop = loop_first; loop <= loop_last; ++loop) {
+      /* Independent storage lookup, deliberately not the production helper. */
+      layout = !loop ? &base : &mips[packed ? loop : 0];
+      layout->offset_bytes = total;
+      layout->x_pitch_blocks = (16/bytes) * (1 + loop%5);
+      layout->y_pitch_blocks = 3 + loop%3;
+      layout->slice_size_bytes = (uint64_t)bytes * layout->x_pitch_blocks * layout->y_pitch_blocks;
+      total += layout->slice_size_bytes * layers;
+    }
+    /* Reference: any incomplete requested member excludes its whole storage
+     * group, including earlier complete members of that same packed tail. */
+    for (i = 0; i < 16; ++i) image_group[i] = 1;
+    for (i = first+complete; i <= last; ++i) image_group[logical_key(i,packed)] = 0;
+    wanted = 0;
+    for (i = first; i <= last; ++i) {
+      if (!image_group[logical_key(i,packed)]) break;
+      ++wanted;
+    }
+    for (i = first; i <= last; ++i) {
+      layout = !i ? &base : &mips[i < packed ? i : packed];
+      copies[i-first].level = i;
+      copies[i-first].size_blocks_x = copies[i-first].size_blocks_y = 1;
+      copies[i-first].image_offset_bytes = bytes *
+          ((uint64_t)(i % layout->y_pitch_blocks)*layout->x_pitch_blocks + i%layout->x_pitch_blocks);
+    }
+    memset(&plan,0xa5,sizeof(plan)); memcpy(&before,&plan,sizeof(plan));
+    result = xe_texture_image_plan_prepare(&plan,&base,mips,15,first,last,packed,
+        complete,copies,layers,bytes,16384,total);
+    CHECK(result == (wanted != 0)); ++cases;
+    if (!wanted) { CHECK(!memcmp(&before,&plan,sizeof(plan))); continue; }
+    CHECK(plan.image_count == wanted && plan.buffer_first == first+wanted);
+    cursor = 0; origin = total;
+    for (loop = loop_first; loop <= loop_last; ++loop) {
+      unsigned key = !loop ? 0 : 1 + (packed ? loop : 0);
+      layout = !loop ? &base : &mips[packed ? loop : 0];
+      CHECK((loop < plan.image_loop_end) == (image_group[key] != 0));
+      if (!image_group[key] && origin == total) origin = cursor;
+      cursor += layout->slice_size_bytes * layers;
+    }
+    CHECK(plan.buffer_origin == origin && plan.buffer_bytes == total-origin);
+    for (i = first; i <= last; ++i) {
+      layout = !i ? &base : &mips[i < packed ? i : packed];
+      local = copies[i-first].image_offset_bytes;
+      for (j = 0; j < layers; ++j) {
+        old_address = layout->offset_bytes + local + layout->slice_size_bytes*j;
+        if (i < first+wanted) {
+          CHECK((uint64_t)(copies[i-first].atlas_y-layout->image.y)*layout->x_pitch_blocks +
+              copies[i-first].atlas_x == local/bytes);
+          CHECK(copies[i-first].atlas_x < plan.atlas.width && copies[i-first].atlas_y < plan.atlas.height);
+        } else {
+          compact = layout->offset_bytes - plan.buffer_origin + local + layout->slice_size_bytes*j;
+          CHECK(compact + bytes <= plan.buffer_bytes && compact + plan.buffer_origin == old_address);
+        }
+        ++addresses;
+      }
+    }
+  }
+  /* Failure must preserve the published plan even if preparation had started. */
+  memset(&base,0,sizeof(base)); memset(mips,0,sizeof(mips)); memset(copies,0,sizeof(copies));
+  base.x_pitch_blocks = 4; base.y_pitch_blocks = 4; base.slice_size_bytes = 64;
+  mips[1] = base; mips[1].offset_bytes = 64;
+  copies[0].size_blocks_x = copies[0].size_blocks_y = 1;
+  copies[1] = copies[0]; copies[1].level = 1;
+  memset(&plan,0xa5,sizeof(plan)); memcpy(&before,&plan,sizeof(plan));
+#define BAD_PLAN(cap,f,l,p,c,a,b,lim,total) do { \
+  CHECK(!xe_texture_image_plan_prepare(&plan,&base,mips,cap,f,l,p,c,copies,a,b,lim,total)); \
+  CHECK(!memcmp(&before,&plan,sizeof(plan))); \
+} while (0)
+  BAD_PLAN(0,0,1,2,1,1,4,16384,128);
+  BAD_PLAN(15,2,1,2,1,1,4,16384,128);
+  BAD_PLAN(15,0,15,2,1,1,4,16384,128);
+  BAD_PLAN(15,0,1,15,1,1,4,16384,128);
+  BAD_PLAN(15,0,1,2,3,1,4,16384,128);
+  BAD_PLAN(15,0,1,2,1,0,4,16384,128);
+  BAD_PLAN(15,0,1,2,1,1,2,16384,128);
+  BAD_PLAN(15,0,1,2,1,1,4,1,128);
+  BAD_PLAN(15,0,1,2,1,1,4,16384,127);
+  mips[1].offset_bytes = 65;
+  BAD_PLAN(15,0,1,2,1,1,4,16384,128); mips[1].offset_bytes = 64;
+  base.slice_size_bytes = UINT64_MAX;
+  BAD_PLAN(15,0,1,2,1,2,4,16384,128); base.slice_size_bytes = 64;
+  copies[0].image_offset_bytes = 64;
+  BAD_PLAN(15,0,1,2,1,1,4,16384,128); copies[0].image_offset_bytes = 0;
+  copies[0].level = 1;
+  BAD_PLAN(15,0,1,2,1,1,4,16384,128);
+#undef BAD_PLAN
+  printf("PASS: %u stored mip splits, %u borrowed/compact addresses\n",cases,addresses);
+}
 int main(int argc, char **argv) {
   xe_spv_sink_workspace work = {0}; xe_spv_binary out = {0};
   unsigned i;
   char source[512], dest[512];
   FILE *f;
-  CHECK(argc == 2); atlas_test();
+  CHECK(argc == 2); atlas_test(); split_test();
   for (i = 0; i < sizeof(fixtures)/sizeof(fixtures[0]); ++i) {
     uint32_t *input; size_t count;
     current = fixtures[i].name;

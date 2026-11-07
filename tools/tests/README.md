@@ -1308,3 +1308,9 @@ sanitizers default on; set SANITIZER= for MinGW without those runtimes.
 Native ASan: IMAGE_SINK_TEST_FLAGS=/fsanitize=address /Zi and a separate
 IMAGE_SINK_TEST_OUT. Output modules remain available for independent validation.
 See spv_image_sink_results.txt for production eligibility and remaining copies.
+
+The same runner also checks the production stored-mip split planner against an
+independent logical-storage-group reference: 76,800 requests and 1,491,504
+image/compact-buffer addresses, packed level zero, base/mips-only loads and
+array layers. Invalid or overflowing layouts preserve the published plan.
+See texture_image_mips_results.txt for mixed-chain routing and scratch limits.

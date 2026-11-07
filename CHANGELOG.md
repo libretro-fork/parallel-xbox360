@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan mixed mip chains can keep their large levels on direct image decode. A C89 stored-level partition keeps packed tails intact, decodes each storage region once, and allocates scratch only for the remaining suffix. Original source/decode shaders and array strides remain; source sets are rebound when switching layouts. Atlas, overflow, independent partition/address and sanitizer checks pass. GPU-time and rendered-output gains remain unmeasured.
+
 - Vulkan can decode texture data directly into its integer staging image, skipping the scratch buffer and a second compute pass for eligible 32/64/128-bit host blocks. The C89 SPIR-V rewrite preserves original source/decode instructions and uses checked stored-level atlas bounds for packed mips and arrays. Ineligible layouts/devices retain the existing path. Final image-copy regions now construct directly in deferred replay storage. Offline sink, sanitizer and Vulkan shader validation pass; live rendering/GPU-time gains remain unmeasured.
 
 - Vulkan and D3D12 EDRAM dumps/direct resolves replace runtime source-pitch divide/modulo with a shared exact C89 integer sequence and a CPU-prepared reciprocal. Pixel addressing, fetches, packing and stores remain unchanged. No shader int64, floating-point approximation, GPU branch or extra synchronization is introduced. Offline arithmetic, shader-matrix and validator checks pass; GPU-time gains remain unmeasured.

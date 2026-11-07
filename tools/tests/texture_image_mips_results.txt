@@ -1,0 +1,67 @@
+Stored-level Vulkan image/buffer mip partition (0148)
+====================================================
+
+Change and ownership
+--------------------
+Mixed compressed chains no longer force their large stored levels through the
+full scratch/blit path merely because a later logical mip has a partial block.
+The C89 planner borrows the existing native host-layout and logical-copy arrays.
+It excludes a partial mip's entire stored tail, including earlier whole logical
+mips sharing that storage. Packed level zero retains distinct base and mip
+storage. Each stored region is dispatched once, to image OR buffer.
+
+The atlas contains only the selected stored prefix. Scratch starts at the first
+excluded stored region, and only the suffix bytes are requested/described.
+Buffer dispatch and copy offsets are rebased by that origin; pitches and array
+slice strides remain unchanged. Remaining whole and partial logical tail mips
+copy directly from this compact buffer, without an extra tail blit or another
+packed-tail decode. No image-to-buffer transfer or host/GPU round trip is added.
+
+At the one image-to-buffer pipeline switch, destination and source descriptors
+are rebound and constants refreshed because the layouts have different push
+constant ranges. Mixed loads need at most four descriptor writes (two targets,
+base and mip source views), written in the existing native batch. Existing
+source watches, shader instructions, packing, barriers, final image-copy format
+and resource retirement are retained. Optional image/descriptor failure keeps
+the full legacy route and original copy plan.
+
+Checks
+------
+76,800 requests against an independent reference group classifier: all ranges
+within 15 mips, all packed levels plus the UINT32_MAX unpacked sentinel, all complete-prefix lengths, block sizes
+4/8/16, arrays of 1/6 layers. The reference marks a storage group as buffer if
+ANY requested member needs a partial-block copy, rather than mirroring the
+production split formula. It verifies no storage group is split or duplicated.
+1,491,504 sampled image/compact-buffer addresses match the original offsets;
+the compact interval contains every remaining slice and logical mip region.
+Invalid ranges/capacity, gaps, inconsistent totals/slices, zero layers,
+overflow, invalid image regions and copy-order mismatch preserve the published
+plan. Host pitch must fit the actual uint32 byte-pitch constant, not merely
+the reciprocal's 16-byte-unit divisor. Scratch must fit uint32 addressing and
+the native storage-buffer range limit.
+
+MSVC C89 /TC /W4 /WX, native MSVC ASan and strict MinGW tests PASS, together
+with the existing 33 actual SPIR-V sink templates, instruction/numeric checks,
+Vulkan 1.2 validation, allocation-failure/mutation tests and ownership counts.
+The SPIR-V rewrite itself is unchanged by this batch.
+
+Limits
+------
+No GPU device, game, JIT or RetroArch was launched. No installed DLL was
+replaced. Planning/address equivalence and shader validity do not prove whole
+rendered-image equivalence or measure GPU time, register pressure or FPS.
+3D/3D-as-2D, depth, 1/2-byte host blocks, incompatible native formats and
+allocation failures retain the existing path. A chain entirely in one excluded
+tail has no image prefix. Staging/scratch resources still retain their high
+water sizes and may grow; the compact request does not shrink an existing
+scratch allocation. Final GPU copies and driver allocations remain.
+
+Specification basis (primary sources, checked 2026-11-07)
+-------------------------------------------------------
+https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdCopyImage.html
+VUID-vkCmdCopyImage-dstOffset-00150/00151 require the size-adjusted destination
+extent to fit its subresource. An uncompressed integer source texel represents
+a whole compressed block, so tiny destination mips cannot use that image copy.
+The existing buffer-to-image route expresses their actual logical extents.
+
+Native texture-cache checks and static Windows Make (-j5): PASS.
