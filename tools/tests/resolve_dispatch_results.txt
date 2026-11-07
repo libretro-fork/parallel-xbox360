@@ -1,0 +1,61 @@
+Direct-resolve dispatch bounds (0140)
+======================================
+Changes
+- Vulkan and D3D12 direct resolves previously launched whole tile-rounded
+  rectangles. The unchanged SPIR-V/DXIL shaders test unsigned destination
+  coordinates before loading source texels or storing packed output runs.
+- core_resolve_dispatch.h is an allocation-free MSVC C89 axis planner. It
+  removes only complete groups beyond the shader's live rectangle, or a wholly
+  rejected launch. Tile origins, source mappings, sample selection, grouping,
+  formats, endian conversions, fill behavior, precision and vector stores stay
+  unchanged. Left/top partial groups remain; no valid thread is discarded.
+- Keep the complete final group and its vector tails. A thread passing the
+  scalar guard still writes its whole legacy run. No per-pixel clipping is added.
+  Rounded launch coverage can exceed nominal ownership-tile coverage: the
+  planner tests that rounded coverage, avoiding lost legacy edge writes.
+- Checked wide arithmetic preserves the old launch if shader coordinates or
+  coverage could wrap. Compile-time assertions pin the 8x8 group geometry and
+  8/4 pixels per thread that the adapter's group logarithms assume.
+- Group counts use shifts, not divide/remainder. No allocation, extra staging
+  copy, clock, sleep, CPU/GPU readback or CPU wait is introduced by the planner.
+- Vulkan scaled direct output lacked the post-write visibility operation present
+  in the fallback path. After actual scaled direct dispatches, one compute
+  memory barrier publishes shader writes to later compute reads/writes. Global
+  memory scope covers aliases through different sparse-window VkBuffers.
+  This is required synchronization, not a claimed GPU speedup. No host wait is
+  added; existing source/destination transitions and D3D12 UAV tracking remain.
+
+Evidence
+- C89 independent scalar port of both shader coordinate predicates: 195840
+  directed axis cases (scales 1..16, 32/64bpp, 1/2/4x MSAA, offsets, zero and
+  partial extents) plus 100000 random axis cases and 3000 two-dimensional cases.
+  Every legacy potentially-writing run remains, and hashes include all samples
+  of vector tails. Tests cover overflow fallback and rounded-group edge cases.
+- Synthetic 4x single-sample 32bpp 8x8 resolve: 40 -> 4 workgroups (2560 -> 256
+  invocations); same potentially-writing threads and output-run fingerprint.
+  4x 320x184: 1920 -> 1840 groups. Aligned 4x 1280x720: unchanged 28800 groups.
+  These are dispatch-count fixtures, NOT measured GPU time or Dark Souls II FPS.
+- Strict GCC C89 -pedantic -Werror on MinGW; native MSVC /TC /O2 /W4 /WX, and
+  native MSVC AddressSanitizer pass. Production Vulkan/D3D12 MSVC /Zs checks and
+  the full Windows static Make -j5 build pass. GCC optimized backend objects
+  contain no out-of-line planner symbol. GCC and MSVC x64 planner assembly has
+  no integer divide instructions.
+- The actual SPIR-V/DXIL helper emitters are unchanged. Reviewed the direct
+  write predicate and guard placement in edram_dump_shader.cc and
+  dxil/edram_dump.c: texture reads/output stores follow that guard. No shader
+  bytecode, pipeline-key or push-constant ABI change is made.
+- Reviewed deferred CmdVkPipelineBarrier recording/execution: it copies the
+  stack VkMemoryBarrier into owned command pages before replay.
+- Synchronization basis: Khronos compute-to-compute examples and access scopes:
+  https://docs.vulkan.org/guide/latest/synchronization_examples.html
+  https://github.khronos.org/Vulkan-Site/spec/latest/chapters/synchronization.html
+
+Limits and next work
+- No GPU/game/RetroArch/JIT was started, and the installed core was not replaced.
+  Hardware synchronization validation, actual GPU timestamps, frame pacing and
+  gameplay accuracy/performance remain unverified by these CPU fixtures.
+- The added visibility barrier has an accuracy cost; no net GPU-time improvement
+  is promised. Converting resolves still take the EDRAM round trip; expanding
+  exact direct conversions and broader scaled synchronization remain open work.
+- This does not eliminate all renderer allocations, transfers, barriers or GPU
+  pixel cost. At 4x per axis there are still sixteen times as many host pixels.

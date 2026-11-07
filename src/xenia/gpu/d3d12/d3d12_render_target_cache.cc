@@ -9,6 +9,7 @@
 
 #include "xenia/gpu/d3d12/d3d12_render_target_cache.h"
 #include <new>
+#include "libretro/core_resolve_dispatch.h"
 
 #include <cstdint>
 #include <cstring>
@@ -3860,17 +3861,38 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
           sizeof(dispatch_tile) / sizeof(uint32_t), &dispatch_tile,
           kEdramDumpShaderPushConstantResolveDispatchTile);
 
-      command_processor_.SubmitBarriers();
       uint32_t threads_x =
           (dispatch.width_tiles * tile_pixels_x + (pixels_per_thread - 1)) /
           pixels_per_thread;
-      command_list.D3DDispatch(
+      uint32_t groups_x =
           (threads_x + (kEdramDumpShaderResolveThreadsPerGroupX - 1)) /
-              kEdramDumpShaderResolveThreadsPerGroupX,
+          kEdramDumpShaderResolveThreadsPerGroupX;
+      uint32_t groups_y =
           (dispatch.height_tiles * tile_pixels_y +
            (kEdramDumpShaderResolveThreadsPerGroupY - 1)) /
-              kEdramDumpShaderResolveThreadsPerGroupY,
-          1);
+          kEdramDumpShaderResolveThreadsPerGroupY;
+      // Match the unchanged shader's unsigned destination bounds. Retain its
+      // tile origin and partial workgroups, including whole vector stores.
+      static_assert(kEdramDumpShaderResolveThreadsPerGroupX == 8 &&
+                    kEdramDumpShaderResolveThreadsPerGroupY == 8 &&
+                    GetEdramDumpShaderResolvePixelsPerThread(false) == 8 &&
+                    GetEdramDumpShaderResolvePixelsPerThread(true) == 4);
+      const auto& coordinates =
+          copy_shader_constants.dest_relative.coordinate_info;
+      groups_x = xe_resolve_dispatch_axis(groups_x,
+          pixels_per_thread == 4 ? 5 : 6,
+          uint32_t(dispatch_tile.tile_x) * tile_pixels_x,
+          coordinates.edram_offset_x_div_8, coordinates.width_div_8,
+          copy_dest_scaled ? draw_resolution_scale_x() : 1);
+      groups_y = xe_resolve_dispatch_axis(groups_y,
+          3,
+          uint32_t(dispatch_tile.tile_y) * tile_pixels_y,
+          coordinates.edram_offset_y_div_8, resolve_info.height_div_8,
+          copy_dest_scaled ? draw_resolution_scale_y() : 1);
+      if (groups_x && groups_y) {
+        command_processor_.SubmitBarriers();
+        command_list.D3DDispatch(groups_x, groups_y, 1);
+      }
     }
   }
 

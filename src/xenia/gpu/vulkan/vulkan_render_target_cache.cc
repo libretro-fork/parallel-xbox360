@@ -9,6 +9,7 @@
 
 #include "xenia/gpu/vulkan/vulkan_render_target_cache.h"
 #include <new>
+#include "libretro/core_resolve_dispatch.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -4101,6 +4102,7 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
 
   DeferredCommandBuffer& command_buffer =
       command_processor_.deferred_command_buffer();
+  bool dispatched = false;
   bool dest_bound = false, resolve_constants_bound = false;
   VkDescriptorSet last_source_descriptor_set = VK_NULL_HANDLE;
   EdramDumpShaderPitches last_pitches;
@@ -4207,20 +4209,54 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
           sizeof(uint32_t) * kEdramDumpShaderPushConstantResolveDispatchTile,
           sizeof(dispatch_tile), &dispatch_tile);
 
-      command_processor_.SubmitBarriers(true);
       uint32_t threads_x =
           (dispatch.width_tiles * tile_pixels_x + (pixels_per_thread - 1)) /
           pixels_per_thread;
-      command_buffer.CmdVkDispatch(
+      uint32_t groups_x =
           (threads_x + (kEdramDumpShaderResolveThreadsPerGroupX - 1)) /
-              kEdramDumpShaderResolveThreadsPerGroupX,
+          kEdramDumpShaderResolveThreadsPerGroupX;
+      uint32_t groups_y =
           (dispatch.height_tiles * tile_pixels_y +
            (kEdramDumpShaderResolveThreadsPerGroupY - 1)) /
-              kEdramDumpShaderResolveThreadsPerGroupY,
-          1);
+          kEdramDumpShaderResolveThreadsPerGroupY;
+      // Match the unchanged shader's unsigned destination bounds. Retain its
+      // tile origin and partial workgroups, including whole vector stores.
+      static_assert(kEdramDumpShaderResolveThreadsPerGroupX == 8 &&
+                    kEdramDumpShaderResolveThreadsPerGroupY == 8 &&
+                    GetEdramDumpShaderResolvePixelsPerThread(false) == 8 &&
+                    GetEdramDumpShaderResolvePixelsPerThread(true) == 4);
+      const auto& coordinates =
+          copy_shader_constants.dest_relative.coordinate_info;
+      groups_x = xe_resolve_dispatch_axis(groups_x,
+          pixels_per_thread == 4 ? 5 : 6,
+          uint32_t(dispatch_tile.tile_x) * tile_pixels_x,
+          coordinates.edram_offset_x_div_8, coordinates.width_div_8,
+          copy_dest_scaled ? draw_resolution_scale_x() : 1);
+      groups_y = xe_resolve_dispatch_axis(groups_y,
+          3,
+          uint32_t(dispatch_tile.tile_y) * tile_pixels_y,
+          coordinates.edram_offset_y_div_8, resolve_info.height_div_8,
+          copy_dest_scaled ? draw_resolution_scale_y() : 1);
+      if (groups_x && groups_y) {
+        command_processor_.SubmitBarriers(true);
+        command_buffer.CmdVkDispatch(groups_x, groups_y, 1);
+        dispatched = true;
+      }
     }
   }
 
+  if (copy_dest_scaled && dispatched) {
+    // Sparse windows may alias the same memory through different VkBuffers.
+    // Publish direct writes to compute readers/writers of every such alias.
+    VkMemoryBarrier barrier;
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.pNext = nullptr;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    command_buffer.CmdVkPipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr,
+        0, nullptr);
+  }
   command_processor_.PopDebugMarker();
   return true;
 }
