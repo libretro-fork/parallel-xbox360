@@ -4,7 +4,7 @@
 #include <string.h>
 #include "core_resolve_loads_emit.h"
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"line %u: %s\n",(unsigned)__LINE__,#x); exit(1); } } while (0)
-static unsigned calls, modules, compared;
+static unsigned calls, modules, compared, reduced;
 static unsigned wide_multiplies, high_extracts;
 static size_t binary_bytes;
 #ifdef XE_TEST_RESOLVE_DXIL
@@ -61,8 +61,8 @@ typedef struct context {
   unsigned expected, optimized;
 } context;
 static void path_make(char *path, size_t capacity, const char *dir, const xe_test_resolve_options *o) {
-  int size = snprintf(path, capacity, "%s/%u-%u-%u-%u-%u-%u." EXTENSION,
-      dir, o->format, o->depth, o->msaa, o->scale, o->config, o->direct);
+  int size = snprintf(path, capacity, "%s/%u-%u-%u-%u-%u-%u-%u." EXTENSION,
+      dir, o->format, o->depth, o->msaa, o->scale, o->config, o->direct, o->volume);
   CHECK(size > 0 && (size_t)size < capacity);
 }
 static int inspect(void *opaque, const uint32_t *words, size_t count) {
@@ -111,11 +111,18 @@ static int inspect(void *opaque, const uint32_t *words, size_t count) {
   path_make(path, sizeof(path), c->output, &c->options);
   file = fopen(path, "wb"); CHECK(file);
   CHECK(fwrite(words, 1, bytes, file) == bytes); CHECK(!fclose(file));
-  if (c->baseline && !c->optimized) {
+  if (c->baseline) {
     unsigned char scratch[4096];
     size_t consumed = 0;
+    long baseline_bytes;
     path_make(path, sizeof(path), c->baseline, &c->options);
     file = fopen(path, "rb"); CHECK(file);
+    CHECK(!fseek(file,0,SEEK_END)); baseline_bytes = ftell(file); CHECK(baseline_bytes > 0);
+    CHECK(!fseek(file,0,SEEK_SET));
+    if (c->options.direct) {
+      CHECK(bytes < (size_t)baseline_bytes); ++reduced;
+      CHECK(!fclose(file));
+    } else {
     while (consumed < bytes) {
       size_t n = bytes - consumed;
       if (n > sizeof(scratch)) n = sizeof(scratch);
@@ -123,25 +130,26 @@ static int inspect(void *opaque, const uint32_t *words, size_t count) {
       CHECK(!memcmp(scratch, (const unsigned char *)words + consumed, n)); consumed += n;
     }
     CHECK(fgetc(file) == EOF && !ferror(file)); CHECK(!fclose(file)); ++compared;
+    }
   }
   ++modules; binary_bytes += bytes; return 1;
 }
 int main(int argc, char **argv) {
   static const unsigned formats[14] = {0,1,2,3,4,5,6,7,10,12,14,15,0,1};
   static const unsigned scales[7] = {1,2,3,4,8,16,32};
-  unsigned f, s, msaa, config, direct;
+  unsigned f, s, msaa, config, direct, volume;
   context c;
   CHECK(argc == 2 || argc == 3); memset(&c, 0, sizeof(c));
   c.output = argv[1]; c.baseline = argc == 3 ? argv[2] : NULL;
   for (f = 0; f < 14; ++f) for (msaa = 0; msaa < 3; ++msaa)
   for (s = 0; s < 7; ++s) for (config = 0; config < 3; ++config)
-  for (direct = 0; direct < 2; ++direct) {
+  for (direct = 0; direct < 2; ++direct) for (volume = 0; volume <= direct; ++volume) {
     unsigned run = f < 12 && (formats[f] == 5 || formats[f] == 7 || formats[f] == 15) ? 4 : 8;
 #ifdef XE_TEST_RESOLVE_DXIL
     if (scales[s] > 16) continue; /* Native DXIL emitter rejects larger scales. */
 #endif
     c.options.format = formats[f]; c.options.depth = f >= 12; c.options.msaa = msaa;
-    c.options.scale = scales[s]; c.options.config = config; c.options.direct = direct;
+    c.options.scale = scales[s]; c.options.config = config; c.options.direct = direct; c.options.volume = volume;
     wide_multiplies = 0; high_extracts = 0;
     c.optimized = direct && config == 1 && scales[s] > 1 && scales[s] <= 16 && !(scales[s] & (scales[s] - 1));
     c.expected = direct ? run : 1;
@@ -157,9 +165,9 @@ int main(int argc, char **argv) {
       options.format = formats[f]; options.depth = f >= 12; options.msaa = msaa;
       options.scale_x = scales[s]; options.scale_y = scales[s] == 1 ? 1 : (scales[s] == 4 ? 4 : 3);
       options.native_source = config != 0; options.native_layout = config == 2;
-      options.direct_resolve = direct; options.msaa_2x_supported = config != 0;
+      options.direct_resolve = direct; options.direct_resolve_3d = volume; options.msaa_2x_supported = config != 0;
       options.source_uint = !options.depth && ((options.format >= 4 && options.format <= 7) || options.format >= 14);
-      options.round_depth = 1; calls = 0;
+      options.round_depth = 1; calls = 0; wide_product = NULL;
       CHECK(xe_dxil_build_edram_dump(&options, &binary)); CHECK(!(binary.size % 4));
       CHECK(inspect(&c, (const uint32_t *)binary.data, binary.size / 4));
       xe_dxil_shader_binary_free(&binary);
@@ -168,7 +176,7 @@ int main(int argc, char **argv) {
     CHECK(xe_test_resolve_spv(&c.options, inspect, &c));
 #endif
   }
-  printf("actual " EXTENSION " emitters: %u modules, %u unaffected byte-identical, %lu total bytes; load counts PASS\n",
-      modules, compared, (unsigned long)binary_bytes);
+  printf("actual " EXTENSION " emitters: %u modules, %u dumps byte-identical, %u direct modules smaller, %lu total bytes; load counts PASS\n",
+      modules, compared, reduced, (unsigned long)binary_bytes);
   return 0;
 }

@@ -1314,3 +1314,20 @@ independent logical-storage-group reference: 76,800 requests and 1,491,504
 image/compact-buffer addresses, packed level zero, base/mips-only loads and
 array layers. Invalid or overflowing layouts preserve the published plan.
 See texture_image_mips_results.txt for mixed-chain routing and scratch limits.
+
+Static direct-resolve destination addressing
+------------------------------------------
+`run_resolve_address_tests.sh` or `.cmd` checks the shared C89 emitter against
+production native CPU Xenos Tiled2D/Tiled3D addressing. It also checks all fixed
+pipeline-cache slots, cached failures, duplicate ownership, teardown and reuse.
+Shell sanitizers default on; use SANITIZER= on MinGW without those runtimes.
+Native ASan uses RESOLVE_ADDRESS_FLAGS=/fsanitize=address /Zi and a separate
+RESOLVE_ADDRESS_OUT.
+
+The actual-emitter matrix above now includes separate 2D/3D direct variants:
+2,646 SPIR-V and 2,268 DXIL modules per configuration. Optional shell
+BASELINE_COMMIT=9693c7c9b requires normal dumps to remain byte-identical and
+every direct module to shrink compared with the old dynamic destination path.
+It does not require this local-history commit for ordinary CI. Source-fetch
+counts and exact pitch-division checks still apply. See resolve_address_results.txt
+for measurements and limits; smaller IR is not a GPU timing measurement.

@@ -6,8 +6,16 @@ cd "$root"
 out=${TEST_BUILD_DIR:-"$root/build/tests/resolve-loads-emit-$(uname -s)"}
 mkdir -p "$out/current-spv" "$out/current-dxil"
 out=$(CDPATH= cd -- "$out" && pwd)
-# This is a current-ABI matrix. The reciprocal constant changes every module;
-# historical pre-reciprocal byte comparisons are recorded in the 0144 results.
+# Optional same-ABI dynamic-address reference (0149 parent 9693c7c9b).
+# Without BASELINE_COMMIT this runner needs no local Git history.
+base=${BASELINE_COMMIT:-}
+modes=current
+if test -n "$base"; then
+ mkdir -p "$out/base-spv" "$out/base-dxil"
+ git show "$base:src/xenia/gpu/edram_dump_shader.cc" > "$out/dump-base.cc"
+ git show "$base:src/xenia/gpu/dxil/edram_dump.c" > "$out/dump-base.c"
+ modes='base current'
+fi
 extra=
 case $(uname -s) in MINGW*|MSYS*|CYGWIN*) extra=-Wno-long-long ;; esac
 inc='-I. -Isrc -Itools/tests -Ithird_party/libretro-common/include -Ithird_party/fmt/include -Ithird_party -Ithird_party/Vulkan-Headers/include'
@@ -27,9 +35,15 @@ for source in "$out/static_emitters.cc" tools/tests/core_resolve_loads_spv_bridg
  ${CXX:-c++} -std=c++20 -Wno-attributes $flags $inc -c "$source" -o "$out/$(basename "$source" | sed 's/\.[^.]*$//').o"
 done
 ${CC:-cc} -std=c89 -pedantic -Wall -Wextra -Werror $extra -O2 $inc -c tools/tests/core_resolve_loads_emit_test.c -o "$out/spv-test.o"
-${CXX:-c++} -std=c++20 -Wno-attributes $flags $inc -c src/xenia/gpu/edram_dump_shader.cc -o "$out/dump.o"
-${CXX:-c++} -static-libgcc -static-libstdc++ "$out/spv-test.o" "$out/dump.o" "$out/static_emitters.o" "$out/core_resolve_loads_spv_bridge.o" "$out/spirv_builder.o" "$out/SpvBuilder.o" "$out/InReadableOrder.o" "$out/Logger.o" "$out/binary.o" "$out/packet.o" "$out/arena.o" "$out/size.o" -o "$out/spv-current"
-"$out/spv-current" "$out/current-spv"
+for mode in $modes; do
+ source=src/xenia/gpu/edram_dump_shader.cc
+ if test "$mode" = base; then source="$out/dump-base.cc"; fi
+ ${CXX:-c++} -std=c++20 -Wno-attributes $flags $inc -c "$source" -o "$out/dump.o"
+ ${CXX:-c++} -static-libgcc -static-libstdc++ "$out/spv-test.o" "$out/dump.o" "$out/static_emitters.o" "$out/core_resolve_loads_spv_bridge.o" "$out/spirv_builder.o" "$out/SpvBuilder.o" "$out/InReadableOrder.o" "$out/Logger.o" "$out/binary.o" "$out/packet.o" "$out/arena.o" "$out/size.o" -o "$out/spv-$mode"
+ if test "$mode" = current && test -n "$base"; then
+  "$out/spv-$mode" "$out/current-spv" "$out/base-spv"
+ else "$out/spv-$mode" "$out/$mode-spv"; fi
+done
 
 dxil=src/xenia/gpu/dxil
 dxinc="-Itools/tests -I$dxil -isystem $dxil/bytecode"
@@ -40,9 +54,15 @@ for source in "$dxil"/*.c "$dxil"/bytecode/*.c; do
  ${CC:-cc} -std=c17 -O2 -I"$dxil" -I"$dxil/bytecode" -c "$source" -o "$out/dxil-objects/$(basename "$source" .c).o"
 done
 ${CC:-cc} -std=c89 -pedantic -Wall -Wextra -Werror $extra -O2 -DXE_TEST_RESOLVE_DXIL $dxinc -c tools/tests/core_resolve_loads_emit_test.c -o "$out/dxil-test.o"
-${CC:-cc} -std=c89 -pedantic -Wall -Wextra -Werror $extra -O2 $dxinc -include tools/tests/core_resolve_loads_dxil_hook.h -c "$dxil/edram_dump.c" -o "$out/dxil-dump.o"
-${CC:-cc} -static-libgcc "$out/dxil-test.o" "$out/dxil-dump.o" "$out"/dxil-objects/*.o -lm -o "$out/dxil-current"
-"$out/dxil-current" "$out/current-dxil"
+for mode in $modes; do
+ source="$dxil/edram_dump.c"
+ if test "$mode" = base; then source="$out/dump-base.c"; fi
+ ${CC:-cc} -std=c89 -pedantic -Wall -Wextra -Werror $extra -O2 $dxinc -include tools/tests/core_resolve_loads_dxil_hook.h -c "$source" -o "$out/dxil-dump.o"
+ ${CC:-cc} -static-libgcc "$out/dxil-test.o" "$out/dxil-dump.o" "$out"/dxil-objects/*.o -lm -o "$out/dxil-$mode"
+ if test "$mode" = current && test -n "$base"; then
+  "$out/dxil-$mode" "$out/current-dxil" "$out/base-dxil"
+ else "$out/dxil-$mode" "$out/$mode-dxil"; fi
+done
 
 if test -n "${SPIRV_VALIDATOR:-}"; then
  for file in "$out"/current-spv/*.spv; do "$SPIRV_VALIDATOR" "$file"; done

@@ -5,6 +5,7 @@
 #include "guest_resources.h"
 #include "../../../../libretro/core_resolve_native_loads.h"
 #include "../../../../libretro/core_gpu_divide.h"
+#include "../../../../libretro/core_resolve_tiled_address.h"
 #include <dxil_module.h>
 #include <dxil_function.h>
 
@@ -120,11 +121,22 @@ static int divide_pitch(XeDxilAlu *s, XeDxilValue numerator, XeDxilValue pitch,
   *quotient = (XeDxilValue)q; *remainder = (XeDxilValue)r;
   return 1;
 }
-static XeDxilValue combine_address(XeDxilAlu *s, XeDxilValue bytes, XeDxilValue bank,
-                                     XeDxilValue pipe, XeDxilValue y_lsb) {
-  return bor(s, bor(s, bor(s, shl(s, y_lsb, 4), shl(s, pipe, 6)), shl(s, bank, 11)),
-    bor(s, bor(s, field(s, bytes, 0, 15), shl(s, field(s, bytes, 4, 1), 5)),
-      bor(s, shl(s, field(s, bytes, 5, 7), 8), shl(s, shr(s, bytes, 8), 12))));
+static uintptr_t emit_resolve_address(void *opaque, enum xe_resolve_address_op op,
+    uintptr_t a, uintptr_t b) {
+  XeDxilAlu *s = (XeDxilAlu *)opaque;
+  enum dxil_bin_opcode native_op;
+  if (op == XE_RESOLVE_ADDR_CONST) return (uintptr_t)ic(s, (uint32_t)a);
+  switch (op) {
+    case XE_RESOLVE_ADDR_ADD: native_op = DXIL_BINOP_ADD; break;
+    case XE_RESOLVE_ADDR_MUL: native_op = DXIL_BINOP_MUL; break;
+    case XE_RESOLVE_ADDR_SHL: native_op = DXIL_BINOP_SHL; break;
+    case XE_RESOLVE_ADDR_SHR: native_op = DXIL_BINOP_LSHR; break;
+    case XE_RESOLVE_ADDR_AND: native_op = DXIL_BINOP_AND; break;
+    case XE_RESOLVE_ADDR_OR: native_op = DXIL_BINOP_OR; break;
+    case XE_RESOLVE_ADDR_XOR: native_op = DXIL_BINOP_XOR; break;
+    default: return 0;
+  }
+  return (uintptr_t)bin(s, native_op, (XeDxilValue)a, (XeDxilValue)b);
 }
 static XeDxilValue fill_bias(XeDxilAlu *s, XeDxilValue coordinate, unsigned extent, XeDxilValue enabled) {
   XeDxilValue limit = pick(s, enabled, ic(s, extent), ic(s, 0));
@@ -139,7 +151,7 @@ static int emit_direct_resolve(XeDxilAlu *s, const XeDxilEdramDumpOptions *o,
   XeDxilValue tile, source_tile, source_pitch, source_x, source_y, sample, fill_enabled;
   XeDxilValue source_tile_x, source_tile_y;
   XeDxilValue packed[8], pixel[2], pixel_x, endian, swap, swap8, swap10, swap64, swap_dwords;
-  XeDxilValue a, b, value, bytes, bank, pipe, address2d, address3d, address, slice, pitch;
+  XeDxilValue a, b, value, address, slice = NULL, pitch, height = NULL;
   XeDxilValue tiled_x, tiled_y, host_offset = NULL, gx, gy, hx, hy, group;
   XeDxilValue args[9], format, swap_bytes, swap_halves;
   const struct dxil_func *store;
@@ -236,20 +248,14 @@ static int emit_direct_resolve(XeDxilAlu *s, const XeDxilEdramDumpOptions *o,
     tiled_x = shl(s, gx, group_x); tiled_y = shl(s, gy, group_y);
   }
   pitch = field(s, dest_coordinate, 0, 1023);
-  bytes = shl(s, bor(s, shl(s, add(s, mul(s, shr(s, tiled_y, 5), pitch), shr(s, tiled_x, 5)), 6),
-    bor(s, shl(s, field(s, tiled_y, 1, 7), 3), field(s, tiled_x, 0, 7))), bpp_log2);
-  bank = field(s, tiled_y, 4, 1);
-  pipe = bin(s, DXIL_BINOP_XOR, field(s, tiled_x, 3, 3), shl(s, field(s, tiled_y, 3, 1), 1));
-  address2d = combine_address(s, bytes, bank, pipe, field(s, tiled_y, 0, 1));
-  slice = field(s, dest_info, 4, 7);
-  a = shl(s, field(s, dest_coordinate, 10, 1023), 1);
-  bytes = shl(s, bor(s, shl(s, add(s, mul(s, add(s, mul(s, shr(s, slice, 2), a), shr(s, tiled_y, 4)), pitch),
-    shr(s, tiled_x, 5)), 7), bor(s, bor(s, shl(s, field(s, slice, 0, 3), 5), shl(s, field(s, tiled_y, 1, 3), 3)),
-    field(s, tiled_x, 0, 7))), bpp_log2);
-  bank = field(s, bin(s, DXIL_BINOP_XOR, shr(s, tiled_y, 3), shr(s, slice, 2)), 0, 1);
-  pipe = bin(s, DXIL_BINOP_XOR, field(s, tiled_x, 3, 3), shl(s, bank, 1));
-  address3d = combine_address(s, bytes, bank, pipe, field(s, tiled_y, 0, 1));
-  address = pick(s, equal(s, field(s, dest_info, 3, 1), 1), address3d, address2d);
+  if (o->direct_resolve_3d) {
+    slice = field(s, dest_info, 4, 7);
+    height = field(s, dest_coordinate, 10, 1023);
+  }
+  address = (XeDxilValue)xe_resolve_tiled_address(emit_resolve_address, s,
+      o->direct_resolve_3d, (uintptr_t)tiled_x, (uintptr_t)tiled_y,
+      (uintptr_t)pitch, (uintptr_t)slice, (uintptr_t)height, bpp_log2);
+  if (!address) return 0;
   if (scaled) address = add(s, mul(s, address, ic(s, scale_x * scale_y)), host_offset);
   else address = add(s, address, xe_dxil_cbuffer_word(s, constants, ic(s, 6)));
   /* One run has two 16-byte stores, preserving the direct resolve's
@@ -282,7 +288,7 @@ int xe_dxil_build_edram_dump(const XeDxilEdramDumpOptions *o, XeDxilShaderBinary
   const struct dxil_func *function;
   unsigned words, layout_x, layout_y, width, height, kind, i;
   int result = 0, integer_source;
-  if (!o || !binary_out || o->msaa > 2 || !o->scale_x || !o->scale_y || o->scale_x > 16 || o->scale_y > 16 ||
+  if (!o || !binary_out || o->direct_resolve_3d > 1 || o->msaa > 2 || !o->scale_x || !o->scale_y || o->scale_x > 16 || o->scale_y > 16 ||
       (o->depth && o->format > 1) || (!o->depth && o->format != 0 && o->format != 1 && o->format != 2 &&
        o->format != 3 && o->format != 4 && o->format != 5 && o->format != 6 && o->format != 7 &&
        o->format != 10 && o->format != 12 && o->format != 14 && o->format != 15)) return 0;

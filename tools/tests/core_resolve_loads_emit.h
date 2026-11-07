@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 typedef struct xe_test_resolve_options {
-  unsigned format, depth, msaa, scale, config, direct;
+  unsigned format, depth, msaa, scale, config, direct, volume;
 } xe_test_resolve_options;
 typedef int (*xe_test_resolve_inspect)(void *, const uint32_t *, size_t);
 #ifdef __cplusplus

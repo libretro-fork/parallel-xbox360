@@ -950,12 +950,12 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyRenderPass, device,
                                          fsi_render_pass_);
 
-  for (const auto& dump_pipeline_pair : dump_pipelines_) {
-    // May be null to prevent recreation attempts.
-    if (dump_pipeline_pair.second != VK_NULL_HANDLE) {
-      dfn.vkDestroyPipeline(device, dump_pipeline_pair.second, nullptr);
-    }
+  uint32_t dump_cursor = 0;
+  uint64_t dump_handle;
+  while (xe_resolve_pipeline_next(&dump_pipelines_, &dump_cursor, &dump_handle)) {
+    if (dump_handle) dfn.vkDestroyPipeline(device, (VkPipeline)dump_handle, nullptr);
   }
+  xe_resolve_pipeline_reset(&dump_pipelines_);
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
                                          dump_pipeline_layout_depth_);
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
@@ -3869,10 +3869,9 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
 }
 
 VkPipeline VulkanRenderTargetCache::GetDumpPipeline(EdramDumpShaderKey key) {
-  auto pipeline_it = dump_pipelines_.find(key);
-  if (pipeline_it != dump_pipelines_.end()) {
-    return pipeline_it->second;
-  }
+  if (key.key >= XE_RESOLVE_PIPELINE_CAPACITY) return VK_NULL_HANDLE;
+  uint64_t cached;
+  if (xe_resolve_pipeline_get(&dump_pipelines_, key.key, &cached)) return (VkPipeline)cached;
 
   EdramDumpShaderOptions shader_options;
   shader_options.spirv_version = spirv_version_;
@@ -3911,7 +3910,13 @@ VkPipeline VulkanRenderTargetCache::GetDumpPipeline(EdramDumpShaderKey key) {
             ? xenos::GetDepthRenderTargetFormatName(key.GetDepthFormat())
             : xenos::GetColorRenderTargetFormatName(key.GetColorFormat()));
   }
-  dump_pipelines_.emplace(key, pipeline);
+  if (!xe_resolve_pipeline_put(&dump_pipelines_, key.key, (uint64_t)pipeline)) {
+    if (pipeline) {
+      const auto* device = command_processor_.GetVulkanDevice();
+      device->functions().vkDestroyPipeline(device->device(), pipeline, nullptr);
+    }
+    return xe_resolve_pipeline_get(&dump_pipelines_, key.key, &cached) ? (VkPipeline)cached : VK_NULL_HANDLE;
+  }
   return pipeline;
 }
 
@@ -3966,6 +3971,7 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
     pipeline_key.source_scale_native = rt_key.scale_native;
     pipeline_key.native_layout = uint32_t(!copy_dest_scaled);
     pipeline_key.direct_resolve = 1;
+    pipeline_key.direct_resolve_3d = copy_shader_constants.dest_relative.dest_info.copy_dest_array;
     if (GetDumpPipeline(pipeline_key) == VK_NULL_HANDLE) {
       return false;
     }

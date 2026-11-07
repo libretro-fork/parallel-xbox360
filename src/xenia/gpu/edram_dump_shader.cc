@@ -13,6 +13,7 @@
 #include "libretro/core_spv_words.h"
 #include "libretro/core_resolve_native_loads.h"
 #include "libretro/core_gpu_divide.h"
+#include "libretro/core_resolve_tiled_address.h"
 
 #include "xenia/gpu/spirv/GLSL.std.450.h"
 
@@ -59,6 +60,26 @@ static uintptr_t EmitDivide(void* opaque, enum xe_gpu_divide_op op,
   return 0;
 }
 
+// C++ builder ABI only; tiled address arithmetic is shared C89.
+static uintptr_t EmitResolveAddress(void* opaque, enum xe_resolve_address_op op,
+                                    uintptr_t a, uintptr_t b) {
+  auto& state = *static_cast<DivideBuilder*>(opaque);
+  auto& builder = *state.builder;
+  if (op == XE_RESOLVE_ADDR_CONST) return builder.makeUintConstant(uint32_t(a));
+  spv::Op native_op;
+  switch (op) {
+    case XE_RESOLVE_ADDR_ADD: native_op = spv::OpIAdd; break;
+    case XE_RESOLVE_ADDR_MUL: native_op = spv::OpIMul; break;
+    case XE_RESOLVE_ADDR_SHL: native_op = spv::OpShiftLeftLogical; break;
+    case XE_RESOLVE_ADDR_SHR: native_op = spv::OpShiftRightLogical; break;
+    case XE_RESOLVE_ADDR_AND: native_op = spv::OpBitwiseAnd; break;
+    case XE_RESOLVE_ADDR_OR: native_op = spv::OpBitwiseOr; break;
+    case XE_RESOLVE_ADDR_XOR: native_op = spv::OpBitwiseXor; break;
+    default: return 0;
+  }
+  return builder.createBinOp(native_op, state.type_uint, spv::Id(a), spv::Id(b));
+}
+
 // C89 storage reports capacity failures; this is the existing C++ builder's
 // allocation-failure boundary. No heap work is performed on the normal path.
 static void AppendShaderWord(xe_spv_word_list* words, uint32_t value) {
@@ -85,7 +106,6 @@ constexpr uint32_t kResolveCoordinateInfoWidthBits =
     xenos::kResolveSizeBits - xenos::kResolveAlignmentPixelsLog2;
 
 constexpr uint32_t kResolveDestInfoEndianBits = 3;
-constexpr uint32_t kResolveDestInfoIsArrayShift = 3;
 constexpr uint32_t kResolveDestInfoSliceShift = 4;
 constexpr uint32_t kResolveDestInfoSwapShift = 24;
 
@@ -104,7 +124,6 @@ constexpr uint32_t kResolveDestCoordinateInfoSampleSelectShift =
     xenos::kResolveAlignmentPixelsLog2;
 
 // XENOS_TEXTURE_MACRO_TILE_HEIGHT_3D_LOG2 in texture_address.xesli.
-constexpr uint32_t kTextureMacroTileHeight3DLog2 = 4;
 
 // XenosTextureTiledAddressCombine in texture_address.xesli.
 constexpr uint32_t CombineTiledAddress(uint32_t outer_inner_bytes,
@@ -1228,79 +1247,17 @@ bool BuildEdramDumpShaderSpirv(
     }
     spv::Id dest_pitch_macro_tiles = extract(
         resolve_dest_coordinate_info, 0, kResolveDestCoordinateInfoPitchBits);
-    // XenosTextureTiledAddressCombine.
-    auto combine = [&](spv::Id outer_inner_bytes, spv::Id bank, spv::Id pipe,
-                       spv::Id y_lsb) {
-      spv::Id address =
-          bitwise_or(bitwise_or(shift_left(y_lsb, 4), shift_left(pipe, 6)),
-                     shift_left(bank, 11));
-      address = bitwise_or(address, bitwise_and(outer_inner_bytes, 0xF));
-      address = bitwise_or(
-          address,
-          shift_left(bitwise_and(shift_right(outer_inner_bytes, 4), 0x1), 5));
-      address = bitwise_or(
-          address,
-          shift_left(bitwise_and(shift_right(outer_inner_bytes, 5), 0x7), 8));
-      return bitwise_or(address,
-                        shift_left(shift_right(outer_inner_bytes, 8), 12));
-    };
-    // XenosTextureTiledAddress2D.
-    spv::Id outer_blocks_2d = shift_left(
-        add(multiply(shift_right(tiled_y, 5), dest_pitch_macro_tiles),
-            shift_right(tiled_x, 5)),
-        6);
-    spv::Id inner_blocks_2d =
-        bitwise_or(shift_left(bitwise_and(shift_right(tiled_y, 1), 0x7), 3),
-                   bitwise_and(tiled_x, 0x7));
-    spv::Id outer_inner_bytes_2d = shift_left(
-        bitwise_or(outer_blocks_2d, inner_blocks_2d), bytes_per_block_log2);
-    spv::Id address_2d =
-        combine(outer_inner_bytes_2d, bitwise_and(shift_right(tiled_y, 4), 0x1),
-                builder.createBinOp(
-                    spv::OpBitwiseXor, type_uint,
-                    bitwise_and(shift_right(tiled_x, 3), 0x3),
-                    shift_left(bitwise_and(shift_right(tiled_y, 3), 0x1), 1)),
-                bitwise_and(tiled_y, 1));
-    // XenosTextureTiledAddress3D, for array destinations.
-    spv::Id dest_slice =
-        extract(resolve_dest_info, kResolveDestInfoSliceShift, 3);
-    spv::Id dest_slice_pitch_macro_tiles = shift_left(
-        extract(resolve_dest_coordinate_info,
-                kResolveDestCoordinateInfoHeightShift,
-                kResolveDestCoordinateInfoPitchBits),
-        xenos::kTextureTileWidthHeightLog2 - kTextureMacroTileHeight3DLog2);
-    spv::Id outer_blocks_3d = shift_left(
-        add(multiply(add(multiply(shift_right(dest_slice, 2),
-                                  dest_slice_pitch_macro_tiles),
-                         shift_right(tiled_y, kTextureMacroTileHeight3DLog2)),
-                     dest_pitch_macro_tiles),
-            shift_right(tiled_x, 5)),
-        7);
-    spv::Id inner_blocks_3d = bitwise_or(
-        bitwise_or(shift_left(bitwise_and(dest_slice, 0x3), 5),
-                   shift_left(bitwise_and(shift_right(tiled_y, 1), 0x3), 3)),
-        bitwise_and(tiled_x, 0x7));
-    spv::Id outer_inner_bytes_3d = shift_left(
-        bitwise_or(outer_blocks_3d, inner_blocks_3d), bytes_per_block_log2);
-    spv::Id bank_3d =
-        bitwise_and(builder.createBinOp(spv::OpBitwiseXor, type_uint,
-                                        shift_right(tiled_y, 3),
-                                        shift_right(dest_slice, 2)),
-                    0x1);
-    spv::Id address_3d =
-        combine(outer_inner_bytes_3d, bank_3d,
-                builder.createBinOp(spv::OpBitwiseXor, type_uint,
-                                    bitwise_and(shift_right(tiled_x, 3), 0x3),
-                                    shift_left(bank_3d, 1)),
-                bitwise_and(tiled_y, 1));
-    spv::Id dest_address = builder.createTriOp(
-        spv::OpSelect, type_uint,
-        builder.createBinOp(
-            spv::OpINotEqual, type_bool,
-            bitwise_and(resolve_dest_info, uint32_t(1)
-                                               << kResolveDestInfoIsArrayShift),
-            const_uint_0),
-        address_3d, address_2d);
+    spv::Id dest_slice = spv::NoResult, dest_height = spv::NoResult;
+    if (key.direct_resolve_3d) {
+      dest_slice = extract(resolve_dest_info, kResolveDestInfoSliceShift, 3);
+      dest_height = extract(resolve_dest_coordinate_info,
+          kResolveDestCoordinateInfoHeightShift, kResolveDestCoordinateInfoPitchBits);
+    }
+    DivideBuilder address_builder{&builder, type_uint, type_bool};
+    spv::Id dest_address = spv::Id(xe_resolve_tiled_address(EmitResolveAddress,
+        &address_builder, key.direct_resolve_3d, tiled_x, tiled_y,
+        dest_pitch_macro_tiles, dest_slice, dest_height, bytes_per_block_log2));
+    if (!dest_address) throw std::bad_alloc();
     if (dest_scaled) {
       dest_address =
           add(scale_up(dest_address, layout_scale_x * layout_scale_y),

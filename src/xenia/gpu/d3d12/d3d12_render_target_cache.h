@@ -10,6 +10,7 @@
 #ifndef XENIA_GPU_D3D12_D3D12_RENDER_TARGET_CACHE_H_
 #define XENIA_GPU_D3D12_D3D12_RENDER_TARGET_CACHE_H_
 
+#include "libretro/core_resolve_pipeline_cache.h"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -704,9 +705,7 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   ID3D12RootSignature* dump_root_signature_depth_ = nullptr;
   // Compute pipelines for copying host render target contents to the EDRAM
   // buffer. May be null if failed to create.
-  std::unordered_map<EdramDumpShaderKey, ID3D12PipelineState*,
-                     EdramDumpShaderKey::Hasher>
-      dump_pipelines_;
+  xe_resolve_pipeline_cache dump_pipelines_ = {};
 
   // Parameter 0 - 2 root constants (red, green).
   ID3D12RootSignature* uint32_rtv_clear_root_signature_ = nullptr;

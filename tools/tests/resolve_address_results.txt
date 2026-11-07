@@ -1,0 +1,44 @@
+Direct-resolve destination specialization / fixed pipeline caches (0149)
+======================================================================
+Scope: accuracy-preserving renderer cost reduction, Vulkan and D3D12.
+No RetroArch/game, graphics device or JIT execution. Installed core untouched.
+
+Shared MSVC C89 emitter chooses 2D/3D from CPU-known destination array bit.
+The unused equation and dynamic selection are not emitted. Guest address
+arithmetic remains u32; source fetches, native quantization/packing, swaps,
+scale mapping and stores remain. Converted resolves still use their existing
+pack/unpack, sample averaging, gamma and exponent operations; no host-float
+precision shortcut or converted-resolve fusion is introduced.
+
+Native production CPU Tiled2D/Tiled3D reference: 1,025,920 comparisons,
+x/y edges through 8191, slice 0..7, byte-size log2 0..4, random pitch/height
+1..512. MSVC normal and ASan plus MinGW strict C89 pass. All emitter failure
+boundaries pass. 2D emits 39 and 3D 45 nonconstant arithmetic IR operations;
+these are not GPU ISA instruction or elapsed-time measurements.
+
+C89 GPU-owner cache: 2,048 slots / 11 key bits, 16,640 fixed CPU bytes per
+backend. All slots tested, including cached zero failures, >32-bit handles,
+duplicate publication rejection, invalid keys, borrowed teardown iteration,
+reset and reuse. Reset clears only occupancy after native destruction/joins.
+Native pipeline creation/destruction remains backend-owned. No new locks or
+concurrent publication contract. Node/rehash allocations are removed; shader
+builders and native driver pipeline creation may still allocate. A source used
+with both destination layouts can need an additional driver pipeline.
+
+Actual production emitter matrices, baseline 9693c7c9b / same current ABI:
+SPIR-V: 2,646 modules; baseline 29,130,756 bytes -> 27,458,484 bytes.
+882 ordinary dumps byte-identical; all 1,764 direct modules strictly smaller.
+DXIL (MinGW): 2,268 modules; baseline 9,092,188 -> 8,841,856 bytes.
+756 ordinary dumps byte-identical; all 1,512 direct modules strictly smaller.
+Source-fetch counts unchanged; existing exact reciprocal/high-word checks pass.
+All 2,646 current GNU SPIR-V outputs pass Vulkan 1.2 spirv-val validation.
+MSVC normal and ASan actual matrices pass: 2,646 SPIR-V / 2,268 DXIL each.
+Microsoft validator passes all 6,804 current DXIL outputs across three builds.
+MSVC ASan DXIL aggregate is 8,841,872 bytes; no baseline identity claim there.
+Test hooks and full-module comparisons are absent from release builds.
+
+Both native renderer translation units pass MSVC syntax checking. Static
+Windows Make build passes with -j5, no Python/CMake/Clang requirement added.
+CI includes address/cache tests on Linux and Windows. No claim that the older
+all-module historical shader byte-identity harness passes intentional shader
+changes. No GPU timer, rendered-output, FPS or Dark Souls II measurement yet.

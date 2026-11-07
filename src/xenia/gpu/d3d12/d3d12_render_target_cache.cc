@@ -1014,12 +1014,12 @@ void D3D12RenderTargetCache::Shutdown(bool from_destructor) {
   }
   ui::d3d12::util::ReleaseAndNull(uint32_rtv_clear_root_signature_);
 
-  for (const auto& dump_pipeline_pair : dump_pipelines_) {
-    if (dump_pipeline_pair.second) {
-      dump_pipeline_pair.second->Release();
-    }
+  uint32_t dump_cursor = 0;
+  uint64_t dump_handle;
+  while (xe_resolve_pipeline_next(&dump_pipelines_, &dump_cursor, &dump_handle)) {
+    if (dump_handle) ((ID3D12PipelineState*)(uintptr_t)dump_handle)->Release();
   }
-  dump_pipelines_.clear();
+  xe_resolve_pipeline_reset(&dump_pipelines_);
   ui::d3d12::util::ReleaseAndNull(dump_root_signature_depth_);
   ui::d3d12::util::ReleaseAndNull(dump_root_signature_color_);
 
@@ -3525,10 +3525,9 @@ void D3D12RenderTargetCache::SetCommandListRenderTargets(
 
 ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
     EdramDumpShaderKey key) {
-  auto pipeline_it = dump_pipelines_.find(key);
-  if (pipeline_it != dump_pipelines_.end()) {
-    return pipeline_it->second;
-  }
+  if (key.key >= XE_RESOLVE_PIPELINE_CAPACITY) return nullptr;
+  uint64_t cached;
+  if (xe_resolve_pipeline_get(&dump_pipelines_, key.key, &cached)) return (ID3D12PipelineState*)(uintptr_t)cached;
 
   XeDxilEdramDumpOptions options;
   XeDxilShaderBinary binary;
@@ -3552,6 +3551,7 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
   options.destination_space = kDumpDescriptorSetEdram;
   options.source_space = kDumpDescriptorSetSource;
   options.direct_resolve = key.direct_resolve;
+  options.direct_resolve_3d = key.direct_resolve_3d;
   const char* format_name =
       key.is_depth ? xenos::GetDepthRenderTargetFormatName(key.GetDepthFormat())
                    : xenos::GetColorRenderTargetFormatName(key.GetColorFormat());
@@ -3575,7 +3575,11 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
   }
   // Even if creation fails, still store the null pointer not to try to create
   // again.
-  dump_pipelines_.emplace(key, pipeline);
+  if (!xe_resolve_pipeline_put(&dump_pipelines_, key.key, (uint64_t)(uintptr_t)pipeline)) {
+    if (pipeline) pipeline->Release();
+    return xe_resolve_pipeline_get(&dump_pipelines_, key.key, &cached) ?
+        (ID3D12PipelineState*)(uintptr_t)cached : nullptr;
+  }
   return pipeline;
 }
 
@@ -3642,6 +3646,7 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
     pipeline_key.source_scale_native = rt_key.scale_native;
     pipeline_key.native_layout = uint32_t(!copy_dest_scaled);
     pipeline_key.direct_resolve = 1;
+    pipeline_key.direct_resolve_3d = copy_shader_constants.dest_relative.dest_info.copy_dest_array;
     if (!GetOrCreateDumpPipeline(pipeline_key)) {
       return false;
     }

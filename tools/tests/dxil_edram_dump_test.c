@@ -49,6 +49,7 @@ int main(int argc, char **argv) {
   wide = options.format == 15 && test_case >= 8;
   if (wide) options.source_uint = 0;
   test_case &= 7;
+  options.direct_resolve_3d = options.direct_resolve && (test_case == 5 || test_case == 6);
   if (!xe_dxil_build_edram_dump(&options, &binary)) return 1;
   if (!write_file(argv[1], binary.data, binary.size)) goto done;
   /* The execution fixture uses RGBA32F input and an 8x16 dispatch region

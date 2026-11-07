@@ -10,6 +10,7 @@
 #ifndef XENIA_GPU_VULKAN_VULKAN_RENDER_TARGET_CACHE_H_
 #define XENIA_GPU_VULKAN_VULKAN_RENDER_TARGET_CACHE_H_
 
+#include "libretro/core_resolve_pipeline_cache.h"
 #include "libretro/core_gpu_retire.h"
 #include "libretro/core_gpu_transfer.h"
 #include <array>
@@ -768,8 +769,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   VkPipelineLayout dump_pipeline_layout_depth_ = VK_NULL_HANDLE;
   // Compute pipelines for copying host render target contents to the EDRAM
   // buffer. VK_NULL_HANDLE if failed to create.
-  std::unordered_map<EdramDumpShaderKey, VkPipeline, EdramDumpShaderKey::Hasher>
-      dump_pipelines_;
+  xe_resolve_pipeline_cache dump_pipelines_ = {};
 
   // GPU-command-thread owned. Vulkan consumes words synchronously; no borrowed
   // word pointer survives shader/pipeline creation. Reused across both helpers.

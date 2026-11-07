@@ -11,7 +11,6 @@
 #define XENIA_GPU_EDRAM_DUMP_SHADER_H_
 
 #include <cstdint>
-#include <functional>
 #include "libretro/core_spv_binary.h"
 #include "libretro/core_spv_arena.h"
 
@@ -52,15 +51,12 @@ union EdramDumpShaderKey {
     // is written in the group-packed layout, out of a windowed binding, so the
     // destination base push constant is unused there.
     uint32_t direct_resolve : 1;
+    // Fixed by RB_COPY_DEST_INFO before dispatch, so emit only that layout.
+    uint32_t direct_resolve_3d : 1;
   };
 
   EdramDumpShaderKey() : key(0) { static_assert_size(*this, sizeof(key)); }
 
-  struct Hasher {
-    size_t operator()(const EdramDumpShaderKey& key) const {
-      return std::hash<uint32_t>{}(key.key);
-    }
-  };
   bool operator==(const EdramDumpShaderKey& other_key) const {
     return key == other_key.key;
   }
