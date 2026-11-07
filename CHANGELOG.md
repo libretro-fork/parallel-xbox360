@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Added a borrowed raw-XMA history checkpoint for future savestates. Restore validates configuration and both channel spans before copying history into initialized codec storage; opaque FFmpeg pointers are never serialized. This adds no work to normal decode or playback scheduling. Native C89/ASan and MinGW fixtures cover nonzero-overlap continuation and rejected-state nonmutation; full libretro savestates remain unavailable.
+
 - Graphics and APU state pauses now use one reusable C89 controller with borrowed static stage tables, a shared deadline and reverse ownership-aware rollback. A partially failed stage is cleaned up, reentrant transitions fail without blocking, and shutdown can reject new acquisitions without running cleanup on its stopping thread. Native exceptions are contained before the C boundary. CMake uses one C/C++ scalar atomic ABI. Graphics destruction now releases its leaked host register-file mapping. Protocol sanitizer tests, native compilation and a 128-owner OS mapping check pass; complete libretro savestates remain unfinished.
 
 - State-operation graphics pause now quiesces both the vblank interrupt worker and GPU command worker. Pending frontend vblank requests survive pause/resume, and shutdown wakes paused workers before their existing joins. Graphics and APU/XMA pause stages share one timeout budget and preserve pauses they did not acquire when a later stage fails. Graphics vblank anchors and GPU-loss suppression use retro_atomic. Offline C89/MSVC ASan checks pass; this is quiescence groundwork, not complete libretro savestates or a change to normal frame/audio delivery.

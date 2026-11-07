@@ -1,0 +1,53 @@
+Raw XMA history checkpoint (0159)
+=================================
+The owned AV_CODEC_ID_XMAFRAMES decoder replaces packet bits every call; per-frame
+scale/tile/transform state is reset before use. IMDCT overlap and preceding block
+length survive. The new checkpoint borrows 512 floats per active channel and
+48 bytes of scalar metadata. The ephemeral view holds pointers and MUST NOT be
+serialized as a wire record. The caller stores metadata and history bytes.
+No opaque context, bitreader pointer, DSP/MDCT plan or AVFrame pointer is saved.
+
+View/apply require an initialized, matching raw profile, manual sample skipping,
+default discard, no codec threading, no queued packet/output or draining state,
+and at most the null packet filter. Apply copies only its tiny view metadata to
+a local plan. It checks all spans and previous-block lengths before any channel
+write, rejects alias with the destination context and pointer-range wrap, then
+copies history directly to final codec storage. No temporary PCM buffer, malloc,
+flush, DSP rebuild, lock, timer, release log or ordinary per-frame work is added.
+
+Executed Windows x64 coverage:
+- strict GNU C89 driver (-pedantic -Wall -Wextra -Werror) linked to actual Make
+  objects and the production owned decoder; all assertions pass.
+- native MSVC /TC /W4 /WX driver plus minimal C++ legacy-header bridge, linked to
+  freshly built libavcodec and libavutil CMake targets; all assertions pass.
+- native MSVC ASan driver/bridge and actual wmaprodec.c override object, linked
+  ahead of the freshly built codec/util libraries; all assertions pass. Other
+  FFmpeg/DSP objects are ordinary native builds, not fully sanitizer-instrumented.
+- 24 configurations: mono/stereo, 24/32/44.1/48 kHz and previous blocks 128/256/512.
+- 192 subsequent frames match bit-for-bit after nonzero seeded overlap restoration;
+  packet prefix alignment covers all eight bit offsets. Frame counter wraps.
+- wrong version/rate/channels/sample count/bit-exact mode, bad trim/boolean/block,
+  missing/short/overflowing/aliased spans and unused mono channel metadata rejected.
+  A bad second channel cannot mutate the first. Pending output rejects capture
+  and restore, and output remains available. Signed zero and NaN payload bits
+  survive history I/O without conversion (NaN is not decoded).
+
+Limits: fixtures use valid synthetic no-coefficient frames with nonzero seeded
+history, not a real coefficient-bearing XMA stream or all subframe layouts.
+This is private codec history only, not caller packet/PCM/loop/cursor state,
+AVCodec timestamp accounting or complete XmaContext/AudioSystem serialization.
+No libretro serialize callback is enabled and no gameplay/audio quality or speed
+improvement is claimed. Existing frontend pacing/audio behavior is unchanged.
+
+Reproduction:
+  make -j5
+  CC=gcc CXX=g++ sh tools/tests/run_xma_checkpoint_tests.sh
+Native VS developer prompt:
+  cmake --build build/tests/state-control-cmake --target libavcodec libavutil --parallel 5
+  set XMA_CODEC_BUILD=build\tests\state-control-cmake
+  tools\tests\run_xma_checkpoint_tests.cmd
+ASan: compile wmaprodec.c using its generated command with /GL removed and
+/fsanitize=address /Zi added, redirect /Fo and /Fd to a separate test directory.
+Set XMA_CHECKPOINT_FLAGS=/fsanitize=address /Zi and
+XMA_CHECKPOINT_DECODER_OBJECT to that object; use a separate XMA_CHECKPOINT_OUT.
+Do not replace objects or edit build inputs while another build is live.

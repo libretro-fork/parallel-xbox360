@@ -1433,3 +1433,13 @@ rollback, reuse, 32-stage ownership and concurrent stop.
 `core_cold_graphics_test.c` is a Windows C89 OS-mapping oracle; its tiny native
 bridge instantiates actual GraphicsSystem owners with no Setup, GPU or JIT.
 Link it with matching current core objects, as described in state_control_results.txt.
+
+Raw XMA history checkpoint
+--------------------------
+`run_xma_checkpoint_tests.sh` links the actual matching Make objects after building
+the core. The strict C89 driver uses a minimal native FFmpeg-header bridge;
+there is no emulator, frontend, GPU device or guest JIT invocation.
+`run_xma_checkpoint_tests.cmd` links only the native libavcodec/libavutil targets
+from XMA_CODEC_BUILD (default build/windows-native). Set XMA_CHECKPOINT_OUT for a
+separate output directory. See xma_checkpoint_results.txt for sanitizer details
+and the synthetic-stream limitations. These tests do not enable savestates.

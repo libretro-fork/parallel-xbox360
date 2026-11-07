@@ -108,6 +108,8 @@
 #include "wmaprodata.h"
 #include "sinewin.h"
 #include "wma.h"
+#include "xmaframes_checkpoint.h"
+#include "bsf.h"
 #include "wma_common.h"
 
 /** current decoder limitations */
@@ -2141,16 +2143,17 @@ static av_cold int xmaframes_decode_init(AVCodecContext *avctx)
 
     int ret = decode_init(s, avctx, 0);
     if (ret == 0) {
-        /* Each packet contains a complete, individually decodable XMA frame,
-         * so there is no need to skip the first frame for IMDCT warmup. */
+        /* Raw packets contain complete frame syntax. Preserve the first output
+         * frame; subsequent output still depends on IMDCT overlap history. */
         s->skip_frame = 0;
     }
     return ret;
 }
 
 /**
- * Unlike wmapro_flush(), this does not set skip_frame since each xmaframes
- * packet is independently decodable and does not require IMDCT warmup.
+ * Unlike wmapro_flush(), preserve the first output after a flush. Packet
+ * syntax is self-contained, but clearing IMDCT overlap changes future PCM;
+ * this is not a replacement for restoring decoder history.
  */
 static av_cold void xmaframes_flush(AVCodecContext *avctx)
 {
@@ -2217,8 +2220,8 @@ static int xmaframes_decode_packet(AVCodecContext *avctx, AVFrame *frame,
         return AVERROR_INVALIDDATA;
     }
 
-    /* Each packet holds one complete, independently decodable frame, so no
-     * bitstream error can carry over between packets.  packet_loss is set by
+    /* Each packet holds complete frame syntax, so no bitstream-reservoir
+     * error needs to carry over. IMDCT overlap history is still preserved.  packet_loss is set by
      * decode_init() and by xmaframes_flush(), and the only clear in the file
      * lives in decode_packet(), which this decoder does not use -- without
      * this reset the check after decode_frame() rejects every packet.  Reset
@@ -2269,3 +2272,105 @@ const FFCodec ff_xmaframes_decoder = {
     CODEC_SAMPLEFMTS(AV_SAMPLE_FMT_FLTP),
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };
+
+/* Raw XMA packets replace their bit reservoir and per-frame scale factors.
+ * Only the overlap window, preceding block length and these small scalar
+ * fields carry into the next packet. Static DSP/MDCT plans stay initialized.
+ * New checkpoint code is C89; no change to the normal decode path is needed. */
+static int xma_checkpoint_quiescent(const AVCodecContext *avctx)
+{
+    const WMAProDecodeCtx *s;
+    const AVCodecInternal *internal;
+    if (!avctx || avctx->codec != &ff_xmaframes_decoder.p ||
+        avctx->codec_id != AV_CODEC_ID_XMAFRAMES || !avctx->priv_data ||
+        !avctx->internal || !(avctx->flags2 & AV_CODEC_FLAG2_SKIP_MANUAL) ||
+        avctx->skip_frame != AVDISCARD_DEFAULT || avctx->active_thread_type)
+        return 0;
+    internal = avctx->internal;
+    if (internal->draining || internal->draining_done || internal->skip_samples ||
+        (internal->buffer_frame && internal->buffer_frame->buf[0]) ||
+        (internal->buffer_pkt && (internal->buffer_pkt->data || internal->buffer_pkt->size || internal->buffer_pkt->side_data_elems)) ||
+        (internal->in_pkt && (internal->in_pkt->data || internal->in_pkt->size || internal->in_pkt->side_data_elems)) ||
+        (internal->bsf && strcmp(internal->bsf->filter->name, "null")))
+        return 0;
+    s = avctx->priv_data;
+    return s->samples_per_frame == FF_XMA_CHECKPOINT_SAMPLES &&
+        s->min_samples_per_subframe == 128 && s->decode_flags == 0x10d6 &&
+        s->bits_per_sample == 16 && avctx->sample_fmt == AV_SAMPLE_FMT_FLTP &&
+        s->nb_channels >= 1 && s->nb_channels <= 2 &&
+        s->nb_channels == avctx->ch_layout.nb_channels &&
+        (avctx->sample_rate == 24000 || avctx->sample_rate == 32000 ||
+         avctx->sample_rate == 44100 || avctx->sample_rate == 48000);
+}
+static int xma_checkpoint_block(uint32_t length)
+{
+    return length >= 128 && length <= FF_XMA_CHECKPOINT_SAMPLES &&
+        !(length & (length - 1));
+}
+int ff_xmaframes_checkpoint_view(const AVCodecContext *avctx,FFXmaCheckpointView *out)
+{
+    const WMAProDecodeCtx *s;
+    FFXmaCheckpointView view;
+    unsigned i;
+    if (!out || !xma_checkpoint_quiescent(avctx)) return 0;
+    s = avctx->priv_data;
+    if (s->skip_frame < 0 || s->skip_frame > 1 || s->packet_loss > 1 ||
+        s->trim_start > 1023 || s->trim_end > 1023) return 0;
+    memset(&view,0,sizeof(view));
+    view.state.version = FF_XMA_CHECKPOINT_VERSION;
+    view.state.rate = avctx->sample_rate;
+    view.state.channels = s->nb_channels;
+    view.state.samples = s->samples_per_frame;
+    view.state.frame_number = s->frame_num;
+    view.state.bit_exact = !!(avctx->flags & AV_CODEC_FLAG_BITEXACT);
+    view.state.trim_start = s->trim_start;view.state.trim_end = s->trim_end;
+    view.state.skip_frame = s->skip_frame;view.state.packet_loss = s->packet_loss;
+    for (i=0;i<view.state.channels;++i) {
+        if (!xma_checkpoint_block(s->channel[i].prev_block_len)) return 0;
+        view.state.previous_block[i] = s->channel[i].prev_block_len;
+        view.history[i] = s->channel[i].out;
+        view.history_bytes[i] = FF_XMA_CHECKPOINT_SAMPLES * sizeof(float);
+    }
+    *out = view;return 1;
+}
+int ff_xmaframes_checkpoint_apply(AVCodecContext *avctx,const FFXmaCheckpointView *view)
+{
+    WMAProDecodeCtx *s;
+    const FFXmaCheckpointState *state;
+    FFXmaCheckpointView plan;
+    uintptr_t source,destination;
+    size_t bytes;
+    unsigned i;
+    if (!view || !xma_checkpoint_quiescent(avctx)) return 0;
+    plan = *view;state = &plan.state;s = avctx->priv_data;
+    if (state->version != FF_XMA_CHECKPOINT_VERSION ||
+        state->rate != (uint32_t)avctx->sample_rate ||
+        state->channels != (uint32_t)s->nb_channels ||
+        state->samples != FF_XMA_CHECKPOINT_SAMPLES ||
+        state->bit_exact != (uint32_t)!!(avctx->flags & AV_CODEC_FLAG_BITEXACT) ||
+        state->skip_frame > 1 || state->packet_loss > 1 ||
+        state->trim_start > 1023 || state->trim_end > 1023) return 0;
+    bytes = FF_XMA_CHECKPOINT_SAMPLES * sizeof(float);
+    destination = (uintptr_t)s;
+    for (i=0;i<2;++i) {
+        if (i>=state->channels) {
+            if (state->previous_block[i] || plan.history[i] || plan.history_bytes[i]) return 0;
+            continue;
+        }
+        if (!xma_checkpoint_block(state->previous_block[i]) ||
+            !plan.history[i] || plan.history_bytes[i] != bytes) return 0;
+        source = (uintptr_t)plan.history[i];
+        if (source > UINTPTR_MAX-bytes) return 0;
+        if (source >= destination ? source-destination < sizeof(*s) :
+            destination-source < bytes) return 0;
+    }
+    /* No source or metadata validation may fail beyond this point. */
+    for (i=0;i<state->channels;++i) {
+        memcpy(s->channel[i].out,plan.history[i],bytes);
+        s->channel[i].prev_block_len = state->previous_block[i];
+    }
+    s->frame_num = state->frame_number;s->trim_start = state->trim_start;
+    s->trim_end = state->trim_end;s->skip_frame = state->skip_frame;
+    s->packet_loss = state->packet_loss;
+    return 1;
+}
