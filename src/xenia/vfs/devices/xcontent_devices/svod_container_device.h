@@ -10,7 +10,6 @@
 #ifndef XENIA_VFS_DEVICES_XCONTENT_DEVICES_SVOD_CONTAINER_DEVICE_H_
 #define XENIA_VFS_DEVICES_XCONTENT_DEVICES_SVOD_CONTAINER_DEVICE_H_
 
-#include <map>
 
 #include "xenia/vfs/devices/stfs_xbox.h"
 #include "xenia/vfs/devices/xcontent_container_device.h"
@@ -51,25 +50,26 @@ class SvodContainerDevice : public XContentContainerDevice {
 
   Result Read() override;
   Result ReadEntry(uint32_t sector, uint32_t ordinal,
-                   SvodContainerEntry* parent);
+                   SvodContainerEntry* parent, uint32_t directory_size, xe_svod_directory_scratch* scratch, unsigned depth = 0);
   void BlockToOffset(size_t sector, size_t* address, size_t* file_index) const;
 
-  Result SetLayout(xe::filesystem::FileHandle* header, size_t& magic_offset);
-  Result SetEDGFLayout(xe::filesystem::FileHandle* header,
-                       size_t& magic_offset);
-  Result SetXSFLayout(xe::filesystem::FileHandle* header, size_t& magic_offset);
-  Result SetNormalLayout(xe::filesystem::FileHandle* header,
-                         size_t& magic_offset);
+  Result SetLayout(size_t& magic_offset);
+  Result SetEDGFLayout(size_t& magic_offset);
+  Result SetXSFLayout(size_t& magic_offset);
+  Result SetNormalLayout(size_t& magic_offset);
 
   const bool IsEDGFLayout() const {
     return header_->content_metadata.volume_descriptor.svod.features.bits
         .enhanced_gdf_layout;
   }
-  const bool IsXSFLayout(xe::filesystem::FileHandle* header) const;
+  const bool IsXSFLayout() const;
 
   size_t svod_base_offset_;
   SvodLayoutType svod_layout_;
-  MultiFileHandles files_;
+  bool ReadAt(size_t file, size_t offset, void* destination, size_t length) const {
+    return xe_svod_files_read(files_,file,offset,destination,length) != 0;
+  }
+  xe_svod_files* files_ = nullptr;
 };
 
 }  // namespace vfs

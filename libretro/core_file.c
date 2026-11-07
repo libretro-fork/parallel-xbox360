@@ -44,18 +44,21 @@ const uint8_t *xe_file_view(const xe_file *file, uint64_t offset, size_t size) {
   if (!valid(file, offset, size) || !file->mapping) return NULL;
   return file->mapping + (size_t)offset;
 }
-int xe_file_read(xe_file *file, uint64_t offset, void *out, size_t size) {
+int xe_file_read_transfer(xe_file *file, uint64_t offset, void *out, size_t size, size_t *read) {
   int64_t got;
   uint8_t *destination = (uint8_t *)out;
+  if (!read) return 0;
+  *read = 0;
   if (!valid(file, offset, size) || (!out && size)) return 0;
   if (!size) return 1;
   if (file->mapping) {
     memcpy(out, file->mapping + (size_t)offset, size);
+    *read = size;
     return 1;
   }
   if (file->position != (int64_t)offset) {
     if (filestream_seek(file->stream, (int64_t)offset,
-        RETRO_VFS_SEEK_POSITION_START) < 0) {
+        RETRO_VFS_SEEK_POSITION_START) != 0) {
       file->position = -1; return 0;
     }
     file->position = (int64_t)offset;
@@ -65,11 +68,17 @@ int xe_file_read(xe_file *file, uint64_t offset, void *out, size_t size) {
     got = filestream_read(file->stream, destination, size);
     if (got < 0 && errno == EINTR) continue;
     if (got <= 0 || (uint64_t)got > size) { file->position = -1; return 0; }
+    *read += (size_t)got;
     file->position += got;
     destination += (size_t)got;
     size -= (size_t)got;
   }
   return 1;
+}
+
+int xe_file_read(xe_file *file, uint64_t offset, void *out, size_t size) {
+  size_t read;
+  return xe_file_read_transfer(file,offset,out,size,&read);
 }
 
 void xe_file_blob_close(xe_file_blob *blob) {

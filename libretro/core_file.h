@@ -12,6 +12,8 @@ void xe_file_close(xe_file *file);
 uint64_t xe_file_size(const xe_file *file);
 /* Complete range preflight precedes access. Failure may modify destination. */
 int xe_file_read(xe_file *file, uint64_t offset, void *out, size_t size);
+/* Same transfer, exposing successfully read prefix bytes on I/O failure. */
+int xe_file_read_transfer(xe_file *,uint64_t,void *,size_t,size_t *);
 /* Immutable mapping valid until close; NULL selects ordinary reads. */
 const uint8_t *xe_file_view(const xe_file *file, uint64_t offset, size_t size);
 /* Zero-initialize before open; close before reuse. Native mappings are borrowed

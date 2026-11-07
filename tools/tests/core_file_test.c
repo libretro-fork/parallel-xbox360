@@ -30,6 +30,7 @@ static int64_t RETRO_CALLCONV file_seek(struct retro_vfs_file_handle *file,
   (void)file; ++seeks;
   if (origin != RETRO_VFS_SEEK_POSITION_START || offset < 0 ||
       (uint64_t)offset > sizeof(data) || fault == 3) return -1;
+  if (fault == 5) return offset + 1;
   position = (size_t)offset; return 0;
 }
 static int64_t RETRO_CALLCONV file_read(struct retro_vfs_file_handle *file,
@@ -55,6 +56,7 @@ int main(int argc, char **argv) {
   const void *view;
   unsigned char buffer[259];
   unsigned i, before;
+  size_t transferred;
   if (argc != 2) return 1;
   for (i = 0; i < sizeof(data); ++i) data[i] = (unsigned char)(i * 37);
   memset(&iface, 0, sizeof(iface));
@@ -79,6 +81,13 @@ int main(int argc, char **argv) {
   if (!xe_file_read(file, 103, buffer, 3) || memcmp(buffer, data + 103, 3)) return 7;
   fault = 4;
   if (!xe_file_read(file, 106, buffer, 3) || memcmp(buffer, data + 106, 3)) return 14;
+  fault = 5; before = reads; transferred = 99;
+  memset(buffer, 0xAD, sizeof(buffer));
+  if (xe_file_read_transfer(file, 5, buffer, 3, &transferred) || transferred ||
+      reads != before || buffer[0] != 0xAD) return 30;
+  fault = 0;
+  if (!xe_file_read_transfer(file, 5, buffer, 3, &transferred) || transferred != 3 ||
+      memcmp(buffer, data + 5, 3)) return 31;
   xe_file_close(file);
   if (closes != 1) return 8;
   memset(&blob, 0, sizeof(blob));

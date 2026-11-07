@@ -179,6 +179,7 @@ add_library(retro-common STATIC
   libretro-common/vfs/vfs_implementation.c
   libretro-common/file/file_path.c
   libretro-common/file/file_path_io.c
+  libretro-common/file/retro_dirent.c
   libretro-common/string/stdstring.c
   libretro-common/string/rstrtod.c
   libretro-common/encodings/encoding_utf.c
@@ -218,6 +219,7 @@ endif()
 # ==============================================================================
 add_library(zarchive STATIC
   ../libretro/core_file.c
+  ../libretro/core_svod.c
   ../libretro/core_zarchive.c
   ../libretro/core_xex_metadata.c
   ../libretro/core_crypto.c

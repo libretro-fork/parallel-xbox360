@@ -309,7 +309,7 @@ SOURCES_C += $(FFMPEG_SOURCES)
 SOURCES_C += $(addprefix third_party/libretro-common/,formats/xml/rxml.c hash/lrc_hash.c crypto/crypto.c crypto/kdf.c utils/md5.c encodings/encoding_xxh3.c \
  encodings/encoding_xxh64.c encodings/encoding_rzstd.c encodings/encoding_crc32.c encodings/encoding_deflate.c \
  features/features_cpu.c compat/compat_strl.c time/rtime.c queues/retro_spsc.c \
- streams/file_stream.c vfs/vfs_implementation.c file/file_path.c file/file_path_io.c \
+ streams/file_stream.c vfs/vfs_implementation.c file/file_path.c file/file_path_io.c file/retro_dirent.c \
  string/stdstring.c string/rstrtod.c encodings/encoding_utf.c \
  compat/compat_strcasestr.c compat/compat_posix_string.c compat/fopen_utf8.c \
  rthreads/rthreads.c rthreads/retro_eventcount.c rthreads/retro_asym_eventcount.c \
@@ -326,7 +326,7 @@ SOURCES_C += libretro/core_spv_image_sink.c
 SOURCES_C += libretro/core_spv_size.c
 SOURCES_C += libretro/core_spv_probe.c
 
-SOURCES_C += libretro/core_file_blocks.c
+SOURCES_C += libretro/core_file_blocks.c libretro/core_svod.c
 
 SOURCES_C += libretro/core_io_mailbox.c libretro/core_gpu_tasks.c
 

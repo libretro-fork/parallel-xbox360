@@ -2,10 +2,11 @@
 #include <stdio.h>
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "line %d\n", __LINE__); return 1; } } while (0)
 static struct retro_vfs_interface iface;
-static struct retro_vfs_interface_info file_info, path_info;
+static struct retro_vfs_interface_info file_info, path_info, dir_info;
 static unsigned mode, calls, versions[2];
 void filestream_vfs_init(const struct retro_vfs_interface_info *info) { file_info = *info; }
 void path_vfs_init(const struct retro_vfs_interface_info *info) { path_info = *info; }
+void dirent_vfs_init(const struct retro_vfs_interface_info *info) { dir_info = *info; }
 static bool RETRO_CALLCONV environment(unsigned command, void *opaque) {
    struct retro_vfs_interface_info *info = (struct retro_vfs_interface_info *)opaque;
    if (command != RETRO_ENVIRONMENT_GET_VFS_INTERFACE || calls >= 2) return false;
@@ -25,11 +26,12 @@ int main(void) {
       CHECK(path_info.required_interface_version == file_info.required_interface_version);
       CHECK(file_info.iface == (mode <= 2 ? &iface : NULL));
       CHECK(path_info.iface == file_info.iface);
+      CHECK(dir_info.iface == file_info.iface && dir_info.required_interface_version == file_info.required_interface_version);
       if (mode != 1) CHECK(versions[1] == 2);
    }
    calls = 0;
    xe_core_vfs_init(NULL);
-   CHECK(!calls && !file_info.iface && !path_info.iface);
+   CHECK(!calls && !file_info.iface && !path_info.iface && !dir_info.iface);
    puts("PASS: frontend VFS3 directories, VFS2 fallback, rejected/null interfaces and native reset");
    return 0;
 }

@@ -10,41 +10,35 @@
 #ifndef XENIA_VFS_DEVICES_XCONTENT_SVOD_CONTAINER_ENTRY_H_
 #define XENIA_VFS_DEVICES_XCONTENT_SVOD_CONTAINER_ENTRY_H_
 
-#include <map>
 #include <memory>
 
-#include "xenia/base/filesystem.h"
+#include "libretro/core_svod.h"
 #include "xenia/vfs/devices/xcontent_container_entry.h"
 #include "xenia/vfs/file.h"
 
 namespace xe {
 namespace vfs {
-// One handle per data fragment, read at an explicit offset. No shared cursor,
-// so two of this device's files can be read at once.
-using MultiFileHandles =
-    std::map<size_t, std::unique_ptr<xe::filesystem::FileHandle>>;
-
 class XContentContainerDevice;
 
 class SvodContainerEntry : public XContentContainerEntry {
  public:
   SvodContainerEntry(Device* device, Entry* parent, const std::string_view path,
-                     MultiFileHandles* files);
+                     xe_svod_files* files);
   ~SvodContainerEntry() override;
 
   static std::unique_ptr<SvodContainerEntry> Create(Device* device,
                                                     Entry* parent,
                                                     const std::string_view name,
-                                                    MultiFileHandles* files);
+                                                    xe_svod_files* files);
 
-  MultiFileHandles* files() const { return files_; }
+  xe_svod_files* files() const { return files_; }
 
   X_STATUS Open(uint32_t desired_access, File** out_file) override;
 
  private:
   bool DeleteEntryInternal(Entry* entry) override;
 
-  MultiFileHandles* files_;
+  xe_svod_files* files_;
 };
 
 }  // namespace vfs

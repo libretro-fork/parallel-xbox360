@@ -22,23 +22,13 @@ SvodContainerFile::~SvodContainerFile() = default;
 void SvodContainerFile::Destroy() { delete this; }
 
 bool SvodContainerFile::CanRead(size_t offset, size_t length, size_t record_file) const {
-  auto* files = entry_->files();
-  if (!files) return false;
-  auto file = files->find(record_file);
-  return file != files->end() && bool(file->second);
+  return xe_svod_files_range(entry_->files(),record_file,offset,length) != 0;
 }
 
 size_t SvodContainerFile::Read(std::span<uint8_t> buffer, size_t offset,
                                size_t record_file) {
-  auto* files = entry_->files();
-  if (!files) return 0;
-  auto file = files->find(record_file);
-  if (file == files->end() || !file->second) return 0;
-  size_t bytes_read = 0;
-  if (!file->second->Read(offset, buffer.data(), buffer.size(), &bytes_read)) {
-    return 0;
-  }
-  return bytes_read;
+  return xe_svod_files_transfer(entry_->files(),record_file,offset,
+                                buffer.data(),buffer.size());
 }
 
 }  // namespace vfs

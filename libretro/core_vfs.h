@@ -5,6 +5,7 @@
 #include <retro_inline.h>
 #include <streams/file_stream.h>
 #include <file/file_path.h>
+#include <retro_dirent.h>
 static INLINE void xe_core_vfs_init(retro_environment_t environment)
 {
    struct retro_vfs_interface_info info;
@@ -19,5 +20,6 @@ static INLINE void xe_core_vfs_init(retro_environment_t environment)
    }
    filestream_vfs_init(&info);
    path_vfs_init(&info);
+   dirent_vfs_init(&info);
 }
 #endif

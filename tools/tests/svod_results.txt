@@ -1,0 +1,92 @@
+SVOD VFS ownership, bounded mount scratch and borrowed directory views
+2026-11-07
+
+Scope and provenance
+--------------------
+Independent C89 VFS/ownership adaptation after reviewing WizzardSK/xenia-libretro
+7d3298bf8. No upstream commit cherry-picked. Unlike a lazy-open design, all SVOD
+fragment handles still open at cold mount: this deliberately keeps first-use
+opens/allocations outside payload reads. Fragment sizes come from the same open
+VFS owner, avoiding native filesystem stat races and symlink listing sizes.
+
+Only the following required common files were imported verbatim (LF-normalized)
+from RetroArch c358071531a568859654f46a0826f409495c08be, libretro-common/:
+ file/retro_dirent.c
+ include/retro_dirent.h
+ include/retro_common.h
+Existing licenses retained. The RetroArch source checkout was read-only.
+Both static Make and CMake compile rdir and the C89 SVOD owner. Directory VFS
+uses the same negotiated frontend as filestream/path: v3, v2/native fallback,
+rejected/null interface reset. VFS-only content:// paths mount in the native ABI
+fixture without native directory/stat/open calls for fragments.
+
+Ownership and copies
+--------------------
+Two cold enumeration passes produce one immutable indexed fragment table, a
+transient filename arena and path scratch. Case-insensitive ASCII sorting retains
+fragment order. Cold names/path buffers are freed after open. The per-fragment
+std::map/native FileHandle tree and filesystem exists/file_size queries are gone.
+Native immutable mappings lend sector views until owner close. Mapping is not
+available through the standard frontend VFS interface; custom mapped-pointer
+adapters may lend, otherwise cursor reads fill one of four 2048-byte sector slots.
+Sector fallback views expire on slot reuse. Copy 14 bytes of directory metadata
+and construct the final owned entry/path before left recursion can evict a slot.
+ASCII names borrow source bytes; CP1252 conversion writes bounded reusable UTF8
+scratch instead of ANSI/UTF16/output vectors or a temporary std::string. One
+mount-local scratch owner is released when Read returns; it is not retained on
+the device or duplicated for each recursion. Final owned paths/tree nodes remain.
+
+Payload reads target the supplied destination directly, without helper staging
+or slurps. The existing File::ReadSync guest ABI requires a final copy from native
+mappings, or a direct VFS transfer into the destination; this is not end-to-end
+zero-copy. A checked transfer API preserves successfully read prefix bytes on
+I/O failure. Ordinary helper reads allocate/open no storage or handles. Guest
+FileOpen, foreign VFS internals, OS paging and wait-backend initialization remain
+outside that claim. All handles close on partial mount failure and device teardown;
+users must stop/join before close. No view escapes owner lifetime.
+
+Native mappings need no cursor gate. Unmapped VFS seek/read shares one cursor,
+so it retains per-fragment exclusion using common atomics/eventcount (not
+lock-free I/O). There is no new polling/sleep loop, frame/audio pacing or release
+allocation logging. This patch does not make file I/O asynchronous/nonblocking.
+
+Verification
+------------
+- Full local Windows MSVC CMake core build --parallel 5: PASS.
+- Full local Windows MinGW GNU Make -j5 core build: PASS.
+- Real container factory, Initialize, ResolvePath and File::ReadSync linked from
+  each of those builds: PASS (MSVC /TC /W4 /WX C89 driver, GNU strict C89 driver).
+- Scoped MSVC ASan: actual SVOD device/entry/file C++ owners and C89 core_file /
+  core_svod compiled with ASan; C89 owners /W4 /WX: PASS. Supporting libraries
+  are release libraries; this does not claim whole-core sanitizer coverage.
+- Linux pure C89 common-VFS ASan+UBSan helper suite: PASS. 8000 concurrent
+  transfers across mapped/unmapped modes, same/different fragment cursor reads,
+  exact caller destination address, no extra payload opens, repeat sector reuse,
+  native directory fallback and actual immutable OS mapping ownership.
+- Native ABI directory regression: two names in one sector use one directory
+  transfer when unmapped, none when mapped (total mount reads 6 vs 3). These are
+  fixture I/O counts, not a general gameplay or mount-time speed measurement.
+- CP1252 checks cover all 256 byte values against Windows conversion, plus a
+  non-ASCII directory name. Recursive left traversal forces same-slot eviction;
+  the parent name remains correct because final entry ownership precedes reuse.
+- Valid final sector padding marker is accepted with only two remaining bytes;
+  an earlier development version rejected this case and failed the fixture.
+- Malformed magic, short directory metadata, oversized name, cyclic right link
+  and invalid block reject without an out-of-bounds access. Directory extents,
+  sector header/name bounds, addition overflow and recursion depth are checked.
+- Count/listing changes, casefold duplicates, directory instead of file, summed
+  size overflow, open/size/seek/read errors, EINTR, EOF after five bytes and
+  oversized transfer results: PASS, no leaked fragment ownership in fixtures.
+- Existing shared-file ASan+UBSan and frontend VFS negotiation tests: PASS.
+  Previous turn's shared cache/file-record ASan+UBSan tests also passed; final
+  seek status fix is exercised by the shared-file/native fixtures here.
+- CI adds C89 helper and native ownership checks after the core build on Linux,
+  plus the native MSVC check. Remote CI and full Linux/Android/macOS core builds
+  have not been run locally. No live-game mount/performance test or installed
+  RetroArch DLL replacement was performed. No gameplay/FPS/RSS gain is claimed.
+
+Remaining scope
+---------------
+Cold tree/path/block-record allocations and legacy filesystem::path typed ABI
+remain. STFS native payloads, other containers, shader/DXIL WIP, complete
+savestates and broader optimization goal remain separate incomplete work.
