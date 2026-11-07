@@ -214,6 +214,9 @@ generated: $(CONFIG_INPUTS) $(CODEGEN) | check-target-tools
 	@mkdir -p "$(GEN)"
 	$(CODEGEN) inputs "$(GEN)" $(if $(filter windows,$(OS)),windows) $(if $(filter aarch64,$(ARCH)),aarch64)
 
+# Exact escaped patch prerequisites prevent stale bundles on incremental builds.
+-include $(GEN)/embedded_bundle_patches.d
+
 $(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc: | generated
 	@test -f "$@"
 

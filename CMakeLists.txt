@@ -167,6 +167,9 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   "${PROJECT_SOURCE_DIR}/tools/build/core_codegen.c"
   "${PROJECT_SOURCE_DIR}/tools/build/core_deflate.c")
+file(GLOB_RECURSE _xe_patch_inputs CONFIGURE_DEPENDS
+  "${PROJECT_SOURCE_DIR}/libretro/data/patches/*")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_xe_patch_inputs})
 set(_codegen_options)
 if(WIN32)
   list(APPEND _codegen_options windows)

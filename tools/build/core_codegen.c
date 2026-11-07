@@ -329,7 +329,8 @@ static int compare_files(const void *left, const void *right) {
 }
 
 static void sort_files(Files *files) {
-  qsort(files->names, files->count, sizeof(*files->names), compare_files);
+  if (files->count > 1)
+    qsort(files->names, files->count, sizeof(*files->names), compare_files);
 }
 
 static void free_files(Files *files) {
@@ -351,6 +352,22 @@ static void u32(Buffer *value, size_t number_value) {
   append(value, encoded, 4);
 }
 
+/* Make dependency words, including the spaces used by patch filenames. */
+static void dependency_word(Buffer *out, const char *path) {
+  const char *p;
+  for (p = path; *p; ++p) {
+    if (*p == '$') text(out, "$$");
+    else {
+      /* Make scans semicolons twice: recipe splitting, then word parsing. */
+      if (*p == ';') text(out, "\\\\");
+      if (*p == ' ' || *p == '\t' || *p == '#' || *p == ':' ||
+          *p == ';' || *p == '|' || *p == '\\')
+        text(out, "\\");
+      append(out, p, 1);
+    }
+  }
+}
+
 static void bundle(const char *out) {
   const char *root = "libretro/data/patches";
   Files files = {NULL, 0};
@@ -358,15 +375,20 @@ static void bundle(const char *out) {
   Buffer file;
   Buffer source = {0, 0, 0};
   Buffer header = {0, 0, 0};
+  Buffer deps = {0, 0, 0};
   unsigned char *compressed;
   int compressed_size;
   size_t i;
   char *path;
   list_files(&files, root, "", 1);
   sort_files(&files);
+  path = join(out, "embedded_bundle_patches.cc");
+  dependency_word(&deps, path); free(path);
+  text(&deps, ": "); dependency_word(&deps, root);
   u32(&raw, files.count);
   for (i = 0; i < files.count; ++i) {
     path = join(root, files.names[i]);
+    text(&deps, " "); dependency_word(&deps, path);
     file = read_file(path, 1);
     u32(&raw, strlen(files.names[i]));
     text(&raw, files.names[i]);
@@ -387,6 +409,15 @@ static void bundle(const char *out) {
   text(&source, ";\n}\n");
   output(out, "embedded_bundle_patches.h", &header);
   output(out, "embedded_bundle_patches.cc", &source);
+  text(&deps, "\n");
+  /* As with compiler -MP depfiles, removed inputs must not break Make before
+   * the directory dependency can regenerate this list. */
+  for (i = 0; i < files.count; ++i) {
+    path = join(root, files.names[i]);
+    dependency_word(&deps, path); free(path);
+    text(&deps, ":\n");
+  }
+  output(out, "embedded_bundle_patches.d", &deps);
   free(compressed);
   free(raw.data);
   free_files(&files);

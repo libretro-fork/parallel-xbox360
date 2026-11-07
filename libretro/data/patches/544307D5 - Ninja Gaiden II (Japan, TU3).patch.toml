@@ -34,3 +34,20 @@ hash = "4CC4201C0C4ED58B" # default.xex, Japan, TU3
     [[patch.be32]]
         address = 0x8285a24c
         value = 0x3bc00000
+
+# Shadow slot 0 is 1024x1024; slot 1 is 512x512. Pin both the initial
+# selector and the per-frame combat selector, reusing the game's own surfaces.
+# Independently traced from the World executable; TU3 sites cross-checked
+# against alicenotmech/ng2-master-edition v1.0.3-hotfix2 shadow hooks.
+[[patch]]
+    name = "Hi-res Shadows"
+    desc = "Always use the game's 1024x1024 shadow map, including combat (normally 512x512). Uses more GPU time. Restart content after changing."
+    author = "parallel-xbox360; inspired by alicenotmech's NG2 Master Edition"
+    is_enabled = true
+
+    [[patch.be32]]
+        address = 0x82332250
+        value = 0x39600000 # li r11, 0: initial 1024 shadow slot
+    [[patch.be32]]
+        address = 0x822F0DFC
+        value = 0x39600000 # li r11, 0: retain 1024 during combat

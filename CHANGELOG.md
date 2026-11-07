@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Add an NG2-only "Hi-res Shadows" option in Patch Manager for verified World disc and TU3 executable hashes. Enabled by default, it retains the game's existing 1024x1024 shadow surfaces during combat instead of selecting 512x512. Restart content after changing it; Apply Game Patches must be enabled. Unknown revisions and TU2 remain untouched. Fix incremental Make/CMake patch dependencies and an empty-input build-generator UB case.
+
 - Correct vertex/domain shader sums and products to round toward zero, including separate multiply/add accumulation and fractional-coordinate subtraction. Vulkan uses hardware RTZ with flush-to-zero when supported; older Vulkan devices and native DXIL use a shared exact C89 integer lowering without shader Int64/Float64 requirements. The CPU shader interpreter follows the same vertex rule. Explicit vertex fractional-part lowering prevents tiny negative coordinates rounding to one on NVIDIA. Pixel-stage rounding retains its prior policy. The change is informed by the NG2 recomp audit; the reported game's texture symptom has not yet been reproduced or confirmed fixed. No measured gameplay speedup is claimed.
 
 - Native D3D12 vertex/domain and pixel shaders retain their bytecode directly on the exact translation owner, replacing two nested cache maps and five cache-lock sites with C89 libretro-common atomic publication. Consumers borrow the existing binary without a staging copy; failed emission is cached independently from pending work. Joined shutdown and virtual shader destruction release the binary. Shared binding-generation and geometry-cache locks remain; shader output and audio scheduling are unchanged.

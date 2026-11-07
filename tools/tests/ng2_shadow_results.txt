@@ -1,0 +1,53 @@
+NG2 Hi-res Shadows / title-specific core option
+2026-11-08
+
+Feature inspiration: alicenotmech/ng2-master-edition, README at853ccb8,
+release v1.0.3-hotfix2. No plugin, mod code or game assets are shipped here.
+
+Offline verification of the user's World disc through XexModule showed:
+- Initial selector at82332248: li r11,1.
+- Per-frame selector at822F0DFC: addi r11,r11,-1.
+- Shadow setup creates paired1024/512 textures and color/depth surfaces.
+- Selected index feeds surface arrays and viewport tables: index0 is1024.
+
+The two replacement instructions independently pin r11 to0, using the game's
+own allocations, viewports, resolves and sampling. No host per-frame callback,
+scan, payload copy or extra shadow allocation is added. More shadow pixels
+still cost GPU time; no performance improvement is claimed.
+
+TU3 is guarded by existing bundled hash4CC4201C0C4ED58B. Master Edition's
+published sparse patch records hook its initial selection at82332250 and
+combat selection at822F0DFC. Original TU3 code was not loaded locally.
+The World initial site differs by8 bytes: applying the TU3 address to it
+would corrupt a texture-format argument. Exact hashes select separate sites.
+TU2 and unknown hashes receive no new option. Gameplay shadows are untested.
+
+The existing before-title-patches callback republishes matching patches as
+core options. Keys remain stable, defaults are enabled, and Apply Game Patches
+must be enabled. Restart content after toggling: disabled content reloads its
+original executable. Unload clears title patch options.
+
+The C89 native fixture uses minimal typed C++ access to the real bundled parser
+and game database. It checks title/hash filtering, defaults, distinct stable
+keys, the exact two big-endian PPC writes and forget/unload clearing.
+
+The first incremental build exposed stale embedded data. The C89 generator
+now emits escaped Make dependencies for patch filenames containing spaces.
+Empty rules allow removed inputs to regenerate cleanly. CMake tracks both
+patch contents and directory membership. The isolated actual-generator/Make
+fixture checks cold, edit, delete, add and no-op builds, including spaces,
+hash, dollar and semicolon characters in filenames: PASS on MSYS and Linux
+ASan/UBSan. Semicolons require escaping both Make parsing passes.
+The empty-bundle case exposed qsort(NULL,0); sorting now requires count>1.
+The final sanitizer run halts on UB and passes without diagnostics.
+
+Actual native registry fixtures pass on GNU and MSVC. The MSVC driver compiles
+with /TC /W4 /WX and uses the actual generated bundle, parser and game database.
+The initial fixture against stale pre-change bundled data fails selection,
+providing a negative control for missing options rather than a compile failure.
+
+Full Windows GNU static Make -j5 and native MSVC CMake --parallel5 builds pass.
+The final CMake bundle also passes the native registry fixture without an
+override object. A subsequent CMake build reports no work. Existing complete
+patch filenames, including the Gears of War3 semicolon filename, parse in Make.
+The installed RetroArch DLL was not replaced and gameplay was not launched.

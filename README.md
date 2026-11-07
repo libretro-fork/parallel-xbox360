@@ -1,5 +1,7 @@
 # parallel_xbox360 libretro core
 
+Ninja Gaiden II (`544307D5`) exposes **Hi-res Shadows** in Patch Manager for the World disc (`AFF931BFF00F8A0A`) and TU3 (`4CC4201C0C4ED58B`) executable hashes. It defaults on and keeps the game's existing 1024x1024 shadow surfaces during combat. Enable **Apply Game Patches** and restart content after changing the option. Higher shadow resolution costs GPU time. TU2 and unknown revisions remain unchanged. No Master Edition plugin or extra host shadow allocation is needed. Frontends without option categories show the patch among ordinary core options. Offline registry tests pass; gameplay shadow captures remain untested.
+
 Dirty texture-upload batches compact their borrowed pointer list in place before dirty-state snapshots, preventing repeated conversions of the same owner. Distinct signed/unsigned owners remain separate. A typed C89 filter uses linear scans for tiny or heavily aliased batches and fixed 128-byte scratch for larger distinct sets, with no allocation or persistent tags. Clean batches bypass it. See [texture batch checks and measurements](tools/tests/texture_unique_results.txt).
 
 Rejected pixel formats and hardware-render requests fail the content load with pending audio, disc and patch-option ownership cleared. Vulkan and D3D12 provider initialization failures return errors rather than terminating the frontend. Vulkan v2 negotiation retains its v1 fallback. Offline tests exercise real load APIs and forced provider failures; see [load-failure checks](tools/tests/load_failure_results.txt).
