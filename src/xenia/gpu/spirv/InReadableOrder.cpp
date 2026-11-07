@@ -67,10 +67,10 @@ static size_t nodeIndex(void* opaque, const void* node) {
         ? index : SIZE_MAX;
 }
 static size_t successorCount(const void* node) {
-    return static_cast<const spv::Block*>(node)->getSuccessors().size();
+    return static_cast<const spv::Block*>(node)->getSuccessors().count;
 }
 static const void* successor(const void* node, size_t index) {
-    return static_cast<const spv::Block*>(node)->getSuccessors()[index];
+    return static_cast<const spv::Block*>(node)->getSuccessors().records[index];
 }
 static int targets(const void* node, const void** merge, const void** continuation) {
     const auto* block = static_cast<const spv::Block*>(node);

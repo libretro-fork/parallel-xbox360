@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Replaced shader-block successor vectors with C89 arrays in the existing reusable payload arena. Traversal borrows indexed spans, latest growth can stay in place, and failed growth preserves prior edges. This removes per-block edge heap allocations while keeping edge order, shader bytes and block size unchanged. Added C89 fault/reuse tests and ASan checks for expired views; larger modules can still grow retained pages.
+
 - Shader blocks no longer build unused predecessor vectors. Forward control-flow traversal and branch output stay the same, while reverse-edge allocations/copies disappear and measured x64 blocks shrink from 136 to 112 bytes. Helper/guest binary comparisons and native sanitizer checks pass. Corrected the optional profiling harness to keep allocator cleanup and baseline arena configuration consistent.
 
 - Resolve watch rearming in Vulkan and D3D12 now uses two fixed page bitmaps instead of growing range vectors. Submission detaches a borrowed bitmap without copying; concurrent faults queue into the other. Adjacent/overlapping pages coalesce, reducing repeated memory-watch calls while preserving coverage across all physical aliases. This reserves about 32 KiB and adds bitmap work for sparse batches; required fault serialization remains.

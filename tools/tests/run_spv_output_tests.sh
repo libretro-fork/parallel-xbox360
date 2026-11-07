@@ -17,6 +17,8 @@ if test ! -f "$out/base/libretro/core_spv_arena.c"; then
  exit 1
 fi
 san=${SANITIZER-}
+${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_edges_test.c" -o "$out/edges-unit"
+"$out/edges-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root" -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_export_cases_test.c" -o "$out/export-cases-unit"
 "$out/export-cases-unit"
 ${CC:-cc} -std=c89 -pedantic -O2 $san -Wall -Wextra -Werror -I"$root/third_party/libretro-common/include" "$root/tools/tests/core_spv_mask_test.c" -o "$out/mask-unit"
@@ -215,6 +217,10 @@ for variant in 0 1; do "$out/decorations-bridge" "$out/decorations-$variant.bin"
 if test -n "${SPIRV_VALIDATOR:-}"; then "$SPIRV_VALIDATOR" "$out/decorations-0.bin.last.spv"; fi
 
 case "$san" in *address*)
+ for lifetime in relocate-uaf clear-uaf; do
+  if "$out/edges-unit" "$lifetime" > "$out/edges-$lifetime.log" 2>&1; then echo "missed retired edge view"; exit 1; fi
+  grep -q 'use-after-poison' "$out/edges-$lifetime.log"
+ done
  if "$out/decorations-unit" uaf > "$out/decorations-uaf.log" 2>&1; then echo 'missed retired decoration'; exit 1; fi
  grep -q 'use-after-poison' "$out/decorations-uaf.log"
  if "$out/extensions-unit" uaf > "$out/extensions-uaf.log" 2>&1; then echo 'missed retired extension'; exit 1; fi

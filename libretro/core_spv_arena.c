@@ -345,6 +345,36 @@ void *xe_spv_arena_payload_realloc(void *context, void *old, size_t old_bytes, s
    UNPOISON(result, padded);
    return result;
 }
+int xe_spv_arena_edges_grow_push(xe_spv_arena *arena, xe_spv_edges *edges, void *target)
+{
+   void **records;
+   size_t capacity, bytes;
+   const size_t limit = ((size_t)-1 - 7 - PAYLOAD_REDZONE) / sizeof(void *);
+   if (!arena || !arena->in_use || !target || edges->count != edges->capacity ||
+       edges->capacity >= limit) return 0;
+   capacity = edges->capacity;
+   if (!capacity) capacity = 2;
+   else capacity = capacity > limit / 2 ? limit : capacity * 2;
+   if (capacity > limit) return 0;
+   bytes = capacity * sizeof(void *);
+   records = (void **)xe_spv_arena_payload_realloc(arena, edges->records,
+         edges->capacity * sizeof(void *), bytes);
+   if (!records) return 0;
+   if (records != edges->records && edges->count) {
+      /* Only initialized pointer metadata moves; never instructions/payloads. */
+      memcpy(records, edges->records, edges->count * sizeof(void *));
+      POISON(edges->records, edges->capacity * sizeof(void *));
+   }
+   edges->records = records; edges->capacity = capacity;
+   edges->records[edges->count++] = target;
+   return 1;
+}
+void xe_spv_arena_edges_clear(xe_spv_edges *edges)
+{
+   if (edges->records) POISON(edges->records, edges->capacity * sizeof(void *));
+   edges->records = NULL; edges->count = edges->capacity = 0;
+}
+
 static void payloads_end(xe_spv_arena *arena)
 {
    payload_pool *pool;

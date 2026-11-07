@@ -33,6 +33,33 @@ typedef struct xe_spv_arena {
    int in_use;
    struct xe_spv_object_state *objects;
 } xe_spv_arena;
+/* Exclusive module-owned CFG edges. Contiguous borrowed prefixes retain exact
+ * insertion order/duplicates; relocation, clear and module end expire views.
+ * No shallow copies. Growth uses retained payload pages, not per-block heaps. */
+typedef struct xe_spv_edges {
+   void **records;
+   size_t count, capacity;
+} xe_spv_edges;
+int xe_spv_arena_edges_grow_push(xe_spv_arena *arena, xe_spv_edges *edges, void *target);
+static INLINE int xe_spv_arena_edges_push(xe_spv_arena *arena,
+      xe_spv_edges *edges, void *target)
+{
+   if (!arena || !arena->in_use || !target) return 0;
+   if (edges->count < edges->capacity) {
+      edges->records[edges->count++] = target;
+      return 1;
+   }
+   return xe_spv_arena_edges_grow_push(arena, edges, target);
+}
+static INLINE xe_spv_record_view xe_spv_edges_view(const xe_spv_edges *edges)
+{
+   xe_spv_record_view view;
+   view.records = edges->records; view.count = edges->count;
+   return view;
+}
+/* Clear before typed retirement without consulting the (possibly dead) parent. */
+void xe_spv_arena_edges_clear(xe_spv_edges *edges);
+
 enum { XE_SPV_OBJECT_BLOCK = 0, XE_SPV_OBJECT_FUNCTION = 1 };
 /* Exclusive module lease; object addresses never move. Constructors must retire
  * their allocation on failure. Typed deletion retires after payload destruction. */

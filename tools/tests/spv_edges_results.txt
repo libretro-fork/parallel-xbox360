@@ -1,0 +1,101 @@
+Reusable C89 SPIR-V successor arrays
+==================================
+
+Replace the remaining Block successor vector with a three-word C89 descriptor:
+void** records, size_t count, size_t capacity. No new per-block registry, hash,
+owner sidecar or cold reservation. The descriptor fits the same 24 bytes as the
+old vector on measured x64, so Block remains 112 bytes. Function/Instruction/
+Module sizes and object-pool alignment stay unchanged.
+
+Growth uses the compiler's existing payload workspace, already reserved by the
+InstructionArena wrapper. The latest live payload can extend in place. Otherwise
+reserve a new span and copy only the count initialized pointer slots; never copy
+instructions, shader payloads or full modules. Append writes directly to its
+final slot. Duplicates and edge order exactly follow old addPredecessor calls,
+including structural edges not necessarily derivable from branch operands.
+
+getSuccessors returns a borrowed C89 pointer/count span. The two readable-order
+callbacks read its count or indexed record directly, without a second list or
+linked-list index walk. Pointer slots are void* objects, read through the same
+C type and recovered by the existing typed node callbacks; no Block** alias cast.
+The compiler has an exclusive module lease; no new lock, atomics, callbacks,
+clock, sleep or cross-thread publication rule is introduced.
+
+Failure and lifetime
+--------------------
+Inline append has a checked active lease. Growth rejects size overflow and leaves
+count/capacity/records unchanged if allocation fails. The thin C++ owner boundary
+throws bad_alloc as before. Views stay with their array, not another growing
+array. Relocation expires the previous span; block cleanup clears/poisons its
+span after owned instructions are destroyed. Cleanup never consults a parent
+that may already have been destroyed. Remaining pooled typed objects finish
+before the module's payload pages reset. The workspace retains page high-water
+capacity until close, not per-block individual heap capacities.
+
+This removes repeated per-block edge heap growth/free after warming. A larger
+first-seen graph may still grow payload pages; this is not full eradication of
+all shader/mid-game allocation. Relocating metadata still copies pointers.
+Shared retained storage may hold dead earlier growth spans until module end.
+The measured cohorts fit existing storage without increasing tracked peak, but
+other inputs can retain more. No RSS/FPS/driver compilation claim follows.
+
+Evidence
+--------
+- Actual C89 allocator fixture: 3,289,600 warm appends across 200 leases and 64
+  lists of 257 entries. Exact ordered pointer oracle includes duplicates, latest
+  in-place growth, forced relocation, another list growing, failed initial and
+  relocating allocations, rollback/retry, invalid targets/leases and overflow.
+  Warm allocation count stays fixed after initial high-water growth; all tracked
+  allocations free at arena close, including failure paths.
+- Strict MinGW C89 and native MSVC /TC /W4 /WX pass. MSVC ASan positively checks
+  the full fixture AND deliberately catches relocated/cleared stale views as
+  use-after-poison. Both traps are available in the permanent test runner.
+- Full native shader-output MSVC suite passes. Final full native suite with
+  /O1 /Zi /fsanitize=address passes after removing a duplicate cleanup call during
+  review. Cleanup now occurs once, after instruction teardown as intended.
+- Full GCC shader fixture suite passes; final-header helper executables were
+  rebuilt after that cleanup-only correction and both packed cohorts compared
+  against the pinned parent again. Pinned parent: 70c3f0a59.
+- Standard/wide helper outputs: 2624 modules each, byte-identical. Geometry:
+  18432 variants byte-identical; all 128 exported modules pass spirv-val.
+- Actual rebuilt Make objects replay 256 vertex/pixel control-flow translations
+  and four retained depth outputs byte-for-byte against the pre-change build.
+- Full Windows static Make-j5 rebuild/link passes. No emulator/game/GPU/JIT,
+  installed core replacement, Linux ASan/TSan or remote CI result claimed.
+- New leaf fixture gates GitHub Linux/Windows and GitLab Linux core builds and
+  is included in the existing full shader-output scripts.
+
+Allocation experiment (GCC 16.2 /O2, actual production helpers)
+-------------------------------------------------------------
+Pinned parent and current use the same reusable instruction arena, payload arena
+configuration and binary output reserve. Existing profiling adapters count C++
+new/delete, arena pages and ID-index requests, with matching inline cleanup flags.
+Each standard/wide cohort independently generates 2624 modules. These are counters,
+not timed gameplay; allocator overhead/driver memory are excluded.
+
+                                  parent           current
+Block bytes                       112              112
+Allocation calls per cohort       27564            24524
+Requested bytes per cohort        447133           414365
+Peak tracked live bytes           184669           184669
+Live bytes after cleanup          0                0
+Instruction-page growth           0                0
+
+3040 fewer calls (about 11%) per 2624-module cohort. Other compiler allocations,
+high-water payload growth and driver allocations remain. No new fixed reserve
+was added for these arrays. The descriptor/helper runtime is MSVC C89; C++ edits
+only adapt existing typed ownership, exception and traversal boundaries.
+
+Reproduce
+---------
+sh tools/tests/run_spv_edges_tests.sh
+MSVC developer prompt: tools\tests\run_spv_edges_tests.cmd
+For native ASan set SPV_EDGES_ASAN=1 before that command; it checks both stale-view
+traps. Linux shell defaults to ASan/UBSan; MinGW without runtimes: SANITIZER=.
+BASELINE_COMMIT=70c3f0a59 CAPTURE_ALLOCATIONS=1 \
+  sh tools/tests/run_spv_output_tests.sh
+BASELINE_ROOT=<complete-parent-source> SPIRV_VALIDATOR=<spirv-val> \
+  sh tools/tests/run_spv_geometry_tests.sh
+For strict MinGW C89 set CC='gcc -Wno-long-long'. Guest replay uses
+run_spv_guest_workspace_tests.sh with a pre-change SPV_GUEST_REFERENCE; finish
+Make before linking those actual core objects.

@@ -326,6 +326,7 @@ public:
         xe_spv_instruction_destroy(localVariables.head, Instruction::nextSlot, Instruction::destroyLinked);
         label.reset();
         xe_spv_instruction_destroy(body.chain.head, Instruction::nextSlot, Instruction::destroyLinked);
+        xe_spv_arena_edges_clear(&successors);
     }
 
     Id getId() { return label->getResultId(); }
@@ -343,7 +344,7 @@ public:
     }
     void addInstruction(std::unique_ptr<Instruction> inst);
     // Only forward edges are traversed; do not retain an unread reverse list.
-    void addPredecessor(Block* pred) { pred->successors.push_back(this); }
+    void addPredecessor(Block* pred);
     void addLocalVariable(std::unique_ptr<Instruction> inst) {
         assert(inst && inst->getOpCode() != Op::OpLabel && !inst->getNextInstruction());
         xe_spv_instruction_append(&localVariables, inst.get(), Instruction::nextSlot);
@@ -356,7 +357,7 @@ public:
             throw std::bad_alloc();
         inst.release();
     }
-    const std::vector<Block*>& getSuccessors() const { return successors; }
+    xe_spv_record_view getSuccessors() const { return xe_spv_edges_view(&successors); }
     Instruction* getFirstInstruction() const { return label.get(); }
     Instruction* getFirstBodyInstruction() const { return static_cast<Instruction*>(body.chain.head); }
     Instruction* getNextInstruction(const Instruction* instruction) const {
@@ -417,7 +418,7 @@ protected:
     // Keep the traversal inputs together; debug data is colder.
     xe_spv_instruction_body body = {};
     std::unique_ptr<Instruction> label;
-    std::vector<Block*> successors;
+    xe_spv_edges successors = {};
     // Dense creation index and owner are read on every traversal visit.
     uint32_t traversalIndex = UINT32_MAX;
     uint8_t stateFlags;
@@ -615,6 +616,9 @@ public:
             (void)closed;
         }
     }
+    bool appendSuccessor(xe_spv_edges* edges, void* target) {
+        return xe_spv_arena_edges_push(arena, edges, target) != 0;
+    }
     void* allocateObject(unsigned kind, size_t bytes) {
         void* record = xe_spv_arena_object_alloc(arena, kind, bytes);
         if (!record) throw std::bad_alloc();
@@ -792,6 +796,12 @@ __inline void Function::addLocalVariable(std::unique_ptr<Instruction> inst)
     Instruction* raw_instruction = inst.get();
     getEntryBlock()->addLocalVariable(std::move(inst));
     parent.mapInstruction(raw_instruction);
+}
+
+__inline void Block::addPredecessor(Block* pred)
+{
+    if (!pred->parent.getParent().appendSuccessor(&pred->successors, this))
+        throw std::bad_alloc();
 }
 
 __inline Block::Block(Id id, Function& parent) : xe_spv_block_link{}, stateFlags(0), parent(parent)
