@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "core_vk_source_views.h"
+#include "core_gpu_resolve_view.h"
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"line %u: %s\n",(unsigned)__LINE__,#x); exit(1); } } while (0)
 static VkDevice device;
 static unsigned creates, allocates, writes, destroys, live, fail_create, fail_allocate, missing;
@@ -147,9 +148,81 @@ static void view_tests(void) {
   }
   CHECK(seen_scales == ((UINT64_C(1) << 49) - 1));
 }
+static void resolve_view_tests(void) {
+  xe_gpu_resolve_view view, sentinel;
+  const uint64_t capacity = UINT64_C(1) << 29;
+  uint64_t base, start, length, limit, alignment, expected_offset, end, padded;
+  uint64_t tiled, old_address, rebased_address;
+  unsigned i, j, transient = 0, persistent = 0, rejected = 0;
+  int available, success, expected;
+  memset(&sentinel,0x5a,sizeof(sentinel)); view = sentinel;
+#define REJECT(c,b,s,n,m,a,p) do { \
+  CHECK(!xe_gpu_resolve_view_plan(c,b,s,n,m,a,p,&view)); \
+  CHECK(!memcmp(&view,&sentinel,sizeof(view))); \
+} while (0)
+  REJECT(capacity,0,0,0,capacity,256,0);
+  REJECT(capacity,0,0,16,capacity,0,0);
+  REJECT(capacity,0,0,16,capacity,3,0);
+  REJECT(capacity,1,16,16,capacity,256,0);
+  REJECT(capacity,16,0,16,capacity,256,1);
+  REJECT(capacity,0,capacity,1,capacity,256,1);
+  REJECT(capacity,0,capacity-16,UINT64_MAX,capacity,256,1);
+  REJECT(UINT64_MAX,0,UINT64_MAX-16,16,UINT64_MAX,256,1);
+  REJECT(UINT64_C(1)<<33,0,UINT64_C(1)<<32,16,UINT64_MAX,256,1);
+  REJECT(capacity-1,0,capacity-16,15,capacity,256,1);
+  REJECT(capacity,0,0,16,15,256,0);
+#undef REJECT
+  CHECK(!xe_gpu_resolve_view_plan(capacity,0,0,16,capacity,256,0,NULL));
+  /* Descriptor alignment exceeds base alignment: round DOWN and keep the
+   * residual in the shader constant instead of losing the first bytes. */
+  CHECK(xe_gpu_resolve_view_plan(capacity,4100,8192,17,128*1024*1024,4096,0,&view));
+  CHECK(view.offset==4096 && view.shader_base==4 && view.range==4128);
+  CHECK(xe_gpu_resolve_view_plan(capacity,capacity-4,capacity-4,4,capacity,1,1,&view));
+  CHECK(view.persistent && !view.offset && view.shader_base==capacity-4);
+  CHECK(xe_gpu_resolve_view_plan(UINT64_C(1)<<32,UINT32_MAX-3,UINT32_MAX-3,4,
+      UINT64_C(1)<<32,16,0,&view));
+  CHECK(view.offset==(UINT64_C(1)<<32)-16 && view.shader_base==12 && view.range==16);
+  for (i=0;i<1000000;++i) {
+    base = random_word() & UINT32_C(0x1ffffffc);
+    start = base + random_word() % (capacity-base);
+    length = 1 + random_word() % (capacity-start);
+    limit = UINT64_C(1) << (20 + random_word()%10);
+    alignment = UINT64_C(1) << (random_word()%17);
+    available = (int)(random_word()&1);
+    end = start+length; padded = (end+15)&~UINT64_C(15);
+    /* Independent CPU reference uses division to round the view origin. */
+    expected_offset = base / (alignment<16 ? 16 : alignment) *
+        (alignment<16 ? 16 : alignment);
+    expected = available && limit>=capacity;
+    if (!expected) expected = padded-expected_offset<=limit;
+    view=sentinel;
+    success=xe_gpu_resolve_view_plan(capacity,base,start,length,limit,alignment,available,&view);
+    CHECK(success==expected);
+    if (!success) { CHECK(!memcmp(&view,&sentinel,sizeof(view))); ++rejected; continue; }
+    CHECK(view.offset%alignment==0 && view.offset%16==0 && view.range<=limit);
+    CHECK(view.offset+view.range<=capacity && view.offset<=base);
+    CHECK(view.offset+view.shader_base==base);
+    CHECK(view.persistent==(available && limit>=capacity));
+    if(view.persistent) { CHECK(!view.offset && view.range==capacity); ++persistent; }
+    else { CHECK(view.offset==expected_offset && view.offset+view.range==padded); ++transient; }
+    /* First/last/arbitrary bytes cover the same interval after native tiling
+     * and adding the rebased constant; vector-aligned enclosing stores fit. */
+    for(j=0;j<3;++j) {
+      old_address = j==0 ? start : j==1 ? end-1 : start+random_word()%length;
+      tiled=old_address-base;
+      CHECK(tiled<=UINT32_MAX-view.shader_base);
+      rebased_address=(uint32_t)tiled+view.shader_base;
+      CHECK(view.offset+rebased_address==old_address && rebased_address<view.range);
+      CHECK((rebased_address&~UINT64_C(15))+16<=view.range);
+    }
+  }
+  CHECK(transient && persistent && rejected);
+  printf("resolve views: 1000000 intervals, %u range / %u persistent / %u fallback; bounds, alignment, failure publication PASS\n",
+      transient,persistent,rejected);
+}
 int main(void) {
   device = (VkDevice)(uintptr_t)3; layout = (VkDescriptorSetLayout)(uintptr_t)5;
-  bank_tests(); view_tests();
+  bank_tests(); view_tests(); resolve_view_tests();
   printf("source views: 1000000 address pairs, 320000 immutable lookups, cold failure/reinit/double-close PASS; bank %lu bytes\n",
       (unsigned long)sizeof(xe_vk_source_bank));
   return 0;

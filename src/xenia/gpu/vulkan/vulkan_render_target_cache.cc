@@ -11,6 +11,7 @@
 #include <new>
 #include "libretro/core_gpu_divide.h"
 #include "libretro/core_resolve_dispatch.h"
+#include "libretro/core_gpu_resolve_view.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -3929,24 +3930,25 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
   SCOPE_profile_cpu_f("gpu");
   assert_true(GetPath() == Path::kHostRenderTargets);
 
-  // Unscaled, the whole buffer bound persistently is what lets copy_dest_base
-  // stay an absolute byte offset, which is what the shader adds to the tiled
-  // address.
   VkDescriptorSet descriptor_set_dest = VK_NULL_HANDLE;
+  xe_gpu_resolve_view native_dest_view = {};
   if (!copy_dest_scaled) {
     descriptor_set_dest =
         texture_cache.shared_memory_persistent_descriptor_set();
-    if (descriptor_set_dest == VK_NULL_HANDLE) {
-      static bool no_persistent_dest_logged = false;
-      if (!no_persistent_dest_logged) {
-        no_persistent_dest_logged = true;
-        XELOGW(
-            "VulkanRenderTargetCache: No persistent shared memory descriptor "
-            "set (maxStorageBufferRange below the shared memory size) - every "
-            "resolve will take the EDRAM round trip");
-      }
+    const auto& properties = command_processor_.GetVulkanDevice()->properties();
+    // A range view keeps native direct resolves available when the entire
+    // aperture does not fit. Descriptor alignment is moved into the existing
+    // base constant; no pixel bytes or residency ownership are moved.
+    if (!xe_gpu_resolve_view_plan(SharedMemory::kBufferSize,
+            copy_shader_constants.dest_base,
+            resolve_info.copy_dest_extent_start,
+            resolve_info.copy_dest_extent_length,
+            properties.maxStorageBufferRange,
+            properties.minStorageBufferOffsetAlignment,
+            descriptor_set_dest != VK_NULL_HANDLE, &native_dest_view)) {
       return false;
     }
+    if (!native_dest_view.persistent) descriptor_set_dest = VK_NULL_HANDLE;
   }
 
   if (!GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
@@ -4034,13 +4036,30 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
         command_processor_.GetVulkanDevice();
     vulkan_device->functions().vkUpdateDescriptorSets(
         vulkan_device->device(), 1, &write_descriptor_set_dest, 0, nullptr);
-  } else if (!shared_memory.RequestRange(
-                 resolve_info.copy_dest_extent_start,
-                 resolve_info.copy_dest_extent_length)) {
-    XELOGE(
-        "VulkanRenderTargetCache: Failed to obtain the direct resolve "
-        "destination memory region");
-    return false;
+  } else {
+    if (!shared_memory.RequestRange(resolve_info.copy_dest_extent_start,
+                                   resolve_info.copy_dest_extent_length)) {
+      XELOGE(
+          "VulkanRenderTargetCache: Failed to obtain the direct resolve "
+          "destination memory region");
+      return false;
+    }
+    if (!native_dest_view.persistent) {
+      descriptor_set_dest = command_processor_.AllocateSingleTransientDescriptor(
+          VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageBuffer);
+      if (descriptor_set_dest == VK_NULL_HANDLE) return false;
+      VkDescriptorBufferInfo info = {};
+      info.buffer = shared_memory.buffer();
+      info.offset = native_dest_view.offset; info.range = native_dest_view.range;
+      VkWriteDescriptorSet write = {};
+      write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      write.dstSet = descriptor_set_dest; write.descriptorCount = 1;
+      write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      write.pBufferInfo = &info;
+      const auto* device = command_processor_.GetVulkanDevice();
+      device->functions().vkUpdateDescriptorSets(device->device(), 1, &write,
+                                                0, nullptr);
+    }
   }
 
   command_processor_.PushDebugMarker("DirectResolveRenderTargets: base tile %u",
@@ -4101,9 +4120,9 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
   resolve_push_constants
       [kEdramDumpShaderPushConstantResolveDestCoordinateInfo] =
           copy_shader_constants.dest_relative.dest_coordinate_info.packed;
-  // The scaled destination's binding already starts at the base.
+  // Scaled bindings start at the base; native range views rebase it.
   resolve_push_constants[kEdramDumpShaderPushConstantResolveDestBase] =
-      copy_dest_scaled ? 0 : copy_shader_constants.dest_base;
+      copy_dest_scaled ? 0 : native_dest_view.shader_base;
   resolve_push_constants[kEdramDumpShaderPushConstantResolveHeightDiv8] =
       resolve_info.height_div_8;
 

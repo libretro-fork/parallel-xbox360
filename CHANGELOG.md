@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan no longer requires a whole 512 MiB shared-memory descriptor for native direct resolves. Checked C89 range planning preserves aligned descriptor bounds and exact tiled destination addresses, allowing eligible constrained-device/pool-failure resolves to skip their EDRAM round trip. Whole-buffer binding, guest residency/watch handling, scaled resolves and shaders retain their paths. Bounds/reference, MSVC ASan, backend syntax and Windows Make checks pass; GPU-time gains remain unmeasured.
+
 - Vulkan and D3D12 direct resolves emit only the destination tiling calculation needed for the dispatch. Shared C89 addressing preserves native Xenos byte offsets, with pixel conversion and loads unchanged. Both dump-pipeline maps become fixed caches, eliminating node/rehash allocation and clearing occupancy after native teardown. This reserves 16,640 bytes per backend and may compile an extra driver pipeline when both destination layouts occur. Native address/cache, sanitizer, shader-validation and Windows build checks pass; GPU-time gains remain unmeasured.
 
 - Vulkan mixed mip chains can keep their large levels on direct image decode. A C89 stored-level partition keeps packed tails intact, decodes each storage region once, and allocates scratch only for the remaining suffix. Original source/decode shaders and array strides remain; source sets are rebound when switching layouts. Atlas, overflow, independent partition/address and sanitizer checks pass. GPU-time and rendered-output gains remain unmeasured.

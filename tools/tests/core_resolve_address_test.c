@@ -1,6 +1,7 @@
 /* Evaluate the shared actual emitter against native CPU Xenos addressing. */
 #include "core_resolve_tiled_address.h"
 #include "core_resolve_pipeline_cache.h"
+#include "core_gpu_resolve_view.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,17 +33,31 @@ static uintptr_t emit(void *opaque, enum xe_resolve_address_op op, uintptr_t a, 
   }
   t->values[t->count] = value; return t->count++;
 }
-static unsigned calls[2], instructions[2], cases;
+static unsigned calls[2], instructions[2], cases, views, view_fallbacks;
 static void check(unsigned volume, uint32_t x, uint32_t y, uint32_t pitch,
     uint32_t slice, uint32_t height, unsigned bpp) {
   trace t;
   uintptr_t result;
+  xe_gpu_resolve_view view;
+  uint64_t original, relative;
+  unsigned byte;
   memset(&t,0,sizeof(t)); t.count = 6;
   t.values[1]=x; t.values[2]=y; t.values[3]=pitch; t.values[4]=slice; t.values[5]=height;
   result = xe_resolve_tiled_address(emit,&t,(int)volume,1,2,3,volume?4:0,volume?5:0,bpp);
   CHECK(result && t.values[result] == xe_test_native_address(volume,x,y,pitch,slice,height,bpp));
   if (calls[volume]) CHECK(calls[volume] == t.calls && instructions[volume] == t.instructions);
   calls[volume]=t.calls; instructions[volume]=t.instructions; ++cases;
+  /* Actual native tiled offsets with a deliberately non-descriptor-aligned
+   * base. Every component byte must name the same backing memory. */
+  original = UINT64_C(0x1000004) + t.values[result];
+  if (xe_gpu_resolve_view_plan(UINT64_C(1)<<29,UINT64_C(0x1000004),original,
+          UINT64_C(1)<<bpp,UINT64_C(1)<<27,256,0,&view)) {
+    for(byte=0;byte<(1u<<bpp);++byte) {
+      relative=(uint64_t)t.values[result]+view.shader_base+byte;
+      CHECK(relative<view.range && view.offset+relative==original+byte);
+    }
+    ++views;
+  } else ++view_fallbacks;
 }
 static uint32_t random_word(uint32_t *state) {
   uint32_t x=*state; x ^= x<<13; x ^= x>>17; x ^= x<<5; return *state=x;
@@ -115,5 +130,6 @@ int main(void) {
   CHECK(!xe_resolve_tiled_address(emit,&t,0,1,2,3,0,0,5));
   printf("PASS: %u native Xenos addresses; 2D %u, 3D %u arithmetic instructions; all emission failure boundaries\n",
       cases,instructions[0],instructions[1]);
+  printf("PASS: %u native tiled range views, %u bounded fallbacks; all pixel bytes identical\n",views,view_fallbacks);
   return 0;
 }

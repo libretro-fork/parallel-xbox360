@@ -1,0 +1,47 @@
+Native direct-resolve range views (0150)
+=======================================
+Vulkan previously rejected all native direct resolves if the persistent whole
+512 MiB shared-memory descriptor was absent. The normal fallback dumped host
+render targets into EDRAM, then ran the copy shader into shared memory.
+
+The C89 planner now describes a borrowed aligned destination range. Its origin
+rounds down from dest_base to max(device alignment,16), and the residual base
+uses the existing u32 shader constant. The extent rounds up to16 with checked
+capacity/device limits and u32 address bounds. Failed planning publishes nothing.
+For a valid persistent descriptor the whole-buffer binding and absolute base
+are retained. No shader, pixel packing, native quantization, workgroup layout,
+source sampling, guest residency/watch, barrier, mark-resolved or teardown
+protocol changes. Native RequestRange remains on the original write extent.
+
+Every pipeline and descriptor is prepared before the first direct dispatch;
+unrepresentable ranges, unavailable descriptors or pipelines keep the existing
+fallback. Eligible range-view requests skip the EDRAM intermediate and copy
+compute dispatch. This is not a CPU-GPU readback removal: neither path adds a
+readback. Descriptor rebasing copies no pixels and creates no staging buffer.
+The range path uses one existing transient storage-buffer descriptor; its pool
+can still grow. Native pipeline/driver allocation and other copies remain.
+Scaled resolves retain their window descriptor; D3D12 already binds an absolute
+destination GPU address. No D3D12 change is required for this Vulkan limit.
+
+Offline tests
+-------------
+MSVC C89 /W4 /WX normal and AddressSanitizer; MinGW strict C89: PASS.
+One million generated intervals with independently divided aligned origins:
+196804 range bindings,49693 persistent bindings,753503 bounded fallbacks.
+First,last,arbitrary bytes and containing16-byte spans preserve physical
+addresses and fit the selected view. Invalid/overflow/zero-length/misaligned
+cases leave output untouched; includes UINT64_MAX and end-exclusive4GiB.
+Existing immutable-source-bank and one-million source address tests still pass.
+
+Production native Xenos Tiled2D/Tiled3D reference fixtures, bpp log2 0..4:
+421143 representable range views,604777 bounded fallbacks, all pixel component
+bytes identical after descriptor rebasing. Cases span both dimensions, slice
+0..7, x/y through8191, pitch/height through512. The fallbacks deliberately include
+large/invalid-for-aperture synthetic offsets; counts are not game frequencies.
+MSVC normal+ASan and MinGW pass. Native Vulkan render-target cache /Zs passes.
+Static Windows Make -j5 passes. CI already runs both extended test runners.
+
+No game, RetroArch, GPU/device or JIT launched. Installed DLL untouched.
+No GPU timer, rendered-image or Dark Souls II/5090 FPS result. Devices already
+using the whole-aperture descriptor should not be expected to gain from this
+fallback removal. The broader accuracy-preserving4x GPU optimization continues.

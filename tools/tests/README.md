@@ -1331,3 +1331,12 @@ every direct module to shrink compared with the old dynamic destination path.
 It does not require this local-history commit for ordinary CI. Source-fetch
 counts and exact pitch-division checks still apply. See resolve_address_results.txt
 for measurements and limits; smaller IR is not a GPU timing measurement.
+
+Native direct-resolve destination views
+--------------------------------------
+The source-view runners also check the C89 resolve destination planner:
+one million bounded intervals, aligned rebasing, persistent/range selection,
+32-bit shader addition, descriptor limits and invalid-plan publication.
+The address runners additionally apply range views to actual native Xenos
+Tiled2D/Tiled3D offsets and compare every component byte. Existing shell and
+MSVC/ASan flags apply. See resolve_view_results.txt. No GPU/device is created.
