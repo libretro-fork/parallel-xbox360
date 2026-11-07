@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fail content loading cleanly when the frontend rejects the pixel format or Vulkan/D3D12 hardware rendering. Pixel validation precedes GPU context creation, and failed loads clear pending audio ownership, fractional cadence, disc entries and title patch options before retry. Vulkan/D3D12 provider failures return an error rather than terminating the frontend, and D3D12 stops before dereferencing a missing provider. Existing Vulkan v2-to-v1 negotiation fallback is preserved. Successful gameplay audio scheduling and worker shutdown order remain unchanged.
+
 - Fix CPU shader-interpreter loop nesting and relative addressing used by draw-extent estimation. Each nonempty loop owns one of four fixed slots; empty/full-stack entry does not corrupt depth, and aL reads the innermost live slot. Checked C89 arithmetic preserves the existing signed-step and [-256, 256] address range without allocation or added synchronization. Native packed-microcode regressions fail against the previous implementation. This is a correctness and memory-safety fix, with no measured gameplay speed claim.
 
 - XContent header I/O now uses bounded libretro-common VFS reads and closes every opened header handle on success and failure. Container selection reads only the signature and volume type; initialization fills its existing header directly. This removes the failed-open/successful-initialize handle leaks, two temporary header allocations and redundant full-header reads. Payload mounting and legacy path-typed interfaces remain separate work.

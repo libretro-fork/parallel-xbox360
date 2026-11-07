@@ -165,14 +165,7 @@ bool D3D12Provider::IsIntelArcGpu() const {
 std::unique_ptr<D3D12Provider> D3D12Provider::Create() {
   std::unique_ptr<D3D12Provider> provider(new D3D12Provider);
   if (!provider->Initialize()) {
-    xe::FatalError(
-        "Unable to initialize Direct3D 12 graphics subsystem.\n"
-        "\n"
-        "Ensure that you have the latest drivers for your GPU and it supports "
-        "Direct3D 12 with the feature level of at least 11_0.\n"
-        "\n"
-        "See https://xenia.jp/faq/ for more information and a list of "
-        "supported GPUs.");
+    XELOGE("Unable to initialize the Direct3D 12 graphics subsystem");
     return nullptr;
   }
 

@@ -34,6 +34,10 @@ X_STATUS D3D12GraphicsSystem::Setup(cpu::Processor* processor,
                                     kernel::KernelState* kernel_state,
                                     bool with_presentation) {
   provider_ = xe::ui::d3d12::D3D12Provider::Create();
+  if (!provider_) {
+    XELOGE("Direct3D 12 provider creation failed");
+    return X_STATUS_UNSUCCESSFUL;
+  }
   return GraphicsSystem::Setup(processor, kernel_state,
                                with_presentation);
 }

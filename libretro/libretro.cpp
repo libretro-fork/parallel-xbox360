@@ -1608,6 +1608,30 @@ static void xenia_shutdown(void) {
     }
 }
 
+/* Producers must already be stopped before releasing their borrowed registry. */
+static void clear_content_audio(void) {
+    xe_audio_registry_free(s_audio_registry);
+    s_audio_registry = NULL;
+    s_audio_channels = 2;
+    memset(&s_audio_float, 0, sizeof(s_audio_float));
+    memset(&s_audio_multi, 0, sizeof(s_audio_multi));
+    xe_audio_cadence_reset(&s_audio_cadence);
+}
+
+static bool fail_content_load(void) {
+    xenia_shutdown();
+    xe_libretro_notice_clear();
+    disc::unload();
+    clear_content_audio();
+    core_state.title_id = 0;
+    core_state.game_path[0] = 0;
+    if (!gamedb::patches().empty()) {
+        gamedb::forget_patches();
+        publish_core_options();
+    }
+    return false;
+}
+
 /* ================================================================== */
 /*  Libretro API (extern "C")                                          */
 /* ================================================================== */
@@ -1705,12 +1729,8 @@ RETRO_API void retro_deinit(void) {
     xenia_shutdown();
     disc::deinit();
     xe_libretro_notice_clear();
-    xe_audio_registry_free(s_audio_registry);
-    s_audio_registry = nullptr;
+    clear_content_audio();
     xe::threading::ShutdownTimerQueue();
-
-    s_audio_float = {};
-    s_audio_multi = {};
 
 }
 
@@ -1753,16 +1773,13 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
     }
     // A failed load may be retried without an intervening unload.
     if (s_audio_registry) {
-        xenia_shutdown();
-        xe_libretro_notice_clear();
-        xe_audio_registry_free(s_audio_registry);
-        s_audio_registry = nullptr;
+        fail_content_load();
     }
     // An .m3u is the game's discs; the game starts from its first (or the
     // one Disc Control had in last time), and asks for the others itself
     if (!disc::load(info->path, core_state.game_path, sizeof(core_state.game_path))) {
         xenia_log(RETRO_LOG_ERROR, "No disc listed in %s\n", info->path);
-        return false;
+        return fail_content_load();
     }
 
     // The game's title ID before anything is set up: the unlock list's rate
@@ -1806,6 +1823,13 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
     cvars::gpu = core_state.graphics_backend;
     xenia_log(RETRO_LOG_INFO, "Graphics API: %s\n", core_state.graphics_backend);
 
+    // Reject the pixel format before the frontend can create a GPU context.
+    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
+    if (!core_state.environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt)) {
+        xenia_log(RETRO_LOG_ERROR, "XRGB8888 not supported\n");
+        return fail_content_load();
+    }
+
     // Audio must be ready if hardware setup invokes context_reset immediately.
     // 5.1 when asked for and the frontend has multi-channel output; asked
     // once, at load, as the frontend wants it
@@ -1833,7 +1857,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
     s_audio_registry = xe_audio_registry_new(s_audio_channels);
     if (!s_audio_registry) {
         xenia_log(RETRO_LOG_ERROR, "Failed to create content audio registry\n");
-        return false;
+        return fail_content_load();
     }
     // Request HW render from the frontend.
     memset(&hw_render_cb, 0, sizeof(hw_render_cb));
@@ -1848,9 +1872,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
         hw_render_cb.context_destroy = vulkan_context_destroy;
 
         if (!core_state.environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render_cb)) {
-            xenia_log(RETRO_LOG_WARN,
-                      "Frontend rejected Vulkan HW render ??? falling back to software\n");
-            vulkan_hw_render_active = false;
+            xenia_log(RETRO_LOG_ERROR, "Frontend rejected Vulkan hardware rendering\n");
+            return fail_content_load();
         } else {
             // Both versions leave device destruction to the frontend. Never
             // retain a callback into this DLL in a cached video context.
@@ -1865,21 +1888,13 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
         hw_render_cb.context_destroy = d3d12_context_destroy;
 
         if (!core_state.environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render_cb)) {
-            xenia_log(RETRO_LOG_WARN,
-                      "Frontend rejected D3D12 HW render ??? falling back to software\n");
-            d3d12_hw_render_active = false;
+            xenia_log(RETRO_LOG_ERROR, "Frontend rejected D3D12 hardware rendering\n");
+            return fail_content_load();
         } else {
             xe_d3d12_video_negotiate(core_state.environ_cb);
         }
     }
 #endif
-
-    // Set pixel format (needed for software fallback and D3D12).
-    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
-    if (!core_state.environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt)) {
-        xenia_log(RETRO_LOG_ERROR, "XRGB8888 not supported\n");
-        return false;
-    }
 
     // Acquire rumble interface from the frontend
     s_rumble = {};
@@ -1889,7 +1904,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
     if (s_launch_on_context_reset)
         return true;
     launch_game();
-    return game_loaded;
+    return game_loaded ? true : fail_content_load();
 }
 
 static void launch_game(void) {
@@ -1914,12 +1929,7 @@ RETRO_API void retro_unload_game(void) {
     xenia_shutdown();
     xe_libretro_notice_clear();
     disc::unload();
-    xe_audio_registry_free(s_audio_registry);
-    s_audio_registry = nullptr;
-    s_audio_channels = 2;
-    s_audio_float = {};
-    s_audio_multi = {};
-    xe_audio_cadence_reset(&s_audio_cadence);
+    clear_content_audio();
     core_state.title_id = 0;
     if (!gamedb::patches().empty()) {
         gamedb::forget_patches();

@@ -39,14 +39,7 @@ X_STATUS VulkanGraphicsSystem::Setup(cpu::Processor* processor,
   provider_ = xe::ui::vulkan::VulkanProvider::Create(true, with_presentation);
   if (!provider_) {
     XELOGE("Vulkan provider creation failed");
-    xe::FatalError(
-        "Unable to initialize the Vulkan graphics subsystem.\n"
-        "\n"
-        "Ensure that you have the latest drivers for your GPU and that it "
-        "supports Vulkan.\n"
-        "\n"
-        "See https://xenia.jp/faq/ for more information and a list of "
-        "supported GPUs.");
+    return X_STATUS_UNSUCCESSFUL;
   }
   return GraphicsSystem::Setup(processor, kernel_state,
                                with_presentation);

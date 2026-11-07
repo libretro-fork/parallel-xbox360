@@ -1,0 +1,65 @@
+Graphics initialization failure ownership (0179)
+===============================================
+References reviewed: WizzardSK/xenia-libretro cc80811419dd2de01806fe122e747fd9d943f90c
+and 26af0220b0238227d685770a67f9a4c8a5dceb95. Independent core-only adaptation;
+no upstream cherry-pick or blanket Windows-version/Shader Model assumption.
+
+Previously SET_HW_RENDER rejection continued into the software capture path.
+D3D12Provider::Create and VulkanGraphicsSystem::Setup could call FatalError,
+terminating the frontend. D3D12GraphicsSystem::Setup also lacked the provider
+null check required before its command processor dereferences the provider.
+
+Both provider failure paths now log/return errors. The D3D12 graphics owner
+returns X_STATUS_UNSUCCESSFUL before base setup if no provider exists. The core
+checks the pixel format before requesting hardware/context creation, rejects
+failed hardware requests and uses a common failed-load cleanup path. Existing
+upstream stop/join order runs before audio ownership release. Pending registry,
+float/multichannel callbacks, sample fraction, disc paths, title ID/path and
+patch options are cleared. Retry, unload and deinit share audio release/reset.
+Synchronous launch failure receives the same cleanup. Vulkan deferred context
+startup and v2 negotiation with v1 fallback retain their existing architecture.
+No new per-frame code, worker, lock, sleep, GPU wait or data copy is added.
+The existing successful-run audio schedule is not changed.
+
+Verification:
+- Final MSVC and GNU Release core builds, five build jobs: PASS.
+- MSVC /TC /W4 /WX C89 driver + actual production load owner: PASS.
+- GNU strict C89 driver + actual production load owner: PASS.
+- Scoped MSVC ASan C89 driver + actual production load owner: PASS.
+- Linux G++ actual production load owner + typed bridge compilation: PASS.
+- Parent 1f2e56eb3 load owner built against the same current dependencies:
+  runtime FAIL at load line38, hardware requested before pixel validation.
+- Parent Vulkan graphics owner with the new load owner: ordinary load cases
+  PASS, then forced provider failure terminates the test process with exit1.
+  Current provider failure tests instead return normally with exit0.
+
+The test bridge includes libretro.cpp exactly once instead of linking its
+normal object, allowing direct inspection of private ownership without adding
+DLL exports or release-build test hooks. Test scenarios/expectations are C89;
+the bridge supplies existing C++ object lifetimes only. The fake frontend
+exercises actual retro_set_environment/init/load/unload/deinit, checks callback
+order and disc-control counts, loops failed loads eight times, and retries
+pending Vulkan content without an intervening unload. It seeds real bundled
+Gears of War 3 patch metadata/options and fractional audio state, then verifies
+both are cleared on failed load. Vulkan tests cover v2
+acceptance, v2 rejection followed by v1 acceptance, and unavailable support
+query selecting v1. D3D12 hardware-request rejection runs when the host supports
+its existing availability probe (both local Windows toolchains covered it).
+
+Provider tests run in a separate test process with VK_DRIVER_FILES and
+VK_ICD_FILENAMES pointing to a nonexistent test manifest. D3D12 selects an
+impossible adapter index. Both actual GraphicsSystem::Setup paths must return
+X_STATUS_UNSUCCESSFUL with null processor/kernel arguments, proving they stop
+before the base setup. No render device/game is launched. Tests write only
+under their build/tests output directory; no user core/frontend is replaced.
+
+Limits: not a full-core sanitizer or live graphics/device-loss test. Existing
+resolution-validation FatalError and other fatal call sites remain separate
+work; this patch fixes the two provider initialization sites, not all fatal
+errors. D3D12 feature probing, device-sharing architecture and real v1/v2 frame
+handoff behavior are unchanged. Deferred Vulkan launch failure is still reported
+by the context callback after retro_load_game has accepted the pending load.
+Legacy software capture/storage, C++ pause-watchdog synchronization and remaining
+filesystem operations in the API owner are still broader-goal migration work.
+No measured gameplay/FPS/latency improvement is claimed. Remote CI and a full
+Linux core build have not been run locally.

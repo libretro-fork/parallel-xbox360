@@ -1,5 +1,7 @@
 # parallel_xbox360 libretro core
 
+Rejected pixel formats and hardware-render requests fail the content load with pending audio, disc and patch-option ownership cleared. Vulkan and D3D12 provider initialization failures return errors rather than terminating the frontend. Vulkan v2 negotiation retains its v1 fallback. Offline tests exercise real load APIs and forced provider failures; see [load-failure checks](tools/tests/load_failure_results.txt).
+
 The CPU shader interpreter uses bounded C89 loop-stack entry and innermost aL addressing, correcting double depth advancement and out-of-range nested-loop access. It retains fixed storage and adds no allocations or synchronization. Actual packed-microcode regressions cover nested loops, skip/break paths and signed address clamping. See [shader loop checks](tools/tests/shader_loop_results.txt).
 
 XContent container selection probes eight bytes through libretro-common VFS, then initialization reads directly into its owned header and closes the handle before payload mounting. Header operations no longer use stdio or filesystem stat calls. The tested factory/initialize sequence uses one header allocation instead of three. Legacy path-typed APIs and fragment/payload I/O remain migration work. See [package header ownership checks](tools/tests/package_header_results.txt).
