@@ -152,11 +152,6 @@ class CommandProcessor {
 
   void CallInThread(std::function<void()> fn);
 
-  // Dumps the EDRAM contents to a raw file.
-  virtual bool DumpEdramSnapshotToFile(const std::filesystem::path& path) {
-    return false;
-  }
-
   virtual void ClearCaches();
   virtual void InvalidateGpuMemory();
   virtual void ClearReadbackBuffers();

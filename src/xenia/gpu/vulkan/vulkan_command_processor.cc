@@ -5094,18 +5094,6 @@ void VulkanCommandProcessor::InitializeTrace() {
   }
 }
 
-bool VulkanCommandProcessor::DumpEdramSnapshotToFile(
-    const std::filesystem::path& path) {
-  if (!BeginSubmission(true)) {
-    return false;
-  }
-  if (!render_target_cache_->InitializeTraceSubmitDownloads()) {
-    return false;
-  }
-  AwaitAllQueueOperationsCompletion();
-  return render_target_cache_->WriteEdramSnapshotToFile(path);
-}
-
 void VulkanCommandProcessor::LogRecentSubmissions(const char* context) {
   XELOGE(
       "VulkanCommandProcessor: recent submission history ({}) - oldest first, "

@@ -700,7 +700,7 @@ bool COMMAND_PROCESSOR::ExecutePacketType3(uint32_t packet) XE_RESTRICT {
             executable_module ? executable_module->title_id() : 0;
         auto file_name = fmt::format("{:08X}_{}.xtr", title_id, counter_ - 1);
         auto path = trace_frame_path_ / file_name;
-        trace_writer_.Open(path, title_id);
+        trace_writer_.Open(xe::path_to_utf8(path).c_str(), title_id);
         trace_frame_file_path_ = path;
         InitializeTrace();
       }
@@ -1701,7 +1701,7 @@ uint32_t COMMAND_PROCESSOR::ExecutePrimaryBuffer(uint32_t read_index,
                             : 0;
     auto file_name = fmt::format("{:08X}_stream.xtr", title_id);
     auto path = trace_stream_path_ / file_name;
-    trace_writer_.Open(path, title_id);
+    trace_writer_.Open(xe::path_to_utf8(path).c_str(), title_id);
     InitializeTrace();
   }
 #endif

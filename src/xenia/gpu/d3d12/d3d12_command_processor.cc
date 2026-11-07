@@ -3399,18 +3399,6 @@ void D3D12CommandProcessor::InitializeTrace() {
   }
 }
 
-bool D3D12CommandProcessor::DumpEdramSnapshotToFile(
-    const std::filesystem::path& path) {
-  if (!BeginSubmission(false)) {
-    return false;
-  }
-  if (!render_target_cache_->InitializeTraceSubmitDownloads()) {
-    return false;
-  }
-  AwaitAllQueueOperationsCompletion();
-  return render_target_cache_->WriteEdramSnapshotToFile(path);
-}
-
 void D3D12CommandProcessor::ResolveReadCallbackThunk(
     void* context, uint32_t physical_address, uint32_t length,
     Memory::PhysicalAccess access) {

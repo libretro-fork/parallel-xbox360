@@ -15,8 +15,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
-#include <functional>
 #include <map>
 #include <span>
 #include <type_traits>
@@ -260,8 +258,6 @@ class RenderTargetCache {
   // afterwards. Submit returns whether there is anything for Complete to read.
   bool InitializeTraceSubmitDownloads();
   void InitializeTraceCompleteDownloads();
-  // Writes the trace EDRAM readback to a raw file.
-  bool WriteEdramSnapshotToFile(const std::filesystem::path& path);
 
  protected:
   RenderTargetCache(const RegisterFile& register_file, const Memory& memory,

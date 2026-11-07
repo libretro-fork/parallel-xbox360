@@ -18,7 +18,6 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
-#include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/gpu/draw_util.h"
@@ -1770,25 +1769,6 @@ void RenderTargetCache::InitializeTraceCompleteDownloads() {
     XELOGE("Failed to map the EDRAM snapshot readback for frame tracing");
   }
   EndEdramSnapshotReadback();
-}
-
-bool RenderTargetCache::WriteEdramSnapshotToFile(
-    const std::filesystem::path& path) {
-  const void* snapshot = MapEdramSnapshotReadback();
-  bool written = false;
-  if (snapshot) {
-    FILE* file = xe::filesystem::OpenFile(path, "wb");
-    if (file) {
-      written = fwrite(snapshot, 1, xenos::kEdramSizeBytes, file) ==
-                xenos::kEdramSizeBytes;
-      fclose(file);
-    }
-  }
-  if (!written) {
-    XELOGE("Failed to write the EDRAM snapshot to {}", xe::path_to_utf8(path));
-  }
-  EndEdramSnapshotReadback();
-  return written;
 }
 
 RenderTargetCache::RenderTarget*

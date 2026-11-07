@@ -10,9 +10,8 @@
 #ifndef XENIA_GPU_TRACE_WRITER_H_
 #define XENIA_GPU_TRACE_WRITER_H_
 
-#include <filesystem>
-#include <set>
-#include <string>
+#include <cstddef>
+#include <cstdint>
 
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/trace_protocol.h"
@@ -28,6 +27,11 @@
 #define XE_ENABLE_TRACE_WRITER_INSTRUMENTATION 1
 #endif
 
+#if XE_ENABLE_TRACE_WRITER_INSTRUMENTATION == 1
+#include <set>
+#include "libretro/core_gpu_trace.h"
+#endif
+
 namespace xe {
 namespace gpu {
 
@@ -37,9 +41,9 @@ class TraceWriter {
   explicit TraceWriter(uint8_t* membase);
   ~TraceWriter();
 
-  bool is_open() const { return file_ != nullptr; }
+  bool is_open() const { return stream_.file && !stream_.failed; }
 
-  bool Open(const std::filesystem::path& path, uint32_t title_id);
+  bool Open(const char* path, uint32_t title_id);
   void Flush();
   void Close();
 
@@ -69,7 +73,7 @@ class TraceWriter {
 
   std::set<uint64_t> cached_memory_reads_;
   uint8_t* membase_;
-  FILE* file_;
+  xe_trace_stream stream_ = {};
 
   bool compress_output_ = true;
   size_t compression_threshold_ = 1024;  // Min. number of bytes to compress.
@@ -81,7 +85,7 @@ class TraceWriter {
 
   static constexpr bool is_open() { return false; }
 
-  static constexpr bool Open(const std::filesystem::path& path,
+  static constexpr bool Open(const char* path,
                              uint32_t title_id) {
     return false;
   }
