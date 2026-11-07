@@ -18,6 +18,7 @@
 #include <utility>
 #include <rthreads/rthreads.h>
 #include "libretro/core_job_pool.h"
+#include "libretro/core_completion.h"
 #include "xenia/gpu/pipeline_publish_order.h"
 
 namespace xe {
@@ -34,10 +35,10 @@ class PipelineCreationQueue {
   using Store = std::function<void(const TRequest&, THandle)>;
   using ContextFactory = std::function<std::unique_ptr<TThreadContext>()>;
 
+  PipelineCreationQueue() { xe_completion_init(&completion_); }
   ~PipelineCreationQueue() {
     ReleasePending();
     xe_job_pool_free(pool_);
-    slock_free(callback_lock_);
   }
   void Initialize(const char* thread_name, Creator creator, Store store,
                   ContextFactory context_factory) {
@@ -45,9 +46,7 @@ class PipelineCreationQueue {
     ReleasePending();
     xe_job_pool_free(pool_);
     pool_ = nullptr;
-    slock_free(callback_lock_);
-    callback_lock_ = nullptr;
-    completion_callback_ = nullptr;
+    xe_completion_cancel(&completion_);
     static_assert(alignof(Request) <= alignof(std::max_align_t));
     static_assert(std::is_nothrow_move_constructible<TRequest>::value);
     static_assert(std::is_nothrow_destructible<TRequest>::value);
@@ -59,8 +58,6 @@ class PipelineCreationQueue {
       self->store_(publication.first->request, publication.second);
       self->Release(publication.first);
     }, this);
-    callback_lock_ = slock_new();
-    if (!callback_lock_) throw std::bad_alloc();
     pool_ = xe_job_pool_new(4096, sizeof(Request), thread_name, &Run, &Discard,
         &NewContext, &FreeContext, &Idle, this);
     if (!pool_) throw std::bad_alloc();
@@ -72,10 +69,8 @@ class PipelineCreationQueue {
   void Shutdown(F&& discard) {
     if (!pool_) return;
     SetThreadCount(0);
-    slock_lock(callback_lock_);
-    completion_callback_ = nullptr;
+    xe_completion_cancel(&completion_);
     xe_job_pool_arm_idle(pool_, 0);
-    slock_unlock(callback_lock_);
     publish_order_.Reset([&](Publication& publication) {
       discard(publication.first->request, publication.second);
       Release(publication.first);
@@ -97,17 +92,15 @@ class PipelineCreationQueue {
   void AwaitCompletion() {
     if (has_threads()) xe_job_pool_await(pool_);
   }
-  void TakeCompletionCallback(std::function<void()>& callback) {
-    slock_lock(callback_lock_);
-    if (xe_job_pool_busy(pool_)) {
-      completion_callback_ = std::move(callback);
-      callback = nullptr;
-      if (!ArmCompletion(this)) {
-        callback = std::move(completion_callback_);
-        completion_callback_ = nullptr;
-      }
-    }
-    slock_unlock(callback_lock_);
+  // Sole producer arms after its startup batch. No captured callable crosses
+  // threads; only an atomic generation-tagged token is completed by workers.
+  uint64_t WatchCompletion() {
+    uint64_t ticket=xe_completion_begin(&completion_);
+    if (!ArmCompletion(this)) xe_completion_finish(&completion_,ticket);
+    return ticket;
+  }
+  bool CompletionPending(uint64_t ticket) const {
+    return xe_completion_pending(&completion_,ticket)!=0;
   }
   void DrainOnCallingThread(TThreadContext* context) {
     while (xe_job_pool_run_one(pool_, context)) {}
@@ -140,10 +133,8 @@ class PipelineCreationQueue {
   void ReleasePending() {
     if (!pool_) return;
     xe_job_pool_set_threads(pool_, 0);
-    slock_lock(callback_lock_);
-    completion_callback_ = nullptr;
+    xe_completion_cancel(&completion_);
     xe_job_pool_arm_idle(pool_, 0);
-    slock_unlock(callback_lock_);
     publish_order_.Reset([this](Publication& publication) {
       Release(publication.first);
     });
@@ -181,21 +172,15 @@ class PipelineCreationQueue {
   }
   static void Idle(void* opaque) {
     auto* self = static_cast<PipelineCreationQueue*>(opaque);
-    std::function<void()> callback;
-    slock_lock(self->callback_lock_);
-    if (self->completion_callback_ && !ArmCompletion(self)) {
-      callback = std::move(self->completion_callback_);
-      self->completion_callback_ = nullptr;
-    }
-    slock_unlock(self->callback_lock_);
-    if (callback) callback();
+    uint64_t ticket=xe_completion_current(&self->completion_);
+    if ((ticket&1) && !ArmCompletion(self))
+      xe_completion_finish(&self->completion_,ticket);
   }
   Creator creator_;
   Store store_;
   ContextFactory context_factory_;
   PipelinePublishOrder<Publication> publish_order_;
-  std::function<void()> completion_callback_;
-  slock_t* callback_lock_ = nullptr;
+  xe_completion completion_;
   xe_job_pool* pool_ = nullptr;
 };
 

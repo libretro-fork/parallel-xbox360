@@ -195,12 +195,9 @@ void VulkanCommandProcessor::TracePlaybackWroteMemory(uint32_t base_ptr,
 }
 
 void VulkanCommandProcessor::InitializeShaderStorage(
-    const std::filesystem::path& cache_root, uint32_t title_id, bool blocking,
-    std::function<void()> completion_callback) {
-  CommandProcessor::InitializeShaderStorage(cache_root, title_id, blocking,
-                                            nullptr);
-  pipeline_cache_->InitializeShaderStorage(cache_root, title_id, blocking,
-                                           std::move(completion_callback));
+    const std::filesystem::path& cache_root, uint32_t title_id, bool blocking) {
+  CommandProcessor::InitializeShaderStorage(cache_root, title_id, blocking);
+  pipeline_cache_->InitializeShaderStorage(cache_root, title_id, blocking);
 }
 
 void VulkanCommandProcessor::RestoreEdramSnapshot(const void* snapshot) {

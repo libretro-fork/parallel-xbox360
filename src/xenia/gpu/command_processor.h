@@ -191,8 +191,7 @@ class CommandProcessor {
   // processor is paused, and the termination of this function may be explicitly
   // awaited.
   virtual void InitializeShaderStorage(
-      const std::filesystem::path& cache_root, uint32_t title_id, bool blocking,
-      std::function<void()> completion_callback = nullptr);
+      const std::filesystem::path& cache_root, uint32_t title_id, bool blocking);
 
   virtual void RequestFrameTrace(const std::filesystem::path& root_path);
   virtual void BeginTracing(const std::filesystem::path& root_path);

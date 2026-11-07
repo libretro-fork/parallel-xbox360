@@ -1,0 +1,44 @@
+Pipeline startup completion ownership (0155)
+============================================
+Vulkan's startup_loading_ plain bool was written by a compilation completion
+callback and read by the GPU owner's EndSubmission without synchronization.
+The queue also allocated a separate slock to move a std::function completion
+between owner and workers. Core callers do not consume an external storage
+completion callback; the only active effect was Vulkan's startup flag.
+
+Removed the completion callback parameter from base and both native command
+processors and both pipeline caches. D3D12 no longer forwards/registers an
+unused callable. Blocking storage initialization still waits as before.
+The pipeline queue instead owns an eight-byte C89 xe_completion latch with
+retro_atomic 64-bit generation/pending state. Owner WatchCompletion arms after
+publishing its startup batch, then uses the existing idle-arm/busy-recheck
+protocol. Worker Idle captures the ticket before checking idle and completes
+that exact generation with CAS. The GPU owner holds a plain immutable ticket
+and queries the atomic latch; workers never write owner-side Vulkan fields.
+
+A rearm invalidates older tickets; stale idle work cannot clear a later load.
+One owner controls rearm/cancel, multiple workers may finish, and the latch must
+outlive every worker join. Tickets may not survive 2^63 rearms of one latch.
+Shutdown joins before cancellation and request/handle disposal. No callback,
+mutex, allocation, sample/image staging or profiling counter is added to this
+completion handoff. Pool idle notification, worker parking, actual compilation
+waits, native creator/store/context callbacks, publication order and pipeline
+destruction synchronization remain. This does not remove all threading locks,
+all std::function objects, or shader compilation itself.
+
+Offline checks:
+- C89 four-worker fixture: 50,000 rearms, 200,000 attempted stale finishes,
+  active-ticket preservation, cancellation, duplicate/zero-ticket rejection,
+  signed-boundary crossing and unsigned generation wrap.
+- Actual production queue adapter: 20,000 fast-job/rearm cycles, completion
+  polling, newer-generation invalidation, owner/caller drain, ordered results,
+  failed creations, move-only and single-copy request lifetimes, cancellation,
+  shutdown/reinitialization and unordered warmup independent of blocked work.
+- Existing C89 SPMC worker-pool lifetime, exact-once leases, growth/shrink,
+  completion waits and cancellation fixture retained.
+- MSVC native normal and ASan fixtures and MinGW fixtures pass. New native
+  runner checks exact zero exits including negative Windows exception codes.
+
+No live game/frontend, GPU device, JIT or installed DLL replacement was used.
+No TSan run or gameplay/FPS, latency or shader-stutter improvement is claimed.
+Other broad renderer, allocation, callbacks, I/O and savestate goals remain.

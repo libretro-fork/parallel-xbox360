@@ -302,11 +302,7 @@ void CommandProcessor::Shutdown() {
 }
 
 void CommandProcessor::InitializeShaderStorage(
-    const std::filesystem::path& cache_root, uint32_t title_id, bool blocking,
-    std::function<void()> completion_callback) {
-  if (completion_callback) {
-    completion_callback();
-  }
+    const std::filesystem::path& cache_root, uint32_t title_id, bool blocking) {
 }
 
 void CommandProcessor::RequestFrameTrace(

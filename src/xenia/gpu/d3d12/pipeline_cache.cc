@@ -220,8 +220,7 @@ void PipelineCache::Shutdown() {
 }
 
 void PipelineCache::InitializeShaderStorage(
-    const std::filesystem::path& cache_root, uint32_t title_id, bool blocking,
-    std::function<void()> completion_callback) {
+    const std::filesystem::path& cache_root, uint32_t title_id, bool blocking) {
   ShutdownShaderStorage();
 
   bool edram_rov_used = render_target_cache_.GetPath() ==
@@ -408,11 +407,6 @@ void PipelineCache::InitializeShaderStorage(
         creation_queue_.DrainOnCallingThread(nullptr);
         creation_queue_.SetThreadCount(creation_thread_original_count);
         creation_queue_.AwaitCompletion();
-      } else {
-        // Non-blocking mode: the background threads have it, and invoke the
-        // callback when they are done - or leave it to the tail of this
-        // function if they are already done.
-        creation_queue_.TakeCompletionCallback(completion_callback);
       }
     }
 
@@ -437,12 +431,7 @@ void PipelineCache::InitializeShaderStorage(
 
   shader_storage_title_id_ = title_id;
 
-  // Invoke completion callback if provided (for blocking mode or when no
-  // background work was needed). For non-blocking mode with background work,
-  // the creation queue took it and invokes it when done.
-  if (completion_callback) {
-    completion_callback();
-  }
+
 }
 
 void PipelineCache::ShutdownShaderStorage() {

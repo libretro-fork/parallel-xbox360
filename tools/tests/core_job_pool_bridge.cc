@@ -21,7 +21,7 @@ struct CopyInput {
 };
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL adapter line %u\n", unsigned(__LINE__)); std::abort(); } } while (0)
 int main() {
-  size_t expected = 0, callbacks = 0, discarded = 0;
+  size_t expected = 0, discarded = 0;
   {
     xe::gpu::PipelineCreationQueue<Input, size_t, unsigned> uninitialized;
     uninitialized.Shutdown([&](const Input&, size_t) { ++discarded; });
@@ -46,22 +46,19 @@ int main() {
       queue.Push(Input(i));
       if (i == 127) queue.SetThreadCount(6);
     }
-    std::function<void()> callback = [&]() { ++callbacks; };
-    queue.TakeCompletionCallback(callback);
-    if (callback) callback();
+    uint64_t completion = queue.WatchCompletion();
     queue.DrainOnCallingThread(nullptr);
     queue.AwaitCompletion();
     queue.SetThreadCount(0);
-    CHECK(expected == 12000 && callbacks == 1 && !queue.IsBusy());
+    CHECK(expected == 12000 && !queue.CompletionPending(completion) && !queue.IsBusy());
     queue.Shutdown([&](const Input&, size_t) { ++discarded; });
     CHECK(discarded == 0);
-    /* Cancel queued move-only requests and drop the callback, then reuse. */
+    /* Cancel queued move-only requests and invalidate the token, then reuse. */
     for (size_t i = 0; i < 10; ++i) queue.PushUnordered(Input(i));
-    callback = [&]() { ++callbacks; };
-    queue.TakeCompletionCallback(callback);
-    CHECK(!callback);
+    completion = queue.WatchCompletion();
+    CHECK(queue.CompletionPending(completion));
     queue.Shutdown([&](const Input&, size_t) { ++discarded; });
-    CHECK(callbacks == 1 && discarded == 0);
+    CHECK(!queue.CompletionPending(completion) && discarded == 0);
     queue.SetThreadCount(3);
     for (size_t i = 12000; i < 12100; ++i) queue.Push(Input(i));
     queue.AwaitCompletion();
@@ -71,13 +68,23 @@ int main() {
       queue.SetThreadCount(3);
       size_t first = 12100 + round * 64;
       for (size_t i = first; i < first + 32; ++i) queue.Push(Input(i));
-      callback = [&]() { ++callbacks; };
-      queue.TakeCompletionCallback(callback);
-      if (callback) callback();
+      completion = queue.WatchCompletion();
       for (size_t i = first + 32; i < first + 64; ++i) queue.Push(Input(i));
       queue.AwaitCompletion();
+      size_t completion_spins=0;
+      while(queue.CompletionPending(completion)) CHECK(++completion_spins<100000000);
       queue.Shutdown([&](const Input&, size_t) { ++discarded; });
-      CHECK(expected == first + 64 && callbacks == round + 2 && discarded == 0);
+      CHECK(expected == first + 64 && !queue.CompletionPending(completion) && discarded == 0);
+    }
+    for (size_t round=0;round<20000;++round) {
+      queue.SetThreadCount(3);
+      queue.Push(Input(expected));
+      uint64_t stale=queue.WatchCompletion();
+      completion=queue.WatchCompletion();
+      CHECK(!queue.CompletionPending(stale));
+      size_t spins=0;
+      while(queue.CompletionPending(completion)) CHECK(++spins<100000000);
+      queue.AwaitCompletion();
     }
     size_t first = expected;
     queue.Initialize("Reinitialized pool",
@@ -156,5 +163,5 @@ int main() {
     CHECK(warm_stored && !unexpected);
     scond_free(changed); slock_free(state_lock); slock_free(blocked);
   }
-  std::puts("PASS: production creation queue ordered moves, failed creation, caller drain, context ownership, callbacks, cancellation and reuse");
+  std::puts("PASS: production creation queue ordered moves, failed creation, caller drain, context ownership, completion tokens, cancellation and reuse");
 }

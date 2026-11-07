@@ -70,8 +70,7 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   // rest of the execution of the guest).
 
   void InitializeShaderStorage(
-      const std::filesystem::path& cache_root, uint32_t title_id, bool blocking,
-      std::function<void()> completion_callback = nullptr);
+      const std::filesystem::path& cache_root, uint32_t title_id, bool blocking);
   void ShutdownShaderStorage();
 
   void EndSubmission();

@@ -1391,3 +1391,13 @@ ASan uses GPU_TASK_TEST_FLAGS=/fsanitize=address /Zi with a separate
 GPU_TASK_TEST_OUT. Shell sanitizers default on; SANITIZER= supports MinGW without
 those runtimes. The C++ bridge covers exception ABI only; test algorithms are
 C89. No graphics device or core gameplay is launched. See gpu_tasks_results.txt.
+
+Pipeline completion ownership
+-----------------------------
+`run_job_pool_tests.sh` now includes the C89 generation-latch fixture and the
+production native queue adapter. `run_job_pool_tests.cmd` runs the same three
+fixtures with MSVC; JOB_POOL_TEST_FLAGS=/fsanitize=address /Zi and a separate
+JOB_POOL_TEST_OUT enable native ASan. Four workers attempt 200,000 stale
+completions; the actual adapter exercises 20,000 rearm cycles as well as its
+existing lease, ordering, copy-budget, cancellation and teardown checks.
+See pipeline_completion_results.txt for the remaining callbacks and waits.

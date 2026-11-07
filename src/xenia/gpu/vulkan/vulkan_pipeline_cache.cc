@@ -402,7 +402,7 @@ void VulkanPipelineCache::Shutdown() {
     if (pipeline != VK_NULL_HANDLE)
       dfn.vkDestroyPipeline(device, pipeline, nullptr);
   });
-  startup_loading_ = false;
+  startup_completion_ = 0;
 
   // Process any remaining deferred destructions (force destroy all since
   // device should be idle at shutdown).
@@ -868,7 +868,7 @@ void VulkanPipelineCache::EndSubmission() {
   }
 
   if (creation_queue_.has_threads()) {
-    if (startup_loading_) {
+    if (creation_queue_.CompletionPending(startup_completion_)) {
       // Non-blocking: let background threads work asynchronously.
       creation_queue_.Notify();
     } else {
@@ -2457,23 +2457,12 @@ void VulkanPipelineCache::ProcessDeferredDestructions() {
 }
 
 void VulkanPipelineCache::InitializeShaderStorage(
-    const std::filesystem::path& cache_root, uint32_t title_id, bool blocking,
-    std::function<void()> completion_callback) {
+    const std::filesystem::path& cache_root, uint32_t title_id, bool blocking) {
   ShutdownShaderStorage();
 
   shader_storage_title_id_ = title_id;
 
-  if (!blocking) {
-    startup_loading_ = true;
-    if (completion_callback) {
-      completion_callback = [this, orig = std::move(completion_callback)]() {
-        startup_loading_ = false;
-        orig();
-      };
-    } else {
-      completion_callback = [this]() { startup_loading_ = false; };
-    }
-  }
+  startup_completion_ = 0;
 
   bool edram_fsi_used = render_target_cache_.GetPath() ==
                         RenderTargetCache::Path::kPixelShaderInterlock;
@@ -2515,9 +2504,6 @@ void VulkanPipelineCache::InitializeShaderStorage(
             TranslateShadersForStorage(translations_needed, edram_fsi_used);
           },
           pipeline_stored_descriptions)) {
-    if (completion_callback) {
-      completion_callback();
-    }
     return;
   }
   shader_storage_file_flush_needed_ = false;
@@ -2741,11 +2727,6 @@ void VulkanPipelineCache::InitializeShaderStorage(
       if (blocking) {
         // Blocking mode: wait for all pipelines to be created.
         creation_queue_.AwaitCompletion();
-      } else {
-        // Non-blocking mode: the creation threads invoke the callback when they
-        // are done - or leave it to the tail of this function if they already
-        // are.
-        creation_queue_.TakeCompletionCallback(completion_callback);
       }
     }
 
@@ -2770,10 +2751,8 @@ void VulkanPipelineCache::InitializeShaderStorage(
     }
   }
 
-  // Invoke completion callback if no async work was queued.
-  if (completion_callback) {
-    completion_callback();
-  }
+  if (!blocking) startup_completion_ = creation_queue_.WatchCompletion();
+
 }
 
 void VulkanPipelineCache::ShutdownShaderStorage() {

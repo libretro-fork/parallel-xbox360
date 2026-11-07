@@ -136,8 +136,7 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
 
   // Shader and pipeline storage.
   void InitializeShaderStorage(
-      const std::filesystem::path& cache_root, uint32_t title_id, bool blocking,
-      std::function<void()> completion_callback = nullptr);
+      const std::filesystem::path& cache_root, uint32_t title_id, bool blocking);
   void ShutdownShaderStorage();
 
   void EndSubmission();
@@ -580,7 +579,8 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
       creation_queue_;
   // During startup loading, don't block on pipeline creation to allow game
   // boot.
-  bool startup_loading_ = false;
+  // GPU-owner token only; workers complete the queue's C89 atomic latch.
+  uint64_t startup_completion_ = 0;
 
   // Deferred destruction of pipelines.
   // Pipelines are only destroyed after the GPU submission that might reference

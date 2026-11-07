@@ -121,12 +121,9 @@ void D3D12CommandProcessor::ClearReadbackBuffers() {
 }
 
 void D3D12CommandProcessor::InitializeShaderStorage(
-    const std::filesystem::path& cache_root, uint32_t title_id, bool blocking,
-    std::function<void()> completion_callback) {
-  CommandProcessor::InitializeShaderStorage(cache_root, title_id, blocking,
-                                            nullptr);
-  pipeline_cache_->InitializeShaderStorage(cache_root, title_id, blocking,
-                                           std::move(completion_callback));
+    const std::filesystem::path& cache_root, uint32_t title_id, bool blocking) {
+  CommandProcessor::InitializeShaderStorage(cache_root, title_id, blocking);
+  pipeline_cache_->InitializeShaderStorage(cache_root, title_id, blocking);
 }
 
 void D3D12CommandProcessor::RequestFrameTrace(

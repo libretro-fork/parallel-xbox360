@@ -13,6 +13,14 @@ ${CC:-cc} -std=c89 -Wall -Wextra -Werror -O1 -g \
   "$root/third_party/libretro-common/rthreads/rthreads.c" \
   "$root/third_party/libretro-common/rthreads/retro_eventcount.c" \
   -pthread -o "$out/$exe"
+
+${CC:-cc} -std=c89 -Wall -Wextra -Werror -O2 -g \
+  -DHAVE_THREADS -DHAVE_THREAD_STORAGE $san \
+  -I"$root/libretro" -I"$root/third_party/libretro-common/include" \
+  "$root/tools/tests/core_completion_test.c" \
+  "$root/third_party/libretro-common/rthreads/rthreads.c" \
+  -pthread -o "$out/completion-$exe"
+"$out/completion-$exe"
 "$out/$exe"
 
 for f in "$root/libretro/core_job_pool.c" "$root/libretro/core_pipeline_order.c" \
