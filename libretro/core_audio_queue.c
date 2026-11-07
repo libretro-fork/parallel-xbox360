@@ -8,6 +8,7 @@
 #include <rthreads/retro_eventcount.h>
 
 typedef char xe_audio_float_bits_fit_int[(sizeof(float) == sizeof(int)) ? 1 : -1];
+typedef char xe_audio_float_is_four_bytes[(sizeof(float) == sizeof(uint32_t)) ? 1 : -1];
 
 #define AUDIO_SLOTS 16
 #define SLOT_ACTIVE 1
@@ -53,7 +54,7 @@ static xe_audio_queue *queue_allocate(unsigned channels, int local_space) {
   /* Physical storage may round up; the logical bound is exactly 64 ms. */
   queue->limit = (48000 * channels * 64 / 1000) * sizeof(float);
   queue->frame_bytes = channels * sizeof(float);
-#ifdef XE_AUDIO_QUEUE_PLAIN
+#if defined(XE_AUDIO_QUEUE_PLAIN) && XE_AUDIO_QUEUE_PLAIN
   if (!retro_spsc_init(&queue->samples, queue->limit)) {
 #else
   if (!retro_spsc_init_mirrored(&queue->samples, queue->limit)) {
@@ -386,4 +387,102 @@ float xe_audio_queue_get_volume(const xe_audio_queue *queue) {
   bits = retro_atomic_load_acquire_int(&queue->volume);
   memcpy(&volume, &bits, sizeof(volume));
   return volume;
+}
+
+static int audio_state_disjoint(const void *a, size_t an, const void *b, size_t bn) {
+  uintptr_t x = (uintptr_t)a, y = (uintptr_t)b;
+  if ((!a && an) || (!b && bn) || x > UINTPTR_MAX - an || y > UINTPTR_MAX - bn) return 0;
+  if (!an || !bn) return 1;
+  return x >= y ? x - y >= bn : y - x >= an;
+}
+static size_t audio_state_storage(const xe_audio_queue *queue) {
+  return queue->samples.mirror ? queue->samples.mirror * 2 : queue->samples.capacity;
+}
+static int audio_state_ready(const xe_audio_queue *queue) {
+  if (!queue || stopped(queue) || !queue->samples.buffer || !queue->samples.capacity ||
+      (queue->frame_bytes != 8 && queue->frame_bytes != 24)) return 0;
+  if (queue->registry && (queue->slot >= AUDIO_SLOTS ||
+      retro_atomic_load_acquire_int(&queue->registry->slots[queue->slot].state) != SLOT_ACTIVE ||
+      queue->registry->slots[queue->slot].queue != queue)) return 0;
+  return 1;
+}
+static int audio_state_external(const xe_audio_queue *queue, const void *data, size_t bytes) {
+  return audio_state_disjoint(data, bytes, queue, sizeof(*queue)) &&
+      audio_state_disjoint(data, bytes, queue->samples.buffer, audio_state_storage(queue)) &&
+      (!queue->registry || audio_state_disjoint(data, bytes, queue->registry, sizeof(*queue->registry))) &&
+      (!queue->group || audio_state_disjoint(data, bytes, queue->group, sizeof(*queue->group)));
+}
+int xe_audio_queue_checkpoint_storage_valid(const xe_audio_queue *queue, const void *data, size_t bytes) {
+  return audio_state_ready(queue) && audio_state_external(queue, data, bytes);
+}
+int xe_audio_queue_capture(const xe_audio_queue *queue, xe_audio_queue_view *out) {
+  xe_audio_queue_view view;
+  size_t used, tail, offset, first;
+  int bits;
+  if (!out || !audio_state_ready(queue) || !audio_state_external(queue, out, sizeof(*out))) return 0;
+  out->state.version = 0;
+  used = retro_spsc_read_avail(&queue->samples);
+  if (used > queue->limit || used % queue->frame_bytes) return 0;
+  memset(&view, 0, sizeof(view));
+  view.state.version = 1;
+  view.state.channels = (uint32_t)(queue->frame_bytes / sizeof(float));
+  view.state.frames = (uint32_t)(used / queue->frame_bytes);
+  view.state.paused = retro_atomic_load_acquire_int(&queue->paused) != 0;
+  bits = retro_atomic_load_acquire_int(&queue->volume);
+  memcpy(&view.state.volume_bits, &bits, sizeof(bits));
+  if (used) {
+    tail = retro_atomic_load_acquire_size((retro_atomic_size_t *)&queue->samples.tail);
+    offset = tail & queue->samples.mask;
+    first = queue->samples.mirror ? used : queue->samples.capacity - offset;
+    if (first > used) first = used;
+    view.data[0] = queue->samples.buffer + offset;
+    view.bytes[0] = first;
+    if (used > first) {view.data[1] = queue->samples.buffer; view.bytes[1] = used - first;}
+  }
+  *out = view;
+  return 1;
+}
+static int audio_state_plan(const xe_audio_queue *queue, const xe_audio_queue_view *source,
+      size_t *bytes, int *same) {
+  xe_audio_queue_view current;
+  unsigned i;
+  if (!source || !audio_state_ready(queue) ||
+      !audio_state_external(queue, source, sizeof(*source)) ||
+      source->state.version != 1 || source->state.paused > 1 ||
+      source->state.channels != queue->frame_bytes / sizeof(float) ||
+      source->state.frames > queue->limit / queue->frame_bytes) return 0;
+  *bytes = (size_t)source->state.frames * queue->frame_bytes;
+  if (source->bytes[0] > *bytes || source->bytes[1] != *bytes - source->bytes[0]) return 0;
+  for (i = 0; i < 2; ++i) {
+    if (!!source->data[i] != !!source->bytes[i] ||
+        !audio_state_disjoint(source->data[i], source->bytes[i], source, sizeof(*source))) return 0;
+  }
+  if (!xe_audio_queue_capture(queue, &current)) return 0;
+  *same = current.bytes[0] == source->bytes[0] && current.bytes[1] == source->bytes[1] &&
+      current.data[0] == source->data[0] && current.data[1] == source->data[1];
+  if (!*same) for (i = 0; i < 2; ++i)
+    if (!audio_state_external(queue, source->data[i], source->bytes[i])) return 0;
+  return 1;
+}
+int xe_audio_queue_can_restore(const xe_audio_queue *queue, const xe_audio_queue_view *view) {
+  size_t bytes;
+  int same;
+  return audio_state_plan(queue, view, &bytes, &same);
+}
+int xe_audio_queue_restore(xe_audio_queue *queue, const xe_audio_queue_view *view) {
+  size_t bytes;
+  int same, bits;
+  if (!audio_state_plan(queue, view, &bytes, &same)) return 0;
+  if (!same) {
+    /* Both endpoints are quiescent. Fill final backing, then publish one whole
+     * frame interval; no temporary gather, partial frame or readiness wake. */
+    retro_spsc_clear(&queue->samples);
+    if (view->bytes[0]) memcpy(queue->samples.buffer, view->data[0], view->bytes[0]);
+    if (view->bytes[1]) memcpy(queue->samples.buffer + view->bytes[0], view->data[1], view->bytes[1]);
+    retro_atomic_store_release_size(&queue->samples.head, bytes);
+  }
+  memcpy(&bits, &view->state.volume_bits, sizeof(bits));
+  retro_atomic_store_release_int(&queue->volume, bits);
+  retro_atomic_store_release_int(&queue->paused, view->state.paused != 0);
+  return 1;
 }

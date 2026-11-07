@@ -13,6 +13,7 @@ static int converted;
 static retro_atomic_int_t started, done, failed;
 static retro_eventcount_t completion;
 static size_t written;
+int xe_audio_queue_state_tests(unsigned channels);
 
 static float sample(size_t index) { return (float)(index % 16384) - 8192.0f; }
 
@@ -178,6 +179,7 @@ static int matrix_test(unsigned output_channels, int be) {
 }
 
 int main(void) {
+  if (!xe_audio_queue_state_tests(2) || !xe_audio_queue_state_tests(6)) return 8;
   if (!retro_eventcount_init(&completion)) return 1;
   if (xe_audio_queue_new(1) || xe_audio_queue_new(8)) return 2;
   if (!stream_test(2) || !stream_test(6)) return 3;

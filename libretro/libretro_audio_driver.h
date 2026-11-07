@@ -11,6 +11,7 @@
 #define LIBRETRO_AUDIO_DRIVER_H
 
 #include "core_audio_queue.h"
+#include "core_audio_driver_state.h"
 #include <memory>
 #include <cstring>
 
@@ -46,6 +47,11 @@ class LibretroAudioDriver : public AudioDriver {
   void Pause() override;
   void Resume() override;
   void SetVolume(float volume) override;
+  /* Exclusive state owner: driver, frontend mixer and lifecycle are quiescent.
+   * Views borrow PCM. Restore requires the same driver format and a live queue. */
+  bool CaptureState(xe_audio_driver_view* out) const;
+  bool CanRestoreState(const xe_audio_driver_view* view) const;
+  bool RestoreState(const xe_audio_driver_view* view);
 
  private:
   void Resample(const float* in, size_t frames);

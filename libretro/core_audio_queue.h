@@ -2,12 +2,34 @@
 #ifndef XE_CORE_AUDIO_QUEUE_H
 #define XE_CORE_AUDIO_QUEUE_H
 #include <stddef.h>
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 typedef struct xe_audio_queue xe_audio_queue;
 typedef struct xe_audio_registry xe_audio_registry;
 typedef struct xe_audio_group xe_audio_group;
+/* Quiescent native checkpoint, not a portable wire record. PCM borrows at most
+ * two ring spans until any queue mutation/destruction. Stop/retirement is not
+ * restorable. Quiesce producers, frontend mixing and lifecycle/control callers.
+ * These calls add no lock, allocation, wait or event notification. */
+typedef struct xe_audio_queue_state {
+  uint32_t version, channels, frames, paused, volume_bits;
+} xe_audio_queue_state;
+typedef struct xe_audio_queue_view {
+  xe_audio_queue_state state;
+  const void *data[2];
+  size_t bytes[2];
+} xe_audio_queue_view;
+int xe_audio_queue_capture(const xe_audio_queue *queue, xe_audio_queue_view *out);
+/* Composite checkpoint records must also stay outside known queue backing and
+ * lifecycle metadata. This checks disjointness, not arbitrary pointer validity. */
+int xe_audio_queue_checkpoint_storage_valid(const xe_audio_queue *queue, const void *data, size_t bytes);
+int xe_audio_queue_can_restore(const xe_audio_queue *queue, const xe_audio_queue_view *view);
+/* Input metadata/PCM must remain immutable through restore. Exact live-span
+ * restore is copy-free; all other overlapping ring/owner aliases reject.
+ * External payload goes directly into existing final ring storage. */
+int xe_audio_queue_restore(xe_audio_queue *queue, const xe_audio_queue_view *view);
 /* A single frontend mixer and concurrent driver creation/retirement.
  * Stop is thread-safe; quiesce creation, retirement and the frontend before
  * releasing its root owner. Existing queues may be freed afterwards.

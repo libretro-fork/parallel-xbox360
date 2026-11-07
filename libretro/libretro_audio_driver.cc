@@ -154,6 +154,42 @@ void LibretroAudioDriver::Pause() { xe_audio_queue_pause(ring_.get(), 1); }
 void LibretroAudioDriver::Resume() { xe_audio_queue_pause(ring_.get(), 0); }
 void LibretroAudioDriver::SetVolume(float volume) { xe_audio_queue_volume(ring_.get(), volume); }
 
+bool LibretroAudioDriver::CaptureState(xe_audio_driver_view* out) const {
+  xe_audio_driver_view view = {};
+  if (!xe_audio_driver_storage_external(out, sizeof(*out), this, sizeof(*this)) ||
+      !xe_audio_queue_checkpoint_storage_valid(ring_.get(), out, sizeof(*out))) return false;
+  view.version = 1;
+  view.frequency = frequency_;
+  view.channels = channels_;
+  view.output_channels = out_channels_;
+  view.channel_frames = channel_samples_;
+  view.planar_be = need_format_conversion_;
+  view.resample_position = resample_pos_;
+  std::memcpy(view.last, last_, sizeof(last_));
+  if (!xe_audio_queue_capture(ring_.get(), &view.queue)) return false;
+  *out = view;
+  return true;
+}
+
+bool LibretroAudioDriver::CanRestoreState(const xe_audio_driver_view* view) const {
+  return xe_audio_driver_storage_external(view, sizeof(*view), this, sizeof(*this)) &&
+      xe_audio_queue_checkpoint_storage_valid(ring_.get(), view, sizeof(*view)) &&
+      xe_audio_driver_view_valid(view, frequency_, channels_, out_channels_,
+      channel_samples_, need_format_conversion_) &&
+      (!view->queue.bytes[0] || xe_audio_driver_storage_external(view->queue.data[0],
+          view->queue.bytes[0], this, sizeof(*this))) &&
+      (!view->queue.bytes[1] || xe_audio_driver_storage_external(view->queue.data[1],
+          view->queue.bytes[1], this, sizeof(*this))) &&
+      xe_audio_queue_can_restore(ring_.get(), &view->queue);
+}
+
+bool LibretroAudioDriver::RestoreState(const xe_audio_driver_view* view) {
+  if (!CanRestoreState(view) || !xe_audio_queue_restore(ring_.get(), &view->queue)) return false;
+  resample_pos_ = view->resample_position;
+  std::memcpy(last_, view->last, sizeof(last_));
+  return true;
+}
+
 // ---- LibretroAudioSystem --------------------------------------------------
 
 LibretroAudioSystem::LibretroAudioSystem(cpu::Processor* processor, xe_audio_registry* registry)

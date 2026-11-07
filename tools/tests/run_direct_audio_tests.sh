@@ -21,9 +21,17 @@ for plain in 0 1; do
  ${CC:-cc} -std=c89 -Wall -Wextra -Werror -O2 -g $san $simd $flag $platform_flags \
  -DHAVE_THREADS -DHAVE_THREAD_STORAGE -I"$root/libretro" -I"$common/include" \
  "$root/libretro/core_audio_queue.c" "$root/libretro/core_audio_convert.c" \
- "$root/tools/tests/core_audio_queue_test.c" "$common/queues/retro_spsc.c" \
+ "$root/tools/tests/core_audio_queue_test.c" "$root/tools/tests/core_audio_queue_state_test.c" "$common/queues/retro_spsc.c" \
  "$common/rthreads/rthreads.c" "$common/rthreads/retro_eventcount.c" \
  "$common/features/features_cpu.c" "$common/compat/compat_strl.c" \
  "$common/time/rtime.c" -pthread $platform_libs -o "$out/queue-$plain$ext"
  "$out/queue-$plain$ext"
+ ${CC:-cc} -std=c89 -Wall -Wextra -Werror -O2 -g $san $simd $flag $platform_flags \
+ -DXE_AUDIO_REGISTRY_TEST -DHAVE_THREADS -DHAVE_THREAD_STORAGE -I"$root/libretro" -I"$common/include" \
+ "$root/libretro/core_audio_queue.c" "$root/libretro/core_audio_convert.c" \
+ "$root/tools/tests/core_audio_registry_test.c" "$common/queues/retro_spsc.c" \
+ "$common/rthreads/rthreads.c" "$common/rthreads/retro_eventcount.c" \
+ "$common/features/features_cpu.c" "$common/compat/compat_strl.c" \
+ "$common/time/rtime.c" -pthread $platform_libs -o "$out/registry-$plain$ext"
+ "$out/registry-$plain$ext"
 done

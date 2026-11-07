@@ -1,0 +1,55 @@
+Quiescent audio queue/driver checkpoints (0166)
+=================================================
+Fixed C89 queue metadata records version, channels, unread frames, pause and raw
+volume bits. A native view borrows at most two unread PCM spans. Capture does not
+consume the ring or alter its cached cursors. Mirrored spans may cross the alias;
+plain rings expose physical wrap, including a split within a six-channel frame.
+This is a native component view, not a portable wire record or pointer parser.
+
+All producers, frontend mixing and lifecycle/control callers must be quiescent.
+The API does not pause them or interrupt a full-queue writer. A leased registry
+slot, stopped queue/group/registry, retired owner, malformed record, wrong format,
+oversized count, wrapped pointer or known owner/backing alias rejects before
+mutation. Composite driver records also validate their full storage region.
+Exact unchanged live spans restore PCM without a copy/cursor reset. Other inputs
+must be immutable and disjoint from final backing; their two spans copy directly
+into existing storage, with one whole-frame head publication after both copies.
+No scratch allocation, wait, readiness notification or normal audio-path change.
+Source lifetime remains the caller's obligation; views expire at mutation.
+
+Driver metadata retains its fixed format/chunk contract and existing media
+resampler position plus six previous-channel samples. C89 validation rejects
+format mismatch and noncanonical/negative/NaN/infinite phase. A 48kHz driver must
+have zero phase. No conversion/resampling is performed by capture/restore.
+Driver restore validates queue state before mutating it and then adopts scalar
+carry/history. It still requires global preflight before multi-client restore;
+APU callbacks/media/clock/semaphores and other subsystems are not captured here.
+
+Executed local Windows x64 coverage is recorded below.
+Queue cases use stereo/5.1, empty/full/partial wrapped rings, exact live views,
+external payload splits at arbitrary byte boundaries, no-mutation rejection and
+existing 200000-frame producer/consumer and bounded cancellation fixtures.
+Registry lease fixtures require checkpoint rejection while a read lease exists.
+Native driver continuation compares complete PCM and exact carry after restoring
+and resubmitting the next chunk, across 48/44.1/32kHz, stereo/5.1 and planar BE or
+interleaved LE input. No frontend/system/guest CPU/GPU is constructed or run.
+
+Full libretro savestates are still disabled. No gameplay, hardware-accuracy,
+FPS, RSS, whole-core leak-freedom or measured latency improvement is claimed.
+
+Validation: full GNU Make -j5 and native MSVC core builds pass. GNU strict C89
+queue/registry fixtures pass for mirrored/plain backends, with forced plain-wrap
+coverage, 96 state roundtrips per channel format and existing concurrent tests.
+Native /TC /W4 /WX and scoped MSVC ASan direct tests pass for both backends.
+All 18 actual driver continuations pass on GNU, native MSVC and scoped ASan.
+Direct ASan instruments queue/convert and test code; driver ASan instruments
+actual driver/queue and driver/bridge, with remaining core/common libraries normal.
+This is not a full sanitizer build. Optional GNU linked allocator wrappers observe
+zero malloc/calloc/realloc/free calls after initialization through all checkpoint,
+continuation/rejection and stop calls in each of the 18 cases. It does not trace
+all OS allocation APIs or establish whole-core allocation freedom.
+
+Reproduce: run_direct_audio_tests.sh/.cmd and run_audio_driver_state_tests.sh/.cmd.
+Set AUDIO_STATE_ALLOC_TEST=1 with a separate AUDIO_STATE_OUT for GNU counters.
+Native selects AUDIO_STATE_BUILD=build\\tests\\state-control-cmake here.
+Remote Linux/ARM CI was added but is not claimed run locally.

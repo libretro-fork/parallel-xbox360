@@ -1506,3 +1506,16 @@ adapter, then links it before the ordinary archive. The adapter calls real FFmpe
 with its allocator exhausted for open only. No production test hook is compiled.
 For scoped ASan, pass DECODER_STATE_FLAGS and root/bitmap override objects as usual;
 do not also supply an ordinary raw-context override, since this mode builds it.
+
+Audio component checkpoints use run_direct_audio_tests.sh/.cmd for the C89 queue
+and registry suite, mirrored/plain backends and active-read-lease rejection.
+run_audio_driver_state_tests.sh/.cmd links actual driver/core objects and checks
+exact PCM/carry continuation across 18 format/rate combinations. Native selection
+uses AUDIO_STATE_BUILD, AUDIO_STATE_OUT and AUDIO_STATE_FLAGS; optional
+AUDIO_STATE_DRIVER_OBJECT/AUDIO_STATE_OBJECT select matching sanitizer overrides.
+These APIs require exclusive quiescence and do not enable global serialization.
+
+AUDIO_STATE_ALLOC_TEST=1 adds GNU test-only linked malloc/calloc/realloc/free
+wrappers. All operations after driver initialization through checkpoint/replay
+and stop must leave the counters unchanged; construction/destruction are outside
+the measured interval. This is not whole-process/OS allocation tracing.

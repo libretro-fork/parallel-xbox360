@@ -28,7 +28,11 @@ static int wait_flag(retro_atomic_int_t *flag) {
   return retro_atomic_load_acquire_int(flag);
 }
 void xe_audio_registry_test_lease(xe_audio_queue *queue) {
+  xe_audio_queue_view state;
   if (queue != leased) return;
+  memset(&state,0,sizeof(state));state.state.version=1;state.state.channels=6;
+  if (xe_audio_queue_capture(queue,&state) || xe_audio_queue_can_restore(queue,&state) ||
+      xe_audio_queue_restore(queue,&state)) retro_atomic_store_release_int(&failed,1);
   retro_atomic_store_release_int(&entered, 1);
   retro_eventcount_notify(&event);
   if (!wait_flag(&released)) retro_atomic_store_release_int(&failed, 1);

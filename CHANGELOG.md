@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Audio queue/driver checkpoints now retain unread PCM, pause/volume bits and native resampler continuation state under exclusive quiescence. Capture borrows up to two SPSC spans without consuming them; restore reuses existing final ring storage, with a copy-free exact-live-view path. Format/phase/alias mismatches, stopped streams and active frontend leases reject. This is component state support; full libretro savestates remain unfinished, and ordinary audio pacing/conversion is unchanged.
+
 - XMA codec format changes now open the replacement before releasing the live decoder. Allocation/open failures retain its configuration and history, and decoding restores input/loop controls instead of consuming the frame. Matching formats keep the allocation-free path. Fault-injection regressions cover cold/warm replacement, guest cursor preservation and successful retry; audio scheduling remains unchanged.
 
 - Decoder-wide raw XMA restore prepares all 320 replacement codecs before changing live state, rejects stale final owners and unsafe PCM aliases, and commits the allocation map, owners and registers only after preflight. Staging uses fixed caller-owned C89 storage, borrows registers/pending PCM and adopts prepared codec backing. No decoding-loop allocation or audio scheduling change is added. Complete libretro savestates remain unfinished.
