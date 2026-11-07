@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Shader-cache warmup on Vulkan and D3D12 replaces temporary task/thread vectors, Xenia thread wrappers and C++ work counters with borrowed C89 storage, common atomic claims and libretro-common workers. Small batches avoid redundant worker startup; allocation or partial thread-creation failures retain caller participation. Workers join before storage release or native exception propagation. Vulkan counts completions once per worker rather than once per shader; shader output and audio scheduling are unchanged.
+
 - Vulkan/D3D12 pipeline entries replace C++ atomics with a C89 libretro-common publication record. Concrete placeholder handles remain the basis for draw bindings; packed flags retain independent concurrent updates. D3D12 warm-up failure and pending completion now publish together after the creator's last description read, preventing an old completion from clearing an immediate retry's pending bit. Synchronous warm-up failures also become retryable. Existing shader output, deferred retirement, completion waits and audio cadence remain.
 
 - Removed Vulkan's unused texture/sampler layout UID registry from shader translation. This removes its mutex, hash/collision comparisons, vector/map growth, binding-array copies and per-shader once flag/UID fields. No code consumed these IDs; actual binding metadata, pipeline layouts and shader output are unchanged. This removes avoidable translation work without changing audio or rendering accuracy; gameplay gains are unmeasured.

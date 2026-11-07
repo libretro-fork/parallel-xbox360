@@ -1,0 +1,39 @@
+Shader-cache bulk warmup (0172)
+==============================
+Vulkan translation and D3D12 analysis now borrow immutable shader owners via
+exact-capacity C89 worklists. The original pointer/metadata records are filled
+once before starting workers. Workers claim indexes without queueing or moving
+the records, and task storage is released only after every worker joins. The
+D3D12 list reserves at most min(resident shader count, translation-key count).
+Three C++ atomic work/completion counters and four temporary task/thread vectors
+are removed. Native shader implementations, cache formats and audio are unchanged.
+
+The C89 bulk runner uses common atomics and rthreads with existing 4MiB stacks.
+Zero work invokes no callback; one job creates no background thread. The caller
+participates, and array-allocation/partial thread-creation failure leaves all work
+for it and surviving workers. Cancellation stops new claims on a best-effort
+basis: already claimed jobs may finish. No per-job payload is allocated or copied.
+Vulkan accumulates success counts locally and adds once per nonempty worker batch,
+replacing its per-shader completion RMW. Bounded claims do not overshoot count or
+wrap the final signed64 index. Native C++ exception glue captures one failure and
+joins all owners before rethrow; it does not roll back a partially analyzed shader
+or silently accept an incomplete cache. Failed real shader objects must not be
+assumed transactionally retryable. Normal cold storage/translator allocations
+remain. No allocation-free gameplay, FPS or shader-driver timing gain is claimed.
+
+Local verification on Windows, 2026-11-07:
+- Full static GNU Make build -j5 and full native MSVC CMake build --parallel5 PASS.
+- Strict C89 GNU and MSVC /TC /W4 /WX worker fixtures PASS, including 25 repeated
+  4096-job batches with six workers, exact borrowed writes, zero/single tasks,
+  serial fallback, array/partial creation failures, joins and signed64 exhaustion.
+  Fault redirection is test-object-only, not a release flag or telemetry path.
+- Native callback fixtures PASS: borrowed storage, caller/worker exceptions,
+  constructor failures, concurrent exception writers, joined stack owners and
+  raw task-storage reuse. Module/driver/bridge also pass MSVC AddressSanitizer;
+  the prebuilt common library and other core archives are not ASan-instrumented.
+- Existing real Vulkan/D3D12 pipeline-entry fixtures pass on both compilers:
+  concrete placeholder snapshots, full-width handles, metadata copy/publication,
+  20000 immediate retries and independent flag updates. Entry ABI stays32B/208B.
+Linux/ARM CI runners are wired, not run locally. No frontend, game, GPU submission
+or JIT execution was performed for this optimization. The installed core remains
+unchanged. Full savestates and the wider atomics/storage migration remain open.

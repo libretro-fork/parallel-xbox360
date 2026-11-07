@@ -16,6 +16,9 @@
 #include "libretro/core_cache_file.h"
 #include <cstring>
 #include <set>
+#include <new>
+#include "xenia/base/bulk_work.h"
+#include "libretro/core_gpu_worklist.h"
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
@@ -982,8 +985,13 @@ void VulkanPipelineCache::TranslateShadersForStorage(
     bool edram_fsi_used) {
   uint64_t translation_start = xe::Clock::QueryHostTickCount();
 
-  std::vector<std::pair<VulkanShader*, uint64_t>> translations_to_do;
-  translations_to_do.reserve(translations_needed.size());
+  struct TranslationItem { VulkanShader* shader; uint64_t modification; };
+  if (translations_needed.empty()) return;
+  xe_gpu_worklist translations_to_do = {};
+  std::unique_ptr<xe_gpu_worklist, decltype(&xe_gpu_worklist_close)> storage(
+      &translations_to_do, &xe_gpu_worklist_close);
+  if (!xe_gpu_worklist_init(&translations_to_do, translations_needed.size(),
+                            sizeof(TranslationItem))) throw std::bad_alloc();
   for (const auto& needed : translations_needed) {
     auto shader_it = shaders_.find(needed.first);
     if (shader_it == shaders_.end()) {
@@ -994,16 +1002,18 @@ void VulkanPipelineCache::TranslateShadersForStorage(
         static_cast<VulkanShader::VulkanTranslation*>(
             shader->GetOrCreateTranslation(needed.second));
     if (translation && !translation->is_translated()) {
-      translations_to_do.emplace_back(shader, needed.second);
+      new (xe_gpu_worklist_append(&translations_to_do))
+          TranslationItem{shader, needed.second};
     }
   }
 
-  if (translations_to_do.empty()) {
+  if (!translations_to_do.count) {
     return;
   }
 
-  std::atomic<size_t> translation_index{0};
-  std::atomic<size_t> translations_completed{0};
+  xe_bulk_work work;
+  if (!xe_bulk_work_init(&work, translations_to_do.count)) throw std::bad_alloc();
+  const auto* items = static_cast<const TranslationItem*>(translations_to_do.data);
 
   const ui::vulkan::VulkanDevice* vulkan_device =
       command_processor_.GetVulkanDevice();
@@ -1016,7 +1026,7 @@ void VulkanPipelineCache::TranslateShadersForStorage(
   bool precise_interpolation = precise_interpolation_supported();
 
   auto translate_function =
-      [this, &translations_to_do, &translation_index, &translations_completed,
+      [this, items, &work,
        vulkan_device, msaa_2x_attachments, msaa_2x_no_attachments,
        edram_fsi_used, precise_interpolation, draw_res_x, draw_res_y]() {
         // Each thread needs its own translator.
@@ -1025,22 +1035,20 @@ void VulkanPipelineCache::TranslateShadersForStorage(
             msaa_2x_no_attachments, edram_fsi_used, precise_interpolation,
             draw_res_x, draw_res_y);
 
-        while (true) {
-          size_t index = translation_index.fetch_add(1);
-          if (index >= translations_to_do.size()) {
-            break;
-          }
-          VulkanShader* shader = translations_to_do[index].first;
-          uint64_t modification = translations_to_do[index].second;
+        size_t index, completed = 0;
+        while (xe_bulk_work_claim(&work, &index)) {
+          VulkanShader* shader = items[index].shader;
+          uint64_t modification = items[index].modification;
           VulkanShader::VulkanTranslation* translation =
               static_cast<VulkanShader::VulkanTranslation*>(
                   shader->GetTranslation(modification));
           if (translation && !translation->is_translated()) {
             if (TranslateAnalyzedShader(translator, *translation)) {
-              translations_completed.fetch_add(1);
+              ++completed;
             }
           }
         }
+        xe_bulk_work_complete(&work, completed);
       };
 
   size_t thread_count = 0;
@@ -1053,26 +1061,12 @@ void VulkanPipelineCache::TranslateShadersForStorage(
       thread_count = std::min(uint32_t(cvars::vulkan_pipeline_creation_threads),
                               logical_processor_count);
     }
-    thread_count = std::min(thread_count, translations_to_do.size());
+    thread_count = std::min(thread_count, translations_to_do.count - 1);
   }
 
-  std::vector<std::unique_ptr<xe::threading::Thread>> translation_threads;
-  for (size_t i = 0; i < thread_count; ++i) {
-    auto thread = xe::threading::Thread::Create({}, translate_function);
-    if (thread) {
-      thread->set_name("Shader Translation");
-      translation_threads.push_back(std::move(thread));
-    }
-  }
+  RunBulkWork(work, thread_count, translate_function, "Shader Translation");
 
-  // Main thread also participates.
-  translate_function();
-
-  for (auto& thread : translation_threads) {
-    xe::threading::Wait(thread.get(), false);
-  }
-
-  XELOGI("Translated {} shaders in {} ms", translations_completed.load(),
+  XELOGI("Translated {} shaders in {} ms", xe_bulk_work_completed(&work),
          (xe::Clock::QueryHostTickCount() - translation_start) * 1000 /
              xe::Clock::QueryHostTickFrequency());
 }

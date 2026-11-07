@@ -13,10 +13,12 @@
 #include <cmath>
 #include <cstring>
 #include <sstream>
-#include <thread>
+#include <new>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
+#include "xenia/base/bulk_work.h"
+#include "libretro/core_gpu_worklist.h"
 #include "xenia/base/byte_order.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
@@ -1231,8 +1233,13 @@ void PipelineCache::AnalyzeShadersForStorage(
   // Only shaders referenced by a stored pipeline need analyzing. Analysis is
   // per ucode, not per translation, so the modification in the pair is ignored
   // here.
-  std::vector<SpirvShader*> shaders_to_analyze;
-  shaders_to_analyze.reserve(shaders_.size());
+  const size_t capacity = std::min(shaders_.size(), translations_needed.size());
+  if (!capacity) return;
+  xe_gpu_worklist shaders_to_analyze = {};
+  std::unique_ptr<xe_gpu_worklist, decltype(&xe_gpu_worklist_close)> storage(
+      &shaders_to_analyze, &xe_gpu_worklist_close);
+  if (!xe_gpu_worklist_init(&shaders_to_analyze, capacity, sizeof(SpirvShader*)))
+    throw std::bad_alloc();
   for (auto& shader_pair : shaders_) {
     SpirvShader* shader = shader_pair.second;
     uint64_t ucode_data_hash = shader->ucode_data_hash();
@@ -1240,23 +1247,22 @@ void PipelineCache::AnalyzeShadersForStorage(
             std::make_pair(ucode_data_hash, uint64_t(0))) !=
         translations_needed.upper_bound(
             std::make_pair(ucode_data_hash, UINT64_MAX))) {
-      shaders_to_analyze.push_back(shader);
+      new (xe_gpu_worklist_append(&shaders_to_analyze)) SpirvShader*(shader);
     }
   }
 
-  if (shaders_to_analyze.empty()) {
+  if (!shaders_to_analyze.count) {
     return;
   }
 
-  std::atomic<size_t> analysis_index{0};
+  xe_bulk_work work;
+  if (!xe_bulk_work_init(&work, shaders_to_analyze.count)) throw std::bad_alloc();
+  auto* shaders = static_cast<SpirvShader**>(shaders_to_analyze.data);
   auto analyze_function = [&]() {
     StringBuffer ucode_disasm_buffer;
-    while (true) {
-      size_t index = analysis_index.fetch_add(1);
-      if (index >= shaders_to_analyze.size()) {
-        break;
-      }
-      SpirvShader* shader = shaders_to_analyze[index];
+    size_t index;
+    while (xe_bulk_work_claim(&work, &index)) {
+      SpirvShader* shader = shaders[index];
       if (!shader->is_ucode_analyzed()) {
         shader->AnalyzeUcode(ucode_disasm_buffer);
       }
@@ -1267,25 +1273,10 @@ void PipelineCache::AnalyzeShadersForStorage(
   if (!logical_processor_count) {
     logical_processor_count = 6;
   }
-  size_t thread_count =
-      std::min(logical_processor_count - size_t(1), shaders_to_analyze.size());
-  std::vector<std::unique_ptr<xe::threading::Thread>> analysis_threads;
-  for (size_t i = 0; i < thread_count; ++i) {
-    auto thread = xe::threading::Thread::Create({}, analyze_function);
-    if (thread) {
-      thread->set_name("Shader Analysis");
-      analysis_threads.push_back(std::move(thread));
-    }
-  }
+  RunBulkWork(work, logical_processor_count - 1, analyze_function,
+              "Shader Analysis");
 
-  // Main thread also participates.
-  analyze_function();
-
-  for (auto& thread : analysis_threads) {
-    xe::threading::Wait(thread.get(), false);
-  }
-
-  XELOGI("Analyzed {} shaders in {} ms", shaders_to_analyze.size(),
+  XELOGI("Analyzed {} shaders in {} ms", shaders_to_analyze.count,
          (xe::Clock::QueryHostTickCount() - analysis_start) * 1000 /
              xe::Clock::QueryHostTickFrequency());
 }
