@@ -1421,3 +1421,15 @@ timeout, retained credits, repeated pause ownership and stop/join while paused.
 The pure C89 budget fixture covers sharing one deadline and signed overflow
 boundaries. Native ASan uses VBLANK_TEST_FLAGS=/fsanitize=address /Zi and a
 separate VBLANK_TEST_OUT. See state_quiescence_results.txt for coverage limits.
+
+Reusable state-operation controller
+-----------------------------------
+`run_state_control_tests.sh` or `.cmd` builds the production C89 controller with
+owned common thread/time support. Native ASan uses
+STATE_CONTROL_TEST_FLAGS=/fsanitize=address /Zi with a separate
+STATE_CONTROL_TEST_OUT. Fixtures cover partial failures, prior pauses, reverse
+rollback, reuse, 32-stage ownership and concurrent stop.
+
+`core_cold_graphics_test.c` is a Windows C89 OS-mapping oracle; its tiny native
+bridge instantiates actual GraphicsSystem owners with no Setup, GPU or JIT.
+Link it with matching current core objects, as described in state_control_results.txt.

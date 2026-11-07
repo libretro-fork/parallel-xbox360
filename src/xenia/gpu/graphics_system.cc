@@ -11,8 +11,7 @@
 
 #include <retro_atomic.h>
 
-#include "libretro/core_state_budget.h"
-#include <features/features_cpu.h>
+
 
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/clock.h"
@@ -81,13 +80,28 @@ __declspec(dllexport) uint32_t AmdPowerXpressRequestHighPerformance = 1;
 #endif  // XE_PLATFORM_WIN32
 
 GraphicsSystem::GraphicsSystem() {
+  static const xe_state_stage stages[] = {
+    {[](void* p) noexcept -> int {return xe_vblank_queue_is_paused(static_cast<GraphicsSystem*>(p)->vblank_queue_);},
+     [](void* p,int64_t timeout) noexcept -> int {return xe_vblank_queue_pause(static_cast<GraphicsSystem*>(p)->vblank_queue_,timeout);},
+     [](void* p) noexcept {xe_vblank_queue_resume(static_cast<GraphicsSystem*>(p)->vblank_queue_);}},
+    {[](void* p) noexcept -> int {auto* cp=static_cast<GraphicsSystem*>(p)->command_processor_.get();return cp && cp->is_paused();},
+     [](void* p,int64_t timeout) noexcept -> int {
+       auto* cp=static_cast<GraphicsSystem*>(p)->command_processor_.get();
+       try {return cp && cp->PauseForState(timeout);} catch(...) {return 0;}
+     },
+     [](void* p) noexcept {auto* cp=static_cast<GraphicsSystem*>(p)->command_processor_.get();if(cp) cp->Resume();}}
+  };
+  if(!xe_state_control_init(&pause_control_,stages,2,this,nullptr)) throw std::bad_alloc();
   register_file_ = reinterpret_cast<RegisterFile*>(memory::AllocFixed(
       nullptr, sizeof(RegisterFile), memory::AllocationType::kReserveCommit,
       memory::PageAccess::kReadWrite));
+  if(!register_file_) throw std::bad_alloc();
 }
 
 GraphicsSystem::~GraphicsSystem() {
   xe_vblank_queue_free(vblank_queue_);
+  if(register_file_) memory::DeallocFixed(register_file_,sizeof(RegisterFile),
+      memory::DeallocationType::kRelease);
 }
 
 X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
@@ -158,6 +172,7 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
 }
 
 void GraphicsSystem::Shutdown() {
+  xe_state_control_stop(&pause_control_);
   if (command_processor_) {
     EndTracing();
     command_processor_->Shutdown();
@@ -400,33 +415,13 @@ void GraphicsSystem::Pause() {
 }
 
 bool GraphicsSystem::PauseForState(int64_t timeout_us) {
-  xe_state_budget budget;
-  if(!xe_state_budget_begin(&budget,cpu_features_get_time_usec(),timeout_us) ||
-      !command_processor_ || !vblank_queue_ ||
+  if(!command_processor_ || !vblank_queue_ ||
       (vblank_worker_thread_ && kernel::XThread::IsInThread(vblank_worker_thread_.get()))) return false;
-  const bool had_vblank=xe_vblank_queue_is_paused(vblank_queue_)!=0;
-  const bool had_gpu=command_processor_->is_paused();
-  if(!xe_vblank_queue_pause(vblank_queue_,xe_state_budget_left(&budget,cpu_features_get_time_usec()))) return false;
-  try {
-    if(!command_processor_->PauseForState(xe_state_budget_left(&budget,cpu_features_get_time_usec()))) {
-      if(!had_vblank) xe_vblank_queue_resume(vblank_queue_);
-      return false;
-    }
-  } catch(...) {
-    if(!had_vblank) xe_vblank_queue_resume(vblank_queue_);
-    throw;
-  }
-  if(!paused_) state_pause_owned_=0;
-  if(!had_vblank) state_pause_owned_|=1;
-  if(!had_gpu) state_pause_owned_|=2;
-  paused_=true;return true;
+  return xe_state_control_acquire(&pause_control_,timeout_us)!=0;
 }
 
 void GraphicsSystem::Resume() {
-  unsigned owned=state_pause_owned_;
-  state_pause_owned_=0;paused_=false;
-  if((owned&2) && command_processor_) command_processor_->Resume();
-  if(owned&1) xe_vblank_queue_resume(vblank_queue_);
+  xe_state_control_release(&pause_control_);
 }
 
 bool GraphicsSystem::Save(ByteStream* stream) {

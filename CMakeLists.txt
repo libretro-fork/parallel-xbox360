@@ -29,6 +29,15 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+# C89 control records cross C/C++ boundaries. Use the same scalar atomic ABI
+# in both languages, matching the static Make build rather than mixing C11
+# atomic storage with C++ std::atomic members.
+if(MSVC)
+  add_compile_definitions(RETRO_ATOMIC_FORCE_MSVC)
+else()
+  add_compile_definitions(RETRO_ATOMIC_FORCE_GCC_NEW)
+endif()
+
 if(MINGW)
   # Use one D3D12 header version, including libretro's public hardware interface.
   include_directories(BEFORE "${PROJECT_SOURCE_DIR}/third_party/DirectX-Headers/include/directx")

@@ -11,6 +11,7 @@
 #define XENIA_APU_AUDIO_SYSTEM_H_
 
 #include "libretro/core_pause_gate.h"
+#include "libretro/core_state_control.h"
 #include <retro_atomic.h>
 #include <mutex>
 
@@ -121,7 +122,7 @@ class AudioSystem {
   };
   ClientSlot clients_[kMaximumClientCount];
 
-  unsigned state_pause_owned_ = 0;
+  xe_state_control pause_control_{};
   int FindFreeClient();
 
   std::unique_ptr<xe::threading::Semaphore>

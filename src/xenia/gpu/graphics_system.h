@@ -18,6 +18,7 @@
 #include <thread>
 
 #include "libretro/core_vblank.h"
+#include "libretro/core_state_control.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/gpu/register_file.h"
 #include "xenia/kernel/xthread.h"
@@ -109,7 +110,7 @@ class GraphicsSystem {
   void RequestEndTracing();
   bool is_tracing_stream() const;
 
-  bool is_paused() const { return paused_; }
+  bool is_paused() const { return xe_state_control_held(&pause_control_) != 0; }
   void Pause();
   bool PauseForState(int64_t timeout_us);
   void Resume();
@@ -164,8 +165,7 @@ class GraphicsSystem {
   RegisterFile* register_file_;
   std::unique_ptr<CommandProcessor> command_processor_;
 
-  bool paused_ = false;
-  unsigned state_pause_owned_ = 0;
+  xe_state_control pause_control_{};
 
   xe_vblank_queue* vblank_queue_ = nullptr;
 

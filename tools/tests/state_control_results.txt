@@ -1,0 +1,77 @@
+Reusable component pause controller and register mapping ownership (0158)
+=======================================================================
+core_state_control.c now drives the graphics and APU PauseForState/Resume paths.
+It replaces their duplicated native mask/deadline transitions with C89 logic.
+The controller embeds 40 bytes on tested x64 ABIs and borrows an immutable stage
+table and stable context. Tables are static native function/context adapters;
+there is no per-operation allocation, table copy or captured C++ callable.
+Callbacks must not throw; native throwing acquire paths catch exceptions and
+report failure before crossing the C frame. Queries must not block, acquisitions
+must honor their remaining timeout, and releases must undo partial acquisitions.
+
+One control owner drives acquire/release. Atomic states reject reentrant
+transitions rather than block; repeating acquire while held by that same owner
+is idempotent. The first acquisition verifies every stage, including already
+paused stages, while recording ownership only for newly requested pauses.
+Ownership is recorded before invoking acquire, so failure before or after a
+stage changes state still triggers cleanup. Rollback and ordinary release run
+in reverse order and preserve preexisting pauses. A real atomic backend is
+required; the volatile fallback is rejected at compilation.
+
+Stop is sticky and may be published by another thread. It runs no stage callback
+on that thread. An acquisition checks stop cooperatively between phases and
+before publishing success; an operation already fully acquired can overlap stop
+and remain held. Stop does not revoke a held operation. The owner must return
+before its context is destroyed; resource workers still stop/join externally.
+The graphics/APU shutdown paths preserve their existing joins and gate stops.
+The controller has no destructor callback that could resume a stopped child.
+
+One host-time budget is passed down the stage chain. Deterministic test clocks
+verify 35/25/15 remaining-time propagation. Production uses owned common time
+only for bounded control waits. No periodic watchdog, guest clock, frame limiter,
+sample conversion or normal delivery buffer is introduced. The frontend pause
+watchdog and full emulator-wide snapshot coordination are separate unfinished
+work; libretro serialization remains disabled.
+
+CMake explicitly selects RETRO_ATOMIC_FORCE_MSVC or FORCE_GCC_NEW across both
+languages, matching the static Make scalar ABI instead of choosing C11 and
+C++ std::atomic storage independently by language mode. Fresh MSVC/Ninja
+configuration produced 683 compile commands, all with FORCE_MSVC and none with
+conflicting C11/CXX11 selection. The actual new C source compiled with its
+generated CMake command. This is not a full native CMake core-build claim.
+
+GraphicsSystem previously allocated RegisterFile using AllocFixed but never
+released that host mapping. Its constructor now rejects allocation failure and
+its destructor releases the mapping after existing shutdown/join ownership.
+No other register-file deallocation owner was found. Emulator shutdown destroys
+graphics before memory. This fixes host virtual/committed storage, not a GPU
+render-target or VRAM leak.
+
+Validation:
+- MSVC /TC /W4 /WX normal and ASan controller fixtures pass; MinGW fixture and
+  strict GNU C89/pedantic compilation of new controller/test sources pass.
+- 64 combinations of prior pauses and failure before/after mutation; reverse
+  cleanup, already-held acquisition, recursive transition rejection and idle
+  release are checked. 10,000 reuse cycles and all 32 ownership bits pass.
+- 256 concurrent stop races during a held stage unwind exactly the owned
+  resources; future acquisitions fail. Held-stop then explicit release passes.
+- Forced volatile backend compilation fails at the intended atomic guard.
+- Actual graphics/APU native caller syntax and full Windows Make -j5 pass.
+- A C89 Windows driver and minimal C++ object ABI bridge link against actual
+  current GNU core objects. 128 cold GraphicsSystem owners pass VirtualQuery
+  MEM_COMMIT before deletion and MEM_FREE afterward: 11,010,048 committed
+  register-mapping bytes released. Unconfigured pause fails safely. No Setup,
+  frontend, renderer, device, worker or guest JIT is created in that fixture.
+
+For the actual cold-object fixture, compile core_cold_graphics_test.c as C89,
+then use run_shader_publication_tests.sh with
+  CXX='g++ build/tests/cold-graphics-driver.o'
+  TEST_SOURCE=tools/tests/cold_graphics_bridge.cc
+and a separate TEST_BUILD_DIR, after the matching current core Make completes.
+The native bridge only constructs, queries and destroys the real C++ owner;
+the allocation/mapping regression logic lives in C89.
+
+No TSan, full live graphics/APU pause integration, gameplay, FPS or latency
+measurement. Snapshot capture still needs CPU/I/O/media/timer/clock ownership,
+GPU state/readback and complete validated restore, including host-failure
+recovery. Other renderer, allocation, locking and I/O goals remain active.

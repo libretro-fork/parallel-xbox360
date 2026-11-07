@@ -9,8 +9,7 @@
 
 #include "xenia/apu/audio_system.h"
 #include <limits>
-#include "libretro/core_state_budget.h"
-#include <features/features_cpu.h>
+
 
 #include "xenia/apu/apu_flags.h"
 #include "xenia/apu/audio_driver.h"
@@ -66,6 +65,24 @@ AudioSystem::AudioSystem(cpu::Processor* processor)
   assert_not_null(pending_work_event_);
 
   xma_decoder_ = std::make_unique<xe::apu::XmaDecoder>(processor_);
+  static const xe_state_stage stages[] = {
+    {[](void* p) noexcept -> int {return static_cast<AudioSystem*>(p)->is_paused();},
+     [](void* p,int64_t timeout) noexcept -> int {
+       auto* self=static_cast<AudioSystem*>(p);
+       try {
+         xe_pause_gate_set(self->pause_gate_.get(),1);
+         if(self->pending_work_event_) self->pending_work_event_->Set();
+         return !retro_atomic_load_acquire_int(&self->worker_running_) ||
+             xe_pause_gate_wait_workers(self->pause_gate_.get(),1,timeout);
+       } catch(...) {return 0;}
+     },
+     [](void* p) noexcept {xe_pause_gate_set(static_cast<AudioSystem*>(p)->pause_gate_.get(),0);}},
+    {[](void* p) noexcept -> int {auto* xma=static_cast<AudioSystem*>(p)->xma_decoder_.get();return xma && xma->is_paused();},
+     [](void* p,int64_t timeout) noexcept -> int {auto* xma=static_cast<AudioSystem*>(p)->xma_decoder_.get();try {return !xma || xma->PauseForState(timeout);} catch(...) {return 0;}},
+     [](void* p) noexcept {auto* xma=static_cast<AudioSystem*>(p)->xma_decoder_.get();if(xma) xma->Resume();}}
+  };
+  if(!xe_state_control_init(&pause_control_,stages,2,this,nullptr)) throw std::bad_alloc();
+
 
 
 }
@@ -224,6 +241,7 @@ int AudioSystem::FindFreeClient() {
 void AudioSystem::Initialize() {}
 
 void AudioSystem::StopWorker() {
+  xe_state_control_stop(&pause_control_);
   retro_atomic_store_release_int(&worker_running_, 0);
   pending_work_event_->Set();
   // A paused worker waits for the resume.
@@ -486,35 +504,12 @@ void AudioSystem::Pause() {
 }
 
 bool AudioSystem::PauseForState(int64_t timeout_us) {
-  xe_state_budget budget;
-  if(!xe_state_budget_begin(&budget,cpu_features_get_time_usec(),timeout_us) ||
-      (worker_thread_ && kernel::XThread::IsInThread(worker_thread_.get()))) return false;
-  const bool had_apu=is_paused();
-  const bool had_xma=xma_decoder_ && xma_decoder_->is_paused();
-  xe_pause_gate_set(pause_gate_.get(),1);
-  if(pending_work_event_) pending_work_event_->Set();
-  if(retro_atomic_load_acquire_int(&worker_running_) &&
-      !xe_pause_gate_wait_workers(pause_gate_.get(),1,
-          xe_state_budget_left(&budget,cpu_features_get_time_usec()))) {
-    if(!had_apu) xe_pause_gate_set(pause_gate_.get(),0);
-    return false;
-  }
-  if(xma_decoder_ && !xma_decoder_->PauseForState(
-      xe_state_budget_left(&budget,cpu_features_get_time_usec()))) {
-    if(!had_apu) xe_pause_gate_set(pause_gate_.get(),0);
-    return false;
-  }
-  if(!had_apu) state_pause_owned_=0;
-  if(!had_apu) state_pause_owned_|=1;
-  if(xma_decoder_ && !had_xma) state_pause_owned_|=2;
-  return true;
+  if(worker_thread_ && kernel::XThread::IsInThread(worker_thread_.get())) return false;
+  return xe_state_control_acquire(&pause_control_,timeout_us)!=0;
 }
 
 void AudioSystem::Resume() {
-  unsigned owned=state_pause_owned_;
-  state_pause_owned_=0;
-  if((owned&2) && xma_decoder_) xma_decoder_->Resume();
-  if(owned&1) xe_pause_gate_set(pause_gate_.get(),0);
+  xe_state_control_release(&pause_control_);
 }
 
 }  // namespace apu
