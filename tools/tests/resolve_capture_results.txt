@@ -1,0 +1,57 @@
+Prepared resolve ownership (0152)
+================================
+Vulkan and D3D12 previously walked ownership for native-scale classification,
+again for fast-copy eligibility, and again when collecting direct-dispatch
+rectangles. A direct preflight failure then collected the same rows for fallback.
+Converting paths could also repeat the native-only and dump walks.
+
+Resolve now captures into the existing cold fixed worklist once, accumulating
+both existing C89 scan flags in its native record adapter. required=0 ensures
+classification does not early-stop capture on mixed scale or layout mismatch.
+Native selection, eligibility and direct/fallback dispatch borrow the captured
+rows. No second metadata list or global snapshot cache, epoch, mutex, atomic,
+allocation or release profiling counter is added. Failed-direct fallback no
+longer recopies the rectangle metadata. Successful direct and ordinary fallback
+still copy each stack-produced row once into its necessary owned lifetime.
+
+This is GPU-command-processor-owned storage, scoped to the current Resolve
+copy. Existing code does not mutate ownership between capture and dispatch;
+native-scale info recalculation was already based on that same EDRAM tile span.
+No borrowed row may outlive its worklist reset. Whole-aperture trace downloads
+use the default fresh collection path. Overflow fails the Resolve before GPU
+copy work; a partial list is not dispatched. Empty, partially-owned, mismatched
+or converting resolves keep their original fallback decisions. No changes to
+pixel shaders, conversion precision, barriers, native descriptor lifetime,
+mark-resolved, clears or content-close joins.
+
+Costs: classification now accumulates all rows even if an individual old query
+could stop early. Paths previously needing only one walk also accumulate flags;
+there is no universal timing improvement claim. Worklist capacity/CPU storage
+remain unchanged; scan/capture context adds bounded stack state. Driver and
+other runtime allocations remain. No end-to-end zero-copy claim.
+
+Evidence
+--------
+Actual current MinGW core objects + render_target_collection_test.cc: PASS.
+10000 query cases agree with collected reference native/layout/tile decisions,
+including empty/partial/mismatched and converting rejection, zero query heap
+allocations after cold reservation. 10000 fragmented/wrapped fixed-list cases
+retain identical row fields/order and stable backing; full2048-row boundary
+and deliberate capacity-one overflow/reset pass. Classification remains complete
+for mixed native/scale layouts, with all requested owned tiles counted.
+Existing774400 real ownership transfers/512 wrapped extents and 20000 moving
+EDRAM-base surface reuse/lifetime fixtures pass. No graphics device created.
+
+Existing C89 scan receives new require-zero regression: both failure flags are
+set on the first row, yet later rows are still included. MSVC /TC /W4 /WX normal
+and AddressSanitizer, MinGW strict C89 pass alongside200000 retirement/lifetime
+checks. Actual common render-target cache and both backend TUs pass MSVC /Zs.
+Full MSVC/ASan ownership fixture NOT run: it needs a matching native core build,
+not old libraries from another worktree. No broader sanitizer claim.
+Windows static Make -j5 passes. No shader source/binary changes in this batch,
+so shader matrix validation is not rerun without a new shader concern.
+
+No RetroArch/game/JIT/GPU/device launch or installed DLL overwrite. No CPU/GPU
+timer, rendered-image, Dark Souls II/5090 FPS result. Full converted-resolve
+fusion remains future work: preserve guest pack/unpack before gamma, sample
+averaging, exponent bias and destination packing; no host-float shortcut.

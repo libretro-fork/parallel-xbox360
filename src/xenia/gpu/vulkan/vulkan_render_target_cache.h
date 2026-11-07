@@ -702,7 +702,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // tile layout if native_layout is set.
   void DumpRenderTargets(uint32_t dump_base, uint32_t dump_row_length_used,
                          uint32_t dump_rows, uint32_t dump_pitch,
-                         bool native_layout);
+                         bool native_layout, bool rectangles_prepared = false);
 
   void DumpAllRenderTargetsToEdram() override;
   bool BeginEdramSnapshotReadback() override;

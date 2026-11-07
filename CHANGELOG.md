@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan and D3D12 reuse one prepared resolve ownership list for native-scale decisions, direct eligibility and dispatch/fallback. Classification accumulates during the existing fixed-list capture, removing repeated map walks and failed-direct fallback metadata copies. Mixed/layout-mismatched lists remain complete for fallback, and trace dumps still collect fresh data. Actual ownership/fragmentation/overflow fixtures, C89/MSVC ASan classification, native backend syntax and Windows Make checks pass. No GPU command or measured frametime improvement is claimed.
+
 - Vulkan scaled direct resolves reuse immutable whole-buffer descriptors where device bounds permit, removing their transient descriptor allocation/update. Existing C89 planning carries the binding origin through the shader after scaled tiling, with checked unscaled prefix arithmetic. Fallback range views, pixel packing, residency and barriers remain. Actual shader address interpretation, MSVC ASan, Vulkan/DXIL validation and Windows builds pass. The shader gains a constant load/add; GPU-time gains remain unmeasured.
 
 - Vulkan no longer requires a whole 512 MiB shared-memory descriptor for native direct resolves. Checked C89 range planning preserves aligned descriptor bounds and exact tiled destination addresses, allowing eligible constrained-device/pool-failure resolves to skip their EDRAM round trip. Whole-buffer binding, guest residency/watch handling, scaled resolves and shaders retain their paths. Bounds/reference, MSVC ASan, backend syntax and Windows Make checks pass; GPU-time gains remain unmeasured.

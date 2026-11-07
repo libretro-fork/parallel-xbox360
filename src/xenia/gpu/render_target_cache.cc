@@ -1343,17 +1343,23 @@ void RenderTargetCache::GetHostDepthStoreRectangleInfo(
 
 bool RenderTargetCache::GetResolveCopyRectanglesToDump(
     uint32_t base, uint32_t row_length, uint32_t rows, uint32_t pitch,
-    xe_gpu_worklist* rectangles_out) const {
+    xe_gpu_worklist* rectangles_out, xe_gpu_resolve_scan* scan_out) const {
   if (!rectangles_out || !rectangles_out->data ||
       rectangles_out->stride != sizeof(ResolveCopyDumpRectangle)) return false;
+  struct Capture {
+    xe_gpu_worklist* rectangles;
+    xe_gpu_resolve_scan* scan;
+  } capture = {rectangles_out, scan_out};
   xe_gpu_worklist_reset(rectangles_out);
   VisitResolveCopyRectangles(base, row_length, rows, pitch,
       [](void* context, const ResolveCopyDumpRectangle* rectangle) -> bool {
-        void* slot = xe_gpu_worklist_append(static_cast<xe_gpu_worklist*>(context));
+        Capture* capture = static_cast<Capture*>(context);
+        void* slot = xe_gpu_worklist_append(capture->rectangles);
         if (!slot) return false;
         new (slot) ResolveCopyDumpRectangle(*rectangle);
+        if (capture->scan) ScanResolveRectangle(capture->scan, rectangle);
         return true;
-      }, rectangles_out);
+      }, &capture);
   return !rectangles_out->failed;
 }
 
@@ -1458,25 +1464,33 @@ bool RenderTargetCache::ScanResolveRectangle(
       rectangle->GetTileCount(scan->row_length)) != 0;
 }
 
-bool RenderTargetCache::IsResolveSourceNativeOnly(uint32_t base,
-                                                  uint32_t row_length,
-                                                  uint32_t rows,
-                                                  uint32_t pitch) const {
-  if (!IsDrawResolutionScaled() || GetPath() != Path::kHostRenderTargets) {
-    return false;
-  }
-  xe_gpu_resolve_scan scan = {};
-  scan.row_length = row_length;
-  scan.required = XE_GPU_RESOLVE_REQUIRE_NATIVE;
-  VisitResolveCopyRectangles(base, row_length, rows, pitch,
-      ScanResolveRectangle, &scan);
-  return scan.found && !(scan.invalid & scan.required);
+bool RenderTargetCache::PrepareResolveCopyRectangles(
+    const draw_util::ResolveInfo& info, xe_gpu_worklist* rectangles,
+    xe_gpu_resolve_scan& scan) const {
+  uint32_t base, width, rows, pitch;
+  info.GetCopyEdramTileSpan(base, width, rows, pitch);
+  const draw_util::ResolveEdramInfo& edram =
+      info.IsCopyingDepth() ? info.depth_edram_info : info.color_edram_info;
+  scan = {};
+  scan.row_length = width;
+  scan.wanted_layout = uint32_t(info.IsCopyingDepth()) |
+      (uint32_t(edram.msaa_samples) << 1) | (edram.format_is_64bpp << 3);
+  // Accumulate BOTH classifications; no early stop may truncate the list
+  // subsequently borrowed by a converting or failed-direct fallback dump.
+  return GetResolveCopyRectanglesToDump(base, width, rows, pitch, rectangles, &scan);
+}
+
+bool RenderTargetCache::IsResolveSourceNativeOnly(
+    const xe_gpu_resolve_scan& scan) const {
+  return IsDrawResolutionScaled() && GetPath() == Path::kHostRenderTargets &&
+      scan.found && !(scan.invalid & XE_GPU_RESOLVE_REQUIRE_NATIVE);
 }
 
 RenderTargetCache::DirectResolveEligibility
 RenderTargetCache::GetDirectResolveEligibility(
     const draw_util::ResolveInfo& resolve_info,
-    draw_util::ResolveCopyShaderIndex copy_shader) const {
+    draw_util::ResolveCopyShaderIndex copy_shader,
+    const xe_gpu_resolve_scan& scan) const {
   if (GetPath() != Path::kHostRenderTargets) {
     return DirectResolveEligibility::kNotHostRenderTargets;
   }
@@ -1491,22 +1505,8 @@ RenderTargetCache::GetDirectResolveEligibility(
   }
   uint32_t base, row_length_used, rows, pitch;
   resolve_info.GetCopyEdramTileSpan(base, row_length_used, rows, pitch);
-  bool is_depth = resolve_info.IsCopyingDepth();
-  const draw_util::ResolveEdramInfo& edram_info =
-      is_depth ? resolve_info.depth_edram_info : resolve_info.color_edram_info;
-  xe_gpu_resolve_scan scan = {};
-  scan.row_length = row_length_used;
-  // Direct resolves may bypass the intermediate dump only when the source
-  // sample/depth/word layout matches and the whole requested area is owned.
-  // Storage-compatible guest formats may differ; the fast copy is bitwise.
-  scan.wanted_layout = uint32_t(is_depth) |
-      (uint32_t(edram_info.msaa_samples) << 1) |
-      (edram_info.format_is_64bpp << 3);
-  scan.required = XE_GPU_RESOLVE_REQUIRE_LAYOUT;
-  VisitResolveCopyRectangles(base, row_length_used, rows, pitch,
-      ScanResolveRectangle, &scan);
   if (!scan.found) return DirectResolveEligibility::kNoOwnership;
-  if (scan.invalid & scan.required)
+  if (scan.invalid & XE_GPU_RESOLVE_REQUIRE_LAYOUT)
     return DirectResolveEligibility::kSourceLayoutMismatch;
   if (scan.tiles != uint64_t(row_length_used) * rows) {
     return DirectResolveEligibility::kPartialOwnership;

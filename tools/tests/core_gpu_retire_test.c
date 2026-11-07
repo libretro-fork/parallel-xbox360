@@ -4,6 +4,7 @@
 #include "libretro/core_gpu_resolve_scan.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"FAIL line %u\n",(unsigned)__LINE__); exit(1); } } while (0)
 struct resource {
    xe_gpu_retire_node node;
@@ -102,6 +103,11 @@ int main(void)
    scan.wanted_layout = 3;
    CHECK(xe_gpu_resolve_scan_add(&scan,3,0,4));
    CHECK(!xe_gpu_resolve_scan_add(&scan,2,1,4));
+   /* A captured list must stay complete after either classification fails. */
+   memset(&scan,0,sizeof(scan)); scan.wanted_layout = 3;
+   CHECK(xe_gpu_resolve_scan_add(&scan,2,0,4));
+   CHECK(xe_gpu_resolve_scan_add(&scan,3,1,7));
+   CHECK(scan.found && scan.tiles==11 && scan.invalid==3);
    test_fixed_pool();
    test_scaled_views();
    CHECK(xe_gpu_surface_recent(2, UINT64_MAX, 4));

@@ -298,6 +298,8 @@ class RenderTargetCollectionTest final : public RenderTargetCache {
     ownership_ranges_.emplace(32,OwnershipRange(xenos::kEdramTileCount,native,{},{}));
     std::vector<ResolveCopyDumpRectangle> rectangles;
     unsigned results = 0;
+    xe_gpu_worklist prepared = {};
+    CHECK(xe_gpu_worklist_init(&prepared,kResolveWorkCapacity,sizeof(ResolveCopyDumpRectangle)));
     for (unsigned i = 0; i < 10000; ++i) {
       draw_util::ResolveInfo info = {};
       info.rb_copy_control.copy_src_select = (i & 8) ? 4 : 0;
@@ -330,14 +332,22 @@ class RenderTargetCollectionTest final : public RenderTargetCache {
           tiles != uint64_t(width)*rows)
         expected = DirectResolveEligibility::kPartialOwnership;
       count_query_allocations = true;
-      bool actual_native = IsResolveSourceNativeOnly(base,width,rows,pitch);
+      xe_gpu_resolve_scan scan = {};
+      CHECK(PrepareResolveCopyRectangles(info,&prepared,scan));
+      bool actual_native = IsResolveSourceNativeOnly(scan);
       DirectResolveEligibility actual = GetDirectResolveEligibility(info,
-          draw_util::ResolveCopyShaderIndex::kFast32bpp1x2xMSAA);
+          draw_util::ResolveCopyShaderIndex::kFast32bpp1x2xMSAA,scan);
+      CHECK(GetDirectResolveEligibility(info,
+          draw_util::ResolveCopyShaderIndex::kFull32bpp,scan) ==
+          DirectResolveEligibility::kConvertingCopyShader);
       count_query_allocations = false;
       CHECK(actual_native == expected_native && actual == expected);
       CHECK(query_allocations == 0);
+      CHECK(prepared.count == rectangles.size());
+      CHECK(scan.tiles == tiles);
       results |= 1u << unsigned(actual);
     }
+    xe_gpu_worklist_close(&prepared);
     CHECK(results & (1u << unsigned(DirectResolveEligibility::kEligible)));
     CHECK(results & (1u << unsigned(DirectResolveEligibility::kNoOwnership)));
     CHECK(results & (1u << unsigned(DirectResolveEligibility::kSourceLayoutMismatch)));
@@ -374,10 +384,13 @@ class RenderTargetCollectionTest final : public RenderTargetCache {
       if (pass < 2) { base = pass ? xenos::kEdramTileCount-1 : 0; width=32; rows=64; }
       CollectReference(base,width,rows,32,reference);
       count_query_allocations = true;
-      bool ok = GetResolveCopyRectanglesToDump(base,width,rows,32,&fixed);
+      xe_gpu_resolve_scan scan = {}; scan.row_length = width;
+      bool ok = GetResolveCopyRectanglesToDump(base,width,rows,32,&fixed,&scan);
       count_query_allocations = false;
       CHECK(ok && !query_allocations && fixed.data == storage);
       CHECK(fixed.count == reference.size() && fixed.count <= kResolveWorkCapacity);
+      CHECK(scan.found && scan.tiles == uint64_t(width)*rows);
+      if (pass < 2) CHECK(scan.invalid & XE_GPU_RESOLVE_REQUIRE_NATIVE);
       if (pass < 2) CHECK(fixed.count == xenos::kEdramTileCount);
       const auto* records = static_cast<const ResolveCopyDumpRectangle*>(fixed.data);
       for (size_t i=0;i<fixed.count;++i) {

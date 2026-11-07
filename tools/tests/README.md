@@ -1352,3 +1352,15 @@ direct SPIR-V gains the base load/add. BASELINE_MODE defaults to the historical
 shrink check; no history is needed for ordinary current-module checks.
 Source-view runners also check unscaled extent prefixes before multiplication.
 See scaled_resolve_views_results.txt for exact coverage and remaining costs.
+
+Prepared resolve ownership
+--------------------------
+`run_render_target_collection_tests.sh` uses actual current core Make objects
+to compare prepared resolve classification and rectangle rows with the existing
+collected reference. It covers empty/partial/mixed ownership, source-layout
+mismatches, converting-copy rejection, maximal fragmentation and EDRAM wrap.
+The native `.cmd` counterpart requires a matching current native core build;
+old native libraries must not be mixed with a changed class ABI. The C89
+`run_gpu_retire_tests.sh` also checks exhaustive classification continues after
+both layout/native flags fail. See resolve_capture_results.txt for coverage
+and the distinction between C89 sanitizer checks and full native fixtures.

@@ -10,6 +10,7 @@
 #ifndef XENIA_GPU_RENDER_TARGET_CACHE_H_
 #define XENIA_GPU_RENDER_TARGET_CACHE_H_
 #include "libretro/core_gpu_worklist.h"
+#include "libretro/core_gpu_resolve_scan.h"
 
 #include <cmath>
 #include <cstddef>
@@ -692,7 +693,8 @@ class RenderTargetCache {
   enum { kResolveWorkCapacity = xenos::kEdramTileCount };
   bool GetResolveCopyRectanglesToDump(
       uint32_t base, uint32_t row_length, uint32_t rows, uint32_t pitch,
-      xe_gpu_worklist* rectangles_out) const;
+      xe_gpu_worklist* rectangles_out,
+      xe_gpu_resolve_scan* scan_out = nullptr) const;
   // The visitor borrows one stack rectangle at a time; false stops the walk.
   void VisitResolveCopyRectangles(
       uint32_t base, uint32_t row_length, uint32_t rows, uint32_t pitch,
@@ -706,15 +708,20 @@ class RenderTargetCache {
   // duplicating pixels into the scaled layout (which ruins linear filtering).
   // Decided from actual ownership rather than resolve dimensions since one
   // range can span both classes.
-  bool IsResolveSourceNativeOnly(uint32_t base, uint32_t row_length,
-                                 uint32_t rows, uint32_t pitch) const;
+  bool IsResolveSourceNativeOnly(const xe_gpu_resolve_scan& scan) const;
+  // Capture once for the current Resolve call. Consumers borrow this list;
+  // no ownership mutation may occur until dispatch/fallback consumes it.
+  bool PrepareResolveCopyRectangles(const draw_util::ResolveInfo& info,
+      xe_gpu_worklist* rectangles, xe_gpu_resolve_scan& scan) const;
 
+  // scan must come from PrepareResolveCopyRectangles for this ownership span.
   // copy_shader is the one ResolveInfo::GetCopyShader picked for this resolve.
   // Both destination layouts are covered - the caller decides which by what it
   // binds and by EdramDumpShaderKey::native_layout.
   DirectResolveEligibility GetDirectResolveEligibility(
       const draw_util::ResolveInfo& resolve_info,
-      draw_util::ResolveCopyShaderIndex copy_shader) const;
+      draw_util::ResolveCopyShaderIndex copy_shader,
+      const xe_gpu_resolve_scan& scan) const;
 
   // Sets up the needed render targets and transfers to perform a clear in a
   // resolve operation via a host render target clear. resolve_info is expected

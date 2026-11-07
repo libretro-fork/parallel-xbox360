@@ -1183,6 +1183,7 @@ bool VulkanRenderTargetCache::Resolve(
     // If everything owning the source is native, copy at 1x1 into shared
     // memory.
     bool copy_native = false;
+    xe_gpu_resolve_scan resolve_scan = {};
     uint32_t dump_base = 0;
     uint32_t dump_row_length_used = 0;
     uint32_t dump_rows = 0;
@@ -1190,8 +1191,11 @@ bool VulkanRenderTargetCache::Resolve(
     if (GetPath() == Path::kHostRenderTargets) {
       resolve_info.GetCopyEdramTileSpan(dump_base, dump_row_length_used,
                                         dump_rows, dump_pitch);
-      copy_native = IsResolveSourceNativeOnly(dump_base, dump_row_length_used,
-                                              dump_rows, dump_pitch);
+      if (!PrepareResolveCopyRectangles(resolve_info, &dump_rectangles_, resolve_scan)) {
+        XELOGE("Resolve ownership worklist capacity exceeded");
+        return false;
+      }
+      copy_native = IsResolveSourceNativeOnly(resolve_scan);
       if (copy_native) {
         // Redo the resolve info at 1x1 so the scale-dependent fields match
         // what the unscaled copy shaders expect.
@@ -1220,7 +1224,7 @@ bool VulkanRenderTargetCache::Resolve(
       // wouldn't have converted anything, otherwise dump the current contents
       // of the ones owning the affected range to edram_buffer_ for it.
       if (cvars::direct_host_resolve &&
-          GetDirectResolveEligibility(resolve_info, copy_shader) ==
+          GetDirectResolveEligibility(resolve_info, copy_shader, resolve_scan) ==
               DirectResolveEligibility::kEligible) {
         resolved_directly = DirectResolveRenderTargets(
             resolve_info, copy_shader_constants, dump_base,
@@ -1229,7 +1233,7 @@ bool VulkanRenderTargetCache::Resolve(
       }
       if (!resolved_directly) {
         DumpRenderTargets(dump_base, dump_row_length_used, dump_rows,
-                          dump_pitch, copy_native);
+                          dump_pitch, copy_native, true);
       }
     }
 
@@ -3951,11 +3955,6 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
     if (!native_dest_view.persistent) descriptor_set_dest = VK_NULL_HANDLE;
   }
 
-  if (!GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
-          dump_pitch, &dump_rectangles_)) {
-    XELOGE("Resolve ownership worklist capacity exceeded");
-    return false;
-  }
   if (!dump_rectangles_.count) {
     return false;
   }
@@ -4471,11 +4470,12 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
                                                 uint32_t dump_row_length_used,
                                                 uint32_t dump_rows,
                                                 uint32_t dump_pitch,
-                                                bool native_layout) {
+                                                bool native_layout,
+                                                bool rectangles_prepared) {
   SCOPE_profile_cpu_f("gpu");
   assert_true(GetPath() == Path::kHostRenderTargets);
 
-  if (!GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
+  if (!rectangles_prepared && !GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows,
           dump_pitch, &dump_rectangles_)) {
     XELOGE("Resolve ownership worklist capacity exceeded");
     return;
