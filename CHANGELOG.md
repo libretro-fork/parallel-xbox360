@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Shader blocks no longer build unused predecessor vectors. Forward control-flow traversal and branch output stay the same, while reverse-edge allocations/copies disappear and measured x64 blocks shrink from 136 to 112 bytes. Helper/guest binary comparisons and native sanitizer checks pass. Corrected the optional profiling harness to keep allocator cleanup and baseline arena configuration consistent.
+
 - Resolve watch rearming in Vulkan and D3D12 now uses two fixed page bitmaps instead of growing range vectors. Submission detaches a borrowed bitmap without copying; concurrent faults queue into the other. Adjacent/overlapping pages coalesce, reducing repeated memory-watch calls while preserving coverage across all physical aliases. This reserves about 32 KiB and adds bitmap work for sparse batches; required fault serialization remains.
 
 - Vulkan and D3D12 recent-read history now uses fixed C89 storage instead of a second node map. Exact keys, 60-frame expiry, full-map clearing and frame-counter wrap retain their previous behavior. Tracking no longer allocates nodes during play; it reserves about 97 KiB even with few reads. This GPU-thread history remains separate from fault-owner lifetimes.

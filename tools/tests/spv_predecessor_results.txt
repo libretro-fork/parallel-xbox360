@@ -1,0 +1,89 @@
+Unused SPIR-V reverse-edge removal
+=================================
+
+Tracked source audit found getPredecessors only at its declaration. The
+predecessors vector was populated by addPredecessor but never read. CFG readable
+order uses getSuccessors().size()/operator[] instead. Remove the unused vector,
+getter and incoming-list push; retain the exact predecessor->successors append,
+including duplicates and insertion order. No new runtime algorithm or allocator
+is introduced. Branch instructions, labels, structural targets, traversal and
+cleanup order are unchanged. No libretro ABI or guest shader format changes.
+
+On measured MinGW x64, sizeof(Block) falls 136 -> 112 bytes; Instruction remains 64,
+Function 136 and Module 88. Each edge no longer appends/grows/copies the unread
+reverse array. Forward-edge vectors still allocate; this is not a fully
+allocation-free compiler claim. Cold object pools use sizeof(Block), so smaller
+records also reduce their aligned slot reservation. Do not infer RSS or FPS from
+object size or requested-allocation counters.
+
+Allocation comparison (GCC 16.2 /O2, offline production helper generation)
+----------------------------------------------------------------------
+Pinned parent: cda0e1d94. Both revisions use the SAME retained instruction arena
+(16 instruction pages, 64 block slots, 32 function slots) and reusable output
+buffer. Matching custom allocation/free macros apply to C storage and C++ inline
+cleanup. Standard/wide-scale cohorts each generate 2624 helper modules. These are
+allocation counters, not elapsed-time measurements. Global C++ new/delete,
+C89 arena pages and ID-index storage are tracked by existing test adapters;
+allocator overhead, driver memory and process RSS are not included.
+
+                                      parent           current
+Block bytes                           136              112
+Standard allocation calls             30604            27564
+Wide-scale allocation calls           30604            27564
+Requested bytes, each cohort          480925           447133
+Peak tracked live bytes, each         186717           184669
+Tracked live bytes after cleanup      0                0
+Instruction-page growth               0                0
+
+3040 fewer tracked calls per 2624-module cohort (about 9.9%). The reservation and
+edge-allocation savings are both included. Other compiler allocations remain.
+This does not measure driver compilation, pipeline publication or gameplay stutter.
+
+Profiling harness repairs
+-------------------------
+CAPTURE_ALLOCATIONS=1 previously failed to link some companion fixtures because
+the profiled arena's support object was omitted. Supplying that object alone
+exposed mismatched inline cleanup macros and an invalid free in the test
+executable. All companions using a profiled arena now get matching allocator
+flags and support linkage; plain/fault-injection arenas keep their own flags.
+Production builds never enable these profiling adapters.
+
+The former baseline selector also always disabled the reusable instruction arena,
+even for recent revisions supporting it. That makes attribution misleading when
+comparing two recent IR changes. Detect the compatible optional arena parameter
+and enable the same fixture mode on both sides; keep support for older source
+revisions without it. Discard the earlier heap-versus-arena counter results for
+this change. The table above uses the corrected paired configuration.
+
+Evidence / limits
+-----------------
+- Whole tracked source audit: no remaining getPredecessors references; no
+  predecessor-vector readers were removed. DXIL phi predecessor arrays are
+  required instruction inputs and are unrelated/unchanged.
+- Parent/current EDRAM helper output: 2624 modules at standard scales and 2624 at
+  wide scales compare byte-for-byte, with unchanged wire sizes.
+- Parent/current geometry: 18432 generation variants have identical packed bytes;
+  all 128 exported current geometry modules pass installed spirv-val.
+- Real guest translator: 256 vertex/pixel control-flow translations and four
+  retained depth outputs match the pre-change binary exactly. Guest fixture
+  includes jumps, unreachable continuation and CopyObject fallback cases.
+- Full native MSVC shader-output fixture suite passes, including typed ownership,
+  allocator failure, reused arenas and block traversal. The same suite with
+  MSVC /O1 /Zi /fsanitize=address passes positive cases. Deliberate UAF traps from
+  the Linux shell's sanitizer branch were not run; no Linux ASan/TSan claim.
+- Full MinGW static Windows Make-j5 rebuild/link passes. No guest emulation,
+  game/GPU/JIT execution or installed DLL replacement. Remote CI unobserved.
+
+Reproduce
+---------
+BASELINE_COMMIT=cda0e1d94 CAPTURE_ALLOCATIONS=1 \
+  sh tools/tests/run_spv_output_tests.sh
+BASELINE_ROOT=<complete-parent-source> SPIRV_VALIDATOR=<spirv-val> \
+  sh tools/tests/run_spv_geometry_tests.sh
+For strict MinGW C89 fixtures set CC='gcc -Wno-long-long'. Linux uses default cc.
+Native MSVC developer prompt: tools\tests\run_spv_output_tests.cmd.
+For MSVC ASan use a separate output directory, /MD /O1 /Zi /fsanitize=address
+on C and C++ compilations with matching link options.
+For guest comparisons run run_spv_guest_workspace_tests.sh before and after,
+setting SPV_GUEST_REFERENCE to the earlier guest.bin in the second run. It links
+actual Make objects; wait for the core rebuild to finish before linking it.

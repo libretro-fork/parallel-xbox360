@@ -98,6 +98,11 @@ for mode in baseline current; do
   arena_test=
   # Accept the older vector-output baseline as well as reusable-output commits.
   if test -z "$(sed -n '/^bool BuildEdramDumpShaderSpirv(/p' "$src/xenia/gpu/edram_dump_shader.h")"; then legacy=-DXE_SPV_OUTPUT_LEGACY; fi
+  # Recent baselines accept the same borrowed arena. Match that configuration
+  # before attributing allocation differences to a new IR/storage change.
+  if test -z "$legacy" && test -n "$(sed -n '/xe_spv_arena.*instruction_arena/p' "$src/xenia/gpu/edram_dump_shader.h")"; then
+   arena_test=-DXE_SPV_ARENA_TEST
+  fi
  fi
 # Isolate the seven production static emitters needed by the helpers, without
 # linking the unrelated translator's configuration registrars and Vulkan device.
@@ -127,10 +132,10 @@ for mode in baseline current; do
   "$src/xenia/gpu/spirv/SpvBuilder.cpp" \
   "$src/xenia/gpu/spirv/InReadableOrder.cpp" "$src/xenia/gpu/spirv/Logger.cpp" \
   "$objects_root/binary.o" "$objects_root/operands.o" "$objects_root/arena.o" "$objects_root/size.o" $profile_object -o "$out/views-$mode"
- spv_compile_revision "$source_root" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$src/xenia/gpu/spirv" -I"$source_root" -I"$root" -I"$root/third_party/libretro-common/include" \
+ spv_compile_revision "$source_root" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san $arena_flags -I"$src/xenia/gpu/spirv" -I"$source_root" -I"$root" -I"$root/third_party/libretro-common/include" \
   "$root/tools/tests/core_spv_sampler_bridge.cc" "$src/xenia/gpu/spirv/SpvBuilder.cpp" \
   "$src/xenia/gpu/spirv/InReadableOrder.cpp" \
-  "$src/xenia/gpu/spirv/Logger.cpp" "$objects_root/binary.o" "$objects_root/operands.o" "$objects_root/arena.o" "$objects_root/size.o" -o "$out/sampler-$mode"
+  "$src/xenia/gpu/spirv/Logger.cpp" "$objects_root/binary.o" "$objects_root/operands.o" "$objects_root/arena.o" "$objects_root/size.o" $profile_object -o "$out/sampler-$mode"
  "$out/sampler-$mode" "$out/sampler-$mode.spv"
  for variant in 0 1 2 3 4 5 6 7; do
   "$out/views-$mode" "$out/views-$mode-$variant.spv" "$variant"
@@ -162,8 +167,8 @@ for variant in 0 1 2 3 4 5 6 7; do
 done
 echo "PASS: parent/current EDRAM output byte-for-byte, stable high-water storage"
 echo "PASS: eight archived-vector/borrowed-view modules, overwritten inputs and nested access chains"
-spv_compile_revision "$root" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DFMT_HEADER_ONLY $san -I"$root" -I"$root/src" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" -I"$root/third_party/fmt/include" \
- "$root/tools/tests/core_spv_repeat_bridge.cc" "$root/src/xenia/gpu/spirv_builder.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/size.o" "$out/binary.o" "$out/operands.o" "$out/arena.o" -o "$out/repeat-bridge"
+spv_compile_revision "$root" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG -DFMT_HEADER_ONLY $san $arena_flags -I"$root" -I"$root/src" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" -I"$root/third_party/fmt/include" \
+ "$root/tools/tests/core_spv_repeat_bridge.cc" "$root/src/xenia/gpu/spirv_builder.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/size.o" "$out/binary.o" "$out/operands.o" "$out/arena.o" $profile_object -o "$out/repeat-bridge"
 for variant in 0 1 2 3; do "$out/repeat-bridge" "$out/repeat-$variant.spv" "$variant"; done
 if test -n "${SPIRV_VALIDATOR:-}"; then "$SPIRV_VALIDATOR" "$out/repeat-0.spv"; fi
 
@@ -197,15 +202,15 @@ spv_compile_revision "$root" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -include "
  "$root/tools/tests/core_spv_arena_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" \
  "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena-plain.o" "$out/size.o" "$out/operands-fault.o" "$out/fault.o" -o "$out/arena-bridge"
 "$out/arena-bridge"
-spv_compile_revision "$root" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" \
+spv_compile_revision "$root" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san $arena_flags -I"$root" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" \
  "$root/tools/tests/core_spv_extensions_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" \
- "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena.o" "$out/size.o" "$out/operands.o" -o "$out/extensions-bridge"
+ "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena.o" "$out/size.o" "$out/operands.o" $profile_object -o "$out/extensions-bridge"
 for variant in 0 1; do "$out/extensions-bridge" "$out/extensions-$variant.bin" "$variant"; done
 if test -n "${SPIRV_VALIDATOR:-}"; then "$SPIRV_VALIDATOR" "$out/extensions-0.bin.last.spv"; fi
 
-spv_compile_revision "$root" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san -I"$root" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" \
+spv_compile_revision "$root" ${CXX:-c++} -std=c++20 -O2 -DNDEBUG $san $arena_flags -I"$root" -I"$root/src/xenia/gpu/spirv" -I"$root/third_party/libretro-common/include" \
  "$root/tools/tests/core_spv_decorations_bridge.cc" "$root/src/xenia/gpu/spirv/SpvBuilder.cpp" \
- "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena.o" "$out/size.o" "$out/operands.o" -o "$out/decorations-bridge"
+ "$root/src/xenia/gpu/spirv/InReadableOrder.cpp" "$root/src/xenia/gpu/spirv/Logger.cpp" "$out/binary.o" "$out/arena.o" "$out/size.o" "$out/operands.o" $profile_object -o "$out/decorations-bridge"
 for variant in 0 1; do "$out/decorations-bridge" "$out/decorations-$variant.bin" "$variant"; done
 if test -n "${SPIRV_VALIDATOR:-}"; then "$SPIRV_VALIDATOR" "$out/decorations-0.bin.last.spv"; fi
 

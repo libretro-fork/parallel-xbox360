@@ -342,7 +342,8 @@ public:
         return xe_spv_block_scope(&debugState, &stateFlags, scopeId) != 0;
     }
     void addInstruction(std::unique_ptr<Instruction> inst);
-    void addPredecessor(Block* pred) { predecessors.push_back(pred); pred->successors.push_back(this);}
+    // Only forward edges are traversed; do not retain an unread reverse list.
+    void addPredecessor(Block* pred) { pred->successors.push_back(this); }
     void addLocalVariable(std::unique_ptr<Instruction> inst) {
         assert(inst && inst->getOpCode() != Op::OpLabel && !inst->getNextInstruction());
         xe_spv_instruction_append(&localVariables, inst.get(), Instruction::nextSlot);
@@ -355,7 +356,6 @@ public:
             throw std::bad_alloc();
         inst.release();
     }
-    const std::vector<Block*>& getPredecessors() const { return predecessors; }
     const std::vector<Block*>& getSuccessors() const { return successors; }
     Instruction* getFirstInstruction() const { return label.get(); }
     Instruction* getFirstBodyInstruction() const { return static_cast<Instruction*>(body.chain.head); }
@@ -414,7 +414,7 @@ protected:
     // To enforce keeping parent and ownership in sync:
     friend Function;
 
-    // Keep the traversal inputs together; predecessor/debug data is colder.
+    // Keep the traversal inputs together; debug data is colder.
     xe_spv_instruction_body body = {};
     std::unique_ptr<Instruction> label;
     std::vector<Block*> successors;
@@ -422,7 +422,6 @@ protected:
     uint32_t traversalIndex = UINT32_MAX;
     uint8_t stateFlags;
     Function& parent;
-    std::vector<Block*> predecessors;
     xe_spv_instruction_chain localVariables = {};
 
     // Read only when the corresponding valid bit is present in stateFlags.
