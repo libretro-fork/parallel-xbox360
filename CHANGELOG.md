@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Native D3D12 vertex/domain and pixel shaders retain their bytecode directly on the exact translation owner, replacing two nested cache maps and five cache-lock sites with C89 libretro-common atomic publication. Consumers borrow the existing binary without a staging copy; failed emission is cached independently from pending work. Joined shutdown and virtual shader destruction release the binary. Shared binding-generation and geometry-cache locks remain; shader output and audio scheduling are unchanged.
+
 - Move SVOD fragment enumeration, sizing and payload reads to libretro-common VFS with a fixed C89 fragment table. Mount parsing borrows mapped sectors or reuses four bounded sector slots; filename decoding reuses mount-only scratch. Remove native filesystem queries, the fragment map and temporary name vectors, while reading payloads directly into caller storage. Failed transfers retain their successful byte count, malformed directory entries reject safely, and all opened fragments close on failure. Unmapped VFS cursors retain necessary exclusion; cold fragment opens and final guest copies remain.
 
 - Fix XContent container selection on native file streams: libretro VFS seek returns zero on success, not the resulting offset. Correct the probe and its fake VFS fixture, and exercise real files through both the C89 probe and native container factory. This repairs a regression introduced by the earlier header migration.

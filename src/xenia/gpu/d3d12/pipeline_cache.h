@@ -13,16 +13,12 @@
 #include "libretro/core_pipeline_publication.h"
 #include "libretro/core_pipeline_retire.h"
 #include <cstdio>
-#include <deque>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <utility>
-#include <vector>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/hash.h"
@@ -118,10 +114,8 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   bool depth_float24_convert_in_pixel_shader() const override {
     return render_target_cache_.depth_float24_convert_in_pixel_shader();
   }
-  const XeDxilShaderBinary* GetGuestNativeVertexDxil(const Shader& shader,
-                                                   uint64_t modification);
-  const XeDxilShaderBinary* GetGuestNativePixelDxil(const Shader& shader,
-                                                  uint64_t modification);
+  const XeDxilShaderBinary* GetGuestNativeVertexDxil(Shader::Translation& translation);
+  const XeDxilShaderBinary* GetGuestNativePixelDxil(Shader::Translation& translation);
   // Returns the guest SpirvShader for a ucode hash once its bindings are
   // published (bindings_ready), or nullptr. Its texture/sampler bindings define
   // the order the Native DXIL expects in the bindless index buffers.
@@ -414,7 +408,7 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
       PipelineRuntimeDescription& runtime_description_out);
 
   // Modifications are raw SpirvShaderTranslator::Modification values (uint64_t
-  // to keep spirv_shader_translator.h, and glslang, out of this header).
+  // to avoid pulling spirv_shader_translator.h into this header).
   static bool GetGeometryShaderKey(PipelineGeometryShader geometry_shader_type,
                                    uint64_t vertex_shader_modification,
                                    uint64_t pixel_shader_modification,
@@ -452,12 +446,7 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   using OwnedNativeDxil = std::unique_ptr<XeDxilShaderBinary,
                                         void (*)(XeDxilShaderBinary*)>;
   std::unordered_map<uint32_t, OwnedNativeDxil> native_geometry_dxil_cache_;
-  // Stable owned containers: no temporary bytecode vector or buffer copy.
-  std::unordered_map<uint64_t, std::unordered_map<uint64_t, OwnedNativeDxil>>
-      native_vertex_dxil_cache_;
-  std::unordered_map<uint64_t, std::unordered_map<uint64_t, OwnedNativeDxil>>
-      native_pixel_dxil_cache_;
-  std::mutex native_dxil_cache_mutex_;
+  std::mutex native_geometry_dxil_cache_mutex_;
   // Native ROV depth-only shaders: the optional interpreter uses legacy linkage;
   // guest vertex/domain/geometry stages use the fixed shared linkage.
   XeDxilShaderBinary native_rov_depth_pixel_shaders_[3][2] = {};

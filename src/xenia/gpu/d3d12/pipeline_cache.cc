@@ -12,11 +12,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
-#include <sstream>
 #include <new>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
+#include "xenia/gpu/d3d12/d3d12_shader.h"
 #include "xenia/base/bulk_work.h"
 #include "libretro/core_gpu_worklist.h"
 #include "xenia/base/byte_order.h"
@@ -506,7 +506,7 @@ SpirvShader* PipelineCache::LoadShader(xenos::ShaderType shader_type,
   // We need to track it even if it fails translation so we know not to try
   // again.
   SpirvShader* shader =
-      new SpirvShader(shader_type, data_hash, host_address, dword_count);
+      new D3D12Shader(shader_type, data_hash, host_address, dword_count);
   shaders_.emplace(data_hash, shader);
   return shader;
 }
@@ -574,11 +574,9 @@ Shader::Translation* PipelineCache::EnsureGuestTranslation(
 // Native compilation does not mark the SPIR-V translation as complete. Consult
 // its own cache before choosing an interpreter or dropping a cached VS draw.
 bool PipelineCache::IsGuestVertexReady(const Shader::Translation& translation) {
-  std::lock_guard<std::mutex> lock(native_dxil_cache_mutex_);
-  auto shader = native_vertex_dxil_cache_.find(translation.shader().ucode_data_hash());
-  if (shader == native_vertex_dxil_cache_.end()) return false;
-  auto binary = shader->second.find(translation.modification());
-  return binary != shader->second.end() && binary->second != nullptr;
+  assert_true(dynamic_cast<const D3D12Shader::D3D12Translation*>(&translation));
+  return static_cast<const D3D12Shader::D3D12Translation&>(translation)
+      .native_snapshot().binary != nullptr;
 }
 namespace {
 bool BuildNativeTextureLayout(const SpirvShader& shader, XeDxilTextureLayout& layout, unsigned pixel) {
@@ -648,7 +646,11 @@ bool NativeTessellationHosts(unsigned mode, Shader::HostVertexShaderType host,
 }  // namespace
 
 const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
-    const Shader& shader, uint64_t modification) {
+    Shader::Translation& translation) {
+  const Shader& shader = translation.shader();
+  const uint64_t modification = translation.modification();
+  assert_true(dynamic_cast<D3D12Shader::D3D12Translation*>(&translation));
+  auto& native = static_cast<D3D12Shader::D3D12Translation&>(translation);
   SpirvShaderTranslator::Modification mod(modification);
   unsigned domain = 0, control_points = 0;
   if (!shader.is_ucode_analyzed() ||
@@ -657,15 +659,13 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
       shader.kills_pixels()) {
     return nullptr;
   }
-  {
-    std::lock_guard<std::mutex> lock(native_dxil_cache_mutex_);
-    auto& cache = native_vertex_dxil_cache_[shader.ucode_data_hash()];
-    auto found = cache.find(modification);
-    if (found != cache.end()) return found->second.get();
-  }
-  auto* binding_shader = const_cast<SpirvShader*>(dynamic_cast<const SpirvShader*>(&shader));
-  if (!binding_shader) return nullptr;
+  auto cached = native.native_snapshot();
+  if (cached.ready) return static_cast<const XeDxilShaderBinary*>(cached.binary);
+  // Every translation is created by this cache's D3D12Shader owner.
+  auto* binding_shader = static_cast<SpirvShader*>(&translation.shader());
   std::unique_lock<std::mutex> bindings_lock(binding_shader->resource_bindings_mutex());
+  cached = native.native_snapshot();
+  if (cached.ready) return static_cast<const XeDxilShaderBinary*>(cached.binary);
   XeDxilTextureLayout texture_layout = {};
   if (!BuildNativeTextureLayout(*binding_shader,texture_layout,0)) return nullptr;
   auto texture_options = NativeTextureOptions(texture_layout,0,render_target_cache_.draw_resolution_scale_x(),render_target_cache_.draw_resolution_scale_y());
@@ -701,27 +701,27 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
       &options, shader.ucode_dwords(), shader.ucode_dword_count(),
       shader.cf_pair_index_bound() * 2), &xe_dxil_shader_binary_delete);
   if (binary && !binding_shader->PublishNativeBindings(texture_layout)) return nullptr;
-  bindings_lock.unlock();
-  std::lock_guard<std::mutex> lock(native_dxil_cache_mutex_);
-  auto& cache = native_vertex_dxil_cache_[shader.ucode_data_hash()];
-  return cache.try_emplace(modification, std::move(binary)).first->second.get();
+  if (native.PublishNativeBinary(binary.get())) return binary.release();
+  return static_cast<const XeDxilShaderBinary*>(native.native_snapshot().binary);
 }
 const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
-    const Shader& shader, uint64_t modification) {
+    Shader::Translation& translation) {
+  const Shader& shader = translation.shader();
+  const uint64_t modification = translation.modification();
+  assert_true(dynamic_cast<D3D12Shader::D3D12Translation*>(&translation));
+  auto& native = static_cast<D3D12Shader::D3D12Translation&>(translation);
   SpirvShaderTranslator::Modification mod(modification);
   if (!shader.is_ucode_analyzed()) return nullptr;
   bool edram_rov_used = render_target_cache_.GetPath() == RenderTargetCache::Path::kPixelShaderInterlock;
-  {
-    std::lock_guard<std::mutex> lock(native_dxil_cache_mutex_);
-    auto& cache = native_pixel_dxil_cache_[shader.ucode_data_hash()];
-    auto found = cache.find(modification);
-    if (found != cache.end()) return found->second.get();
-  }
+  auto cached = native.native_snapshot();
+  if (cached.ready) return static_cast<const XeDxilShaderBinary*>(cached.binary);
   static_assert(XE_DXIL_BLEND_SOURCE_COLOR == uint32_t(xenos::BlendFactor::kSrcColor));
   static_assert(XE_DXIL_BLEND_INVERSE_SOURCE_COLOR == uint32_t(xenos::BlendFactor::kOneMinusSrcColor));
-  auto* binding_shader = const_cast<SpirvShader*>(dynamic_cast<const SpirvShader*>(&shader));
-  if (!binding_shader) return nullptr;
+  // Every translation is created by this cache's D3D12Shader owner.
+  auto* binding_shader = static_cast<SpirvShader*>(&translation.shader());
   std::unique_lock<std::mutex> bindings_lock(binding_shader->resource_bindings_mutex());
+  cached = native.native_snapshot();
+  if (cached.ready) return static_cast<const XeDxilShaderBinary*>(cached.binary);
   XeDxilTextureLayout texture_layout = {};
   if (!BuildNativeTextureLayout(*binding_shader,texture_layout,1)) return nullptr;
   auto texture_options = NativeTextureOptions(texture_layout,1,render_target_cache_.draw_resolution_scale_x(),render_target_cache_.draw_resolution_scale_y());
@@ -803,10 +803,8 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
       shader.ucode_dwords(), shader.ucode_dword_count(), shader.cf_pair_index_bound()*2),
       &xe_dxil_shader_binary_delete);
   if (binary && !binding_shader->PublishNativeBindings(texture_layout)) return nullptr;
-  bindings_lock.unlock();
-  std::lock_guard<std::mutex> lock(native_dxil_cache_mutex_);
-  auto& cache = native_pixel_dxil_cache_[shader.ucode_data_hash()];
-  return cache.try_emplace(modification, std::move(binary)).first->second.get();
+  if (native.PublishNativeBinary(binary.get())) return binary.release();
+  return static_cast<const XeDxilShaderBinary*>(native.native_snapshot().binary);
 }
 SpirvShader* PipelineCache::GetGuestShader(uint64_t ucode_hash) {
   auto it = shaders_.find(ucode_hash);
@@ -822,7 +820,7 @@ SpirvShader* PipelineCache::GetGuestShader(uint64_t ucode_hash) {
 
 const XeDxilShaderBinary* PipelineCache::GetGuestNativeGeometryDxil(GeometryShaderKey key) {
   {
-    std::lock_guard<std::mutex> lock(native_dxil_cache_mutex_);
+    std::lock_guard<std::mutex> lock(native_geometry_dxil_cache_mutex_);
     auto cached = native_geometry_dxil_cache_.find(key.key);
     if (cached != native_geometry_dxil_cache_.end()) return cached->second.get();
   }
@@ -846,7 +844,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeGeometryDxil(GeometryShad
     }
   }
   if (!binary) XELOGW("native_dxil: geometry generation failed (key {:08X})",key.key);
-  std::lock_guard<std::mutex> lock(native_dxil_cache_mutex_);
+  std::lock_guard<std::mutex> lock(native_geometry_dxil_cache_mutex_);
   return native_geometry_dxil_cache_.try_emplace(key.key,std::move(binary)).first->second.get();
 }
 
@@ -857,7 +855,7 @@ bool PipelineCache::BuildNativePipelineDxil(
   const PipelineDescription& description = runtime_description.description;
   SpirvShaderTranslator::Modification mod(description.vertex_shader_modification);
   runtime_description.native_vertex_dxil = GetGuestNativeVertexDxil(
-      vertex_translation->shader(), vertex_translation->modification());
+      *vertex_translation);
   if (!runtime_description.native_vertex_dxil) return false;
   if (Shader::IsHostVertexShaderTypeDomain(mod.vertex.host_vertex_shader_type) &&
       !NativeTessellationHosts(description.primitive_topology_type_or_tessellation_mode,
@@ -866,7 +864,7 @@ bool PipelineCache::BuildNativePipelineDxil(
   runtime_description.root_signature = command_processor_.GetNativeRootSignature();
   if (pixel_translation) {
     runtime_description.native_pixel_dxil = GetGuestNativePixelDxil(
-        pixel_translation->shader(), pixel_translation->modification());
+        *pixel_translation);
     if (!runtime_description.native_pixel_dxil) return false;
   }
   if (description.geometry_shader != PipelineGeometryShader::kNone) {
@@ -1032,7 +1030,7 @@ bool PipelineCache::ConfigurePipeline(
     // generation needs no intermediate IR; native generation publishes texture
     // bindings. Pixel conversion and PSO creation may run asynchronously.
     runtime_description.native_vertex_dxil = GetGuestNativeVertexDxil(
-        vertex_shader->shader(), vertex_spirv_modification);
+        *vertex_shader);
     if (!runtime_description.native_vertex_dxil) {
       XELOGE("native_dxil: guest vertex/domain generation failed; skipping draw");
       return false;
@@ -1050,7 +1048,7 @@ bool PipelineCache::ConfigurePipeline(
       runtime_description.native_pixel_translation = pixel_ps_translation;
     } else {
       runtime_description.native_pixel_dxil = GetGuestNativePixelDxil(
-          pixel_shader->shader(), pixel_spirv_modification);
+          *pixel_ps_translation);
       if (!runtime_description.native_pixel_dxil) {
         XELOGE(
             "native_dxil: guest pixel shader {:016X} translation failed; "
@@ -1680,7 +1678,7 @@ void PipelineCache::EnsurePipelineShadersTranslated(Pipeline* pipeline) {
     BuildNativePipelineDxil(desc.native_vertex_translation,desc.native_pixel_translation,desc);
   } else if (pipeline->pending_pixel_shader && desc.native_pixel_translation && !desc.native_pixel_dxil) {
     desc.native_pixel_dxil = GetGuestNativePixelDxil(
-        desc.native_pixel_translation->shader(),desc.native_pixel_translation->modification());
+        *desc.native_pixel_translation);
   }
   pipeline->pending_pixel_shader = nullptr;
   pipeline->pending_vertex_shader = nullptr;

@@ -1,0 +1,84 @@
+Native D3D12 binary ownership / C89 publication
+2026-11-07
+
+Change and lifetime
+-------------------
+D3D12Shader creates a derived translation with one C89 atomic pointer slot. The
+existing exact modification record owns native vertex/domain or pixel bytecode.
+Pending is NULL; the stable slot address represents a completed failure. A
+real binary pointer represents successful immutable publication. No invalid
+integer-derived pointer or separately allocated failure token is used.
+
+Publication CAS transfers ownership only to the winning publisher; losers keep
+and release their candidate. Acquire readers borrow the original binary. No
+binary header/payload copy or cache insertion allocation is added. This replaces
+the vertex and pixel nested unordered_maps and five shared-cache lock sites.
+Resource binding generation remains serialized by its existing shader mutex;
+a second slot check under that mutex prevents duplicate emission after another
+creator publishes. Geometry retains a separate map/mutex. Debug owner assertions
+remain; release binding-owner casts avoid redundant RTTI on misses.
+
+Shader translations are stable, nonmoving owners. DestroyTranslation has no
+production callers outside its definition in the current source tree. Queue
+Shutdown joins creators before pipelines/shaders are deleted; storage workers
+are stopped before shader destruction. D3D12CommandProcessor::ShutdownContext
+retains its existing queue-completion and cache-reset ordering. Translation
+virtual destruction takes and deletes the binary once. Reset/take is exclusively
+joined: publication never permits a concurrent reset while readers borrow.
+This does not redesign shutdown or add a GPU wait.
+
+This is not allocation-free shader compilation: first translation creation,
+shader emitter storage and driver/PSO creation still allocate. Each D3D12
+translation gains one slot (MSVC and MinGW x64: base120 -> native128 bytes,
+slot8). The extra nested map records/buckets are removed, but total RSS has not
+been measured. Vulkan translation objects do not gain the D3D12 slot. No shader
+emitter algorithm, bytecode format, audio scheduling or guest timing is changed.
+Unused deque/function/thread/vector includes are removed from the D3D12 cache
+header; remaining geometry/binding mutex dependencies are explicit.
+
+Verification
+------------
+- Full Windows MSVC CMake core --parallel5 and MinGW static Make -j5: PASS.
+- Strict C89 slot scenarios: null boundaries, reserved marker rejection,
+  pending/success/cached-failure separation, publication loser ownership,
+  reset/reuse, repeated take and 60 concurrent success/failure/mixed races.
+  Four producers/four readers per round, acquire-visible initialized bytes,
+  exactly one winner and all mock owned allocations freed: PASS.
+- Linux C89 ASan+UBSan, MSVC /TC /W4 /WX, and MinGW strict C89: PASS.
+- Native C89 driver with minimal C++ typed translation bridge, MSVC and MinGW:
+  real vertex/pixel D3D12 owners, exact 64-bit modification identity, repeated
+  lookup identity, independent pending/failure/success records, borrowed binary
+  pointer/byte identity, rejected-candidate cleanup, DestroyTranslation and
+  deletion through virtual Shader base: PASS.
+- Concurrent native vertex/pixel translation publishers/readers: one winner,
+  three losing candidates released, owner remains alive through joined readers,
+  then shader virtual deletion: PASS.
+- Scoped MSVC ASan driver/bridge: after direct translation removal and full
+  shader deletion the actual XeDxilShaderBinary address is ASan-poisoned; it is
+  unpoisoned while still borrowed. PASS. Supporting libraries are release, so
+  this is not a whole-core sanitizer or live GPU-use test.
+- Existing Linux binding-storage ASan+UBSan and pipeline-publication regressions
+  (20,000 immediate retries / independent flag writers): PASS.
+- CI adds Linux helper/native bridge checks and Windows native bridge check.
+  Remote CI, full Linux/Android/macOS builds, live D3D12 gameplay and driver PSO
+  performance have not been tested here. Real guest DXIL emission output was
+  not independently regenerated/compared for this ownership-only change.
+
+Synthetic metadata comparison (single local sample, no performance gate)
+-----------------------------------------------------------------------
+core_binary_slot_bench.c owns timing/scenarios/checksums. The separate C++
+reference adapter mirrors the old IsGuestVertexReady mutex plus two exact-key
+map finds; it is benchmark-only, not linked into the core. 512 shader keys x4
+modifications are initialized before timing, versus 2048 stable binary slots.
+Every eleventh index is a cached failure; index0 is a failure. Two million queries
+per case, matching checksum, sequential old/slot measurements, no contention.
+
+            MSVC legacy/slot ns        MinGW legacy/slot ns
+1 key          10.46 / 0.72                 9.16 / 0.89
+32 keys        10.77 / 0.72                 9.19 / 0.89
+2048 keys      12.63 / 0.72                 9.93 / 0.89
+
+These measure only metadata readiness lookup and function-call costs, not shader
+compilation, PSO creation, GPU time, frame cadence or game speed. Reproduce from a
+built core with run_binary_slot_bench.cmd (MSVC developer shell) or .sh (GNU).
+No gameplay/FPS or universal throughput claim follows from these samples.
