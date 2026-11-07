@@ -1,0 +1,77 @@
+Borrowed texture batch deduplication (0180)
+==========================================
+Defect reference: Edge commit40cee11ab14cb9ad4286232dabfe3c69fc32b806,
+reviewed through WizzardSK/xenia-libretro. Independent MSVC C89 adaptation,
+not a transplant of its lambda/linear-search implementation.
+
+The shared TextureCache::LoadTexturesData snapshots base/mip dirty masks for
+all entries before converting any. Duplicate Texture* entries therefore can
+request and convert the same data repeatedly, even when the first load succeeds.
+Both Vulkan and D3D12 route their batch work through this common implementation.
+
+The original RequestTextures fixed64-pointer scratch remains the owner. Dirty
+batches compact that exact span in place, preserving first occurrence order and
+pointer identity. No texture keys, pixel buffers or guest data are copied by
+the filter. Distinct signed/unsigned owners with identical guest addresses are
+not collapsed. Only surviving pointer records after holes move; unique spans
+have no pointer stores. No second pointer array, allocation, persistent texture
+field, generation counter, wrapping tags, atomic or lock is introduced.
+
+The typed C89 expansion avoids treating T** storage as void**, which would be
+an aliasing violation. Tiny batches (up to8) and batches with at most4 distinct
+owners stay linear. Other batches use128 one-byte indices into the compacted
+prefix, with multiplicative pointer hashing and bounded linear probing. The
+maximum64 owners leave the table at most half full. Scratch is automatic128B;
+its bytes are only initialized when the hash path is needed. Unsupported counts
+outside2..64 are left unchanged by the utility; the texture caller retains its
+existing <=64 assertion/precondition and nonnull-owner contract.
+
+The clean-state hint scan returns before compaction, and stops at its first
+dirty hint because the existing locked scan remains authoritative. Required
+shared-memory watch critical regions, GPU dependencies, dirty-bit ownership,
+range validity and conversion failure semantics are retained. This is borrowed
+metadata compaction, not end-to-end zero-copy texture emulation. Backend GPU
+copies/conversion/storage allocations remain separate optimization work.
+
+Verification:
+- Full native MSVC core, --parallel5: PASS.
+- Full GNU static Makefile core, make-j5: PASS.
+- MSVC /TC /W4 /WX and strict MinGW C89 helper+native fixtures: PASS.
+- Linux GCC helper ASan+UBSan: PASS.
+- Scoped MSVC ASan actual texture_cache.cc, typed bridge and C89 driver: PASS.
+  Other libraries are release; STL vector/string annotations disabled for ABI
+  compatibility. This is not full-core ASan or a leak-sanitizer claim.
+- Linux G++ actual texture_cache.cc and typed bridge compilation: PASS.
+- Same native regression linked to exact parentc8438afb2 owner/header: runtime
+  FAIL at the first batch count assertion. It records64 conversion calls for64
+  aliases. Current MSVC/MinGW record1, with the same unchanged dependencies.
+
+C89 oracle coverage: all87,381 sequences of lengths0..8 over four pointer values
+(including NULL as a generic utility value), all lengths through64, all-unique,
+all-alias and alternating owners,10,000 deterministic random lists, sentinel
+bounds and64 distinct valid pointers in one initial hash bucket. It checks exact
+first-occurrence identity/order against an independent linear oracle.
+
+The native bridge owns actual Memory, SharedMemory and TextureCache lifetimes.
+A backend stub marks requested ranges resident and records conversion calls,
+without a GPU or frontend. Tests exercise the real dirty scans, RequestRange,
+watch installation and callbacks:64 aliases ->1 call; clean repeat ->0 calls;
+base-only/mip-only dirty flags; failed conversion then successful retry; distinct
+signed owners of the same guest bytes ->2 calls; guest invalidation during load
+keeps the owner dirty/retryable; all64 unique owners load in order; interleaved
+aliases retain first-use order; empty batches do nothing. Clean interleaved
+spans are verified pointer-for-pointer unchanged through the actual batch method.
+
+Metadata microbenchmark: see pointer_unique_bench_results.txt for all cases,
+including slower ones. Windows x64 AMD Ryzen9 9950X3D, MSVC19.44.35222 /O2 and
+GCC16.2 /O3. Three alternated-order runs of500,000 iterations; mean elapsed
+QueryPerformanceCounter time, with identical input-list copies included. Owned
+builds were stopped for these runs; CPU pinning and fixed clocks were not used.
+The comparison is with a C89 form of the fork's linear dedup proposal. The
+pre-patch core had no dedup filter, so these ratios are not core speedups.
+For64 unique owners MSVC measures354.67ns linear vs55.40ns adaptive; GNU485.37ns
+vs49.14ns. Small and highly aliased cases are mixed (e.g. GNU64 aliases22.32ns
+linear vs26.32ns adaptive). Dirty all-unique batches add metadata work compared
+to the old core; clean batches avoid the filter entirely. No gameplay/FPS,
+real GPU dispatch timing, VRAM or latency improvement is claimed. No live game,
+full Linux core build or remote CI run has been performed for this patch.

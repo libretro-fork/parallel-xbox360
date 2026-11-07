@@ -12,6 +12,7 @@
 
 #include <array>
 #include "libretro/core_texture_dirty.h"
+#include "libretro/core_pointer_unique.h"
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -690,6 +691,7 @@ class TextureCache {
   static uint32_t GetIntegerScaleBits(
       const xenos::xe_gpu_texture_fetch_t& fetch, uint8_t swizzled_signs);
   bool LoadTextureData(Texture& texture);
+  XE_POINTER_UNIQUE_DEFINE(UniqueTextureLoadRequests, Texture)
   void LoadTexturesData(Texture** textures, uint32_t n_textures);
   // Writes the texture data (for base, mips or both - but not neither) from the
   // shared memory or the scaled resolve memory. The shared memory management is

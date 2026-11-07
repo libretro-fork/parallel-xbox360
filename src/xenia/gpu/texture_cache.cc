@@ -928,19 +928,24 @@ void TextureCache::LoadTexturesData(Texture** textures, uint32_t n_textures) {
     }
   }
 
-  // Lockless pre-check: count how many textures appear outdated.
-  // If none appear outdated, skip the lock entirely.
-  uint32_t likely_outdated = 0;
+  // One dirty hint is enough to require the authoritative locked scan.
+  // Clean batches bypass both the lock and pointer compaction entirely.
+  bool likely_outdated = false;
   for (uint32_t i = 0; i < n_textures; ++i) {
     Texture* current = textures[i];
     if (current->outdated_mask_lockless()) {
-      ++likely_outdated;
+      likely_outdated = true;
+      break;
     }
   }
-  if (likely_outdated == 0) {
+  if (!likely_outdated) {
     // All textures appear up-to-date, skip lock acquisition
     return;
   }
+
+  // Dirty state is snapshotted for the whole batch below. Each borrowed owner
+  // must occur once, or duplicate fetch bindings can dispatch duplicate loads.
+  n_textures = UniqueTextureLoadRequests(textures, n_textures);
 
   uint64_t index_base_outdated = 0;
   uint64_t index_mips_outdated = 0;

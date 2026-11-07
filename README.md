@@ -1,5 +1,7 @@
 # parallel_xbox360 libretro core
 
+Dirty texture-upload batches compact their borrowed pointer list in place before dirty-state snapshots, preventing repeated conversions of the same owner. Distinct signed/unsigned owners remain separate. A typed C89 filter uses linear scans for tiny or heavily aliased batches and fixed 128-byte scratch for larger distinct sets, with no allocation or persistent tags. Clean batches bypass it. See [texture batch checks and measurements](tools/tests/texture_unique_results.txt).
+
 Rejected pixel formats and hardware-render requests fail the content load with pending audio, disc and patch-option ownership cleared. Vulkan and D3D12 provider initialization failures return errors rather than terminating the frontend. Vulkan v2 negotiation retains its v1 fallback. Offline tests exercise real load APIs and forced provider failures; see [load-failure checks](tools/tests/load_failure_results.txt).
 
 The CPU shader interpreter uses bounded C89 loop-stack entry and innermost aL addressing, correcting double depth advancement and out-of-range nested-loop access. It retains fixed storage and adds no allocations or synchronization. Actual packed-microcode regressions cover nested loops, skip/break paths and signed address clamping. See [shader loop checks](tools/tests/shader_loop_results.txt).
