@@ -1,0 +1,67 @@
+Launch VFS signature probes and obsolete standalone state removal (0162)
+=====================================================================
+GetFileSignature uses a fixed C89 probe owner with one common VFS RFILE. Opening
+reads exactly four logical header bytes; recognized formats return without a
+tail seek/read. Other inputs read four footer bytes from that same handle, and
+a four-byte file reuses its existing header. Short positive reads are completed,
+EINTR is retried, failed/empty/oversized read returns and bad seeks reject. Failed
+header open and footer reads do not publish partial bytes. A native RAII wrapper
+closes the handle on every early return; no extra payload allocation, whole-file
+mapping or file-size slurp is requested. Common RFILE/path conversion can still
+allocate and the underlying backend may buffer more physical I/O than requested.
+
+The classifier keeps the existing magic values and native raw-disc fallback.
+It is static because it uses no Emulator instance; tests never construct/setup
+one. Signature headers/footers can use frontend virtual-file callbacks, but this
+does NOT migrate the remaining raw-disc/metadata/launch I/O away from native
+paths. GetFileSignature closes its probe before running the existing disc parser.
+This is a cold launch operation, not a measured gameplay or FPS optimization.
+
+Removed the unused SaveToFile/RestoreFromFile entry points and signature, their
+standalone Pause/Resume state, restore fence and WaitUntilExit polling loop.
+The old save path reserved a fixed 2 GiB mapping, ignored component save failures
+and could leave the emulator paused on early failure. Restore terminated the
+loaded title before validating the file and had unbalanced error exits. None of
+those file APIs were called by libretro. Their removal does not provide working
+savestates or claim a normal-play 2 GiB memory reduction.
+One debug-only internal exception callback still called the obsolete global
+Pause; that blocking call is intentionally removed as well. Crash reporting and
+halting/diverting the faulting guest thread remain, matching ordinary release
+behavior. Component pause gates, live launch serialization and shutdown joins
+remain. This does not remove every lock, wait or sleep in the emulator.
+
+Executed Windows x64 coverage:
+- full static GNU Make -j5 and full native MSVC CMake xenia-libretro --parallel 5.
+- strict GNU C89 -pedantic -Wall -Wextra -Werror driver with the actual current
+  classifier linked from Make objects; native MSVC /TC /W4 /WX driver and minimal
+  path/enum bridge linked from freshly rebuilt native libraries.
+- all six XEX variants, ELF, CON, LIVE, PIRS, XSF, XBE, MZ and trailing ZAR magic
+  classify through content://probe. Ordinary recognized headers assert one open,
+  one close, four bytes delivered and no seek; ZAR asserts one open/close and
+  eight bytes delivered with one footer seek. No native path reopen is possible
+  for the virtual fixture. Other classification and disc fallback are unchanged.
+- one/two/three/four-byte read chunks, sparse tail offsets through INT64_MAX,
+  four-byte header reuse, empty/truncated lengths, open/size/read/seek failures,
+  zero and oversized read returns, EINTR recovery, truncated reads and close
+  failure/reset/idempotence. Callback read requests never exceed four bytes.
+- scoped native MSVC ASan instruments actual emulator.cc (including the probe),
+  the C89 hostile-VFS driver and the native bridge; the same regressions pass.
+  String/vector annotations are disabled consistently for compatibility with
+  ordinary native libraries; address instrumentation remains active. Other core
+  and common-library objects are not a fully sanitizer-instrumented build.
+No game, frontend, GPU device or guest CPU/JIT starts. No installed DLL is replaced.
+The removal audit found no production callers of the old file/exit-wait APIs;
+all their declarations/definitions and associated state are removed. No replacement
+whole-machine serialize implementation is claimed; libretro callbacks stay disabled.
+
+Reproduce after matching core builds:
+ CC=gcc CXX=g++ sh tools/tests/run_file_probe_tests.sh
+Native VS prompt:
+ set FILE_PROBE_BUILD=build\tests\state-control-cmake
+ tools\tests\run_file_probe_tests.cmd
+ASan: compile emulator.cc using its generated CMake command with /GL removed,
+/fsanitize=address /Zi /D_DISABLE_VECTOR_ANNOTATION /D_DISABLE_STRING_ANNOTATION
+added, and separate /Fo /Fd outputs. Set FILE_PROBE_OBJECT to that object,
+FILE_PROBE_FLAGS to the same sanitizer/annotation flags, and a separate
+FILE_PROBE_OUT. No /FORCE link or mismatched class ABI is used. Do not edit build
+inputs or overwrite shared artifacts while a build using them is live.

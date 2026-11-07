@@ -57,7 +57,6 @@ namespace ui {
 
 namespace xe {
 
-constexpr fourcc_t kEmulatorSaveSignature = make_fourcc("XSAV");
 static constexpr std::string_view kDefaultGameSymbolicLink = "GAME:";
 static constexpr std::string_view kDefaultPartitionSymbolicLink = "D:";
 static constexpr std::string_view kDefaultUpdateSymbolicLink = "UPDATE:";
@@ -259,7 +258,7 @@ class Emulator {
   };
 
   // Determine the executable signature
-  FileSignatureType GetFileSignature(const std::filesystem::path& path);
+  static FileSignatureType GetFileSignature(const std::filesystem::path& path);
 
   // Launches a game from the given file path.
   // This will attempt to infer the type of the given file (such as an iso, etc)
@@ -285,12 +284,6 @@ class Emulator {
   X_STATUS LaunchStfsContainer(const std::filesystem::path& path);
 
   X_STATUS LaunchDefaultModule(const std::filesystem::path& path);
-
-  void Pause();
-  void Resume();
-  bool is_paused() const { return paused_; }
-  bool SaveToFile(const std::filesystem::path& path);
-  bool RestoreFromFile(const std::filesystem::path& path);
 
   // Full in-process relaunch: terminates threads, Shutdown(), Setup(),
   // then launches with new params. Must be called from a non-guest thread.
@@ -328,8 +321,6 @@ class Emulator {
   void set_disc_request(DiscRequest request) {
     disc_request_ = request;
   }
-
-  void WaitUntilExit();
 
  private:
   static bool ExceptionCallbackThunk(Exception* ex, void* data);
@@ -394,13 +385,10 @@ class Emulator {
   uint8_t current_disc_number_ = 0;
   std::unique_ptr<kernel::util::GameInfoDatabase> game_info_database_;
 
-  bool paused_;
-  bool restoring_;
   xe_launch_state launch_state_;
   // Held across a launch and a whole relaunch so title teardown waits for a
   // launch to finish. Recursive, as a relaunch launches under it.
   std::recursive_mutex launch_mutex_;
-  threading::Fence restore_fence_;  // Fired on restore finish.
 
   // Persisted across Shutdown/Setup for relaunch.
   bool require_cpu_backend_ = false;

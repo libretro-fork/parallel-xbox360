@@ -1463,3 +1463,13 @@ the native bridge only exposes object, guest bitfield and resource lifetimes.
 XMA_OWNER_BUILD (default build/windows-native). Both runners require the external
 fixture and do not download it. See xma_owner_state_results.txt for exact native
 ASan scope and preparation/commit contracts. These APIs do not enable savestates.
+
+Launch signature VFS probes
+---------------------------
+`run_file_probe_tests.sh` links the actual static Make inputs after the core
+build. `run_file_probe_tests.cmd` links current native libraries selected by
+FILE_PROBE_BUILD (default build/windows-native). The strict C89 driver installs
+a hostile virtual VFS; the native bridge invokes static GetFileSignature without
+constructing or setting up an Emulator. FILE_PROBE_FLAGS, FILE_PROBE_OBJECT and
+FILE_PROBE_OUT select the scoped native sanitizer configuration described in
+file_probe_results.txt. These regressions run after core builds in CI.

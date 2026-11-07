@@ -22,13 +22,12 @@
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/apu/audio_system.h"
 #include "xenia/base/assert.h"
-#include "xenia/base/byte_stream.h"
+#include "libretro/core_file_probe.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/debugging.h"
 #include "xenia/base/exception_handler.h"
 #include "xenia/base/filesystem.h"
-#include "xenia/base/literals.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/mapped_memory.h"
 #include "xenia/base/memory.h"
@@ -174,7 +173,6 @@ DEFINE_int32(priority_class, 0,
 DECLARE_int32(console_type);
 
 namespace xe {
-using namespace xe::literals;
 
 Emulator::Emulator(const std::filesystem::path& command_line,
                    const std::filesystem::path& storage_root,
@@ -196,10 +194,7 @@ Emulator::Emulator(const std::filesystem::path& command_line,
       kernel_state_(),
       main_thread_(),
       title_id_(std::nullopt),
-      game_info_database_(),
-      paused_(false),
-      restoring_(false),
-      restore_fence_() {
+      game_info_database_() {
   xe_launch_state_init(&launch_state_);
   if (cvars::priority_class != 0) {
     if (SetProcessPriorityClass(cvars::priority_class)) {
@@ -269,7 +264,6 @@ void Emulator::Shutdown() {
   title_name_.clear();
   title_version_.clear();
   game_info_database_.reset();
-  paused_ = false;
 
   XELOGI("Emulator::Shutdown: teardown complete");
 }
@@ -548,33 +542,18 @@ X_STATUS Emulator::MountPath(const std::filesystem::path& path,
 
 Emulator::FileSignatureType Emulator::GetFileSignature(
     const std::filesystem::path& path) {
-  FILE* file = xe::filesystem::OpenFile(path, "rb");
-
-  if (!file) {
-    // Said, so a launch that fails here does not end in a bare NOT_SUPPORTED
-    XELOGE("{}: cannot open {} (errno {})", __func__, xe::path_to_utf8(path),
-           errno);
+  struct ProbeOwner {
+    xe_file_probe probe = {};
+    ~ProbeOwner() { xe_file_probe_close(&probe); }
+  } owner;
+  const std::string utf8_path = xe::path_to_utf8(path);
+  if (!xe_file_probe_open(&owner.probe, utf8_path.c_str())) {
+    XELOGE("{}: cannot read signature from {}", __func__, utf8_path);
     return FileSignatureType::Unknown;
   }
-
-  std::error_code size_error;
-  const uint64_t file_size = std::filesystem::file_size(path, size_error);
-  constexpr int64_t header_size = 4;
-
-  if (size_error || file_size < header_size) {
-    XELOGE("{}: {} has no size to read ({} bytes, {})", __func__,
-           xe::path_to_utf8(path), file_size, size_error.message());
-    fclose(file);
-    return FileSignatureType::Unknown;
-  }
-
-  char file_magic[header_size];
-  fread(file_magic, sizeof(file_magic), 1, file);
-
+  const unsigned char* file_magic = owner.probe.head;
   fourcc_t magic_value =
       make_fourcc(file_magic[0], file_magic[1], file_magic[2], file_magic[3]);
-
-  fclose(file);
 
   switch (magic_value) {
     case xe::cpu::kXEX0Signature:
@@ -611,17 +590,18 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
     return FileSignatureType::EXE;
   }
 
-  file = xe::filesystem::OpenFile(path, "rb");
-  xe::filesystem::Seek(file, -header_size, SEEK_END);
-  fread(file_magic, 1, header_size, file);
-  fclose(file);
-
-  magic_value =
-      make_fourcc(file_magic[0], file_magic[1], file_magic[2], file_magic[3]);
+  unsigned char tail[4];
+  if (!xe_file_probe_tail(&owner.probe, tail)) {
+    XELOGE("{}: cannot read archive footer from {}", __func__, utf8_path);
+    return FileSignatureType::Unknown;
+  }
+  magic_value = make_fourcc(tail[0], tail[1], tail[2], tail[3]);
 
   if (xe::vfs::kZarMagic == magic_value) {
     return FileSignatureType::ZAR;
   }
+
+  xe_file_probe_close(&owner.probe);
 
   // Check if XISO
   std::unique_ptr<vfs::Device> device =
@@ -887,164 +867,6 @@ X_STATUS Emulator::LaunchDefaultModule(const std::filesystem::path& path) {
   return result;
 }
 
-void Emulator::Pause() {
-  if (paused_) {
-    return;
-  }
-  paused_ = true;
-
-  // Don't hold the lock on this (so any waits follow through)
-  graphics_system_->Pause();
-  audio_system_->Pause();
-
-  auto lock = global_critical_region::AcquireDirect();
-  auto threads =
-      kernel_state()->object_table()->GetObjectsByType<kernel::XThread>(
-          kernel::XObject::Type::Thread);
-  auto current_thread = kernel::XThread::IsInThread()
-                            ? kernel::XThread::GetCurrentThread()
-                            : nullptr;
-  for (auto thread : threads) {
-    // Don't pause ourself or host threads.
-    if (thread == current_thread || !thread->can_debugger_suspend()) {
-      continue;
-    }
-
-    if (thread->is_running()) {
-      thread->thread()->Suspend(nullptr);
-    }
-  }
-
-  XELOGD("! EMULATOR PAUSED !");
-}
-
-void Emulator::Resume() {
-  if (!paused_) {
-    return;
-  }
-  paused_ = false;
-  XELOGD("! EMULATOR RESUMED !");
-
-  graphics_system_->Resume();
-  audio_system_->Resume();
-
-  auto threads =
-      kernel_state()->object_table()->GetObjectsByType<kernel::XThread>(
-          kernel::XObject::Type::Thread);
-  for (auto thread : threads) {
-    if (!thread->can_debugger_suspend()) {
-      // Don't pause host threads.
-      continue;
-    }
-
-    if (!thread->is_running()) {
-      thread->thread()->Resume(nullptr);
-    }
-  }
-}
-
-bool Emulator::SaveToFile(const std::filesystem::path& path) {
-  Pause();
-
-  filesystem::CreateEmptyFile(path);
-  auto map = MappedMemory::Open(path, MappedMemory::Mode::kReadWrite, 0, 2_GiB);
-  if (!map) {
-    return false;
-  }
-
-  // Save the emulator state to a file
-  ByteStream stream(map->data(), map->size());
-  stream.Write(kEmulatorSaveSignature);
-  stream.Write(title_id_.has_value());
-  if (title_id_.has_value()) {
-    stream.Write(title_id_.value());
-  }
-
-  // It's important we don't hold the global lock here! XThreads need to step
-  // forward (possibly through guarded regions) without worry!
-  processor_->Save(&stream);
-  graphics_system_->Save(&stream);
-  audio_system_->Save(&stream);
-  kernel_state_->Save(&stream);
-  memory_->Save(&stream);
-  map->Close(stream.offset());
-
-  Resume();
-  return true;
-}
-
-bool Emulator::RestoreFromFile(const std::filesystem::path& path) {
-  // Restore the emulator state from a file
-  auto map = MappedMemory::Open(path, MappedMemory::Mode::kReadWrite);
-  if (!map) {
-    return false;
-  }
-
-  restoring_ = true;
-
-  // Terminate any loaded titles.
-  Pause();
-  kernel_state_->TerminateTitle();
-
-  auto lock = global_critical_region::AcquireDirect();
-  ByteStream stream(map->data(), map->size());
-  if (stream.Read<uint32_t>() != kEmulatorSaveSignature) {
-    return false;
-  }
-
-  auto has_title_id = stream.Read<bool>();
-  std::optional<uint32_t> title_id;
-  if (!has_title_id) {
-    title_id = {};
-  } else {
-    title_id = stream.Read<uint32_t>();
-  }
-  if (title_id_.has_value() != title_id.has_value() ||
-      title_id_.value() != title_id.value()) {
-    // Swapping between titles is unsupported at the moment.
-    assert_always();
-    return false;
-  }
-
-  if (!processor_->Restore(&stream)) {
-    XELOGE("Could not restore processor!");
-    return false;
-  }
-  if (!graphics_system_->Restore(&stream)) {
-    XELOGE("Could not restore graphics system!");
-    return false;
-  }
-  if (!audio_system_->Restore(&stream)) {
-    XELOGE("Could not restore audio system!");
-    return false;
-  }
-  if (!kernel_state_->Restore(&stream)) {
-    XELOGE("Could not restore kernel state!");
-    return false;
-  }
-  if (!memory_->Restore(&stream)) {
-    XELOGE("Could not restore memory!");
-    return false;
-  }
-
-  // Update the main thread.
-  auto threads =
-      kernel_state_->object_table()->GetObjectsByType<kernel::XThread>();
-  for (auto thread : threads) {
-    if (thread->main_thread()) {
-      main_thread_ = thread;
-      break;
-    }
-  }
-
-  Resume();
-
-  restore_fence_.Signal();
-  restoring_ = false;
-
-  return true;
-}
-
 void Emulator::RelaunchTitle(const std::string& host_path,
                              const std::string& launch_module,
                              uint32_t launch_flags,
@@ -1064,7 +886,7 @@ void Emulator::RelaunchTitle(const std::string& host_path,
       "RelaunchTitle: starting full in-process relaunch, target={}, module={}",
       host_path, launch_module);
 
-  // Keep WaitUntilExit from treating a relaunch as final termination.
+  // Publish relaunch ownership before teardown so concurrent control sees it.
   xe_launch_state_set_active(&launch_state_, 1);
   if (audio_system_) audio_system_->CancelPendingOutput();
 
@@ -1497,11 +1319,8 @@ bool Emulator::ExceptionCallback(Exception* ex) {
     return false;
   }
 
-  // Within range. Log the crash and suspend the faulting thread.
-  // Only pause the entire emulator if debugging is enabled.
-  if (cvars::debug) {
-    Pause();
-  }
+  // Log and halt the faulting guest thread. Do not enter a blocking global
+  // pause protocol from an exception callback; the frontend must stay usable.
 
   // Dump information into the log.
   auto current_thread = kernel::XThread::GetCurrentThread();
@@ -1574,30 +1393,6 @@ bool Emulator::ExceptionCallback(Exception* ex) {
   // We should not arrive here!
   assert_always();
   return false;
-}
-
-void Emulator::WaitUntilExit() {
-  while (true) {
-    if (main_thread_) {
-      // Use wait_handle() rather than thread(): a fiber-backed main thread has
-      // no host thread, only an exit event.
-      xe::threading::Wait(main_thread_->wait_handle(), false);
-    }
-
-    if (restoring_) {
-      restore_fence_.Wait();
-    } else if (is_relaunching()) {
-      // RelaunchTitle is running on another thread - wait for it to finish
-      // and set the new main_thread_, then loop back to wait on it.
-      while (is_relaunching()) {
-        xe::threading::Sleep(std::chrono::milliseconds(10));
-      }
-    } else {
-      // Not restoring/relaunching and the thread exited. We're finished.
-      break;
-    }
-  }
-
 }
 
 std::string Emulator::RemountAndResolveLaunchPath(
