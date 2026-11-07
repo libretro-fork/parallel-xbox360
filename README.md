@@ -1,5 +1,7 @@
 # parallel_xbox360 libretro core
 
+Vulkan shader translation no longer builds unused texture/sampler layout UIDs. Their registry had no readers, yet hashed/compared and copied binding arrays into a growing vector/map under a mutex. The registry, copies, mutex and per-shader once flag/UID fields are removed. Actual shader binding metadata and the command processor's Vulkan pipeline-layout cache remain unchanged. See [layout registry audit](tools/tests/layout_uid_removal_results.txt).
+
 Texture invalidation hints now use one libretro-common atomic word per texture. GPU pre-checks no longer race plain callback-written booleans, and an unused cache-wide atomic exchange/store is removed. Base/mip writers still use the existing shared-memory critical region; readers fetch both flags once where possible. Watch ownership, reload rechecks, conversions and audio timing are unchanged. See [texture hint checks](tools/tests/texture_dirty_results.txt).
 
 Two-pass Vulkan resolves now prepare only the destination backing they actually write: scaled output no longer requests/uploads the unused native aperture or dispatches against native storage after a scaled allocation failure. A shared checked C89 destination policy also validates D3D12 ranges. Vulkan removes a redundant scaled-residency preparation and uses 64-bit scaled descriptor lengths. Conversion shaders, resolve passes and synchronization remain unchanged; Dark Souls II GPU-time gains have not been measured. See [resolve destination checks](tools/tests/resolve_destination_results.txt).

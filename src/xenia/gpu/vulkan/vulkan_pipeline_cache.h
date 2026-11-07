@@ -122,8 +122,6 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
     Pipeline& operator=(Pipeline&&) = delete;
   };
 
-  static constexpr size_t kLayoutUIDEmpty = 0;
-
   VulkanPipelineCache(VulkanCommandProcessor& command_processor,
                       const RegisterFile& register_file,
                       VulkanRenderTargetCache& render_target_cache,
@@ -473,21 +471,6 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
   StringBuffer ucode_disasm_buffer_;
   // Shared guest SPIR-V translator, modification derivation and geometry keys.
   GuestSpirvShaderCache guest_shader_cache_;
-
-  struct LayoutUID {
-    size_t uid;
-    size_t vector_span_offset;
-    size_t vector_span_length;
-  };
-  std::mutex layouts_mutex_;
-  // Texture binding layouts of different shaders, for obtaining layout UIDs.
-  std::vector<VulkanShader::TextureBinding> texture_binding_layouts_;
-  // Map of texture binding layouts used by shaders, for obtaining UIDs. Keys
-  // are XXH3 hashes of layouts, values need manual collision resolution using
-  // layout_vector_offset:layout_length of texture_binding_layouts_.
-  std::unordered_multimap<uint64_t, LayoutUID,
-                          xe::hash::IdentityHasher<uint64_t>>
-      texture_binding_layout_map_;
 
   // Ucode hash -> shader.
   std::unordered_map<uint64_t, VulkanShader*,

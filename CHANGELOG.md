@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed Vulkan's unused texture/sampler layout UID registry from shader translation. This removes its mutex, hash/collision comparisons, vector/map growth, binding-array copies and per-shader once flag/UID fields. No code consumed these IDs; actual binding metadata, pipeline layouts and shader output are unchanged. This removes avoidable translation work without changing audio or rendering accuracy; gameplay gains are unmeasured.
+
 - Texture invalidation pre-checks use a libretro-common atomic base/mip mask instead of racing plain booleans. Removed the unused cache-wide atomic flag and its exchange on texture requests. Combined pre-checks use one acquire load; existing watch/authoritative reload locking remains. Per-texture size is unchanged in local MSVC/MinGW x64 probes, and the cache object shrinks eight bytes. Rendering conversion and audio behavior are unchanged.
 
 - Scaled two-pass Vulkan resolves no longer request/upload unused native guest-memory backing. Failed scaled destination preparation now rejects the resolve instead of binding native storage to a scaled shader. Both backends use checked destination extents; Vulkan avoids duplicate scaled-residency preparation and widens descriptor-length multiplication to 64 bits. Existing shaders, conversion, barriers and audio timing remain unchanged; gameplay GPU-time gains are unmeasured.

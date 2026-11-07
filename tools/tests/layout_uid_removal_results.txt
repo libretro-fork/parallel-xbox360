@@ -1,0 +1,45 @@
+Unused Vulkan layout UID registry removal (0170)
+================================================
+Repository-wide source audit found no callers of GetTextureBindingLayoutUserUID
+or GetSamplerBindingLayoutUserUID. Their only writers were the post-translation
+EnterBindingLayoutUserUIDSetup block. LayoutUID, kLayoutUIDEmpty, layouts_mutex_,
+texture_binding_layout_map_ and texture_binding_layouts_ existed solely to build
+those unread IDs and clear their storage at shutdown. No externally exported
+libretro ABI or persistence record includes these IDs.
+
+Removed the entire unused registry and its shader methods/fields. Each shader's
+first translation no longer claims its std::atomic_flag, takes that registry
+mutex, hashes/compares binding records, copies records into the extra vector or
+allocates map nodes for those IDs. The two UID size_t fields are also gone.
+No replacement lock, buffer, atomic wrapper, algorithm or normal-path logging is
+added. Real shader texture/sampler binding metadata still belongs to SpirvShader;
+it is not removed, reinterpreted or copied differently. CommandProcessor's real
+pipeline_layouts_mutex_ and descriptor/pipeline-layout cache are separate and
+remain. Native D3D12 never used this UID registry and is unchanged.
+
+This is source-closure dead-work removal, not a new layout compatibility rule.
+All real translation/publication, placeholder, failure, completion, deferred
+GPU destruction, shader bytecode and cache-file formats are unchanged. Other
+pipeline atomics/locks and translation allocations remain. Not end-to-end
+allocation-free, lock-free or copy-free shader creation.
+
+Cold sizeof probes: VulkanShader608->584 bytes MinGW and632->608 MSVC x64
+(24 bytes per shader). VulkanPipelineCache1000->912 MinGW and1256->1088 MSVC;
+its removed vector/map dynamic storage is additional and workload-dependent,
+not included in sizeof or measured as a whole-game RSS result.
+The removed block ran only after shader_module() was successfully published,
+so it did not contribute to emitted SPIR-V/module bytes in the first place.
+
+Validation: full static Make -j5 and native MSVC CMake --parallel5 PASS.
+The existing actual shared-translator publication fixture passes GNU and native
+MSVC: six claimants, backend preparation before publication, backend failure
+visibility, and guest-ucode storage index checks. This fixture uses a fake native
+backend preparation hook, not a Vulkan device; it does not measure GPU behavior.
+Whole-source references to removed UID APIs/storage are absent, and full builds
+verify no remaining production dependency. Shader remains noncopyable through
+its existing base class. No new runtime code or test algorithm was required.
+No additional sanitizer coverage is claimed for this dead-code deletion.
+
+No game,
+GPU device, guest JIT or installed-core replacement is needed for these checks.
+No FPS, shader-stutter or GPU-time gain is claimed without gameplay measurement.

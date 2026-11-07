@@ -499,8 +499,6 @@ void VulkanPipelineCache::Shutdown() {
     delete it.second;
   }
   shaders_.clear();
-  texture_binding_layout_map_.clear();
-  texture_binding_layouts_.clear();
 
   // Shut down shader translation.
   guest_shader_cache_.Shutdown();
@@ -980,67 +978,6 @@ bool VulkanPipelineCache::TranslateAnalyzedShader(
     translation.Dump(cvars::dump_shaders, "vulkan");
   }
 
-  // Set up the texture binding layout.
-  if (shader.EnterBindingLayoutUserUIDSetup()) {
-    // texture_binding_layout_map_ / texture_binding_layouts_ are shared and may
-    // be mutated concurrently now that pixel shaders (which can have textures)
-    // are translated on multiple creation threads for deferred interpreter
-    // draws.
-    std::lock_guard<std::mutex> layout_lock(layouts_mutex_);
-    // Obtain the unique IDs of the binding layout if there are any texture
-    // bindings, for invalidation in the command processor.
-    size_t texture_binding_layout_uid = kLayoutUIDEmpty;
-    const std::vector<VulkanShader::TextureBinding>& texture_bindings =
-        shader.GetTextureBindingsAfterTranslation();
-    size_t texture_binding_count = texture_bindings.size();
-    if (texture_binding_count) {
-      size_t texture_binding_layout_bytes =
-          texture_binding_count * sizeof(*texture_bindings.data());
-      uint64_t texture_binding_layout_hash =
-          XXH3_64bits(texture_bindings.data(), texture_binding_layout_bytes);
-      auto found_range =
-          texture_binding_layout_map_.equal_range(texture_binding_layout_hash);
-      for (auto it = found_range.first; it != found_range.second; ++it) {
-        if (it->second.vector_span_length == texture_binding_count &&
-            !std::memcmp(
-                texture_binding_layouts_.data() + it->second.vector_span_offset,
-                texture_bindings.data(), texture_binding_layout_bytes)) {
-          texture_binding_layout_uid = it->second.uid;
-          break;
-        }
-      }
-      if (texture_binding_layout_uid == kLayoutUIDEmpty) {
-        static_assert(
-            kLayoutUIDEmpty == 0,
-            "Layout UID is size + 1 because it's assumed that 0 is the UID for "
-            "an empty layout");
-        texture_binding_layout_uid = texture_binding_layout_map_.size() + 1;
-        LayoutUID new_uid;
-        new_uid.uid = texture_binding_layout_uid;
-        new_uid.vector_span_offset = texture_binding_layouts_.size();
-        new_uid.vector_span_length = texture_binding_count;
-        texture_binding_layouts_.resize(new_uid.vector_span_offset +
-                                        texture_binding_count);
-        std::memcpy(
-            texture_binding_layouts_.data() + new_uid.vector_span_offset,
-            texture_bindings.data(), texture_binding_layout_bytes);
-        texture_binding_layout_map_.emplace(texture_binding_layout_hash,
-                                            new_uid);
-      }
-    }
-    shader.SetTextureBindingLayoutUserUID(texture_binding_layout_uid);
-
-    // Use the sampler count for samplers because it's the only thing that must
-    // be the same for layouts to be compatible in this case
-    // (instruction-specified parameters are used as overrides for creating
-    // actual samplers).
-    static_assert(
-        kLayoutUIDEmpty == 0,
-        "Empty layout UID is assumed to be 0 because for bindful samplers, the "
-        "UID is their count");
-    shader.SetSamplerBindingLayoutUserUID(
-        shader.GetSamplerBindingsAfterTranslation().size());
-  }
 
   return true;
 }
