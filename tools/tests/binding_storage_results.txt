@@ -1,0 +1,68 @@
+Immutable shader binding storage (0176)
+=======================================
+SpirvShader now owns one exact-size C89 allocation for four-byte texture and
+sampler records. Both native renderers borrow const spans over that storage;
+views carry pointer/count metadata only, never copy binding payloads. Vulkan
+translation packs its final records directly there. Native DXIL publication
+packs directly into the same final storage on first publication, then compares
+subsequent layouts in place. Two final std::vectors and the two temporary DXIL
+publication vectors are removed. No fixed maximum-size table is embedded in
+every shader.
+
+On MSVC x64, sizeof(SpirvShader) changes from 600 to 576 bytes. Both packed native
+record types remain four bytes. A shader using both record kinds needs one
+payload allocation instead of two; empty bindings allocate nothing. Repeated
+native publication allocates no new binding records and preserves borrowed
+addresses. One allocation on a shader's first publication remains; this is not
+a guarantee of allocation-free gameplay. Translator scratch vectors and the
+shader-generation mutex remain. That mutex still serializes concurrent variants
+through generation and publication; it has not been disguised as a spin lock.
+
+Readiness publication remains release/acquire. Draw code forms spans only after
+the readiness check, since constructing a span reads its counts. Allocation
+failure leaves the C89 owner unchanged; SPIR-V publication invalidates that
+translation without marking the bindings initialized, allowing later retry.
+Readers must finish before shader destruction. The C89 owner frees the single
+allocation during the same shader-destruction lifetime as the previous vectors.
+Native bitfield enum/object lifetime conversion remains minimal C++ ABI glue.
+
+Verification:
+- Native MSVC full core build, --parallel 5: PASS.
+- GNU static Makefile full core build, make -j5: PASS.
+- GNU strict C89 allocation fixture: PASS.
+- MSVC /TC /W4 /WX allocation fixture, normal and ASan: PASS.
+- Linux GCC strict C89 ASan+UBSan allocation fixture: PASS.
+- Native MSVC and MinGW fixtures: PASS maximum 192 texture/2000 sampler records, repeated
+  publication, exact contiguous record placement, empty and sampler-only tables,
+  mismatch rejection, four readers across initial publication, and stable views.
+- Scoped native MSVC ASan (owner module, shader adapter and fixture) PASS; STL
+  string/vector annotations are disabled for compatibility with the remaining
+  uninstrumented native dependency libraries. This is not full-core ASan.
+- Offline cached guest test uses real SpirvShader owners, two translator profiles
+  (host render targets and fragment interlock), and a second variant per shader.
+  698 primary plus 698 variant translations PASS; final binding addresses remain
+  stable after the second translation. No GPU or game process is started.
+- Parent f6ec0dabc binding-owner/translator components, rebuilt against the same
+  unchanged native dependency libraries, produce identical primary output:
+  32,806,352 bytes, SHA256
+  527DA7985C1BD8E9544BEA15C87A2335AB8A60C9B76F4D52682977FE59830E93.
+  This is a component comparison, not a full parent-core/GPU comparison.
+  Local read-only input snapshot 4E4D0859.xsh SHA256
+  4FACCABA716E811213D46BF5E21BFC37519A6ED0D428B806FD309DFF7DC53A8D.
+  User cache input and generated output are not shipped in the patch.
+- Final GNU real-cache fixture also passes all 1396 primary/variant translations
+  and compares byte-for-byte against that parent component output.
+- Raw packed binding tables, counts and used masks also compare byte-for-byte:
+  20,664 bytes, SHA256
+  1319B683D8BCF3B61807650D3A5F1584C958290D0C8D8C22C8CBCD08525620E8.
+- A sampler-only empty-texture-view regression fails before the empty-view
+  guard and passes after it. Zero-count views do not expose the other array's
+  allocation address. Final native MSVC/MinGW and scoped ASan fixtures pass.
+- Linux G++ compilation of the actual shader owner/adapter: PASS.
+- Placement array construction starts the native array lifetimes over the
+  initialized C89 allocation, without a second initialization pass. Compile-time
+  size/alignment/triviality checks guard the packed enum/object ABI.
+
+Remote CI, full Linux core execution, native GPU correctness, gameplay FPS and RSS changes
+have not been measured. No audio scheduling, frontend pacing or GPU completion
+policy is changed. The intermittent frontend close crash remains unresolved.

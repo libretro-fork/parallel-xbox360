@@ -4681,17 +4681,17 @@ bool D3D12CommandProcessor::UpdateBindingsNative(
     // k2D resolve identically in the cache, so the SPIR-V translator's 1D-as-2D
     // is fine).
     size_t texture_count = 0, sampler_count = 0;
-    const std::vector<SpirvShader::TextureBinding>* spirv_textures = nullptr;
-    const std::vector<SpirvShader::SamplerBinding>* spirv_samplers = nullptr;
+    std::span<const SpirvShader::TextureBinding> spirv_textures;
+    std::span<const SpirvShader::SamplerBinding> spirv_samplers;
     // Only read the bindings once published (bindings_ready), so the deferred
     // pixel shader's still-translating bindings are never read partially.
     const SpirvShader* spirv_shader =
         (shader && shader->bindings_ready()) ? shader : nullptr;
     if (spirv_shader) {
-      spirv_textures = &spirv_shader->GetTextureBindingsAfterTranslation();
-      spirv_samplers = &spirv_shader->GetSamplerBindingsAfterTranslation();
-      texture_count = spirv_textures->size();
-      sampler_count = spirv_samplers->size();
+      spirv_textures = spirv_shader->GetTextureBindingsAfterTranslation();
+      spirv_samplers = spirv_shader->GetSamplerBindingsAfterTranslation();
+      texture_count = spirv_textures.size();
+      sampler_count = spirv_samplers.size();
     }
     size_t entry_count = texture_count + sampler_count;
     if (!entry_count) {
@@ -4717,11 +4717,11 @@ bool D3D12CommandProcessor::UpdateBindingsNative(
       // ResourceDescriptorHeap is the bound view heap, so the absolute index is
       // used (no SystemBindlessView::kUnboundedSRVsStart subtraction).
       mapping[i * 2] = texture_cache_->GetActiveTextureBindlessSRVIndex(
-          (*spirv_textures)[i]);
+          spirv_textures[i]);
     }
     for (size_t j = 0; j < sampler_count; ++j) {
       uint32_t sampler_index = GetOrCreateNativeBindlessSamplerIndex(
-          texture_cache_->GetSamplerParameters((*spirv_samplers)[j]));
+          texture_cache_->GetSamplerParameters(spirv_samplers[j]));
       if (sampler_index == UINT32_MAX) {
         // Heap full. Stop and let the caller switch heaps and rebuild.
         sampler_overflow = true;

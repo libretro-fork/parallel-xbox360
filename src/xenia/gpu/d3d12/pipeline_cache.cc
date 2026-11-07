@@ -610,23 +610,6 @@ bool BuildNativeTextureLayout(const SpirvShader& shader, XeDxilTextureLayout& la
   }
   return true;
 }
-bool PublishNativeTextureLayout(SpirvShader& shader, const XeDxilTextureLayout& layout) {
-  std::vector<SpirvShader::TextureBinding> textures;
-  std::vector<SpirvShader::SamplerBinding> samplers;
-  textures.reserve(layout.texture_count); samplers.reserve(layout.sampler_count);
-  for (unsigned i = 0; i < layout.texture_count; ++i) {
-    const auto& in = layout.textures[i]; auto& out = textures.emplace_back();
-    std::memset(&out,0,sizeof(out)); out.fetch_constant = in.fetch_constant;
-    out.dimension = xenos::FetchOpDimension(in.dimension); out.is_signed = in.is_signed;
-  }
-  for (unsigned i = 0; i < layout.sampler_count; ++i) {
-    const auto& in = layout.samplers[i]; auto& out = samplers.emplace_back();
-    std::memset(&out,0,sizeof(out)); out.fetch_constant = in.fetch_constant;
-    out.mag_filter = xenos::TextureFilter(in.mag_filter); out.min_filter = xenos::TextureFilter(in.min_filter);
-    out.mip_filter = xenos::TextureFilter(in.mip_filter); out.aniso_filter = xenos::AnisoFilter(in.aniso_filter);
-  }
-  return shader.PublishNativeBindings(std::move(textures),std::move(samplers),layout.used_texture_mask);
-}
 XeDxilTextureStageOptions NativeTextureOptions(const XeDxilTextureLayout& layout, unsigned pixel, uint32_t scale_x, uint32_t scale_y) {
   XeDxilTextureStageOptions options = {};
   options.layout = &layout; options.pixel_shader = pixel;
@@ -717,7 +700,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
   OwnedNativeDxil binary(xe_dxil_build_guest_vertex_owned(
       &options, shader.ucode_dwords(), shader.ucode_dword_count(),
       shader.cf_pair_index_bound() * 2), &xe_dxil_shader_binary_delete);
-  if (binary && !PublishNativeTextureLayout(*binding_shader,texture_layout)) return nullptr;
+  if (binary && !binding_shader->PublishNativeBindings(texture_layout)) return nullptr;
   bindings_lock.unlock();
   std::lock_guard<std::mutex> lock(native_dxil_cache_mutex_);
   auto& cache = native_vertex_dxil_cache_[shader.ucode_data_hash()];
@@ -819,7 +802,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
   OwnedNativeDxil binary(xe_dxil_build_guest_pixel_owned(&options,
       shader.ucode_dwords(), shader.ucode_dword_count(), shader.cf_pair_index_bound()*2),
       &xe_dxil_shader_binary_delete);
-  if (binary && !PublishNativeTextureLayout(*binding_shader,texture_layout)) return nullptr;
+  if (binary && !binding_shader->PublishNativeBindings(texture_layout)) return nullptr;
   bindings_lock.unlock();
   std::lock_guard<std::mutex> lock(native_dxil_cache_mutex_);
   auto& cache = native_pixel_dxil_cache_[shader.ucode_data_hash()];

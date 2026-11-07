@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan/D3D12 shader binding records use one exact-size C89 owner and borrowed views instead of two final vectors. Native DXIL publication also removes two temporary vectors and compares already-published layouts in place. MSVC x64 shader metadata shrinks by 24 bytes. First publication still allocates; generation serialization and audio scheduling remain.
+
 - Vulkan/D3D12 pipeline workers use direct callbacks with a borrowed owner instead of three std::function wrappers. Requests retain their existing C89 slot and publication lifetime, and worker contexts retain their joined-worker destruction. GNU x64 adapter metadata shrinks from 144 to 80 bytes; synthetic throughput results are mixed and no gameplay gain is established.
 
 - Vulkan and D3D12 retire replaced placeholder pipelines through fixed C89 reservations and a libretro-common MPSC handoff. This removes their retirement mutexes, growing vectors, temporary collection vectors and repeated vector erases. Pool exhaustion selects synchronous creation before shader/layout preparation; it introduces no capacity wait or additional draw-drop policy. Reservations transfer once, GPU completion still gates destruction, and creators join before shutdown releases metadata. Metadata copies do not duplicate reservation ownership. Entry metadata grows by one pointer and the cold pool costs 512 KiB per active backend; gameplay/RSS gains remain unmeasured.

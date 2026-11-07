@@ -1,5 +1,7 @@
 # parallel_xbox360 libretro core
 
+Shader texture/sampler bindings use a single exact-size C89 allocation and borrowed views in both renderers. Native DXIL publication fills final storage directly and compares later layouts without temporary vectors. MSVC x64 shader metadata shrinks from 600 to 576 bytes. First-publication allocation and the shader-generation mutex remain. See [binding ownership and shader-output checks](tools/tests/binding_storage_results.txt).
+
 Pipeline worker callbacks use function pointers and a borrowed backend owner, removing three std::function wrappers from the C++ lifetime adapter. Request payloads still use their existing reusable C89 slots through publication. Worker contexts are destroyed after worker joins. GNU x64 adapter metadata shrinks from 144 to 80 bytes; measured synthetic throughput is mixed. See [callback ownership checks](tools/tests/pipeline_callbacks_results.txt).
 
 Vulkan and D3D12 retire replaced placeholder pipelines through reserved C89 records and a libretro-common MPSC handoff, removing retirement mutexes and growing/temporary vectors. GPU completion still gates destruction. The cold pool costs 512 KiB per active backend; exhausted reservations select synchronous creation before shader preparation. Native entry metadata grows by one pointer. See [retirement checks and limits](tools/tests/pipeline_retire_results.txt).

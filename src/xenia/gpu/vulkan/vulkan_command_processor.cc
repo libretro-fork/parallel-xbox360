@@ -3519,7 +3519,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       // populating them (async draws don't translate here). A placeholder draw
       // that ends up using this shader binds no samplers for it anyway.
       if (!shader->bindings_ready()) continue;
-      const std::vector<VulkanShader::SamplerBinding>& shader_sampler_bindings =
+      const auto shader_sampler_bindings =
           shader->GetSamplerBindingsAfterTranslation();
       if (!i) {
         if (!xe_sampler_begin(&sampler_stage, shader_sampler_bindings.size())) return false;
@@ -6615,31 +6615,24 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   }
 
   // Textures and samplers. Only read a shader's binding lists when its bindings
-  // are ready - an async draw doesn't translate here, so a creation thread may
-  // still be populating them (reading size()/contents would race). Binding the
-  // reference is fine; only size()/iteration touch the racing buffer.
+  // are ready: forming a borrowed view also reads the published counts.
   bool vertex_bindings_ready = vertex_shader->bindings_ready();
-  const std::vector<VulkanShader::SamplerBinding>& samplers_vertex =
-      vertex_shader->GetSamplerBindingsAfterTranslation();
-  const std::vector<VulkanShader::TextureBinding>& textures_vertex =
-      vertex_shader->GetTextureBindingsAfterTranslation();
-  uint32_t sampler_count_vertex =
-      vertex_bindings_ready ? uint32_t(samplers_vertex.size()) : 0;
-  uint32_t texture_count_vertex =
-      vertex_bindings_ready ? uint32_t(textures_vertex.size()) : 0;
-  const std::vector<VulkanShader::SamplerBinding>* samplers_pixel;
-  const std::vector<VulkanShader::TextureBinding>* textures_pixel;
-  uint32_t sampler_count_pixel, texture_count_pixel;
+  const auto samplers_vertex = vertex_bindings_ready
+      ? vertex_shader->GetSamplerBindingsAfterTranslation()
+      : std::span<const VulkanShader::SamplerBinding>{};
+  const auto textures_vertex = vertex_bindings_ready
+      ? vertex_shader->GetTextureBindingsAfterTranslation()
+      : std::span<const VulkanShader::TextureBinding>{};
+  uint32_t sampler_count_vertex = uint32_t(samplers_vertex.size());
+  uint32_t texture_count_vertex = uint32_t(textures_vertex.size());
+  std::span<const VulkanShader::SamplerBinding> samplers_pixel;
+  std::span<const VulkanShader::TextureBinding> textures_pixel;
+  uint32_t sampler_count_pixel = 0, texture_count_pixel = 0;
   if (pixel_shader && pixel_shader->bindings_ready()) {
-    samplers_pixel = &pixel_shader->GetSamplerBindingsAfterTranslation();
-    textures_pixel = &pixel_shader->GetTextureBindingsAfterTranslation();
-    sampler_count_pixel = uint32_t(samplers_pixel->size());
-    texture_count_pixel = uint32_t(textures_pixel->size());
-  } else {
-    samplers_pixel = nullptr;
-    textures_pixel = nullptr;
-    sampler_count_pixel = 0;
-    texture_count_pixel = 0;
+    samplers_pixel = pixel_shader->GetSamplerBindingsAfterTranslation();
+    textures_pixel = pixel_shader->GetTextureBindingsAfterTranslation();
+    sampler_count_pixel = uint32_t(samplers_pixel.size());
+    texture_count_pixel = uint32_t(textures_pixel.size());
   }
   // Placeholder pipelines were built with a layout matching only what their
   // placeholder shaders access, so don't bind texture sets they lack (which
@@ -6735,7 +6728,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   const size_t pixel_texture_image_info_offset = image_plan.offsets[2];
   if (write_pixel_textures && texture_count_pixel) {
     size_t index = pixel_texture_image_info_offset;
-    for (const VulkanShader::TextureBinding& texture_binding : *textures_pixel) {
+    for (const VulkanShader::TextureBinding& texture_binding : textures_pixel) {
       xe_vk_descriptor_texture(descriptor_image_infos + index++,
           texture_cache_->GetActiveBindingOrNullImageView(texture_binding.fetch_constant,
               texture_binding.dimension, bool(texture_binding.is_signed)));
