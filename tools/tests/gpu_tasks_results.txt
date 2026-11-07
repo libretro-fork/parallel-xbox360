@@ -1,0 +1,58 @@
+GPU control task ownership (0154)
+================================
+CommandProcessor's shared std::queue<std::function<void()>> was accessed by
+producers and the GPU consumer without synchronization. Its owner-thread test
+also inspected the consumer's queue from producers; a null worker identity
+could match a frontend's null XThread TLS. Typed C callbacks with context and
+small owned metadata replace this queue. Deeper pipeline std::function callbacks
+are outside this change and remain.
+
+core_gpu_tasks.c is MSVC C89 with owned libretro-common MPSC and retro_atomic.
+There are 64 slots for <=64-byte messages and four for <=4160-byte messages.
+One setup calloc reserves 24,864 bytes on tested x64 builds. Ordinary publication
+and retirement allocate nothing and use no mutex or sleep. Exhaustion/closed/
+oversized requests fail before publication; the native facade throws bad_alloc,
+rather than silently losing a request. This is a bounded capacity change, not an
+unbounded queue. The cold same-owner two-span path uses a separate stack window;
+single-span inline calls borrow their caller directly. Queued metadata copies
+are needed for producer lifetime; no guest image/audio payload is staged here.
+
+Publication uses a close/refcount guard through the wake callback, so accepted
+publishers cannot outlive the retained event owner. Only the consumer inspects
+its private FIFO list. Borrowed task views have a slot lease and remain valid
+until finish. An atomic opaque worker identity is set before Create and cleared
+after join, before releasing the worker object. Create failures clean up.
+
+Shutdown closes publication, retains the existing stop/wake/worker Wait, then
+cancels accepted pending messages after join. Cancellation does not execute GPU
+work; blocking shader-storage requests signal their retained caller fence.
+Cancel callbacks must not throw, and the queue owner must outlive active callers.
+The cold cancel drain may spin until already accepted publishers finish their
+publication/wake guard. This is not a guarantee of wait-free shutdown.
+Existing GPU idle polling/waits are unchanged. No audio/pacing change is claimed.
+
+Removed uncalled standalone TracePlayer/TraceReader and an unused include from
+packet_disassembler.h. Trace capture, its format and command execution remain.
+The deleted paths are recorded in .upstream-excluded.
+
+Validation on Windows:
+- MSVC /TC /W4 /WX normal and /fsanitize=address fixture pass.
+- Strict GNU C89/pedantic fixture with MinGW passes (no GNU sanitizer runtime).
+- Four producers, 200,000 ordered messages; early-close accepted work executes
+  or cancels exactly once, and accepted publication wakes exactly once.
+- Saturation, source overwrite after publication, split metadata, stale/double
+  finish, foreign pointers, invalid lengths/nulls, cold OOM, live-free refusal,
+  held-producer close race, reopen, and unchanged warm allocation counts pass.
+- Thin native bridge verifies callback exceptions release a borrowed lease and
+  unwind within native glue after the C two-span copy; queue reuse passes.
+  A preliminary cross-C-frame exception failed on normal MSVC and was removed;
+  the runner now rejects negative Windows exception/loader exit codes too.
+- Pause-gate regression: 1,152 workers, resume/stop races and terminal shutdown.
+- Actual command_processor.cc, graphics_system.cc and emulator.cc MSVC /Zs pass.
+- Full static Windows Make -j5 build passes.
+
+No live frontend, GPU device, gameplay, JIT, installed DLL replacement or TSan
+run was performed. No measured GPU-time, FPS, frame-pacing or latency gain is
+claimed. Remaining callbacks, atomics, idle waits and other broad optimization
+goals need further work. Accuracy-preserving 4x renderer efficiency remains a
+separate measured objective, including the user's Dark Souls II / RTX 5090 case.

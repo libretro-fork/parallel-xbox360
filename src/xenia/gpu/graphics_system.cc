@@ -16,6 +16,8 @@
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/filesystem.h"
+#include <cstring>
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
 #include "xenia/base/threading.h"
@@ -319,48 +321,58 @@ void GraphicsSystem::MarkVblank() {
 }
 
 void GraphicsSystem::ClearCaches() {
-  command_processor_->CallInThread(
-      [&]() { command_processor_->ClearCaches(); });
+  command_processor_->CallInThread([](void* context,const void*,size_t) {
+    static_cast<CommandProcessor*>(context)->ClearCaches();
+  },command_processor_.get());
 }
 
 void GraphicsSystem::InvalidateGpuMemory() {
-  command_processor_->CallInThread(
-      [&]() { command_processor_->InvalidateGpuMemory(); });
+  command_processor_->CallInThread([](void* context,const void*,size_t) {
+    static_cast<CommandProcessor*>(context)->InvalidateGpuMemory();
+  },command_processor_.get());
 }
 
 void GraphicsSystem::InitializeShaderStorage(
-    const std::filesystem::path& cache_root, uint32_t title_id, bool blocking,
-    std::function<void()> completion_callback) {
-  if (!cvars::store_shaders) {
-    if (completion_callback) {
-      completion_callback();
-    }
+    const std::filesystem::path& cache_root,uint32_t title_id,bool blocking) {
+  if (!cvars::store_shaders) return;
+  if (blocking && command_processor_->is_paused()) {
+    command_processor_->InitializeShaderStorage(cache_root,title_id,true);
     return;
   }
-  if (blocking) {
-    if (command_processor_->is_paused()) {
-      // Safe to run on any thread while the command processor is paused, no
-      // race condition.
-      command_processor_->InitializeShaderStorage(
-          cache_root, title_id, true, std::move(completion_callback));
-    } else {
-      xe::threading::Fence fence;
-      command_processor_->CallInThread(
-          [this, cache_root, title_id, &fence,
-           completion_callback = std::move(completion_callback)]() mutable {
-            command_processor_->InitializeShaderStorage(
-                cache_root, title_id, true, std::move(completion_callback));
-            fence.Signal();
-          });
-      fence.Wait();
-    }
+  // Only a load-time path string is copied; no captured C++ callable or path
+  // object is retained in the queue. Completion callbacks have no core caller.
+  struct StorageArgs { void* fence; uint32_t title; int blocking; } args = {};
+  args.title=title_id;args.blocking=blocking;
+  const std::string path=xe::path_to_utf8(cache_root);
+  if (path.size()>=4096) throw std::bad_alloc();
+  const xe_gpu_task_fn run=[](void* context,const void* data,size_t size) {
+        StorageArgs args;
+        std::memcpy(&args,data,sizeof(args));
+        const char* path=static_cast<const char*>(data)+sizeof(args);
+        try {
+          static_cast<CommandProcessor*>(context)->InitializeShaderStorage(
+              xe::to_path(std::string_view(path,size-sizeof(args)-1)),
+              args.title,args.blocking!=0);
+        } catch (...) {
+          if(args.fence) static_cast<xe::threading::Fence*>(args.fence)->Signal();
+          throw;
+        }
+        if(args.fence) static_cast<xe::threading::Fence*>(args.fence)->Signal();
+      };
+  const xe_gpu_task_fn cancel=[](void*,const void* data,size_t) noexcept {
+        StorageArgs args;
+        std::memcpy(&args,data,sizeof(args));
+        if(args.fence) static_cast<xe::threading::Fence*>(args.fence)->Signal();
+      };
+  if(blocking) {
+    xe::threading::Fence fence;
+    args.fence=&fence;
+    command_processor_->CallInThreadParts(run,command_processor_.get(),
+        &args,sizeof(args),path.c_str(),path.size()+1,cancel);
+    fence.Wait();
   } else {
-    command_processor_->CallInThread(
-        [this, cache_root, title_id,
-         completion_callback = std::move(completion_callback)]() mutable {
-          command_processor_->InitializeShaderStorage(
-              cache_root, title_id, false, std::move(completion_callback));
-        });
+    command_processor_->CallInThreadParts(run,command_processor_.get(),
+        &args,sizeof(args),path.c_str(),path.size()+1,cancel);
   }
 }
 

@@ -18,11 +18,11 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <queue>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include "libretro/core_pause_gate.h"
+#include "libretro/core_gpu_tasks.h"
 
 #include "xenia/base/math.h"
 #include "xenia/base/ring_buffer.h"
@@ -150,7 +150,12 @@ class CommandProcessor {
 
   virtual std::string GetTitleStateSuffix() const { return {}; }
 
-  void CallInThread(std::function<void()> fn);
+  // Metadata is copied once into fixed queue storage; callback borrows it.
+  void CallInThread(xe_gpu_task_fn fn,void* context,const void* data = nullptr,
+      size_t size = 0,xe_gpu_task_fn cancel = nullptr);
+  void CallInThreadParts(xe_gpu_task_fn fn,void* context,const void* first,
+      size_t first_size,const void* second,size_t second_size,
+      xe_gpu_task_fn cancel = nullptr);
 
   virtual void ClearCaches();
   virtual void InvalidateGpuMemory();
@@ -695,7 +700,8 @@ class CommandProcessor {
   retro_atomic_int_t worker_running_;
   kernel::object_ref<kernel::XHostThread> worker_thread_;
 
-  std::queue<std::function<void()>> pending_fns_;
+  std::unique_ptr<xe_gpu_tasks,decltype(&xe_gpu_tasks_free)>
+      pending_tasks_{nullptr,xe_gpu_tasks_free};
 
   // MicroEngine binary from PM4_ME_INIT
   std::vector<uint32_t> me_bin_;

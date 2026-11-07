@@ -1380,3 +1380,14 @@ with the archived production writer. Only its external ASCII native-file opener
 is adapted in the test ABI bridge. Baseline mode checks protocol output, not
 the archived destructor's known file leak. Normal CI requires no local history.
 See gpu_trace_results.txt for successful format hashes, coverage and limits.
+
+GPU control task ownership
+--------------------------
+`run_gpu_tasks_tests.sh` or `.cmd` builds the C89 fixed task pool with owned
+libretro-common MPSC, atomics and rthreads. Four producers publish 200,000
+ordered tasks. Tests cover saturation, source reuse, stale leases, close versus
+publication, cancellation, reopening and native exception unwinding. Native
+ASan uses GPU_TASK_TEST_FLAGS=/fsanitize=address /Zi with a separate
+GPU_TASK_TEST_OUT. Shell sanitizers default on; SANITIZER= supports MinGW without
+those runtimes. The C++ bridge covers exception ABI only; test algorithms are
+C89. No graphics device or core gameplay is launched. See gpu_tasks_results.txt.

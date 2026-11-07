@@ -101,8 +101,7 @@ class GraphicsSystem {
   void InvalidateGpuMemory();
 
   void InitializeShaderStorage(
-      const std::filesystem::path& cache_root, uint32_t title_id, bool blocking,
-      std::function<void()> completion_callback = nullptr);
+      const std::filesystem::path& cache_root, uint32_t title_id, bool blocking);
 
   void RequestFrameTrace();
   void BeginTracing();

@@ -225,6 +225,10 @@ CommandProcessor::CommandProcessor(GraphicsSystem* graphics_system,
       write_ptr_index_event_(xe::threading::Event::CreateAutoResetEvent(false)),
       write_ptr_index_(0) {
   assert_not_null(write_ptr_index_event_);
+  pending_tasks_.reset(xe_gpu_tasks_new([](void* context) noexcept {
+    static_cast<CommandProcessor*>(context)->write_ptr_index_event_->Set();
+  },this));
+  if (!pending_tasks_) throw std::bad_alloc();
   pause_gate_.reset(xe_pause_gate_new());
   if (!pause_gate_) throw std::bad_alloc();
   // Parse and cache ZPD mode once.
@@ -234,6 +238,7 @@ CommandProcessor::CommandProcessor(GraphicsSystem* graphics_system,
 CommandProcessor::~CommandProcessor() = default;
 
 bool CommandProcessor::Initialize() {
+  if (!xe_gpu_tasks_reopen(pending_tasks_.get())) return false;
   // Initialize the gamma ramps to their default (linear) values - taken from
   // what games set when starting with the sRGB (return value 1)
   // VdGetCurrentDisplayGamma.
@@ -263,7 +268,15 @@ bool CommandProcessor::Initialize() {
           },
           kernel_state_->GetIdleProcess()));
   worker_thread_->set_name("GPU Commands");
-  worker_thread_->Create();
+  xe_gpu_tasks_set_owner(pending_tasks_.get(),
+      static_cast<kernel::XThread*>(worker_thread_.get()));
+  if (XFAILED(worker_thread_->Create())) {
+    retro_atomic_store_release_int(&worker_running_,0);
+    xe_gpu_tasks_set_owner(pending_tasks_.get(),nullptr);
+    worker_thread_.reset();
+    xe_gpu_tasks_cancel_all(pending_tasks_.get());
+    return false;
+  }
 
   return true;
 }
@@ -272,16 +285,20 @@ void CommandProcessor::Shutdown() {
   // Already stopped if drained early during relaunch (stopped again at
   // teardown).
   if (!worker_thread_) {
+    xe_gpu_tasks_cancel_all(pending_tasks_.get());
     return;
   }
 
   EndTracing();
+  xe_gpu_tasks_close(pending_tasks_.get());
 
   retro_atomic_store_release_int(&worker_running_, 0);
   xe_pause_gate_stop(pause_gate_.get());
   write_ptr_index_event_->Set();
   worker_thread_->Wait(0, 0, 0, nullptr);
+  xe_gpu_tasks_set_owner(pending_tasks_.get(),nullptr);
   worker_thread_.reset();
+  xe_gpu_tasks_cancel_all(pending_tasks_.get());
 }
 
 void CommandProcessor::InitializeShaderStorage(
@@ -369,12 +386,38 @@ void CommandProcessor::RestoreGammaRamp(
   OnGammaRampPWLValueWritten();
 }
 
-void CommandProcessor::CallInThread(std::function<void()> fn) {
-  if (pending_fns_.empty() &&
-      kernel::XThread::IsInThread(worker_thread_.get())) {
-    fn();
-  } else {
-    pending_fns_.push(std::move(fn));
+// Cold ABI glue: native exceptions must unwind a C++ frame, not C code.
+#if defined(_MSC_VER)
+__declspec(noinline)
+#else
+__attribute__((noinline))
+#endif
+static void CallGpuTaskParts(xe_gpu_task_fn fn,void* context,
+    const void* first,size_t first_size,const void* second,size_t second_size) {
+  unsigned char payload[XE_GPU_TASK_LARGE_BYTES];
+  if(!xe_gpu_tasks_copy_parts(payload,sizeof(payload),first,first_size,second,second_size))
+    throw std::bad_alloc();
+  fn(context,payload,first_size+second_size);
+}
+
+void CommandProcessor::CallInThread(xe_gpu_task_fn fn,void* context,
+    const void* data,size_t size,xe_gpu_task_fn cancel) {
+  CallInThreadParts(fn,context,data,size,nullptr,0,cancel);
+}
+void CommandProcessor::CallInThreadParts(xe_gpu_task_fn fn,void* context,
+    const void* first,size_t first_size,const void* second,size_t second_size,
+    xe_gpu_task_fn cancel) {
+  if (!fn || !xe_gpu_tasks_payload_valid(first,first_size,second,second_size) ||
+      xe_gpu_tasks_closed(pending_tasks_.get())) throw std::bad_alloc();
+  // Only the consumer may inspect its private pending chain.
+  auto* owner=static_cast<kernel::XThread*>(xe_gpu_tasks_owner(pending_tasks_.get()));
+  if (owner && kernel::XThread::IsInThread(owner) &&
+      xe_gpu_tasks_empty(pending_tasks_.get())) {
+    if (!second_size) fn(context,first,first_size);
+    else CallGpuTaskParts(fn,context,first,first_size,second,second_size);
+  } else if (!xe_gpu_tasks_submit(pending_tasks_.get(),fn,cancel,context,
+                 first,first_size,second,second_size)) {
+    throw std::bad_alloc();
   }
 }
 
@@ -428,10 +471,12 @@ void CommandProcessor::SetDesiredSwapPostEffect(
   if (swap_post_effect_desired_ == swap_post_effect) {
     return;
   }
+  CallInThread([](void* context,const void* data,size_t) {
+    SwapPostEffect effect;
+    std::memcpy(&effect,data,sizeof(effect));
+    static_cast<CommandProcessor*>(context)->swap_post_effect_actual_ = effect;
+  },this,&swap_post_effect,sizeof(swap_post_effect));
   swap_post_effect_desired_ = swap_post_effect;
-  CallInThread([this, swap_post_effect]() {
-    swap_post_effect_actual_ = swap_post_effect;
-  });
 }
 
 // Guest swaps and vblanks, counted for the libretro core's run stats
@@ -449,10 +494,12 @@ void CommandProcessor::WorkerThreadMain() {
   }
 
   while (retro_atomic_load_acquire_int(&worker_running_)) {
-    while (!pending_fns_.empty()) {
-      auto fn = std::move(pending_fns_.front());
-      pending_fns_.pop();
-      fn();
+    xe_gpu_task_view task;
+    while (retro_atomic_load_acquire_int(&worker_running_) &&
+           xe_gpu_tasks_take(pending_tasks_.get(),&task)) {
+      try { task.task->run(task.task->context,task.task->data,task.task->size); }
+      catch (...) { xe_gpu_tasks_finish(pending_tasks_.get(),&task); throw; }
+      xe_gpu_tasks_finish(pending_tasks_.get(),&task);
     }
 
     uint32_t write_ptr_index = static_cast<uint32_t>(retro_atomic_load_acquire_int(&write_ptr_index_));
@@ -479,11 +526,11 @@ void CommandProcessor::WorkerThreadMain() {
         }
         loop_count++;
         write_ptr_index = static_cast<uint32_t>(retro_atomic_load_acquire_int(&write_ptr_index_));
-      } while (retro_atomic_load_acquire_int(&worker_running_) && pending_fns_.empty() &&
+      } while (retro_atomic_load_acquire_int(&worker_running_) && xe_gpu_tasks_empty(pending_tasks_.get()) &&
                (write_ptr_index == 0xBAADF00D ||
                 read_ptr_index_ == write_ptr_index));
       ReturnFromWait();
-      if (!retro_atomic_load_acquire_int(&worker_running_) || !pending_fns_.empty()) {
+      if (!retro_atomic_load_acquire_int(&worker_running_) || !xe_gpu_tasks_empty(pending_tasks_.get())) {
         continue;
       }
     }
@@ -513,17 +560,21 @@ void CommandProcessor::Pause() {
 }
 
 bool CommandProcessor::PauseForState(int64_t timeout_us) {
-  if (timeout_us < 0 || kernel::XThread::IsInThread(worker_thread_.get())) return false;
-  if (!worker_thread_ || !retro_atomic_load_acquire_int(&worker_running_)) return false;
+  auto* owner=static_cast<kernel::XThread*>(xe_gpu_tasks_owner(pending_tasks_.get()));
+  if (timeout_us < 0 || (owner && kernel::XThread::IsInThread(owner))) return false;
+  if (!owner || !retro_atomic_load_acquire_int(&worker_running_)) return false;
   if (!is_paused()) {
     xe_pause_gate_set(pause_gate_.get(), 1);
     const int generation = xe_pause_gate_generation(pause_gate_.get());
     // Owned by this processor, so timing out never leaves a callback holding
     // a pointer to a frontend stack fence or a caller's serialization buffer.
     try {
-      CallInThread([this, generation]() {
-        xe_pause_gate_wait_generation(pause_gate_.get(), 0, generation);
-      });
+      CallInThread([](void* context,const void* data,size_t) {
+        int generation;
+        std::memcpy(&generation,data,sizeof(generation));
+        xe_pause_gate_wait_generation(
+            static_cast<CommandProcessor*>(context)->pause_gate_.get(),0,generation);
+      },this,&generation,sizeof(generation));
     } catch (...) {
       xe_pause_gate_set(pause_gate_.get(), 0);
       throw;

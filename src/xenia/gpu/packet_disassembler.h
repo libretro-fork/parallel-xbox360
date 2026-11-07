@@ -14,7 +14,6 @@
 
 #include "xenia/gpu/register_file.h"
 #include "xenia/gpu/trace_protocol.h"
-#include "xenia/gpu/trace_reader.h"
 #include "xenia/memory.h"
 
 namespace xe {

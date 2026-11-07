@@ -255,3 +255,7 @@ src/xenia/base/atomic.h
 src/xenia/gpu/spirv/SpvPostProcess.cpp
 src/xenia/vfs/vfs_dump.cc
 src/xenia/vfs/xex_metadata_main.cc
+src/xenia/gpu/trace_player.cc
+src/xenia/gpu/trace_player.h
+src/xenia/gpu/trace_reader.cc
+src/xenia/gpu/trace_reader.h

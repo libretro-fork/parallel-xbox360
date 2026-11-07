@@ -1966,7 +1966,7 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
   // gameplay starts, most cached pipelines should be compiled.
   if (graphics_system_) {
     graphics_system_->InitializeShaderStorage(
-        cache_root_, title_id_.value(), false, nullptr);
+        cache_root_, title_id_.value(), false);
   }
 
   auto main_thread = kernel_state_->LaunchModule(module);
