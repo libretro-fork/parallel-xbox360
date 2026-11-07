@@ -12,6 +12,7 @@
 
 #include <retro_atomic.h>
 #include "libretro/core_pause_gate.h"
+#include "libretro/core_xma_decoder_state.h"
 
 #include "xenia/apu/xma_context.h"
 #include "xenia/apu/xma_register_file.h"
@@ -52,6 +53,9 @@ class XmaDecoder {
   bool PauseForState(int64_t timeout_us);
   void Resume();
 
+  // Exclusive state owner: guest/control callers must also be stopped.
+  bool CaptureState(xe_xma_decoder_view* out) const;
+
   void SignalWork() {
     if (work_event_) {
       work_event_->Set();
@@ -60,6 +64,8 @@ class XmaDecoder {
 
  protected:
   int GetContextId(uint32_t guest_ptr);
+  // Cold factory shared by Setup and state-only offline fixtures.
+  bool InitializeContexts(uint32_t mode);
 
  private:
   void WorkerThreadMain();
@@ -86,7 +92,8 @@ class XmaDecoder {
 
   XmaRegisterFile register_file_;
 
-  static const uint32_t kContextCount = 320;
+  static const uint32_t kContextCount = XE_XMA_CONTEXTS;
+  uint32_t context_mode_ = XE_XMA_MODE_UNSET;
   XmaContext* contexts_[kContextCount] = {};
   BitMap context_bitmap_;
 

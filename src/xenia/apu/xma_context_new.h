@@ -10,8 +10,6 @@
 #ifndef XENIA_APU_XMA_CONTEXT_NEW_H_
 #define XENIA_APU_XMA_CONTEXT_NEW_H_
 
-#include <array>
-
 #include "xenia/apu/xma_context.h"
 #include "libretro/core_xma_owner_state.h"
 #include "xenia/base/bit_stream.h"
@@ -132,7 +130,7 @@ class XmaContextNew : public XmaContext {
                           const XMA_CONTEXT_DATA& initial_data,
                           uint8_t* context_ptr);
 
-  std::array<uint8_t, kBytesPerFrameChannel * 2> raw_frame_;
+  uint8_t raw_frame_[kBytesPerFrameChannel * 2];
 
   int32_t remaining_subframe_blocks_in_output_buffer_ = 0;
   uint8_t current_frame_remaining_subframes_ = 0;
@@ -144,6 +142,8 @@ class XmaContextNew : public XmaContext {
   // When true, the next decoded frame should skip leading subframes per
   // loop_subframe_skip (loop start adjustment).
   bool loop_start_skip_pending_ = false;
+  // Decoded frame length in 256-byte blocks; guest settings may change before drain.
+  uint8_t current_frame_total_subframes_ = 0;
 };
 
 }  // namespace apu

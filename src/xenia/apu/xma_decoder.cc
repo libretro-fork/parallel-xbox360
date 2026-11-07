@@ -140,6 +140,9 @@ void av_log_callback(void* avcl, int level, const char* fmt, va_list va) {
 }
 
 X_STATUS XmaDecoder::Setup(kernel::KernelState* kernel_state) {
+  uint32_t mode;
+  // Reject duplicate setup before replacing an owned context table.
+  if (context_data_first_ptr_ || worker_thread_) return X_STATUS_UNSUCCESSFUL;
   // Setup ffmpeg logging callback
   av_log_set_callback(av_log_callback);
 
@@ -161,30 +164,16 @@ X_STATUS XmaDecoder::Setup(kernel::KernelState* kernel_state) {
   register_file_[XmaRegister::ContextArrayAddress] =
       memory()->GetPhysicalAddress(context_data_first_ptr_);
 
-  // Setup XMA contexts.
-  for (int i = 0; i < kContextCount; ++i) {
-    if (cvars::xma_decoder == "fake") {
-      contexts_[i] = new XmaContextFake();
-    } else if (cvars::xma_decoder == "master") {
-      contexts_[i] = new XmaContextMaster();
-    } else if (cvars::xma_decoder == "old") {
-      contexts_[i] = new XmaContextOld();
-    } else if (cvars::xma_decoder == "new") {
-      contexts_[i] = new XmaContextNew();
-    } else if (cvars::xma_decoder == "fake") {
-      contexts_[i] = new XmaContextFake();
-    } else {
-      contexts_[i] = new XmaContextNew();
-    }
-
-    uint32_t guest_ptr = context_data_first_ptr_ + i * sizeof(XMA_CONTEXT_DATA);
-    if (contexts_[i]->Setup(i, memory(), guest_ptr)) {
-      Shutdown();
-      return X_STATUS_UNSUCCESSFUL;
-    }
+  // Freeze the actual style once for this table; mutable config must not
+  // create mixed context types or later determine snapshot casts.
+  mode = XE_XMA_MODE_RAW;
+  if (cvars::xma_decoder == "fake") mode = XE_XMA_MODE_FAKE;
+  else if (cvars::xma_decoder == "master") mode = XE_XMA_MODE_MASTER;
+  else if (cvars::xma_decoder == "old") mode = XE_XMA_MODE_OLD;
+  if (!InitializeContexts(mode)) {
+    Shutdown();
+    return X_STATUS_UNSUCCESSFUL;
   }
-  register_file_[XmaRegister::NextContextIndex] = 1;
-  context_bitmap_.Resize(kContextCount);
 
   retro_atomic_store_release_int(&worker_running_, 1);
   work_event_ = xe::threading::Event::CreateAutoResetEvent(false);
@@ -196,6 +185,7 @@ X_STATUS XmaDecoder::Setup(kernel::KernelState* kernel_state) {
             if (cvars::use_dedicated_xma_thread) {
               WorkerThreadMain();
             }
+            retro_atomic_store_release_int(&worker_running_, 0);
             return 0;
           },
           kernel_state
@@ -206,6 +196,59 @@ X_STATUS XmaDecoder::Setup(kernel::KernelState* kernel_state) {
   worker_thread_->Create();
 
   return X_STATUS_SUCCESS;
+}
+
+bool XmaDecoder::InitializeContexts(uint32_t mode) {
+  uint32_t i, guest_ptr;
+  if (!context_data_first_ptr_ || mode >= XE_XMA_MODE_UNSET) return false;
+  for (i = 0; i < kContextCount; ++i) {
+    if (contexts_[i]) return false;
+  }
+  context_mode_ = mode;
+  for (i = 0; i < kContextCount; ++i) {
+    switch (mode) {
+      case XE_XMA_MODE_FAKE: contexts_[i] = new (std::nothrow) XmaContextFake(); break;
+      case XE_XMA_MODE_MASTER: contexts_[i] = new (std::nothrow) XmaContextMaster(); break;
+      case XE_XMA_MODE_OLD: contexts_[i] = new (std::nothrow) XmaContextOld(); break;
+      default: contexts_[i] = new (std::nothrow) XmaContextNew(); break;
+    }
+    guest_ptr = context_data_first_ptr_ + i * sizeof(XMA_CONTEXT_DATA);
+    if (!contexts_[i] || contexts_[i]->Setup(i, memory(), guest_ptr)) return false;
+  }
+  register_file_[XmaRegister::NextContextIndex] = 1;
+  context_bitmap_.Resize(kContextCount);
+  context_bitmap_.Reset(); // Newly constructed owners all begin unallocated.
+  return true;
+}
+
+bool XmaDecoder::CaptureState(xe_xma_decoder_view* out) const {
+  uint32_t i;
+  if (!out) return false;
+  out->state.version = 0;
+  if (context_mode_ != XE_XMA_MODE_RAW || !context_data_first_ptr_ ||
+      (retro_atomic_load_acquire_int(&worker_running_) &&
+       (!is_paused() || !xe_pause_gate_wait_workers(pause_gate_.get(), 1, 0))) ||
+      !context_bitmap_.CaptureState(out->free_slots, sizeof(out->free_slots)))
+    return false;
+  out->state.mode = context_mode_;
+  out->state.count = kContextCount;
+  out->state.context_first = context_data_first_ptr_;
+  out->state.context_last = context_data_last_ptr_;
+  out->registers = register_file_.values;
+  out->register_bytes = sizeof(register_file_.values);
+  for (i = 0; i < kContextCount; ++i) {
+    if (!contexts_[i] ||
+        !static_cast<const XmaContextNew*>(contexts_[i])->CaptureState(&out->owners[i]))
+      return false;
+  }
+  out->state.version = 1;
+  // Structural slot/bitmap checks only; restore must also prepare and validate
+  // every saved codec payload before it mutates any live component.
+  if (!xe_xma_decoder_view_valid(out, context_data_first_ptr_, context_data_last_ptr_)) {
+    out->state.version = 0;
+    return false;
+  }
+  return true;
 }
 
 void XmaDecoder::WorkerThreadMain() {
@@ -253,6 +296,7 @@ void XmaDecoder::Shutdown() {
 
   context_data_first_ptr_ = 0;
   context_data_last_ptr_ = 0;
+  context_mode_ = XE_XMA_MODE_UNSET;
 }
 
 int XmaDecoder::GetContextId(uint32_t guest_ptr) {

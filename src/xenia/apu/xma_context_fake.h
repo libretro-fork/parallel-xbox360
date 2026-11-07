@@ -11,9 +11,7 @@
 #define XENIA_APU_XMA_CONTEXT_FAKE_H_
 
 #include <array>
-#include <atomic>
 #include <mutex>
-#include <queue>
 
 #include "xenia/apu/xma_context.h"
 #include "xenia/base/bit_stream.h"

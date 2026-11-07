@@ -104,6 +104,9 @@ int xe_pause_gate_wait_workers(xe_pause_gate *gate, unsigned mask,
    int key;
    int64_t start, elapsed, remaining;
    if (!gate || (mask & ~63u) || timeout_us < 0) return 0;
+   /* A nonblocking acknowledgement probe needs no clock or event wait. */
+   if (!timeout_us) return !retro_atomic_load_acquire_int(&gate->stopped) &&
+         retro_atomic_load_acquire_int(&gate->paused) && workers_acknowledged(gate, mask);
    start = cpu_features_get_time_usec();
    for (;;) {
       if (retro_atomic_load_acquire_int(&gate->stopped) ||

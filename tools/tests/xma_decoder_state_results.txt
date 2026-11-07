@@ -1,0 +1,116 @@
+All-slot raw XMA capture and quiescent allocation-map state (0163)
+===============================================================
+XmaDecoder::CaptureState covers 320 modern/raw owners, not just allocated slots.
+The caller supplies fixed/reusable xe_xma_decoder_view storage; no large local
+register/owner array is placed on the worker stack. The 64 KiB register file,
+codec history and pending PCM are borrowed; allocation words and small owner
+metadata are written directly into the caller's view. Capture allocates nothing.
+Views expire at mutation/destruction and are native views, NOT wire records.
+Failed capture clears version; a partially filled output must never be consumed.
+
+C89 structural checks validate count/mode/base range, register span shape, owner
+slot IDs/guest addresses, basic owner layout and allocation-map agreement. A set
+bitmap bit means free; slot zero is the high bit. These checks are NOT complete
+codec-payload validation or a restore implementation. Every codec still needs
+candidate preparation/validation before a future decoder-wide/global commit.
+
+The actual context style is frozen once by the cold factory and recorded in the
+owner. Capture never reads a mutable config string to decide a derived-type cast.
+Fake/master/old captures reject before a raw-context cast. All styles retain
+existing playback implementations. Duplicate setup rejects before replacing an
+owned table. New context tables reset retained bitmap words, rather than leaving
+old occupied bits attached to freshly unallocated objects. The exited synchronous
+worker clears worker_running_; running asynchronous capture requires an actual
+current-generation pause acknowledgment and zero pending work. Every synchronous
+guest/control caller must ALSO be quiescent externally; this does not freeze CPUs.
+
+Zero-timeout xe_pause_gate_wait_workers is now a pure atomic acknowledgment
+probe without clock/event waits. Positive bounded waits keep their existing host
+monotonic timeout. No new clock, lock, buffer or work is added to normal decoding.
+FFmpeg decode arithmetic, stable-format delivery and audio scheduling are unchanged.
+
+Pending PCM source-layout safety and redundant-clear removal
+------------------------------------------------------------
+Consume formerly calculated source offsets from the guest's current is_stereo
+bit. Switching mono/stereo while a decoded frame remained could select unused
+bytes; stereo-to-mono with five blocks pending formed a negative index, which
+could wrap when multiplied by the unsigned 256-byte block size. The decoded
+frame's total block count is now frozen at successful conversion, preserved by
+pending drain and reconstructed from codec profile at owner restore. Invalid
+private counts reject before a source pointer is formed and cannot spin Work.
+Loop truncation uses that same frame origin. This is internal source-span safety;
+it is not a claim of silicon validation for every mid-frame register change.
+
+Only the remaining decoded interval can now be read, so borrowing precisely that
+interval for snapshots is valid even when guest channel settings change. The
+raw PCM owner uses a fixed C byte array, and conversion overwrites the complete
+1024/2048-byte mono/stereo frame on success. Removed its unconditional 2048-byte
+pre-clear; decode failure publishes no pending PCM. Codec padding still clears
+as required and conversion/guest-ring copies remain. No new payload copy or
+allocation is introduced. This removes logical zero stores, not a measured
+DRAM-bandwidth or gameplay/FPS improvement.
+
+A source-byte oracle seeds distinct 256-byte blocks in actual decoded frame
+storage, first verifies conversion fully overwrites a poisoned frame span, changes guest layout with pending PCM, then requires the correct old
+frame block on both mono-to-stereo and stereo-to-mono drains. A controlled native
+variant restoring the legacy guest-layout calculation fails at that byte oracle
+(exit 1), while production passes. The test does not execute the original unsafe
+wrapped-address read. A real coefficient-bearing Title_Call stream still emits
+770048 bytes with SHA256
+463708c0b7acfc6c013a018691d8429bfd93b0de3b90469dcf2851f00851469c across all 24
+ring/refill variants, identical to the pre-change reference. Nine owner replays,
+including five partial-PCM checkpoints and unopened-phase restoration, still pass.
+The layout byte occupies former padding: MinGW owner size 2240 -> 2240 bytes,
+MSVC 2368 -> 2368. These are object-size checks, not RSS measurements.
+
+Quiescent bitmap capture/restore uses exact native 64-bit words and validates
+byte count, storage shape, pointer wrap and overlap with atomic cells or owner metadata before mutation. Unaligned
+external storage is accepted through memcpy; no alias of atomic cells or second
+bitmap allocation is used. Restore performs common atomic stores and requires
+quiescent users; it is NOT a concurrent whole-map transaction or a portable wire
+format. The supported scalar atomic word ABI is checked at compile time.
+
+Executed Windows x64 coverage:
+- full GNU static Make -j5 and fresh native MSVC CMake core --parallel 5 pass.
+- strict GNU C89 / native MSVC /TC /W4 /WX drivers link actual core objects.
+- all 320 actual context objects initialize through the production cold factory;
+  all slots allocate in order, exhaustion rejects, every third release agrees
+  with captured allocation words. A mono synthetic XMA frame leaves one pending
+  256-byte PCM subframe in slot zero; history and PCM remain captured after its
+  release. Other slots retain their canonical unopened phase.
+- current/stale pause generations, acknowledgment and pending-work rejection;
+  native clock adapter observes positive bounded waits but no time reads during
+  any capture call. Tests do not use sleeping/polling to drive the decoder.
+- malformed final owner/bitmap, count/mode/register range and final cold codec
+  metadata reject structural checks. An actual inconsistent final live slot
+  invalidates capture. Duplicate setup is rejected and dormant table rebuild
+  resets all five allocation words. All three unsupported styles reject.
+- bitmap fixtures: all 320 single-free-slot masks and unaligned roundtrips,
+  invalid length/null/alias/wrapped ranges without live mutation, empty records,
+  400000 concurrent leases and unchanged allocation count during state operations.
+- scoped native MSVC ASan instruments actual xma_decoder.cc, xma_context_new.cc, core_bitmap.c,
+  the C89 driver, native fixture and clock-adapted pause gate; fixtures pass.
+  Other core/common/FFmpeg code is not a full sanitizer build. Vector/string
+  annotations are disabled consistently for interoperability; address checks
+  stay enabled. No broad RSS/leak-freedom or gameplay correctness claim is made.
+
+The fixture uses Memory, a Processor facade whose Setup/backend is never invoked,
+and dormant XmaDecoder resources. Its duplicate-Setup check rejects immediately
+before any MMIO/kernel-worker initialization. Only offline XMA audio decoding
+runs; no guest CPU/JIT, GPU device, frontend or installed core is started/replaced.
+No game/FPS/latency improvement is inferred from these metadata changes.
+
+Unfinished: prepare all 320 candidate resources, preflight every live identity,
+then commit registers/bitmap/owners together under exclusive ownership; cover
+remaining decoder styles and other APU/media/client/cadence state, then complete
+GPU/CPU/IO/timer/frontend-clock orchestration. Libretro serialization is disabled.
+
+Reproduce: build the matching core and run run_xma_decoder_state_tests.sh/.cmd.
+Native build selection: DECODER_STATE_BUILD=build\tests\state-control-cmake.
+For scoped ASan compile xma_decoder.cc, xma_context_new.cc and core_bitmap.c with their generated
+commands, removing /GL, adding /fsanitize=address /Zi and consistent
+/D_DISABLE_VECTOR_ANNOTATION /D_DISABLE_STRING_ANNOTATION, and separate /Fo /Fd.
+Set DECODER_STATE_OBJECT to those objects, DECODER_STATE_FLAGS to the same flags,
+and a separate DECODER_STATE_OUT. The runner supplies the clock-adapted gate.
+Bitmap tests use run_bitmap_tests.sh/.cmd with the same scalar atomic ABI.
+Do not edit live build inputs or mix old class-layout archives with new headers.

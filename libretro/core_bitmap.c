@@ -3,10 +3,12 @@
 #include "core_bitmap.h"
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <compat/intrinsics.h>
 #if !defined(RETRO_ATOMIC_HAS_64) || !defined(RETRO_ATOMIC_LOCK_FREE)
 #error Lock-free 64-bit common atomics are required.
 #endif
+typedef char bitmap_atomic_word_must_be_eight_bytes[(sizeof(retro_atomic_64_t)==8)?1:-1];
 int xe_bitmap_resize(xe_bitmap *map, size_t bits)
 {
    size_t count, i;
@@ -63,4 +65,44 @@ void xe_bitmap_close(xe_bitmap *map)
 {
    if (!map) return;
    free((void *)map->words); map->words=NULL; map->count=map->capacity=0;
+}
+
+static int bitmap_state_range(const xe_bitmap *map, const void *data, size_t bytes)
+{
+   uintptr_t storage, external, owner;
+   if (!map || map->count > map->capacity || map->count > SIZE_MAX / 8 ||
+         bytes != map->count * 8 || (bytes && (!map->words || !data))) return 0;
+   if (!bytes) return 1;
+   storage = (uintptr_t)map->words; external = (uintptr_t)data;
+   /* Output must not overwrite the map descriptor while it is being read. */
+   owner = (uintptr_t)map;
+   if (external >= owner ? external - owner < sizeof(*map) :
+         owner - external < bytes) return 0;
+   if (storage > UINTPTR_MAX - bytes || external > UINTPTR_MAX - bytes) return 0;
+   return storage >= external ? storage - external >= bytes :
+         external - storage >= bytes;
+}
+int xe_bitmap_capture(const xe_bitmap *map, void *out, size_t bytes)
+{
+   size_t i;
+   int64_t value;
+   unsigned char *destination = (unsigned char *)out;
+   if (!bitmap_state_range(map, out, bytes)) return 0;
+   for (i = 0; i < map->count; ++i) {
+      value = retro_atomic_load_acquire_64(&map->words[i]);
+      memcpy(destination + i * 8, &value, 8);
+   }
+   return 1;
+}
+int xe_bitmap_restore(xe_bitmap *map, const void *input, size_t bytes)
+{
+   size_t i;
+   int64_t value;
+   const unsigned char *source = (const unsigned char *)input;
+   if (!bitmap_state_range(map, input, bytes)) return 0;
+   for (i = 0; i < map->count; ++i) {
+      memcpy(&value, source + i * 8, 8);
+      retro_atomic_store_release_64(&map->words[i], value);
+   }
+   return 1;
 }

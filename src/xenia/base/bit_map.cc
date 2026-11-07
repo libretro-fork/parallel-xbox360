@@ -22,4 +22,10 @@ void BitMap::Release(size_t index) {
   assert_true(released);
 }
 void BitMap::Reset() { xe_bitmap_reset(&data_); }
+bool BitMap::CaptureState(void* out, size_t bytes) const {
+  return xe_bitmap_capture(&data_, out, bytes) != 0;
+}
+bool BitMap::RestoreState(const void* input, size_t bytes) {
+  return xe_bitmap_restore(&data_, input, bytes) != 0;
+}
 }  // namespace xe

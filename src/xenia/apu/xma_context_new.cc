@@ -100,8 +100,10 @@ bool XmaContextNew::CaptureState(xe_xma_owner_view* out) const {
     // A failed/partially configured codec is not a canonical cold owner.
     return false;
   }
+  if (view.state.pending_blocks && (uint32_t)current_frame_total_subframes_ != view.state.channels * 4)
+    return false;
   if (!xe_xma_owner_layout(&view.state, &offset, &bytes)) return false;
-  view.pcm = bytes ? raw_frame_.data() + offset : nullptr;
+  view.pcm = bytes ? raw_frame_ + offset : nullptr;
   view.pcm_bytes = bytes;
   *out = view;
   return true;
@@ -160,10 +162,12 @@ bool XmaContextNew::CommitState(xe_xma_owner_stage* stage) {
              stage->candidate->ch_layout.nb_channels) return false;
   // Consume borrowed PCM before freeing any old codec or frame backing.
   // Codec history already resides in the candidate's final storage.
-  if (bytes) memmove(raw_frame_.data() + offset, stage->pcm, bytes);
+  if (bytes) memmove(raw_frame_ + offset, stage->pcm, bytes);
   previous = av_context_;
   av_context_ = stage->candidate;
   current_frame_remaining_subframes_ = stage->state.pending_blocks;
+  current_frame_total_subframes_ = stage->state.pending_blocks ?
+      static_cast<uint8_t>(stage->state.channels * 4) : 0;
   loop_frame_output_limit_ = stage->state.loop_limit;
   loop_start_skip_pending_ = stage->state.loop_start_pending != 0;
   remaining_subframe_blocks_in_output_buffer_ = 0; // Recomputed by Work.
@@ -359,6 +363,7 @@ void XmaContextNew::ClearLocked(XMA_CONTEXT_DATA* data) {
   data->output_buffer_write_offset = 0;
 
   current_frame_remaining_subframes_ = 0;
+  current_frame_total_subframes_ = 0;
   loop_frame_output_limit_ = 0;
   loop_start_skip_pending_ = false;
 }
@@ -394,7 +399,18 @@ void XmaContextNew::SwapInputBuffer(XMA_CONTEXT_DATA* data) {
 
 void XmaContextNew::Consume(RingBuffer* XE_RESTRICT output_rb,
                             const XMA_CONTEXT_DATA* const XE_RESTRICT data) {
+  uint8_t total_subframes;
   if (!current_frame_remaining_subframes_) {
+    return;
+  }
+
+  total_subframes = current_frame_total_subframes_;
+  if ((total_subframes != 4 && total_subframes != 8) ||
+      current_frame_remaining_subframes_ > total_subframes) {
+    // Invalid private state must not form a wrapped source offset or spin Work.
+    current_frame_remaining_subframes_ = 0;
+    current_frame_total_subframes_ = 0;
+    loop_frame_output_limit_ = 0;
     return;
   }
 
@@ -402,8 +418,6 @@ void XmaContextNew::Consume(RingBuffer* XE_RESTRICT output_rb,
   // Total subframes for this frame minus remaining gives how many have already
   // been consumed.  If that reaches the limit, discard the rest.
   if (loop_frame_output_limit_ > 0) {
-    const uint8_t total_subframes =
-        (kBytesPerFrameChannel / kOutputBytesPerBlock) << data->is_stereo;
     const uint8_t consumed =
         total_subframes - current_frame_remaining_subframes_;
     if (consumed >= loop_frame_output_limit_) {
@@ -430,8 +444,6 @@ void XmaContextNew::Consume(RingBuffer* XE_RESTRICT output_rb,
 
   // Clamp to loop end limit if active.
   if (loop_frame_output_limit_ > 0) {
-    const uint8_t total_subframes =
-        (kBytesPerFrameChannel / kOutputBytesPerBlock) << data->is_stereo;
     const uint8_t consumed =
         total_subframes - current_frame_remaining_subframes_;
     const int8_t remaining_until_limit =
@@ -441,12 +453,11 @@ void XmaContextNew::Consume(RingBuffer* XE_RESTRICT output_rb,
     }
   }
 
-  const int8_t raw_frame_read_offset =
-      ((kBytesPerFrameChannel / kOutputBytesPerBlock) << data->is_stereo) -
-      current_frame_remaining_subframes_;
+  const uint8_t raw_frame_read_offset =
+      (uint8_t)(total_subframes - current_frame_remaining_subframes_);
 
   output_rb->Write(
-      raw_frame_.data() + (kOutputBytesPerBlock * raw_frame_read_offset),
+      raw_frame_ + (kOutputBytesPerBlock * raw_frame_read_offset),
       subframes_to_write * kOutputBytesPerBlock);
 
   // Reserve extra blocks as headroom when unk_skip_decode is set.
@@ -684,14 +695,15 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
     return;
   }
 
-  raw_frame_.fill(0);
-
+  // Successful raw decoding converts every byte of the retained frame span.
+  // No stale/unused tail can be selected when guest channel settings change.
   PrepareDecoder(data->sample_rate, bool(data->is_stereo));
   if (DecodePacket(av_context_, av_packet_, av_frame_)) {
     // dump_raw(av_frame_, id());
     ConvertFrame(reinterpret_cast<const uint8_t**>(&av_frame_->data),
-                 bool(data->is_stereo), raw_frame_.data());
-    current_frame_remaining_subframes_ = 4 << data->is_stereo;
+                 bool(data->is_stereo), raw_frame_);
+    current_frame_total_subframes_ = (uint8_t)(4u << data->is_stereo);
+    current_frame_remaining_subframes_ = current_frame_total_subframes_;
 
     // Loop end: limit output to subframes 0..loop_subframe_end.
     if (is_loop_end_frame) {

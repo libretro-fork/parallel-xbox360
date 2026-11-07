@@ -36,6 +36,9 @@ class BitMap {
 
   // Sets all entries to free.
   void Reset();
+  // State owner only: allocation/release/resize users must be quiescent.
+  bool CaptureState(void* out, size_t bytes) const;
+  bool RestoreState(const void* input, size_t bytes);
 
  private:
   xe_bitmap data_ = {};

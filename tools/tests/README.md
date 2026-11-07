@@ -1473,3 +1473,21 @@ a hostile virtual VFS; the native bridge invokes static GetFileSignature without
 constructing or setting up an Emulator. FILE_PROBE_FLAGS, FILE_PROBE_OBJECT and
 FILE_PROBE_OUT select the scoped native sanitizer configuration described in
 file_probe_results.txt. These regressions run after core builds in CI.
+
+All-slot raw XMA decoder capture
+--------------------------------
+`run_xma_decoder_state_tests.sh` links the actual current Make inputs.
+`run_xma_decoder_state_tests.cmd` uses native libraries selected by
+DECODER_STATE_BUILD (default build/windows-native). It also compiles the actual
+pause-gate source with a test-only clock adapter and asserts that capture does
+not read the clock. The C89 driver owns a reusable static view; the native bridge
+constructs Memory and an uninitialized Processor facade, but never initializes
+a CPU backend, kernel worker, renderer or frontend. A generated XMA packet runs
+only through the offline decoder. See xma_decoder_state_results.txt for capture,
+unsupported-mode, sanitizer and unfinished restoration scope.
+
+The decoder fixture also checks PCM source selection across pending mono/stereo
+changes. Conversion fully initializes its frame span; consumers cannot select
+unused tails. See xma_decoder_state_results.txt for the legacy-index negative
+control and byte-identical real-stream regression. Bitmap sanitizer runs can use
+BITMAP_TEST_FLAGS and a separate BITMAP_TEST_OUT; generated PDBs stay in that output.

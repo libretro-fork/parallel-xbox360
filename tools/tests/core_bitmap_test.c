@@ -69,6 +69,45 @@ static void atomic_transitions(void)
    retro_atomic_store_release_64(&header,old_bits);
    CHECK(retro_atomic_load_acquire_64(&header)==old_bits);
 }
+static void state_roundtrip(void)
+{
+   unsigned char saved[42], before[40], after[40];
+   uint64_t words[5];
+   unsigned i, allocations=reallocations;
+   xe_bitmap empty={0};
+   CHECK(xe_bitmap_capture(&empty,NULL,0));
+   CHECK(xe_bitmap_restore(&empty,NULL,0));
+   for(i=0;i<320;++i) {
+      memset(words,0,sizeof(words));
+      words[i/64]=(uint64_t)1<<(63-(i&63));
+      memset(saved,0x5A,sizeof(saved));memcpy(saved+1,words,40);
+      CHECK(xe_bitmap_restore(&bitmap,saved+1,40));
+      CHECK(xe_bitmap_capture(&bitmap,after,40) && !memcmp(after,words,40));
+      CHECK(xe_bitmap_acquire(&bitmap,0)==i && xe_bitmap_acquire(&bitmap,0)==SIZE_MAX);
+      CHECK(saved[0]==0x5A && saved[41]==0x5A);
+   }
+   xe_bitmap_reset(&bitmap);
+   for(i=0;i<71;++i) CHECK(xe_bitmap_acquire(&bitmap,0)==i);
+   CHECK(xe_bitmap_capture(&bitmap,saved+1,40));
+   CHECK(xe_bitmap_capture(&bitmap,before,40));
+   CHECK(!xe_bitmap_capture(&bitmap,saved+1,39));
+   CHECK(!xe_bitmap_restore(&bitmap,saved+1,41));
+   CHECK(!xe_bitmap_restore(&bitmap,NULL,40));
+   CHECK(!xe_bitmap_capture(&bitmap,NULL,40));
+   CHECK(!xe_bitmap_capture(&bitmap,(void *)bitmap.words,40));
+   CHECK(!xe_bitmap_capture(&bitmap,(void *)&bitmap,40));
+   CHECK(!xe_bitmap_restore(&bitmap,(const void *)&bitmap,40));
+   CHECK(!xe_bitmap_restore(&bitmap,(const void *)((uintptr_t)bitmap.words+1),40));
+   CHECK(!xe_bitmap_restore(&bitmap,(const void *)(UINTPTR_MAX-7),40));
+   CHECK(!xe_bitmap_capture(&bitmap,(void *)(UINTPTR_MAX-7),40));
+   CHECK(xe_bitmap_capture(&bitmap,after,40) && !memcmp(before,after,40));
+   xe_bitmap_reset(&bitmap);
+   CHECK(xe_bitmap_restore(&bitmap,saved+1,40));
+   for(i=71;i<320;++i) CHECK(xe_bitmap_acquire(&bitmap,0)==i);
+   CHECK(xe_bitmap_acquire(&bitmap,0)==SIZE_MAX);
+   CHECK(reallocations==allocations);
+   xe_bitmap_reset(&bitmap);
+}
 int main(void)
 {
    sthread_t *threads[THREADS];
@@ -83,6 +122,7 @@ int main(void)
    fail_allocation=0;
    CHECK(xe_bitmap_resize(&bitmap,320));
    stable=bitmap.words;
+   state_roundtrip();
    CHECK(!xe_bitmap_resize(&bitmap,319));
    CHECK(bitmap.words==stable && bitmap.count==5);
    for (i=0;i<320;++i) CHECK(xe_bitmap_acquire(&bitmap,0)==i);
@@ -119,6 +159,6 @@ int main(void)
    CHECK(xe_bitmap_acquire(&bitmap,0)==SIZE_MAX);
    xe_bitmap_close(&bitmap); xe_bitmap_close(&bitmap);
    CHECK(!bitmap.words && !bitmap.count && !bitmap.capacity);
-   puts("PASS: 400000 concurrent bitmap leases, exact front/back order, cold resize/failure/reset, zero hot reallocations; 32/64-bit CAS and counter/packed-byte transitions");
+   puts("PASS: 320 quiescent snapshot masks/unaligned restore and invalid-state nonmutation; 400000 concurrent bitmap leases, exact front/back order, cold resize/failure/reset, zero hot reallocations; 32/64-bit CAS and counter/packed-byte transitions");
    return 0;
 }
