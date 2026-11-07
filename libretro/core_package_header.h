@@ -63,7 +63,7 @@ static INLINE int xe_package_probe_type(const char *path, size_t minimum,
       else if (!memcmp(head, "CON ", 4) || !memcmp(head, "LIVE", 4) ||
                !memcmp(head, "PIRS", 4)) {
          if (filestream_seek(file, (int64_t)volume_offset,
-                  RETRO_VFS_SEEK_POSITION_START) != (int64_t)volume_offset ||
+                  RETRO_VFS_SEEK_POSITION_START) != 0 ||
              !xe_file_probe_four(file, bytes)) result = -1;
          else {
             value = ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) |

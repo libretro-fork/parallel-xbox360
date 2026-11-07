@@ -14,4 +14,4 @@ for f in queues/retro_spsc.c streams/file_stream.c vfs/vfs_implementation.c file
 done
 ${CC:-cc} $flags $san -pedantic -Wno-long-long -Wall -Wextra -Werror -I"$root" -I"$c/include" \
  "$root/tools/tests/core_package_header_test.c" "$out"/*.o $libs -o "$out/test$ext"
-"$out/test$ext"
+"$out/test$ext" "$out/native-header.dat"

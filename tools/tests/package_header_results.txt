@@ -58,3 +58,20 @@ directory traversal, remaining path objects and container-tree synchronization
 are separate migration work. No audio/video pacing, sleeps, threads or GPU waits
 are added. Remote CI, full Linux core build and live-game mounting have not been
 run for this patch; no gameplay/FPS benefit is claimed.
+
+2026-11-07 follow-up: seek status regression
+-----------------------------------------
+The earlier fake VFS incorrectly returned the new offset for successful seek.
+The owned common VFS API and native fallback return zero, so nonzero-offset
+volume probes rejected real files. The probe and fake now use status semantics;
+unexpected positive status still rejects without publishing a type.
+
+The C89 driver now creates native files for both volume types, probes their
+nonzero-offset volume fields, compares direct header bytes and removes the file.
+MSVC /TC /W4 /WX driver plus actual C++ XContent factory passes with the current
+container owner explicitly compiled and linked ahead of the existing libraries.
+Linux C89 ASan+UBSan passes. Compiling the identical driver against the previous
+header and selecting native-only execution fails at the volume probe (exit 1),
+without invoking the fake VFS. Existing adversarial short-transfer/EINTR/failure
+and exact-once-close cases pass. Full exact-commit core builds and live mounting
+were not rerun for this one-line correction. Larger SVOD migration remains WIP.

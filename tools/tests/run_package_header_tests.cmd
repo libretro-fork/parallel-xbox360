@@ -14,7 +14,7 @@ type nul > "%OUT%\libs.rsp"
 for %%L in ("%PACKAGE_HEADER_BUILD%\obj\Windows\*.lib") do echo "%%~fL">> "%OUT%\libs.rsp"
 cl %PACKAGE_HEADER_FLAGS% /nologo /MD "%OUT%\driver.obj" "%OUT%\bridge.obj" %PACKAGE_HEADER_OBJECT% "%PACKAGE_HEADER_BUILD%\libretro\CMakeFiles\xenia-libretro.dir\core_events.c.obj" "%PACKAGE_HEADER_BUILD%\libretro\CMakeFiles\xenia-libretro.dir\core_disc.c.obj" @"%OUT%\libs.rsp" ntdll.lib ws2_32.lib winmm.lib bcrypt.lib shlwapi.lib dbghelp.lib ole32.lib user32.lib shell32.lib advapi32.lib xinput.lib comctl32.lib shcore.lib dxguid.lib d3d12.lib dxgi.lib synchronization.lib version.lib uuid.lib gdi32.lib imm32.lib setupapi.lib cfgmgr32.lib hid.lib dwmapi.lib comdlg32.lib oleaut32.lib /Fe"%OUT%\test.exe" /link /OPT:REF
 if not "%errorlevel%"=="0" goto fail
-"%OUT%\test.exe"
+"%OUT%\test.exe" "%OUT%\native-header.dat"
 if not "%errorlevel%"=="0" goto fail
 popd
 exit /b 0

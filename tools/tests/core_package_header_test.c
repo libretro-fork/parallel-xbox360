@@ -36,7 +36,7 @@ static int64_t RETRO_CALLCONV seek_file(struct retro_vfs_file_handle *file, int6
    (void)file; ++seeks;
    if (fault == 5 || origin != RETRO_VFS_SEEK_POSITION_START || at < 0 || at > length) return -1;
    position = at;
-   return fault == 10 ? at + 1 : at;
+   return fault == 10 ? 1 : 0;
 }
 static int64_t RETRO_CALLCONV read_file(struct retro_vfs_file_handle *file, void *out, uint64_t size)
 {
@@ -70,7 +70,35 @@ static void setup(unsigned volume)
    limit = (unsigned)header_size; fault = 0;
    memset(output, 0xA5, sizeof(output));
 }
-int main(void)
+static void native_file_test(const char *name)
+{
+   struct retro_vfs_interface_info info;
+   RFILE *file;
+   unsigned volume, i;
+   uint64_t size;
+   memset(&info, 0, sizeof(info));
+   filestream_vfs_init(&info);
+   for (i = 0; i < 2; ++i) {
+      setup(i);
+      file = filestream_open(name, RETRO_VFS_FILE_ACCESS_WRITE,
+            RETRO_VFS_FILE_ACCESS_HINT_NONE);
+      CHECK(file);
+      CHECK(filestream_write(file, data, header_size) == (int64_t)header_size);
+      CHECK(filestream_close(file) == 0);
+      volume = 99;
+      CHECK(xe_package_probe_type(name, header_size, volume_offset, &volume) == 1);
+      CHECK(volume == i);
+      CHECK(xe_package_read_header(name, output, header_size, &size) == 1);
+      CHECK(size == header_size && !memcmp(data, output, header_size));
+#ifdef XE_PACKAGE_NATIVE
+      CHECK(xe_package_native_type(name) == (int)i);
+      CHECK(xe_package_native_read(name, data, header_size));
+#endif
+   }
+   CHECK(filestream_delete(name) == 0);
+   puts("PASS: native file probe at nonzero offset and direct header read");
+}
+int main(int argc, char **argv)
 {
    struct retro_vfs_interface iface;
    struct retro_vfs_interface_info info;
@@ -84,6 +112,7 @@ int main(void)
    printf("native header=%u bytes, volume offset=%u\n", (unsigned)header_size, (unsigned)volume_offset);
 #endif
    CHECK(header_size <= CAPACITY && volume_offset + 4 <= header_size);
+   if (argc > 2) { native_file_test(argv[1]); return 0; }
    memset(&iface, 0, sizeof(iface));
    iface.open = open_file; iface.close = close_file; iface.size = size_file;
    iface.tell = tell_file; iface.seek = seek_file; iface.read = read_file;
@@ -164,6 +193,7 @@ int main(void)
    CHECK(xe_package_probe_type(path, 3, 0, &volume) == -1);
    CHECK(xe_package_probe_type(path, header_size, header_size, &volume) == -1);
    CHECK(xe_package_read_header(NULL, output, header_size, &size) == -1 && !opens);
+   if (argc > 1) native_file_test(argv[1]);
    puts("PASS package VFS probes, direct headers, 64-bit sizes, short I/O, faults and exact-once closure");
    return 0;
 }

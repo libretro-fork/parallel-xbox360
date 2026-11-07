@@ -21,4 +21,8 @@ ${CXX:-c++} -O2 -std=c++20 -Wno-attributes -DNDEBUG -DXENIA_LIBRETRO -DRETRO_ATO
  -I"$root" -I"$root/src" -I"$root/third_party/libretro-common/include" -I"$root/third_party/fmt/include" \
  -I"$root/third_party/ffmpeg-xenia" -I"$root/third_party/FFmpeg" \
  "$source" @"$objects" $libs -o "$out/test$suffix"
-"$out/test$suffix"
+if [ -n "${TEST_ARGUMENT:-}" ]; then
+ "$out/test$suffix" "$TEST_ARGUMENT"
+else
+ "$out/test$suffix"
+fi

@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fix XContent container selection on native file streams: libretro VFS seek returns zero on success, not the resulting offset. Correct the probe and its fake VFS fixture, and exercise real files through both the C89 probe and native container factory. This repairs a regression introduced by the earlier header migration.
+
 - Avoid duplicate texture conversion calls when several fetch constants reference the same texture owner, for both renderer paths. Dirty batches deduplicate their existing pointer span in stable order before the authoritative dirty snapshot. Distinct signed/unsigned owners and failure/invalidation retries remain separate. Clean batches bypass compaction; the hint scan stops after the first dirty owner. The C89 filter adds no allocation or persistent texture metadata and uses 128 bytes of temporary hash indices only for larger distinct sets. The native regression reduces 64 identical-owner conversion calls to one; real GPU timing and gameplay gains remain unmeasured.
 
 - Fail content loading cleanly when the frontend rejects the pixel format or Vulkan/D3D12 hardware rendering. Pixel validation precedes GPU context creation, and failed loads clear pending audio ownership, fractional cadence, disc entries and title patch options before retry. Vulkan/D3D12 provider failures return an error rather than terminating the frontend, and D3D12 stops before dereferencing a missing provider. Existing Vulkan v2-to-v1 negotiation fallback is preserved. Successful gameplay audio scheduling and worker shutdown order remain unchanged.
