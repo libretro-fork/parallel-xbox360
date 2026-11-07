@@ -50,6 +50,7 @@ static struct  predefined_func_descr predefined_funcs[] = {
 {"dx.op.unaryBits", "i", "iO", DXIL_ATTR_KIND_READ_NONE},
 {"dx.op.isSpecialFloat", "b", "iO", DXIL_ATTR_KIND_READ_NONE},
 {"dx.op.binary", "O", "iOO", DXIL_ATTR_KIND_READ_NONE},
+{"dx.op.binaryWithTwoOuts", "T", "iOO", DXIL_ATTR_KIND_READ_NONE},
 {"dx.op.bufferStore", "v", "i@iiOOOOc", DXIL_ATTR_KIND_NONE},
 {"dx.op.rawBufferStore", "v", "i@iiOOOOci", DXIL_ATTR_KIND_NONE},
 {"dx.op.bufferLoad", "R", "i@ii", DXIL_ATTR_KIND_READ_ONLY},
@@ -198,8 +199,9 @@ static const struct dxil_type *
 get_type_from_string(struct dxil_module *mod, const char *param_descr,
                      enum overload_type overload,  int *idx)
 {
+   char type_id;
    assert(param_descr);
-   char type_id = param_descr[(*idx)++];
+   type_id = param_descr[(*idx)++];
    assert(*idx <= (int)strlen(param_descr));
 
    switch (type_id) {
@@ -218,6 +220,7 @@ get_type_from_string(struct dxil_module *mod, const char *param_descr,
    case DXIL_FUNC_PARAM_DIM: return dxil_module_get_dimret_type(mod);
    case DXIL_FUNC_PARAM_SAMPLE_POS: return dxil_module_get_samplepos_type(mod);
    case DXIL_FUNC_PARAM_CBUF_RET: return dxil_module_get_cbuf_ret_type(mod, overload);
+   case DXIL_FUNC_PARAM_TWOI32: return dxil_module_get_twoi32_type(mod);
    case DXIL_FUNC_PARAM_SPLIT_DOUBLE: return dxil_module_get_split_double_ret_type(mod);
    case DXIL_FUNC_PARAM_RES_BIND: return dxil_module_get_res_bind_type(mod);
    case DXIL_FUNC_PARAM_RES_PROPS: return dxil_module_get_res_props_type(mod);

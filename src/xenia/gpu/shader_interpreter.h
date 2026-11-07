@@ -14,8 +14,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 #include "libretro/core_shader_loop.h"
+#include "libretro/core_float_rtz.h"
 #include "xenia/gpu/register_file.h"
 #include "xenia/gpu/shader.h"
 #include "xenia/gpu/trace_writer.h"
@@ -93,10 +95,18 @@ class ShaderInterpreter {
     }
   };
 
+  float GuestAdd(float a, float b) const {
+    return shader_type_ == xenos::ShaderType::kVertex ? xe_float_add_rtz(a,b) : a+b;
+  }
+  float GuestMultiply(float a, float b) const {
+    return shader_type_ == xenos::ShaderType::kVertex ? xe_float_mul_rtz(a,b) : a*b;
+  }
   static float FlushDenormal(float value) {
-    uint32_t bits = *reinterpret_cast<const uint32_t*>(&value);
+    uint32_t bits;
+    std::memcpy(&bits,&value,sizeof(bits));
     bits &= (bits & UINT32_C(0x7F800000)) ? ~UINT32_C(0) : (UINT32_C(1) << 31);
-    return *reinterpret_cast<const float*>(&bits);
+    std::memcpy(&value,&bits,sizeof(value));
+    return value;
   }
 
   uint32_t GetTempRegisterIndex(uint32_t address, bool is_relative) const {

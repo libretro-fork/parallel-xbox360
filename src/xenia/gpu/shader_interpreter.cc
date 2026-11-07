@@ -333,13 +333,13 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       uint32_t vector_src_negate_bit = uint32_t(instr.src_negate(1 + i)) << 31;
       uint32_t vector_src_swizzle = instr.src_swizzle(1 + i);
       for (uint32_t j = 0; j < 4; ++j) {
+        uint32_t vector_src_bits;
         float vector_src_component = FlushDenormal(
             vector_src_ptr[ucode::AluInstruction::GetSwizzledComponentIndex(
                 vector_src_swizzle, j)]);
-        *reinterpret_cast<uint32_t*>(&vector_src_component) =
-            (*reinterpret_cast<const uint32_t*>(&vector_src_component) &
-             vector_src_absolute_mask) ^
-            vector_src_negate_bit;
+        std::memcpy(&vector_src_bits,&vector_src_component,sizeof(vector_src_bits));
+        vector_src_bits = (vector_src_bits & vector_src_absolute_mask) ^ vector_src_negate_bit;
+        std::memcpy(&vector_src_component,&vector_src_bits,sizeof(vector_src_component));
         vector_operands[i][j] = vector_src_component;
       }
     }
@@ -348,14 +348,14 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
     switch (vector_opcode) {
       case ucode::AluVectorOpcode::kAdd: {
         for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = vector_operands[0][i] + vector_operands[1][i];
+          vector_result[i] = GuestAdd(vector_operands[0][i], vector_operands[1][i]);
         }
       } break;
       case ucode::AluVectorOpcode::kMul: {
         for (uint32_t i = 0; i < 4; ++i) {
           // Direct3D 9 behavior (0 or denormal * anything = +0).
           vector_result[i] = (vector_operands[0][i] && vector_operands[1][i])
-                                 ? vector_operands[0][i] * vector_operands[1][i]
+                                 ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
                                  : 0.0f;
         }
       } break;
@@ -402,7 +402,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       case ucode::AluVectorOpcode::kFrc: {
         for (uint32_t i = 0; i < 4; ++i) {
           vector_result[i] =
-              vector_operands[0][i] - std::floor(vector_operands[0][i]);
+              GuestAdd(vector_operands[0][i], -std::floor(vector_operands[0][i]));
         }
       } break;
       case ucode::AluVectorOpcode::kTrunc: {
@@ -421,10 +421,9 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
           // Doing the addition rather than conditional assignment even for zero
           // operands because +0 + -0 must be +0.
           vector_result[i] =
-              ((vector_operands[0][i] && vector_operands[1][i])
-                   ? vector_operands[0][i] * vector_operands[1][i]
-                   : 0.0f) +
-              vector_operands[2][i];
+              GuestAdd((vector_operands[0][i] && vector_operands[1][i])
+                   ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                   : 0.0f, vector_operands[2][i]);
         }
       } break;
       case ucode::AluVectorOpcode::kCndEq: {
@@ -454,10 +453,10 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
           // Direct3D 9 behavior (0 or denormal * anything = +0).
           // Doing the addition even for zero operands because +0 + -0 must be
           // +0.
-          vector_result[0] +=
+          vector_result[0] = GuestAdd(vector_result[0],
               (vector_operands[0][i] && vector_operands[1][i])
-                  ? vector_operands[0][i] * vector_operands[1][i]
-                  : 0.0f;
+                  ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                  : 0.0f);
         }
         replicate_vector_result_x = true;
       } break;
@@ -467,10 +466,10 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
           // Direct3D 9 behavior (0 or denormal * anything = +0).
           // Doing the addition even for zero operands because +0 + -0 must be
           // +0.
-          vector_result[0] +=
+          vector_result[0] = GuestAdd(vector_result[0],
               (vector_operands[0][i] && vector_operands[1][i])
-                  ? vector_operands[0][i] * vector_operands[1][i]
-                  : 0.0f;
+                  ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                  : 0.0f);
         }
         replicate_vector_result_x = true;
       } break;
@@ -479,12 +478,12 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         vector_result[0] = 0.0f;
         for (uint32_t i = 0; i < 2; ++i) {
           // Direct3D 9 behavior (0 or denormal * anything = +0).
-          vector_result[0] +=
+          vector_result[0] = GuestAdd(vector_result[0],
               (vector_operands[0][i] && vector_operands[1][i])
-                  ? vector_operands[0][i] * vector_operands[1][i]
-                  : 0.0f;
+                  ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                  : 0.0f);
         }
-        vector_result[0] += vector_operands[2][0];
+        vector_result[0] = GuestAdd(vector_result[0], vector_operands[2][0]);
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kCube: {
@@ -513,7 +512,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
           vector_result[2] = x;
           vector_result[3] = x_negative ? 1.0f : 0.0f;
         }
-        vector_result[2] *= 2.0f;
+        vector_result[2] = GuestMultiply(vector_result[2], 2.0f);
       } break;
       case ucode::AluVectorOpcode::kMax4: {
         if (std::isgreaterequal(vector_operands[0][0], vector_operands[0][1]) &&
@@ -539,7 +538,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         vector_result[0] =
             (vector_operands[0][0] == 0.0f && vector_operands[1][0] == 0.0f)
                 ? 0.0f
-                : vector_operands[0][0] + 1.0f;
+                : GuestAdd(vector_operands[0][0], 1.0f);
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kSetpNePush: {
@@ -548,7 +547,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         vector_result[0] =
             (vector_operands[0][0] == 0.0f && vector_operands[1][0] != 0.0f)
                 ? 0.0f
-                : vector_operands[0][0] + 1.0f;
+                : GuestAdd(vector_operands[0][0], 1.0f);
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kSetpGtPush: {
@@ -557,7 +556,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         vector_result[0] = (vector_operands[0][0] == 0.0f &&
                             std::isgreater(vector_operands[1][0], 0.0f))
                                ? 0.0f
-                               : vector_operands[0][0] + 1.0f;
+                               : GuestAdd(vector_operands[0][0], 1.0f);
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kSetpGePush: {
@@ -566,7 +565,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         vector_result[0] = (vector_operands[0][0] == 0.0f &&
                             std::isgreaterequal(vector_operands[1][0], 0.0f))
                                ? 0.0f
-                               : vector_operands[0][0] + 1.0f;
+                               : GuestAdd(vector_operands[0][0], 1.0f);
         replicate_vector_result_x = true;
       } break;
       // Not implementing pixel kill currently, the interpreter is currently
@@ -614,7 +613,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       } break;
       case ucode::AluVectorOpcode::kMaxA: {
         state_.address_register = int32_t(std::floor(
-            xe::clamp_float(vector_operands[0][3], -256.0f, 255.0f) + 0.5f));
+            GuestAdd(xe::clamp_float(vector_operands[0][3], -256.0f, 255.0f), 0.5f)));
         for (uint32_t i = 0; i < 4; ++i) {
           vector_result[i] =
               std::isgreaterequal(vector_operands[0][i], vector_operands[1][i])
@@ -693,11 +692,11 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
     uint32_t scalar_src_absolute_mask = ~(uint32_t(scalar_src_absolute) << 31);
     uint32_t scalar_src_negate_bit = uint32_t(instr.src_negate(3)) << 31;
     for (uint32_t i = 0; i < scalar_operand_component_count; ++i) {
+      uint32_t scalar_bits;
       float scalar_operand = FlushDenormal(scalar_operands[i]);
-      *reinterpret_cast<uint32_t*>(&scalar_operand) =
-          (*reinterpret_cast<const uint32_t*>(&scalar_operand) &
-           scalar_src_absolute_mask) ^
-          scalar_src_negate_bit;
+      std::memcpy(&scalar_bits,&scalar_operand,sizeof(scalar_bits));
+      scalar_bits = (scalar_bits & scalar_src_absolute_mask) ^ scalar_src_negate_bit;
+      std::memcpy(&scalar_operand,&scalar_bits,sizeof(scalar_operand));
       scalar_operands[i] = scalar_operand;
     }
   }
@@ -705,38 +704,27 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
     case ucode::AluScalarOpcode::kAdds:
     case ucode::AluScalarOpcode::kAddsc0:
     case ucode::AluScalarOpcode::kAddsc1: {
-      state_.previous_scalar = scalar_operands[0] + scalar_operands[1];
+      state_.previous_scalar = GuestAdd(scalar_operands[0], scalar_operands[1]);
     } break;
     case ucode::AluScalarOpcode::kAddsPrev: {
-      state_.previous_scalar = scalar_operands[0] + state_.previous_scalar;
+      state_.previous_scalar = GuestAdd(scalar_operands[0], state_.previous_scalar);
     } break;
     case ucode::AluScalarOpcode::kMuls: {
       // Direct3D 9 behavior (0 or denormal * anything = +0).
       state_.previous_scalar = (scalar_operands[0] && scalar_operands[1])
-                                   ? scalar_operands[0] * scalar_operands[1]
+                                   ? GuestMultiply(scalar_operands[0], scalar_operands[1])
                                    : 0.0f;
     } break;
     case ucode::AluScalarOpcode::kMulsc0:
     case ucode::AluScalarOpcode::kMulsc1: {
-      // Direct3D 9 behavior (0 or denormal * anything = +0).
-      float product = 0.0f;
-      if (scalar_operands[0] && scalar_operands[1]) {
-        product = scalar_operands[0] * scalar_operands[1];
-        if (cvars::mulsc_round_toward_zero && std::isfinite(product)) {
-          const double exact_product =
-              double(scalar_operands[0]) * double(scalar_operands[1]);
-          // Step back if the float multiply rounded away from zero.
-          if (std::abs(double(product)) > std::abs(exact_product)) {
-            product = std::nextafter(product, 0.0f);
-          }
-        }
-      }
-      state_.previous_scalar = product;
+      // Same vertex RTZ and SM3 zero rule as every other product.
+      state_.previous_scalar = (scalar_operands[0] && scalar_operands[1])
+          ? GuestMultiply(scalar_operands[0],scalar_operands[1]) : 0.0f;
     } break;
     case ucode::AluScalarOpcode::kMulsPrev: {
       // Direct3D 9 behavior (0 or denormal * anything = +0).
       state_.previous_scalar = (scalar_operands[0] && state_.previous_scalar)
-                                   ? scalar_operands[0] * state_.previous_scalar
+                                   ? GuestMultiply(scalar_operands[0], state_.previous_scalar)
                                    : 0.0f;
     } break;
     case ucode::AluScalarOpcode::kMulsPrev2: {
@@ -749,7 +737,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         // Direct3D 9 behavior (0 or denormal * anything = +0).
         state_.previous_scalar =
             (scalar_operands[0] && state_.previous_scalar)
-                ? scalar_operands[0] * state_.previous_scalar
+                ? GuestMultiply(scalar_operands[0], state_.previous_scalar)
                 : 0.0f;
       }
     } break;
@@ -780,7 +768,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
     } break;
     case ucode::AluScalarOpcode::kFrcs: {
       state_.previous_scalar =
-          scalar_operands[0] - std::floor(scalar_operands[0]);
+          GuestAdd(scalar_operands[0], -std::floor(scalar_operands[0]));
     } break;
     case ucode::AluScalarOpcode::kTruncs: {
       state_.previous_scalar = std::trunc(scalar_operands[0]);
@@ -849,7 +837,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
     } break;
     case ucode::AluScalarOpcode::kMaxAs: {
       state_.address_register = int32_t(std::floor(
-          xe::clamp_float(scalar_operands[0], -256.0f, 255.0f) + 0.5f));
+          GuestAdd(xe::clamp_float(scalar_operands[0], -256.0f, 255.0f), 0.5f)));
       state_.previous_scalar =
           std::isgreaterequal(scalar_operands[0], scalar_operands[1])
               ? scalar_operands[0]
@@ -866,10 +854,10 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
     case ucode::AluScalarOpcode::kSubs:
     case ucode::AluScalarOpcode::kSubsc0:
     case ucode::AluScalarOpcode::kSubsc1: {
-      state_.previous_scalar = scalar_operands[0] - scalar_operands[1];
+      state_.previous_scalar = GuestAdd(scalar_operands[0], -scalar_operands[1]);
     } break;
     case ucode::AluScalarOpcode::kSubsPrev: {
-      state_.previous_scalar = scalar_operands[0] - state_.previous_scalar;
+      state_.previous_scalar = GuestAdd(scalar_operands[0], -state_.previous_scalar);
     } break;
     case ucode::AluScalarOpcode::kSetpEq: {
       state_.predicate = scalar_operands[0] == 0.0f;
@@ -895,7 +883,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
               : (scalar_operands[0] == 0.0f ? 1.0f : scalar_operands[0]);
     } break;
     case ucode::AluScalarOpcode::kSetpPop: {
-      float new_counter = scalar_operands[0] - 1.0f;
+      float new_counter = GuestAdd(scalar_operands[0], -1.0f);
       state_.predicate = std::islessequal(new_counter, 0.0f);
       state_.previous_scalar = state_.predicate ? 0.0f : new_counter;
     } break;

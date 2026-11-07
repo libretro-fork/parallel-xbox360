@@ -549,6 +549,7 @@ std::unique_ptr<SpirvShaderTranslator> PipelineCache::CreateTranslator() const {
   spirv_features.signed_zero_inf_nan_preserve_float32 = false;
   spirv_features.denorm_flush_to_zero_float32 = true;
   spirv_features.rounding_mode_rte_float32 = false;
+  spirv_features.rounding_mode_rtz_float32 = false;
   // EDRAM fragment shader interlock (the ROV path) when the render target cache
   // is in its rasterizer-ordered output path; host render targets otherwise.
   bool edram_fragment_shader_interlock =

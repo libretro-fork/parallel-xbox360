@@ -220,6 +220,7 @@ XeDxilGuestProgram *xe_dxil_guest_program_create(struct dxil_module *module, con
       (options->float_dynamic_addressing && options->float_constant_count != 256)) return NULL;
   p = (XeDxilGuestProgram *)calloc(1, sizeof(*p)); if (!p) return NULL;
   p->options = *options; xe_dxil_alu_init(&p->alu, module);
+  p->alu.vertex_round_toward_zero = options->vertex_round_toward_zero != 0;
   p->io.context = p; p->io.read = read_value; p->io.write = write_value; p->io.kill = kill_value;
   p->io.current_block = &p->current_block; p->io.loop_address = ic(p, 0);
   if (options->register_count) {

@@ -1,0 +1,83 @@
+Vertex/domain exact RTZ arithmetic and bounded shared emitter
+2026-11-08
+
+Scope and provenance
+--------------------
+The NG2 recomp audit at gamboozino/ng2recomp 6d7ca828e75033f031e8150668d8dc119c92b956
+identified a missing whole-vertex rounding rule. Their patch 0008 cites Edge
+043a7cb4032e9198265195b62b0cb7c4b45bb047 (not an ancestor of this branch).
+No upstream commit or GPL renderer implementation is copied/cherry-picked.
+This is an independent C89 integer implementation, using existing BSD ALU
+rules and each backend's owned raw IR. It replaces the old disabled mulsc-only
+floating-error experiment. Pixel rounding deliberately retains its prior
+policy; this is not complete console floating-point equivalence.
+
+Arithmetic and cost
+-------------------
+Finite binary32 ADD/SUB/MUL truncate toward zero, saturate finite overflow and
+flush signed input/output denormals. Separate products and sums remain
+uncontracted. Existing nonfinite/native behavior and shader-model-3 zero/NaN
+multiplication handling remain. CPU wrappers never change host rounding state.
+
+Vulkan uses hardware RTZ only with float32 RTZ and FTZ device support. The
+fallback and native DXIL share the same C89 integer SSA recipe. Multiplication
+uses a native 32x32 extended product, extracting bits 47:16, rather than a
+partial-product sequence. SPIR-V pair order is low/high; DXIL is high/low.
+No shader Int64 or Float64 capability is needed. New helper metadata is bounded,
+and IR values use the existing translator/module arena. Fixed four-component
+views are consumed immediately; no intermediate bytecode payload is copied.
+Existing compilation storage still allocates. No lock, queue, clock or audio
+schedule change is introduced. Software fallback adds instructions; no gameplay
+GPU-time, FPS, allocation-count or RSS improvement is claimed.
+
+Vertex fractional parts flush input before floor and explicitly subtract with
+RTZ, rather than assuming native frac obeys the arithmetic rounding rule.
+NVIDIA hardware exposed an error WARP did not: frac(-FLT_MIN) returned 1.0,
+instead of 0x3f7fffff. This is retained as a finite bit-exact regression. Ordinary
+negative fractional inputs are covered too. This may affect wrapped coordinates,
+but the user's reported visible NG2 texture defect is not yet reproduced or
+confirmed fixed. No texture swizzle, game-specific interpolation hack or draw
+skipping policy was imported. Both renderers already contain the recomp's
+10:10:10:2 alias mapping fix.
+
+Verification
+------------
+- Full Windows native MSVC CMake --parallel5 and GNU static Make -j5: PASS.
+- C89 numeric test vs independent x86 SSE RTZ+FTZ/DAZ: 4M random operations,
+  400 edge pairs, exponent-wide cancellation cases, signed-zero, finite overflow,
+  special-value forwarding, and float wrappers under host RNE: PASS.
+- C89 SSA evaluation checks every shift count and fault-injected callback stop;
+  signed input flushing including NaNs/infinities: PASS.
+- Linux ASan+UBSan numeric/SSA and actual DXIL writer: PASS.
+- MSVC /TC /W4 /WX /fp:strict numeric fixture: PASS.
+- Actual packed VS/PS ADD/MUL/FRC through ShaderInterpreter and SpirvShaderTranslator,
+  native MSVC and GNU: PASS. Pixel modules are byte-identical with the new RTZ
+  capability toggled. Vertex NoContraction remains with contraction toggle set.
+- All 49 actual emitted modules pass spirv-val, including SPIR-V1.0 Vulkan1.0
+  fallback with no optional float-control modes or shader int64/float64.
+- Scoped MSVC ASan instruments actual interpreter, main SPIR-V translator and
+  ALU adapter with real C89 driver: PASS. Supporting libraries are release;
+  this is not a whole-core sanitizer claim.
+- Microsoft SDK DXIL validator: PASS for extended ALU fixture and 26 representative
+  actual vertex/domain/pixel stage modules.
+- Extended ALU runtime on WARP and NVIDIA hardware vendor10de/device2b85:
+  PASS, all finite words compared bit-exactly. Existing NaN comparisons allow
+  payload canonicalization only; this does not mask finite FRC mismatches.
+- Parent435cc2c52 interpreter negative control compiled/ran and failed the same
+  golden test: 1+0.75ULP returned3f800001 instead of3f800000, and overflow Inf
+  instead of finite max. This is a behavioral regression test, not compile failure.
+- Existing actual bounded-loop/aL-addressing native GNU fixture: PASS.
+- Full C89 DXIL lowering syntax check with -Wno-long-long for existing uint64
+  constants: PASS. Extra make validator recipes required unavailable dxv;
+  representative binaries were generated directly and checked with real SDK
+  dxil.dll instead. No validator was stubbed or bypassed.
+
+Limits
+------
+Hardware DXIL execution is a test compute fixture, not console reference output
+or an NG2 gameplay capture. Vulkan modules were generated/validated, not executed
+on a physical Vulkan GPU in this test. Native RTZ changes all vertex arithmetic
+and may expose accuracy/performance differences needing game coverage. Pixel
+RTZ, complete savestates and the broader optimization goal remain unfinished.
+Test-only XE_DXIL_TEST_HARDWARE=1 chooses adapter0; normal runtime fixtures use
+WARP. No production GPU probing or diagnostic logging was added.

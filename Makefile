@@ -317,7 +317,7 @@ check-dxil-writer: $(HOST_DIR)/dxil-writer-test$(HOST_EXEEXT)
 
 DXIL_ALU_DIR := src/xenia/gpu/dxil
 DXIL_ALU_SOURCES := $(DXIL_ALU_DIR)/guest_alu.c $(DXIL_ALU_DIR)/guest_alu_instruction.c $(DXIL_ALU_DIR)/guest_flow.c $(DXIL_ALU_DIR)/guest_vertex.c $(DXIL_ALU_DIR)/guest_resources.c $(DXIL_ALU_DIR)/guest_texture.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_ALU_DIR)/guest_geometry.c $(DXIL_ALU_DIR)/edram_format.c $(DXIL_ALU_DIR)/edram_dump.c $(DXIL_ALU_DIR)/edram_transfer.c $(DXIL_ALU_DIR)/depth_only.c $(DXIL_ALU_DIR)/edram_depth_stencil.c $(DXIL_ALU_DIR)/rov_depth.c $(DXIL_ALU_DIR)/guest_program.c $(DXIL_ALU_DIR)/guest_vertex_stage.c $(DXIL_ALU_DIR)/guest_pixel_stage.c $(DXIL_ALU_DIR)/guest_rop.c $(DXIL_ALU_DIR)/guest_texture_stage.c $(DXIL_ALU_DIR)/guest_memexport.c $(DXIL_ALU_DIR)/guest_tessellation.c
-$(HOST_DIR)/dxil-alu-test$(HOST_EXEEXT): tools/tests/dxil_writer_test.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c tools/tests/dxil_test_storage.h $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-alu-test$(HOST_EXEEXT): tools/tests/dxil_writer_test.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c tools/tests/dxil_test_storage.h $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -DXE_DXIL_ALU_TEST -DXE_DXIL_FLOW_TEST -DXE_DXIL_VERTEX_TEST -DXE_DXIL_RESOURCES_TEST -DXE_DXIL_TEXTURE_TEST -DXE_DXIL_EDRAM_TEST -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_writer_test.c tools/tests/dxil_alu_test.c tools/tests/dxil_flow_test.c tools/tests/dxil_vertex_test.c tools/tests/dxil_resources_test.c tools/tests/dxil_texture_test.c tools/tests/dxil_edram_format_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 .PHONY: check-dxil-alu check-dxil-alu-c89
@@ -412,7 +412,7 @@ check-core-events:
 	$(HOST_CC) $(HOST_CFLAGS) -std=c89 -pedantic-errors -Wall -Wextra -Werror -Ilibretro libretro/core_events.c tools/tests/core_events_test.c -o "$(HOST_DIR)/core-events-test$(HOST_EXEEXT)"
 	"$(HOST_DIR)/core-events-test$(HOST_EXEEXT)"
 
-$(HOST_DIR)/dxil-geometry-test$(HOST_EXEEXT): tools/tests/dxil_geometry_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-geometry-test$(HOST_EXEEXT): tools/tests/dxil_geometry_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_geometry_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 .PHONY: check-dxil-geometry
@@ -428,7 +428,7 @@ check-dxil-edram: $(HOST_DIR)/dxil-alu-test$(HOST_EXEEXT) check-dxil-alu-c89
 	$< "$(HOST_DIR)/dxil-edram-test.dxil" edram
 	$(DXIL_VALIDATOR) "$(HOST_DIR)/dxil-edram-test.dxil" -o="$(HOST_DIR)/dxil-edram-test-validated.dxil"
 	cmp "$(HOST_DIR)/dxil-edram-test.dxil" "$(HOST_DIR)/dxil-edram-test-validated.dxil"
-$(HOST_DIR)/dxil-edram-dump-test$(HOST_EXEEXT): tools/tests/dxil_edram_dump_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-edram-dump-test$(HOST_EXEEXT): tools/tests/dxil_edram_dump_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_edram_dump_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 .PHONY: check-dxil-edram-dump
@@ -442,7 +442,7 @@ check-dxil-edram-dump: $(HOST_DIR)/dxil-edram-dump-test$(HOST_EXEEXT) check-dxil
 	    cmp "$$path" "$$path.validated"; \
 	  done; done; done; done; \
 	done
-$(HOST_DIR)/dxil-pixel-interface-test$(HOST_EXEEXT): tools/tests/dxil_pixel_interface_test.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-pixel-interface-test$(HOST_EXEEXT): tools/tests/dxil_pixel_interface_test.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_pixel_interface_test.c $(DXIL_ALU_DIR)/shader_module.c $(DXIL_BYTECODE_SOURCES) -o "$@"
 .PHONY: check-dxil-pixel-interface
@@ -454,7 +454,7 @@ check-dxil-pixel-interface: $(HOST_DIR)/dxil-pixel-interface-test$(HOST_EXEEXT) 
 	  cmp "$$path" "$$path.validated"; \
 	done
 
-$(HOST_DIR)/dxil-edram-transfer-test$(HOST_EXEEXT): tools/tests/dxil_edram_transfer_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-edram-transfer-test$(HOST_EXEEXT): tools/tests/dxil_edram_transfer_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_edram_transfer_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 
@@ -493,7 +493,7 @@ check-dxil-edram-transfer: $(HOST_DIR)/dxil-edram-transfer-test$(HOST_EXEEXT) ch
 	  cmp "$$path" "$$path.validated"; \
 	done
 
-$(HOST_DIR)/dxil-depth-only-test$(HOST_EXEEXT): tools/tests/dxil_depth_only_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-depth-only-test$(HOST_EXEEXT): tools/tests/dxil_depth_only_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_depth_only_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 .PHONY: check-dxil-depth-only
@@ -505,10 +505,10 @@ check-dxil-depth-only: $(HOST_DIR)/dxil-depth-only-test$(HOST_EXEEXT) check-dxil
 	  cmp "$$path" "$$path.validated"; \
 	done; done
 
-$(HOST_DIR)/dxil-rov-test$(HOST_EXEEXT): tools/tests/dxil_rov_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-rov-test$(HOST_EXEEXT): tools/tests/dxil_rov_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_rov_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
-$(HOST_DIR)/dxil-rov-depth-test$(HOST_EXEEXT): tools/tests/dxil_rov_depth_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-rov-depth-test$(HOST_EXEEXT): tools/tests/dxil_rov_depth_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_rov_depth_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 
@@ -528,7 +528,7 @@ check-dxil-rov-depth: $(HOST_DIR)/dxil-rov-depth-test$(HOST_EXEEXT) check-dxil-a
 	  cmp "$$path" "$$path.validated"; \
 	done; done; done; done
 
-$(HOST_DIR)/dxil-program-test$(HOST_EXEEXT): tools/tests/dxil_program_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-program-test$(HOST_EXEEXT): tools/tests/dxil_program_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_program_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 .PHONY: check-dxil-program
@@ -540,7 +540,7 @@ check-dxil-program: $(HOST_DIR)/dxil-program-test$(HOST_EXEEXT) check-dxil-alu-c
 	  cmp "$$path" "$$path.validated"; \
 	done
 
-$(HOST_DIR)/dxil-guest-vertex-test$(HOST_EXEEXT): tools/tests/dxil_guest_vertex_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-guest-vertex-test$(HOST_EXEEXT): tools/tests/dxil_guest_vertex_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_guest_vertex_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 .PHONY: check-dxil-guest-vertex
@@ -552,7 +552,7 @@ check-dxil-guest-vertex: $(HOST_DIR)/dxil-guest-vertex-test$(HOST_EXEEXT) check-
 	  cmp "$$path" "$$path.validated"; \
 	done
 
-$(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT): tools/tests/dxil_guest_pixel_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT): tools/tests/dxil_guest_pixel_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_guest_pixel_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 .PHONY: check-dxil-guest-pixel
@@ -568,7 +568,7 @@ check-dxil-guest-pixel: $(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT) check-dx
 	  done; \
 	done; done
 
-$(HOST_DIR)/dxil-render-color-test$(HOST_EXEEXT): tools/tests/dxil_render_color_test.c tools/tests/dxil_render_color_reference.h $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-render-color-test$(HOST_EXEEXT): tools/tests/dxil_render_color_test.c tools/tests/dxil_render_color_reference.h $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_render_color_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -lm -o "$@"
 .PHONY: check-dxil-render-color
@@ -599,7 +599,7 @@ check-dxil-guest-rop: $(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT) $(HOST_DIR
 	  done; done; \
 	done; done; done
 
-$(HOST_DIR)/dxil-bindless-test$(HOST_EXEEXT): tools/tests/dxil_bindless_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-bindless-test$(HOST_EXEEXT): tools/tests/dxil_bindless_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_bindless_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 .PHONY: check-dxil-bindless
@@ -609,7 +609,7 @@ check-dxil-bindless: $(HOST_DIR)/dxil-bindless-test$(HOST_EXEEXT) check-dxil-alu
 	cmp "$(HOST_DIR)/dxil-bindless-test.dxil" "$(HOST_DIR)/dxil-bindless-test.dxil.validated"
 
 
-$(HOST_DIR)/dxil-texture-weights-test$(HOST_EXEEXT): tools/tests/dxil_texture_weights_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-texture-weights-test$(HOST_EXEEXT): tools/tests/dxil_texture_weights_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_texture_weights_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -lm -o "$@"
 .PHONY: check-dxil-texture-weights check-dxil-guest-texture-query
@@ -646,7 +646,7 @@ check-dxil-bindless-pixel: $(HOST_DIR)/dxil-bindless-test$(HOST_EXEEXT) check-dx
 	$(DXIL_VALIDATOR) "$(HOST_DIR)/dxil-bindless-pixel-test.dxil" -o="$(HOST_DIR)/dxil-bindless-pixel-test.dxil.validated"
 	cmp "$(HOST_DIR)/dxil-bindless-pixel-test.dxil" "$(HOST_DIR)/dxil-bindless-pixel-test.dxil.validated"
 
-$(HOST_DIR)/dxil-texture-stage-test$(HOST_EXEEXT): tools/tests/dxil_texture_stage_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-texture-stage-test$(HOST_EXEEXT): tools/tests/dxil_texture_stage_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_texture_stage_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -lm -o "$@"
 
@@ -679,7 +679,7 @@ check-dxil-guest-sampling-rov: $(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT) c
 	  done; \
 	done
 
-$(HOST_DIR)/dxil-texture-cube-stage-test$(HOST_EXEEXT): tools/tests/dxil_texture_cube_stage_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-texture-cube-stage-test$(HOST_EXEEXT): tools/tests/dxil_texture_cube_stage_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_texture_cube_stage_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -lm -o "$@"
 
@@ -691,7 +691,7 @@ check-dxil-cube-sampling: $(HOST_DIR)/dxil-texture-cube-stage-test$(HOST_EXEEXT)
 	  mode=$$((mode+1)); \
 	done
 
-$(HOST_DIR)/dxil-texture-volume-stage-test$(HOST_EXEEXT): tools/tests/dxil_texture_volume_stage_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-texture-volume-stage-test$(HOST_EXEEXT): tools/tests/dxil_texture_volume_stage_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) tools/tests/dxil_texture_volume_stage_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -lm -o "$@"
 
@@ -727,7 +727,7 @@ check-dxil-scaled-sampling: $(HOST_DIR)/dxil-guest-pixel-test$(HOST_EXEEXT) chec
 	  done; \
 	done
 
-$(HOST_DIR)/dxil-memexport-test$(HOST_EXEEXT): tools/tests/dxil_memexport_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-memexport-test$(HOST_EXEEXT): tools/tests/dxil_memexport_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) $< $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -lm -o "$@"
 
@@ -754,7 +754,7 @@ check-dxil-memexport-c89:
 	$(HOST_CC) $(HOST_CFLAGS) -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -c $(DXIL_ALU_DIR)/guest_program.c -o "$(HOST_DIR)/dxil-memexport-program-c89.o"
 	$(HOST_CC) $(HOST_CFLAGS) -O2 -std=c89 -pedantic-errors -Wall -Wextra -Werror -I$(DXIL_ALU_DIR) -isystem $(DXIL_BYTECODE_DIR) -c tools/tests/dxil_memexport_test.c -o "$(HOST_DIR)/dxil-memexport-fixture-c89.o"
 
-$(HOST_DIR)/dxil-guest-domain-test$(HOST_EXEEXT): tools/tests/dxil_guest_domain_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h) $(HOST_DIR)/config
+$(HOST_DIR)/dxil-guest-domain-test$(HOST_EXEEXT): tools/tests/dxil_guest_domain_test.c $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) $(wildcard $(DXIL_ALU_DIR)/*.h $(DXIL_BYTECODE_DIR)/*.h libretro/core_resolve_native_loads.h libretro/core_float_rtz*.h) $(HOST_DIR)/config
 	@mkdir -p "$(@D)"
 	$(HOST_CC) $(HOST_CFLAGS) -std=c17 -I$(DXIL_ALU_DIR) -I$(DXIL_BYTECODE_DIR) $< $(DXIL_ALU_SOURCES) $(DXIL_BYTECODE_SOURCES) -o "$@"
 

@@ -4,6 +4,7 @@
  * Arithmetic behavior follows ucode.h and the existing guest translator.
  * New implementation uses MSVC-compatible C89, with no SPIR-V dependency. */
 #include "guest_alu.h"
+#include "../../../../libretro/core_float_rtz_emit.h"
 #include <dxil_module.h>
 #include <dxil_function.h>
 #include <float.h>
@@ -93,6 +94,73 @@ XeDxilValue xe_dxil_alu_saturate(XeDxilAlu *s, XeDxilValue value) {
   return unary(s, 7, value);
 }
 
+/* The only allocation is the existing DXIL IR arena owned by the module. */
+static xe_rtz_id rtz_emit(void *opaque,unsigned op,xe_rtz_id a,xe_rtz_id b,xe_rtz_id c,uint32_t literal) {
+  XeDxilAlu *s=(XeDxilAlu *)opaque;
+  XeDxilValue x=(XeDxilValue)a,y=(XeDxilValue)b,value=NULL,args[3],product,low,high;
+  const struct dxil_func *function;
+  switch(op) {
+  case XE_RTZ_CONST:value=ic(s,literal);break;
+  case XE_RTZ_ADD:value=bin(s,DXIL_BINOP_ADD,x,y);break;
+  case XE_RTZ_SUB:value=bin(s,DXIL_BINOP_SUB,x,y);break;
+  case XE_RTZ_MUL:value=bin(s,DXIL_BINOP_MUL,x,y);break;
+  case XE_RTZ_AND:case XE_RTZ_BOOL_AND:value=bin(s,DXIL_BINOP_AND,x,y);break;
+  case XE_RTZ_OR:value=bin(s,DXIL_BINOP_OR,x,y);break;
+  case XE_RTZ_XOR:value=bin(s,DXIL_BINOP_XOR,x,y);break;
+  case XE_RTZ_SHL:value=bin(s,DXIL_BINOP_SHL,x,y);break;
+  case XE_RTZ_SHR:value=bin(s,DXIL_BINOP_LSHR,x,y);break;
+  case XE_RTZ_EQ:value=cmp(s,DXIL_ICMP_EQ,x,y);break;
+  case XE_RTZ_ULT:value=cmp(s,DXIL_ICMP_ULT,x,y);break;
+  case XE_RTZ_ULE:value=cmp(s,DXIL_ICMP_ULE,x,y);break;
+  case XE_RTZ_UGE:value=cmp(s,DXIL_ICMP_UGE,x,y);break;
+  case XE_RTZ_SELECT:value=choose(s,x,y,(XeDxilValue)c);break;
+  case XE_RTZ_MUL_TRUNC16:
+    function=dxil_get_function(s->module,"dx.op.binaryWithTwoOuts",DXIL_I32);
+    args[0]=ic(s,42);args[1]=x;args[2]=y;
+    product=function && args[0]?checked(s,dxil_emit_call(s->module,function,args,3)):NULL;
+    if(!product)break;
+    /* DXIL's twoi32 is high/low, unlike SPIR-V's low/high pair. */
+    high=checked(s,dxil_emit_extractval(s->module,product,0));
+    low=checked(s,dxil_emit_extractval(s->module,product,1));
+    value=bin(s,DXIL_BINOP_OR,bin(s,DXIL_BINOP_SHL,high,ic(s,16)),bin(s,DXIL_BINOP_LSHR,low,ic(s,16)));
+    break;
+  case XE_RTZ_CLZ:
+    function=dxil_get_function(s->module,"dx.op.unaryBits",DXIL_I32);
+    args[0]=ic(s,33);args[1]=x;
+    if(function && args[0])value=checked(s,dxil_emit_call(s->module,function,args,2));
+    value=choose(s,cmp(s,DXIL_ICMP_EQ,x,ic(s,0)),ic(s,32),value);
+    break;
+  default:s->failed=1;break;
+  }
+  return (xe_rtz_id)value;
+}
+static XeDxilValue float_binary(XeDxilAlu *s,enum dxil_bin_opcode op,XeDxilValue a,XeDxilValue b) {
+  XeDxilValue native=bin(s,op,a,b);
+  xe_rtz_emitter emitter;
+  xe_rtz_id result;
+  if(!s->vertex_round_toward_zero || !native)return native;
+  if(op==DXIL_BINOP_SUB)b=neg(s,b);
+  emitter.context=s;emitter.emit=rtz_emit;emitter.failed=0;
+  result=op==DXIL_BINOP_MUL?
+    xe_rtz_emit_mul(&emitter,(xe_rtz_id)bits(s,a),(xe_rtz_id)bits(s,b),(xe_rtz_id)bits(s,native)):
+    xe_rtz_emit_add(&emitter,(xe_rtz_id)bits(s,a),(xe_rtz_id)bits(s,b),(xe_rtz_id)bits(s,native));
+  if(emitter.failed || !result){s->failed=1;return NULL;}
+  return from_bits(s,(XeDxilValue)result);
+}
+
+/* Native frac may round a negative tiny input up to 1 even on RTZ hardware.
+ * Flush before floor, then round the subtraction using the guest rule. */
+static XeDxilValue fraction(XeDxilAlu *s,XeDxilValue a) {
+  xe_rtz_emitter emitter;
+  xe_rtz_id clean;
+  if(!s->vertex_round_toward_zero)return unary(s,22,a);
+  emitter.context=s;emitter.emit=rtz_emit;emitter.failed=0;
+  clean=xe_rtz_emit_flush(&emitter,(xe_rtz_id)bits(s,a));
+  if(!clean || emitter.failed){s->failed=1;return NULL;}
+  a=from_bits(s,(XeDxilValue)clean);
+  return float_binary(s,DXIL_BINOP_SUB,a,unary(s,27,a));
+}
+
 /* Shader Model 3 multiplication returns +0 if either distinct operand is
  * zero/denormal, even if the other is NaN. The identical-operand path keeps
  * normal IEEE multiplication, matching the existing translator's shortcut. */
@@ -101,7 +169,7 @@ static XeDxilValue multiply(XeDxilAlu *s, XeDxilValue a, XeDxilValue b,
   XeDxilValue product;
   XeDxilValue za;
   XeDxilValue zb;
-  product = bin(s, DXIL_BINOP_MUL, a, b);
+  product = float_binary(s, DXIL_BINOP_MUL, a, b);
   if (identical) return product;
   za = cmp(s, DXIL_ICMP_ULT,
     bin(s, DXIL_BINOP_AND, bits(s, a), ic(s, UINT32_C(0x7fffffff))),
@@ -114,7 +182,7 @@ static XeDxilValue multiply(XeDxilAlu *s, XeDxilValue a, XeDxilValue b,
 
 static XeDxilValue address_value(XeDxilAlu *s, XeDxilValue value,
                                   int round_nearest, float low) {
-  if (round_nearest) value = bin(s, DXIL_BINOP_ADD, value, fc(s, 0.5f));
+  if (round_nearest) value = float_binary(s, DXIL_BINOP_ADD, value, fc(s, 0.5f));
   value = unary(s, 27, value);
   value = numeric_minmax(s, 35, value, fc(s, low));
   value = numeric_minmax(s, 36, value, fc(s, 255.0f));
@@ -170,7 +238,7 @@ static int cube(XeDxilAlu *s, XeDxilValue a[4], XeDxilValue out[4]) {
     yz[i] = choose(s, major_y, y_values[i], x_values[i]);
     out[i] = choose(s, major_z, z_values[i], yz[i]);
   }
-  out[2] = bin(s, DXIL_BINOP_MUL, out[2], fc(s, 2.0f));
+  out[2] = float_binary(s, DXIL_BINOP_MUL, out[2], fc(s, 2.0f));
   return !s->failed;
 }
 
@@ -194,9 +262,9 @@ int xe_dxil_alu_vector(XeDxilAlu *s, unsigned opcode,
     count = opcode == XE_DXIL_V_DP4 ? 4 : (opcode == XE_DXIL_V_DP3 ? 3 : 2);
     for (i = 0; i < count; ++i) {
       term = multiply(s, a[0][i], a[1][i], (identical & (1u << i)) != 0);
-      value = i ? bin(s, DXIL_BINOP_ADD, value, term) : term;
+      value = i ? float_binary(s, DXIL_BINOP_ADD, value, term) : term;
     }
-    if (opcode == XE_DXIL_V_DP2ADD) value = bin(s, DXIL_BINOP_ADD, value, a[2][0]);
+    if (opcode == XE_DXIL_V_DP2ADD) value = float_binary(s, DXIL_BINOP_ADD, value, a[2][0]);
   } else if (opcode == XE_DXIL_V_MAX4) {
     value = a[0][0];
     for (i = 1; i < 4; ++i) value = numeric_minmax(s, 35, value, a[0][i]);
@@ -207,7 +275,7 @@ int xe_dxil_alu_vector(XeDxilAlu *s, unsigned opcode,
     condition = bin(s, DXIL_BINOP_AND,
       cmp(s, DXIL_FCMP_OEQ, a[0][0], fc(s, 0.0f)),
       cmp(s, push_comparisons[opcode - XE_DXIL_V_SETP_EQ_PUSH], a[1][0], fc(s, 0.0f)));
-    value = bin(s, DXIL_BINOP_ADD,
+    value = float_binary(s, DXIL_BINOP_ADD,
       choose(s, condition, fc(s, -1.0f), a[0][0]), fc(s, 1.0f));
   } else if (opcode >= XE_DXIL_V_KILL_EQ && opcode <= XE_DXIL_V_KILL_NE) {
     condition = checked(s, dxil_module_get_int1_const(s->module, 0));
@@ -224,11 +292,11 @@ int xe_dxil_alu_vector(XeDxilAlu *s, unsigned opcode,
   if (opcode == XE_DXIL_V_MAXA) s->address = address_value(s, a[0][3], 1, -256.0f);
   for (i = 0; i < 4; ++i) {
     switch (opcode) {
-      case XE_DXIL_V_ADD: out[i] = bin(s, DXIL_BINOP_ADD, a[0][i], a[1][i]); break;
+      case XE_DXIL_V_ADD: out[i] = float_binary(s, DXIL_BINOP_ADD, a[0][i], a[1][i]); break;
       case XE_DXIL_V_MUL:
       case XE_DXIL_V_MAD:
         out[i] = multiply(s, a[0][i], a[1][i], (identical & (1u << i)) != 0);
-        if (opcode == XE_DXIL_V_MAD) out[i] = bin(s, DXIL_BINOP_ADD, out[i], a[2][i]);
+        if (opcode == XE_DXIL_V_MAD) out[i] = float_binary(s, DXIL_BINOP_ADD, out[i], a[2][i]);
         break;
       case XE_DXIL_V_MAX:
       case XE_DXIL_V_MIN:
@@ -242,7 +310,7 @@ int xe_dxil_alu_vector(XeDxilAlu *s, unsigned opcode,
           fc(s, 1.0f), fc(s, 0.0f));
         break;
       case XE_DXIL_V_FRC: case XE_DXIL_V_TRUNC: case XE_DXIL_V_FLOOR:
-        out[i] = unary(s, opcode == XE_DXIL_V_FRC ? 22 : (opcode == XE_DXIL_V_TRUNC ? 29 : 27), a[0][i]);
+        out[i] = opcode == XE_DXIL_V_FRC ? fraction(s,a[0][i]) : unary(s, opcode == XE_DXIL_V_TRUNC ? 29 : 27, a[0][i]);
         break;
       case XE_DXIL_V_CNDEQ: case XE_DXIL_V_CNDGE: case XE_DXIL_V_CNDGT:
         condition = cmp(s, opcode == XE_DXIL_V_CNDEQ ? DXIL_FCMP_OEQ :
@@ -286,50 +354,6 @@ static XeDxilValue approximate(XeDxilAlu *s, XeDxilValue value) {
   return from_bits(s, choose(s, finite, rounded, raw));
 }
 
-static void split(XeDxilAlu *s, XeDxilValue value,
-                    XeDxilValue *high, XeDxilValue *low) {
-  XeDxilValue scaled;
-  scaled = bin(s, DXIL_BINOP_MUL, value, fc(s, 4097.0f));
-  *high = bin(s, DXIL_BINOP_SUB, scaled, bin(s, DXIL_BINOP_SUB, scaled, value));
-  *low = bin(s, DXIL_BINOP_SUB, value, *high);
-}
-
-static XeDxilValue mulsc(XeDxilAlu *s, XeDxilValue a, XeDxilValue b,
-                          int identical) {
-  XeDxilValue product;
-  XeDxilValue ah;
-  XeDxilValue al;
-  XeDxilValue bh;
-  XeDxilValue bl;
-  XeDxilValue error;
-  XeDxilValue away;
-  XeDxilValue adjusted;
-  product = bin(s, DXIL_BINOP_MUL, a, b);
-  if (s->mulsc_round_toward_zero) {
-    split(s, a, &ah, &al); split(s, b, &bh, &bl);
-    error = bin(s, DXIL_BINOP_SUB, bin(s, DXIL_BINOP_MUL, ah, bh), product);
-    error = bin(s, DXIL_BINOP_ADD, error, bin(s, DXIL_BINOP_MUL, ah, bl));
-    error = bin(s, DXIL_BINOP_ADD, error, bin(s, DXIL_BINOP_MUL, al, bh));
-    error = bin(s, DXIL_BINOP_ADD, error, bin(s, DXIL_BINOP_MUL, al, bl));
-    away = bin(s, DXIL_BINOP_XOR,
-      cmp(s, DXIL_FCMP_OLT, error, fc(s, 0.0f)),
-      cmp(s, DXIL_FCMP_OLT, product, fc(s, 0.0f)));
-    away = bin(s, DXIL_BINOP_AND, away, cmp(s, DXIL_FCMP_ONE, error, fc(s, 0.0f)));
-    adjusted = from_bits(s, bin(s, DXIL_BINOP_SUB, bits(s, product), ic(s, 1)));
-    product = choose(s, away, adjusted, product);
-  }
-  if (!identical) {
-    XeDxilValue zero_a;
-    XeDxilValue zero_b;
-    zero_a = cmp(s, DXIL_ICMP_ULT,
-      bin(s, DXIL_BINOP_AND, bits(s, a), ic(s, UINT32_C(0x7fffffff))), ic(s, UINT32_C(0x00800000)));
-    zero_b = cmp(s, DXIL_ICMP_ULT,
-      bin(s, DXIL_BINOP_AND, bits(s, b), ic(s, UINT32_C(0x7fffffff))), ic(s, UINT32_C(0x00800000)));
-    product = choose(s, bin(s, DXIL_BINOP_OR, zero_a, zero_b), fc(s, 0.0f), product);
-  }
-  return product;
-}
-
 XeDxilValue xe_dxil_alu_scalar(XeDxilAlu *s, unsigned opcode,
                               XeDxilValue a, XeDxilValue b, int identical) {
   static const enum dxil_cmp_pred comparisons[4] = {
@@ -352,11 +376,11 @@ XeDxilValue xe_dxil_alu_scalar(XeDxilAlu *s, unsigned opcode,
     case XE_DXIL_S_ADD: case XE_DXIL_S_SUB:
     case XE_DXIL_S_ADDSC0: case XE_DXIL_S_ADDSC1:
     case XE_DXIL_S_SUBSC0: case XE_DXIL_S_SUBSC1:
-      value = bin(s, opcode == XE_DXIL_S_SUB || opcode >= XE_DXIL_S_SUBSC0 ?
+      value = float_binary(s, opcode == XE_DXIL_S_SUB || opcode >= XE_DXIL_S_SUBSC0 ?
         DXIL_BINOP_SUB : DXIL_BINOP_ADD, a, b);
       break;
     case XE_DXIL_S_ADD_PREV: case XE_DXIL_S_SUB_PREV:
-      value = bin(s, opcode == XE_DXIL_S_ADD_PREV ? DXIL_BINOP_ADD : DXIL_BINOP_SUB, a, prior);
+      value = float_binary(s, opcode == XE_DXIL_S_ADD_PREV ? DXIL_BINOP_ADD : DXIL_BINOP_SUB, a, prior);
       break;
     case XE_DXIL_S_MUL: value = multiply(s, a, b, identical); break;
     case XE_DXIL_S_MUL_PREV: value = multiply(s, a, prior, 0); break;
@@ -383,7 +407,7 @@ XeDxilValue xe_dxil_alu_scalar(XeDxilAlu *s, unsigned opcode,
     case XE_DXIL_S_SIN: case XE_DXIL_S_COS:
       intrinsic = opcode == XE_DXIL_S_FRC ? 22 : (opcode == XE_DXIL_S_TRUNC ? 29 :
         (opcode == XE_DXIL_S_FLOOR ? 27 : (opcode == XE_DXIL_S_SIN ? 13 : 12)));
-      value = unary(s, intrinsic, a); break;
+      value = opcode == XE_DXIL_S_FRC ? fraction(s,a) : unary(s, intrinsic, a); break;
     case XE_DXIL_S_EXP: case XE_DXIL_S_LOG: case XE_DXIL_S_LOGC:
     case XE_DXIL_S_RCPC: case XE_DXIL_S_RCPF: case XE_DXIL_S_RCP:
     case XE_DXIL_S_RSQC: case XE_DXIL_S_RSQF: case XE_DXIL_S_RSQ:
@@ -422,7 +446,7 @@ XeDxilValue xe_dxil_alu_scalar(XeDxilAlu *s, unsigned opcode,
         choose(s, cmp(s, DXIL_FCMP_OEQ, a, fc(s, 0.0f)), fc(s, 1.0f), a));
       break;
     case XE_DXIL_S_SETP_POP:
-      value = bin(s, DXIL_BINOP_SUB, a, fc(s, 1.0f));
+      value = float_binary(s, DXIL_BINOP_SUB, a, fc(s, 1.0f));
       s->predicate = cmp(s, DXIL_FCMP_OLE, value, fc(s, 0.0f));
       value = choose(s, s->predicate, fc(s, 0.0f), value);
       break;
@@ -440,7 +464,7 @@ XeDxilValue xe_dxil_alu_scalar(XeDxilAlu *s, unsigned opcode,
       s->killed = bin(s, DXIL_BINOP_OR, s->killed, condition);
       value = choose(s, condition, fc(s, 1.0f), fc(s, 0.0f)); break;
     case XE_DXIL_S_MULSC0: case XE_DXIL_S_MULSC1:
-      value = mulsc(s, a, b, identical); break;
+      value = multiply(s, a, b, identical); break;
     case XE_DXIL_S_RETAIN_PREV: value = prior; break;
     default: s->failed = 1; return NULL;
   }

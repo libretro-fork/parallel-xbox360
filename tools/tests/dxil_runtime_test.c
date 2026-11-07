@@ -1,4 +1,4 @@
-/* C89 fixture: ask D3D12 WARP to accept the native DXIL container. */
+/* C89 native DXIL fixture. WARP by default; optional hardware adapter check. */
 #define COBJMACROS
 #include <windows.h>
 #include <initguid.h>
@@ -364,6 +364,9 @@ int main(int argc, char **argv)
   size_t expected_bytes = sizeof(default_expected);
   float expected_float;
   unsigned i, raw_mode, program_mode, resource_mode;
+  const char *hardware_env = getenv("XE_DXIL_TEST_HARDWARE");
+  int hardware = hardware_env && !strcmp(hardware_env,"1");
+  DXGI_ADAPTER_DESC adapter_desc;
   memset(&texture, 0, sizeof(texture));
   if (argc < 2 || argc > 6) return 2;
   program_mode = argc == 6 && !strcmp(argv[5], "program");
@@ -398,8 +401,11 @@ int main(int argc, char **argv)
   if (SUCCEEDED(D3D12GetDebugInterface(&IID_ID3D12Debug,(void **)&debug))) ID3D12Debug_EnableDebugLayer(debug);
   status = CreateDXGIFactory1(&IID_IDXGIFactory4, (void **)&factory);
   if (FAILED(status)) goto done;
-  status = IDXGIFactory4_EnumWarpAdapter(factory, &IID_IDXGIAdapter, (void **)&adapter);
+  status = hardware ? IDXGIFactory4_EnumAdapters(factory, 0, &adapter) :
+    IDXGIFactory4_EnumWarpAdapter(factory, &IID_IDXGIAdapter, (void **)&adapter);
   if (FAILED(status)) goto done;
+  if (hardware && SUCCEEDED(IDXGIAdapter_GetDesc(adapter,&adapter_desc)))
+    printf("D3D12 adapter vendor=%04x device=%04x\n",(unsigned)adapter_desc.VendorId,(unsigned)adapter_desc.DeviceId);
   status = D3D12CreateDevice((IUnknown *)adapter, D3D_FEATURE_LEVEL_11_0,
                             &IID_ID3D12Device, (void **)&device);
   if (FAILED(status)) goto done;
@@ -494,7 +500,7 @@ done:
   }
   if (info) ID3D12InfoQueue_Release(info);
   if (debug) ID3D12Debug_Release(debug);
-  printf("D3D12 WARP pipeline and execution: 0x%08lX\n", (unsigned long)status);
+  printf("D3D12 %s pipeline and execution: 0x%08lX\n", hardware ? "hardware" : "WARP", (unsigned long)status);
   if (pipeline) ID3D12PipelineState_Release(pipeline);
   if (root) ID3D12RootSignature_Release(root);
   if (constants) ID3D12Resource_Release(constants);

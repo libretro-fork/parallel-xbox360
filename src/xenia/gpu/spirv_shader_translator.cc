@@ -164,6 +164,7 @@ SpirvShaderTranslator::Features::Features(bool all)
       signed_zero_inf_nan_preserve_float32(all),
       denorm_flush_to_zero_float32(all),
       rounding_mode_rte_float32(all),
+      rounding_mode_rtz_float32(all),
       fragment_shader_sample_interlock(all),
       demote_to_helper_invocation(all),
       fragment_shader_barycentric(all) {}
@@ -187,6 +188,8 @@ SpirvShaderTranslator::Features::Features(
           vulkan_device->properties().shaderDenormFlushToZeroFloat32),
       rounding_mode_rte_float32(
           vulkan_device->properties().shaderRoundingModeRTEFloat32),
+      rounding_mode_rtz_float32(
+          vulkan_device->properties().shaderRoundingModeRTZFloat32),
       fragment_shader_sample_interlock(
           vulkan_device->properties().fragmentShaderSampleInterlock),
       demote_to_helper_invocation(
@@ -467,7 +470,7 @@ void SpirvShaderTranslator::StartTranslation() {
   builder_ = std::make_unique<SpirvBuilder>(
       features_.spirv_version, (kSpirvMagicToolId << 16) | 1, nullptr,
       instruction_arena_.get());
-  builder_->SetAllowContraction(features_.allow_float_contraction);
+  builder_->SetAllowContraction(features_.allow_float_contraction && !is_vertex_shader());
   builder_->SetNoContractionAll(cvars::spirv_no_contraction_all);
 
   builder_->addCapability(IsSpirvTessEvalShader() ? spv::CapabilityTessellation
@@ -475,7 +478,8 @@ void SpirvShaderTranslator::StartTranslation() {
   if (features_.spirv_version < spv::Spv_1_4) {
     if (features_.signed_zero_inf_nan_preserve_float32 ||
         features_.denorm_flush_to_zero_float32 ||
-        features_.rounding_mode_rte_float32) {
+        features_.rounding_mode_rte_float32 ||
+        (is_vertex_shader() && features_.rounding_mode_rtz_float32 && features_.denorm_flush_to_zero_float32)) {
       builder_->addExtension("SPV_KHR_float_controls");
     }
   }
@@ -1291,8 +1295,11 @@ ShaderBinary SpirvShaderTranslator::CompleteTranslation() {
     builder_->addExecutionMode(function_main_,
                                spv::ExecutionModeSignedZeroInfNanPreserve, 32);
   }
-  if (features_.rounding_mode_rte_float32 &&
-      !cvars::spirv_disable_rounding_mode_rte) {
+  if (is_vertex_shader() && features_.rounding_mode_rtz_float32 && features_.denorm_flush_to_zero_float32) {
+    builder_->addCapability(spv::Capability::RoundingModeRTZ);
+    builder_->addExecutionMode(function_main_, spv::ExecutionMode::RoundingModeRTZ, 32);
+  } else if (features_.rounding_mode_rte_float32 &&
+             !cvars::spirv_disable_rounding_mode_rte) {
     builder_->addCapability(spv::CapabilityRoundingModeRTE);
     builder_->addExecutionMode(function_main_,
                                spv::ExecutionModeRoundingModeRTE, 32);

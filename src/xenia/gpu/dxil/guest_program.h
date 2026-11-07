@@ -7,6 +7,7 @@
 typedef struct XeDxilGuestProgram XeDxilGuestProgram;
 typedef struct XeDxilGuestProgramOptions {
   unsigned register_count, float_constant_count, float_dynamic_addressing;
+  unsigned vertex_round_toward_zero; /* Guest vertex/domain ALU only. */
   unsigned guest_center_mask; /* Optional initial interpolator provenance. */
   unsigned memexport_mask; /* Potentially written eM0..4; zero omits all state. */
   XeDxilValue memexport_uav, memexport_allowed;

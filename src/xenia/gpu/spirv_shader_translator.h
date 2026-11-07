@@ -25,6 +25,7 @@
 #include "libretro/core_spv_scratch.h"
 #include "libretro/core_spv_export_cases.h"
 #include "libretro/core_spv_plan.h"
+#include "libretro/core_float_rtz_emit.h"
 #include "xenia/gpu/spirv_builder.h"
 #include "xenia/gpu/xenos.h"
 
@@ -541,6 +542,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     bool signed_zero_inf_nan_preserve_float32;
     bool denorm_flush_to_zero_float32;
     bool rounding_mode_rte_float32;
+    bool rounding_mode_rtz_float32;
 
     bool fragment_shader_sample_interlock;
 
@@ -900,6 +902,10 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // (RCP, RSQ, EXP, LOG, SQRT) that provide ~2^-21 relative error tolerance
   // instead of full IEEE-754 precision (equivalent to 21 vs 23 mantissa bits).
   spv::Id ReduceFloatPrecision(spv::Id value, uint32_t mantissa_bits);
+  spv::Id AluFract(spv::Id type, spv::Id operand);
+  spv::Id AluBinaryOperation(spv::Op opcode, spv::Id type, spv::Id a, spv::Id b);
+  static xe_rtz_id EmitRtzNode(void*, unsigned, xe_rtz_id, xe_rtz_id, xe_rtz_id, uint32_t);
+
   // Pack/unpack two floats as Xbox 360 extended-range float16, where exponent
   // 31 is a large finite value (up to +-131008), not Inf/NaN.
   spv::Id PackFloat16x2ExtendedRange(spv::Id float2_value);

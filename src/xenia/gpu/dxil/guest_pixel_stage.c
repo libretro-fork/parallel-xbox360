@@ -183,7 +183,7 @@ XeDxilShaderBinary *xe_dxil_build_guest_pixel_owned(const XeDxilGuestPixelOption
   if (o->flags_word >= n || o->alpha_reference_word >= n || o->alpha_to_mask_word >= n || o->color_bias_word > n-4 ||
       o->blend_constant_word > n-4 || o->front_scale_word >= n || o->back_scale_word >= n || o->front_offset_word >= n ||
       o->back_offset_word >= n || (o->count_coverage && (o->counter_word >= n || !o->counter_stride_bytes || (o->counter_stride_bytes & 3)))) return NULL;
-  memset(&p,0,sizeof(p)); options = o->program; options.context = &p; options.kill = kill; options.export_written = written;
+  memset(&p,0,sizeof(p)); options = o->program; options.vertex_round_toward_zero = 0; options.context = &p; options.kill = kill; options.export_written = written;
   p.shader = xe_dxil_shader_create(DXIL_PIXEL_SHADER); if (!p.shader) return NULL;
   if (o->textures && !xe_dxil_shader_bindless(p.shader)) goto done;
   xe_dxil_alu_init(&p.alu,xe_dxil_shader_module(p.shader)); integer_type = dxil_module_get_int_type(p.alu.module,32);

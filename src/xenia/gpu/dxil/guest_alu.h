@@ -23,7 +23,7 @@ typedef struct XeDxilAlu {
   XeDxilValue address;
   XeDxilValue killed;
   XeDxilValue operation_kill;
-  int mulsc_round_toward_zero;
+  int vertex_round_toward_zero;
   int failed;
 } XeDxilAlu;
 

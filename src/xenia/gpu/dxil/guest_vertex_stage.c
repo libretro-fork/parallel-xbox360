@@ -127,6 +127,7 @@ int xe_dxil_build_guest_vertex(const XeDxilGuestVertexOptions *o, const uint32_t
       ((o->clip_planes || o->cull_planes) && (o->clip_planes_word > i || (o->clip_planes+o->cull_planes)*4 > i-o->clip_planes_word))) return 0;
   for (i = 0; i < 16; ++i) if (o->interpolator_mask & (1u<<i)) ++interpolator_count;
   memset(&v,0,sizeof(v)); options = o->program;
+  options.vertex_round_toward_zero = 1;
   v.shader = xe_dxil_shader_create(o->domain ? DXIL_DOMAIN_SHADER : DXIL_VERTEX_SHADER); if (!v.shader) return 0;
   if (o->textures && !xe_dxil_shader_bindless(v.shader)) goto done;
   xe_dxil_alu_init(&v.alu,xe_dxil_shader_module(v.shader));

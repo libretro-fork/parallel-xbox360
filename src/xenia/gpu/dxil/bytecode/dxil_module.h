@@ -341,6 +341,9 @@ const struct dxil_type *
 dxil_module_get_split_double_ret_type(struct dxil_module *mod);
 
 const struct dxil_type *
+dxil_module_get_twoi32_type(struct dxil_module *mod);
+
+const struct dxil_type *
 dxil_module_get_res_type(struct dxil_module *m, enum dxil_resource_kind kind,
                          enum dxil_component_type comp_type, unsigned num_comps,
                          bool readwrite);

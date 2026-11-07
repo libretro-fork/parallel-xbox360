@@ -371,6 +371,35 @@ static int instruction_test(struct dxil_module *m, XeDxilValue handle,
   return 1;
 }
 
+/* Verified binary32 RTZ/FTZ boundaries; distinct from RNE and from fused MAD.
+ * No use of the implementation under test to construct expected values. */
+static const struct RtzCase { unsigned opcode; uint32_t a,b,result; } rtz_cases[] = {
+  {XE_DXIL_S_ADD,0x3f800000,0x33c00000,0x3f800000},
+  {XE_DXIL_S_ADD,0xbf800000,0xb3c00000,0xbf800000},
+  {XE_DXIL_S_ADD,0x3f800000,0x80800000,0x3f7fffff},
+  {XE_DXIL_S_ADD,0xbf800000,0x00800000,0xbf7fffff},
+  {XE_DXIL_S_ADD,0x7f7fffff,0x7f7fffff,0x7f7fffff},
+  {XE_DXIL_S_ADD,0xff7fffff,0xff7fffff,0xff7fffff},
+  {XE_DXIL_S_ADD,0x00800001,0x80800000,0},
+  {XE_DXIL_S_ADD,0x00800000,0x80800001,0x80000000},
+  {XE_DXIL_S_ADD,0x80000000,0x80000000,0x80000000},
+  {XE_DXIL_S_ADD,0,0x80000000,0},
+  {XE_DXIL_S_MUL,0x3f800801,0x3f800801,0x3f801002},
+  {XE_DXIL_S_MUL,0xbf800801,0x3f800801,0xbf801002},
+  {XE_DXIL_S_MUL,0x7f7fffff,0x40000000,0x7f7fffff},
+  {XE_DXIL_S_MUL,0xff7fffff,0x40000000,0xff7fffff},
+  {XE_DXIL_S_MUL,0x00800000,0x3f000000,0},
+  {XE_DXIL_S_MUL,0x80800000,0x3f000000,0x80000000},
+  {XE_DXIL_S_MUL,0x00800000,0x3f800001,0x00800001},
+  {XE_DXIL_S_MUL,0x7fc12345,0,0},
+  {XE_DXIL_S_FRC,0x80800000,0,0x3f7fffff},
+  {XE_DXIL_S_FRC,0x00800000,0,0x00800000},
+  {XE_DXIL_S_FRC,0x80000000,0,0},
+  {XE_DXIL_S_FRC,0x80000001,0,0},
+  {XE_DXIL_S_FRC,0xbe4ccccd,0,0x3f4ccccc},
+  {XE_DXIL_S_FRC,0x3e4ccccd,0,0x3e4ccccd}
+};
+
 int xe_dxil_alu_test(struct dxil_module *m, const char *path) {
   static const float inputs[3][4] = {{2,-3,0,4},{5,2,-1,-2},{7,8,9,10}};
   XeDxilValue args[5];
@@ -451,7 +480,7 @@ int xe_dxil_alu_test(struct dxil_module *m, const char *path) {
   for (i = 0; i < ARRAY_SIZE(boundaries); ++i, ++index) {
     xe_dxil_alu_init(&alu, m);
     alu.previous_scalar = xe_dxil_alu_float_bits(&alu, boundaries[i].previous);
-    alu.mulsc_round_toward_zero = boundaries[i].round_toward_zero;
+    alu.vertex_round_toward_zero = boundaries[i].round_toward_zero;
     a = xe_dxil_alu_float_bits(&alu, boundaries[i].a);
     b = xe_dxil_alu_float_bits(&alu, boundaries[i].b);
     values[0] = xe_dxil_alu_scalar(&alu, boundaries[i].opcode, a, b, boundaries[i].identical);
@@ -459,6 +488,15 @@ int xe_dxil_alu_test(struct dxil_module *m, const char *path) {
     expected[4] = boundaries[i].predicate;
     expected[5] = (uint32_t)boundaries[i].address; expected[6] = boundaries[i].killed;
     expected[7] = UINT32_C(0x30000000) | i;
+    if (!xe_dxil_test_record(m, handle, index, &alu, values, expected, golden)) goto done;
+  }
+  for (i = 0; i < ARRAY_SIZE(rtz_cases); ++i, ++index) {
+    xe_dxil_alu_init(&alu, m); alu.vertex_round_toward_zero = 1;
+    a = xe_dxil_alu_float_bits(&alu, rtz_cases[i].a);
+    b = xe_dxil_alu_float_bits(&alu, rtz_cases[i].b);
+    values[0] = xe_dxil_alu_scalar(&alu, rtz_cases[i].opcode, a, b, 0);
+    for (k = 0; k < 4; ++k) {values[k] = values[0];expected[k] = rtz_cases[i].result;}
+    expected[4] = 0;expected[5] = 0;expected[6] = 0;expected[7] = UINT32_C(0x60000000) | i;
     if (!xe_dxil_test_record(m, handle, index, &alu, values, expected, golden)) goto done;
   }
   if (!instruction_test(m, handle, &index, golden)) goto done;
