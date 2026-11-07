@@ -1,0 +1,71 @@
+D3D12 borrowed barrier rows (0142)
+==================================
+Changes
+- Removed D3D12CommandProcessor::barriers_, a growing vector. Transition, alias,
+  UAV and predicate barriers now construct directly in final retained row storage.
+  No stack barrier -> vector -> deferred-payload pipeline remains for this queue.
+- C89 core_command_rows.h provides fixed-stride page append, cancellation,
+  peek/transactional commit, publication, reset and ownership. Live rows never
+  relocate. Consuming a view does not recycle it before CPU command replay ends.
+- SubmitBarriers records pointer/count packets at its ORIGINAL position, after
+  any intervening commands. It does not publish the barriers early at Push.
+  C89 publication commits only after packet recording succeeds, retaining an
+  uncommitted tail for retry after allocation failure.
+- Predicate preflight can cancel the latest unsubmitted row without clearing
+  payload bytes or leaving a zero-count GPU barrier command. Nontrivial objects
+  are not supported in the raw row arena; native D3D barriers are trivial.
+- Deferred Reset drops old replay packets, then reuses row pages only if no rows
+  remain pending. Pending rows prepared outside a submission retain their owner,
+  matching the old pending-vector behavior. EndSubmission still flushes barriers
+  before replay, and allocator retry keeps the deferred list/rows intact.
+- Separate copy-owning D3DResourceBarrier calls are retained for callers passing
+  temporary arrays (texture uploads and query paths). Their stack lifetime must
+  not be borrowed. This is not a claim of copy-free pixel transfers or all code.
+- DeferredCommandList no longer stores an unused command-processor reference.
+  PipelineCache's handle lookup is static; its acquire load and pipeline handle
+  lifetime remain unchanged. The recorder can be tested as a CPU object without
+  constructing a command processor, device, emulator or fake C++ object.
+
+Evidence
+- Strict C89 row tests: 8192 stable live row addresses over growing pages,
+  incremental consumption with earlier views intact; 100 warmed reset/reuse
+  cycles with no more allocations; initialization/growth failure; pop of the
+  last row of a new page; invalid commits; preservation of pending rows on reset;
+  publication failure/retry, overflow counter rejection and balanced teardown.
+- Actual production deferred_command_list.cc is compiled into a test executable.
+  A minimal C++ ABI bridge calls it; all trace algorithms and a valid C COM
+  vtable mock are MSVC C89. No command processor/device/GPU/JIT is constructed.
+- 200000 borrowed rows across 20 replay cycles verify all native fields for
+  transition/alias/UAV records and exact original row-pointer identity at the
+  ResourceBarrier callback. Intervening markers prove flush position/order.
+  Cancellation, an empty cancelled batch, pending preservation through Reset,
+  and an external stack array overwritten before replay are covered.
+- Allocator hooks are test-only and forced into both recorder C++ translation
+  units to keep ownership consistent. Normal/throwing constructors release all
+  pages. Actual packet-allocation failure after the first span commits retains
+  only the tail: replay after retry has no lost/duplicated barriers.
+- Native MSVC /TC /W4 /WX and AddressSanitizer pass for C row tests and actual
+  mock replay. Only the SDK header's C4201 warning is locally suppressed around
+  d3d12.h. Strict MinGW C89 and actual MinGW C++ recorder/mock replay pass.
+- The 10000-row fixture with a 4096-byte initial command stream peaks at 352608
+  tracked page bytes. After warm-up, 19 more cycles allocate no storage; teardown
+  returns tracked live bytes to zero. This is a CPU storage measurement only.
+- Native production command-processor/deferred-list /Zs checks and Windows
+  static Make -j5 build pass. Full hardware validation/GPU timings are unrun.
+
+Tradeoffs and open work
+- Row pages begin with 64 KiB allocated at recorder creation; main-stream default
+  size is unchanged (8 MiB). Larger high-water submissions can allocate more row
+  and packet pages. Retaining row payloads separately can increase RSS for cases
+  where the old preallocated main stream already had spare space. No blanket
+  RSS reduction or whole-core mid-game allocation freedom is claimed.
+- A pending batch crossing a row-page boundary uses multiple ordered API calls.
+  In the fixture, 20 cycles plus retry/reset cases make 11903 calls. Order and
+  all records remain exact; CPU/GPU timing improvements are not established.
+- Microsoft documents ResourceBarrier arrays as ordered individual operations,
+  while recommending batching where possible:
+  https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier
+- No barriers are removed/narrowed, no GPU/CPU wait or readback is introduced,
+  and guest shaders, audio/video pacing and the installed DLL are unchanged.
+- Vulkan pending barrier vectors, texture-upload scratch barriers, exact direct
+  converting resolves, broader allocation removal and the full goal remain open.

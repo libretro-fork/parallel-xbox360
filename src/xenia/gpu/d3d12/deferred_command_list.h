@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstring>
 #include "libretro/core_command_stream.h"
+#include "libretro/core_command_rows.h"
 
 #include "xenia/base/assert.h"
 #include "xenia/base/literals.h"
@@ -26,13 +27,11 @@ namespace d3d12 {
 
 using namespace xe::literals;
 
-class D3D12CommandProcessor;
 
 class DeferredCommandList {
  public:
   static constexpr size_t kInitialCommandStreamSize = 65536 * 128;
-  DeferredCommandList(const D3D12CommandProcessor& command_processor,
-                      size_t initial_size_bytes = kInitialCommandStreamSize);
+  explicit DeferredCommandList(size_t initial_size_bytes = kInitialCommandStreamSize);
 
   void Reset();
   void Execute(ID3D12GraphicsCommandList* command_list,
@@ -299,6 +298,10 @@ class DeferredCommandList {
     arg = stencil_ref;
   }
 
+  D3D12_RESOURCE_BARRIER& AppendResourceBarrier();
+  void CancelResourceBarrier();
+  void SubmitResourceBarriers();
+
   void D3DResourceBarrier(UINT num_barriers,
                           const D3D12_RESOURCE_BARRIER* barriers) {
     if (num_barriers == 0) {
@@ -532,6 +535,7 @@ class DeferredCommandList {
     kD3DOMSetRenderTargets,
     kD3DOMSetStencilRef,
     kD3DResourceBarrier,
+    kBorrowedResourceBarriers,
     kRSSetScissorRect,
     kRSSetViewport,
     kD3DSetComputeRoot32BitConstants,
@@ -562,6 +566,11 @@ class DeferredCommandList {
   };
   static constexpr size_t kCommandHeaderSizeElements =
       (sizeof(CommandHeader) + sizeof(uintmax_t) - 1) / sizeof(uintmax_t);
+
+  struct BorrowedResourceBarriers {
+    const D3D12_RESOURCE_BARRIER* data;
+    UINT count;
+  };
 
   struct ClearDepthStencilViewHeader {
     D3D12_CPU_DESCRIPTOR_HANDLE depth_stencil_view;
@@ -709,6 +718,7 @@ class DeferredCommandList {
     // Followed by null-terminated label string.
   };
 
+  static int EmitResourceBarriers(void* context, const xe_command_row_view* view);
   void* WriteCommand(Command command, size_t arguments_size_bytes);
   void ExecutePage(const xe_command_page* page,
                    ID3D12GraphicsCommandList* command_list,
@@ -716,11 +726,11 @@ class DeferredCommandList {
                    ID3D12GraphicsCommandList2* command_list_2,
                    ID3D12PipelineState*& current_pipeline_state);
 
-  const D3D12CommandProcessor& command_processor_;
 
   // Stable uintmax_t-aligned packets, retained across submissions. Larger
   // submissions grow by whole pages without moving earlier argument views.
   xe_command_stream_owner command_stream_;
+  xe_command_rows_owner barrier_rows_;
 };
 
 }  // namespace d3d12

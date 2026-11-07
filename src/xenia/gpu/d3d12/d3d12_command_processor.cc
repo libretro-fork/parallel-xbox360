@@ -64,7 +64,7 @@ namespace shaders {
 D3D12CommandProcessor::D3D12CommandProcessor(
     D3D12GraphicsSystem* graphics_system, kernel::KernelState* kernel_state)
     : CommandProcessor(graphics_system, kernel_state),
-      deferred_command_list_(*this) {}
+      deferred_command_list_() {}
 D3D12CommandProcessor::~D3D12CommandProcessor() = default;
 
 void D3D12CommandProcessor::UpdateDebugMarkersEnabled() {
@@ -166,41 +166,34 @@ bool D3D12CommandProcessor::PushTransitionBarrier(
   if (old_state == new_state) {
     return false;
   }
-  D3D12_RESOURCE_BARRIER barrier;
+  D3D12_RESOURCE_BARRIER& barrier = deferred_command_list_.AppendResourceBarrier();
   barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
   barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
   barrier.Transition.pResource = resource;
   barrier.Transition.Subresource = subresource;
   barrier.Transition.StateBefore = old_state;
   barrier.Transition.StateAfter = new_state;
-  barriers_.push_back(barrier);
   return true;
 }
 
 void D3D12CommandProcessor::PushAliasingBarrier(ID3D12Resource* old_resource,
                                                 ID3D12Resource* new_resource) {
-  D3D12_RESOURCE_BARRIER barrier;
+  D3D12_RESOURCE_BARRIER& barrier = deferred_command_list_.AppendResourceBarrier();
   barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
   barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
   barrier.Aliasing.pResourceBefore = old_resource;
   barrier.Aliasing.pResourceAfter = new_resource;
-  barriers_.push_back(barrier);
 }
 
 void D3D12CommandProcessor::PushUAVBarrier(ID3D12Resource* resource) {
-  D3D12_RESOURCE_BARRIER barrier;
+  D3D12_RESOURCE_BARRIER& barrier = deferred_command_list_.AppendResourceBarrier();
   barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
   barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
   barrier.UAV.pResource = resource;
-  barriers_.push_back(barrier);
 }
 
 void D3D12CommandProcessor::SubmitBarriers() {
-  UINT barrier_count = UINT(barriers_.size());
-  if (barrier_count != 0) {
-    deferred_command_list_.D3DResourceBarrier(barrier_count, barriers_.data());
-    barriers_.clear();
-  }
+  deferred_command_list_.SubmitResourceBarriers();
 }
 
 uint64_t D3D12CommandProcessor::RequestViewBindfulDescriptors(
@@ -3154,11 +3147,12 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
     predicate_buffer = viz_predicate_buffer_.Get();
     predicate_offset = uint64_t(viz_draw_predicate_.id) * sizeof(uint64_t);
   }
-  D3D12_RESOURCE_BARRIER predicate_barrier;
-  if (predicate_buffer &&
-      GetVIZPredicateBufferBarrier(D3D12_RESOURCE_STATE_PREDICATION,
-                                   predicate_barrier)) {
-    barriers_.push_back(predicate_barrier);
+  if (predicate_buffer) {
+    D3D12_RESOURCE_BARRIER& predicate_barrier =
+        deferred_command_list_.AppendResourceBarrier();
+    if (!GetVIZPredicateBufferBarrier(D3D12_RESOURCE_STATE_PREDICATION,
+                                      predicate_barrier))
+      deferred_command_list_.CancelResourceBarrier();
   }
 
   // Draw.
@@ -5009,11 +5003,11 @@ bool D3D12CommandProcessor::CloseQuery(ReportHandle report_handle,
     if (CanArmVIZPredicate(viz.id, viz.generation) &&
         EnsureVIZPredicateBuffer()) {
       const uint64_t predicate_offset = uint64_t(viz.id) * sizeof(uint64_t);
-      D3D12_RESOURCE_BARRIER predicate_barrier;
-      if (GetVIZPredicateBufferBarrier(D3D12_RESOURCE_STATE_COPY_DEST,
-                                       predicate_barrier)) {
-        barriers_.push_back(predicate_barrier);
-      }
+      D3D12_RESOURCE_BARRIER& predicate_barrier =
+          deferred_command_list_.AppendResourceBarrier();
+      if (!GetVIZPredicateBufferBarrier(D3D12_RESOURCE_STATE_COPY_DEST,
+                                        predicate_barrier))
+        deferred_command_list_.CancelResourceBarrier();
       SubmitBarriers();
       if (active_query_is_rov_) {
         // The ZPass lane of the counter slot, written by pixel shader atomics.

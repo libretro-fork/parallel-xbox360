@@ -145,7 +145,7 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   // While async creation is in progress this may be a placeholder pipeline
   // (real vertex shader, no-op pixel shader) that the creation thread swaps for
   // the real one when ready - check IsPlaceholderPipeline if that matters.
-  ID3D12PipelineState* GetD3D12PipelineByHandle(void* handle) const {
+  static ID3D12PipelineState* GetD3D12PipelineByHandle(void* handle) {
     return reinterpret_cast<const Pipeline*>(handle)->state.load(
         std::memory_order_acquire);
   }

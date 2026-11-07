@@ -14,21 +14,52 @@
 #include "xenia/base/assert.h"
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
-#include "xenia/gpu/d3d12/d3d12_command_processor.h"
+#include "xenia/gpu/d3d12/pipeline_cache.h"
 #include "xenia/gpu/gpu_flags.h"
 
 namespace xe {
 namespace gpu {
 namespace d3d12 {
 
-DeferredCommandList::DeferredCommandList(
-    const D3D12CommandProcessor& command_processor, size_t initial_size)
-    : command_processor_(command_processor) {
-  if (!xe_command_stream_init(&command_stream_, initial_size)) throw std::bad_alloc();
+DeferredCommandList::DeferredCommandList(size_t initial_size) {
+  if (!xe_command_stream_init(&command_stream_, initial_size) ||
+      !xe_command_rows_init(&barrier_rows_, sizeof(D3D12_RESOURCE_BARRIER),
+                            64 * 1024)) throw std::bad_alloc();
+  static_assert(sizeof(D3D12_RESOURCE_BARRIER) % sizeof(uintmax_t) == 0);
+  static_assert(alignof(D3D12_RESOURCE_BARRIER) <= alignof(uintmax_t));
 }
 
-void DeferredCommandList::Reset() { xe_command_stream_reset(&command_stream_); }
+void DeferredCommandList::Reset() {
+  xe_command_stream_reset(&command_stream_);
+  // Preserve any barriers prepared outside an open submission, as before.
+  xe_command_rows_reset(&barrier_rows_);
+}
 
+D3D12_RESOURCE_BARRIER& DeferredCommandList::AppendResourceBarrier() {
+  void* row = xe_command_rows_append(&barrier_rows_);
+  if (!row) throw std::bad_alloc();
+  return *new (row) D3D12_RESOURCE_BARRIER;
+}
+
+void DeferredCommandList::CancelResourceBarrier() {
+  if (!xe_command_rows_pop(&barrier_rows_)) throw std::bad_alloc();
+}
+
+int DeferredCommandList::EmitResourceBarriers(void* context,
+                                               const xe_command_row_view* view) {
+  auto* self = static_cast<DeferredCommandList*>(context);
+  void* storage = self->WriteCommand(Command::kBorrowedResourceBarriers,
+                                     sizeof(BorrowedResourceBarriers));
+  auto& args = *new (storage) BorrowedResourceBarriers;
+  args.data = static_cast<const D3D12_RESOURCE_BARRIER*>(view->data);
+  args.count = view->count;
+  return 1;
+}
+
+void DeferredCommandList::SubmitResourceBarriers() {
+  if (!xe_command_rows_submit(&barrier_rows_, UINT32_MAX,
+                              EmitResourceBarriers, this)) throw std::bad_alloc();
+}
 void DeferredCommandList::Execute(ID3D12GraphicsCommandList* command_list,
                                   ID3D12GraphicsCommandList1* command_list_1,
                                   ID3D12GraphicsCommandList2* command_list_2) {
@@ -196,6 +227,10 @@ void DeferredCommandList::ExecutePage(
                 reinterpret_cast<const uint8_t*>(stream) +
                 xe::align(sizeof(UINT), alignof(D3D12_RESOURCE_BARRIER))));
       } break;
+      case Command::kBorrowedResourceBarriers: {
+        const auto& args = *reinterpret_cast<const BorrowedResourceBarriers*>(stream);
+        command_list->ResourceBarrier(args.count, args.data);
+      } break;
       case Command::kRSSetScissorRect: {
         command_list->RSSetScissorRects(
             1, reinterpret_cast<const D3D12_RECT*>(stream));
@@ -298,7 +333,7 @@ void DeferredCommandList::ExecutePage(
         }
       } break;
       case Command::kSetPipelineStateHandle: {
-        current_pipeline_state = command_processor_.GetD3D12PipelineByHandle(
+        current_pipeline_state = PipelineCache::GetD3D12PipelineByHandle(
             *reinterpret_cast<void* const*>(stream));
         if (current_pipeline_state) {
           command_list->SetPipelineState(current_pipeline_state);
