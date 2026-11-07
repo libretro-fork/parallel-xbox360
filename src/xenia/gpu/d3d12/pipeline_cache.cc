@@ -203,7 +203,7 @@ void PipelineCache::Shutdown() {
   current_pipeline_ = nullptr;
   for (auto it : pipelines_) {
     ID3D12PipelineState* state =
-        it.second->state.load(std::memory_order_acquire);
+        reinterpret_cast<ID3D12PipelineState*>(static_cast<uintptr_t>(xe_pipeline_handle_load(&it.second->publication)));
     if (state) {
       state->Release();
     }
@@ -381,7 +381,7 @@ void PipelineCache::InitializeShaderStorage(
         // Creation thread builds the Native DXIL off the main thread (the
         // deferred block in EnsurePipelineShadersTranslated), then the PSO.
         // Nothing is drawing these yet, so they publish as they are built.
-        new_pipeline->creation_pending.store(true, std::memory_order_relaxed);
+        xe_pipeline_flag_store(&new_pipeline->publication, XE_PIPELINE_PENDING, true);
         creation_queue_.PushUnordered(new_pipeline);
       } else {
         // No creation threads: build the DXIL + create the PSO here.
@@ -389,9 +389,9 @@ void PipelineCache::InitializeShaderStorage(
                 new_pipeline->description.native_vertex_translation,
                 new_pipeline->description.native_pixel_translation,
                 new_pipeline->description)) {
-          new_pipeline->state.store(
-              CreateD3D12Pipeline(new_pipeline->description),
-              std::memory_order_release);
+          StoreCreatedPipeline(new_pipeline, CreateD3D12Pipeline(new_pipeline->description));
+        } else {
+          StoreCreatedPipeline(new_pipeline, nullptr);
         }
       }
       ++pipelines_created;
@@ -1186,14 +1186,14 @@ bool PipelineCache::ConfigurePipeline(
       // state always sees it here too, and pins this concrete PSO rather than
       // the swappable handle - the real pipeline must never run against
       // bindings built for the placeholder.
-      new_pipeline->placeholder_state.store(placeholder_state,
-                                            std::memory_order_release);
-      new_pipeline->uses_interpreter.store(
-          make_interpreter && placeholder_state != nullptr,
-          std::memory_order_release);
-      new_pipeline->state.store(placeholder_state, std::memory_order_release);
-      new_pipeline->is_placeholder.store(placeholder_state != nullptr,
-                                         std::memory_order_release);
+      xe_pipeline_placeholder_store(&new_pipeline->publication,
+          (uint64_t)(uintptr_t)(placeholder_state));
+      xe_pipeline_flag_store(&new_pipeline->publication, XE_PIPELINE_INTERPRETER,
+          make_interpreter && placeholder_state != nullptr);
+      xe_pipeline_handle_store(&new_pipeline->publication,
+          (uint64_t)(uintptr_t)(placeholder_state));
+      xe_pipeline_flag_store(&new_pipeline->publication, XE_PIPELINE_PLACEHOLDER,
+          placeholder_state != nullptr);
       if (make_interpreter && placeholder_state != nullptr) {
         XELOGI(
             "VS interpreter placeholder created (interpreter VS + no-op PS): "
@@ -1202,12 +1202,12 @@ bool PipelineCache::ConfigurePipeline(
             pixel_shader ? pixel_shader->shader().ucode_data_hash() : 0);
       }
     }
-    new_pipeline->creation_pending.store(true, std::memory_order_relaxed);
+    xe_pipeline_flag_store(&new_pipeline->publication, XE_PIPELINE_PENDING, true);
     creation_queue_.Push(new_pipeline);
   } else {
     // Sync mode or no creation threads: create synchronously.
-    new_pipeline->state.store(CreateD3D12Pipeline(runtime_description),
-                              std::memory_order_release);
+    xe_pipeline_handle_store(&new_pipeline->publication,
+        (uint64_t)(uintptr_t)(CreateD3D12Pipeline(runtime_description)));
   }
 
   // Native pipelines persist too: their SPIR-V modifications are stored so the
@@ -2209,19 +2209,20 @@ void PipelineCache::StoreCreatedPipeline(Pipeline* pipeline,
     // it. Without a placeholder the old value is null and this is a plain
     // store.
     ID3D12PipelineState* old_state =
-        pipeline->state.exchange(state, std::memory_order_acq_rel);
-    pipeline->is_placeholder.store(false, std::memory_order_release);
+        reinterpret_cast<ID3D12PipelineState*>(static_cast<uintptr_t>(xe_pipeline_handle_exchange(&pipeline->publication,
+            (uint64_t)(uintptr_t)(state))));
+    xe_pipeline_flag_store(&pipeline->publication, XE_PIPELINE_PLACEHOLDER, false);
     if (old_state != nullptr) {
       std::lock_guard<std::mutex> lock(deferred_destroy_mutex_);
       deferred_destroy_pipelines_.emplace_back(
           old_state, command_processor_.GetCurrentSubmission());
     }
-    pipeline->creation_pending.store(false, std::memory_order_release);
+    xe_pipeline_flag_store(&pipeline->publication, XE_PIPELINE_PENDING, false);
     return;
   }
   // Real creation failed. Keep any placeholder in use, but stop reporting it as
   // a placeholder so occlusion-query awaits do not block forever.
-  pipeline->is_placeholder.store(false, std::memory_order_release);
+  xe_pipeline_flag_store(&pipeline->publication, XE_PIPELINE_PLACEHOLDER, false);
   XELOGE("Pipeline creation failed (VS {:016X}, PS {:016X})",
          pipeline->description.vertex_shader
              ? pipeline->description.vertex_shader->shader().ucode_data_hash()
@@ -2229,10 +2230,9 @@ void PipelineCache::StoreCreatedPipeline(Pipeline* pipeline,
          pipeline->description.pixel_shader
              ? pipeline->description.pixel_shader->shader().ucode_data_hash()
              : 0);
-  // After the log: this is what wants_rebuild() waits on, and the rebuild
-  // overwrites the description the log just read.
-  pipeline->creation_failed.store(true, std::memory_order_release);
-  pipeline->creation_pending.store(false, std::memory_order_release);
+  // Grant a retry only after the final description read. Publish failed and
+  // not-pending together; this creator must never clear a retry's pending bit.
+  xe_pipeline_publish_failure(&pipeline->publication);
 }
 
 }  // namespace d3d12

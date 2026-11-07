@@ -11,6 +11,7 @@
 #define XENIA_GPU_D3D12_PIPELINE_CACHE_H_
 
 #include <atomic>
+#include "libretro/core_pipeline_publication.h"
 #include <cstdio>
 #include <deque>
 #include <functional>
@@ -145,17 +146,18 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   // (real vertex shader, no-op pixel shader) that the creation thread swaps for
   // the real one when ready - check IsPlaceholderPipeline if that matters.
   static ID3D12PipelineState* GetD3D12PipelineByHandle(void* handle) {
-    return reinterpret_cast<const Pipeline*>(handle)->state.load(
-        std::memory_order_acquire);
+    return
+        reinterpret_cast<ID3D12PipelineState*>(static_cast<uintptr_t>(xe_pipeline_handle_load(&(reinterpret_cast<const
+        Pipeline*>(handle))->publication)));
   }
   bool IsPlaceholderPipeline(void* handle) const {
-    return reinterpret_cast<const Pipeline*>(handle)->is_placeholder.load(
-        std::memory_order_acquire);
+    return xe_pipeline_flag_load(&(reinterpret_cast<const Pipeline*>(handle))->publication,
+        XE_PIPELINE_PLACEHOLDER);
   }
   // Whether the real pipeline is still being created, so awaiting it can help.
   bool IsPipelineCreationPending(void* handle) const {
-    return reinterpret_cast<const Pipeline*>(handle)->creation_pending.load(
-        std::memory_order_acquire);
+    return xe_pipeline_flag_load(&(reinterpret_cast<const Pipeline*>(handle))->publication,
+        XE_PIPELINE_PENDING);
   }
   // Loads the current pipeline state once and reports whether it is a
   // placeholder, and whether that placeholder is the ucode interpreter one.
@@ -165,20 +167,14 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   // bindings built for the placeholder - an empty bindless texture/sampler
   // index buffer for the still-translating pixel shader, and (interpreter) the
   // full-256 float constants the real VS doesn't use.
-  ID3D12PipelineState* GetD3D12PipelineForDraw(
+  static ID3D12PipelineState* GetD3D12PipelineForDraw(
       void* handle, bool* is_placeholder_out,
-      bool* is_interpreter_placeholder_out) const {
+      bool* is_interpreter_placeholder_out) {
     const Pipeline* pipeline = reinterpret_cast<const Pipeline*>(handle);
-    ID3D12PipelineState* state =
-        pipeline->state.load(std::memory_order_acquire);
-    bool is_placeholder =
-        state != nullptr &&
-        state == pipeline->placeholder_state.load(std::memory_order_acquire);
-    *is_placeholder_out = is_placeholder;
-    *is_interpreter_placeholder_out =
-        is_placeholder &&
-        pipeline->uses_interpreter.load(std::memory_order_acquire);
-    return state;
+    const xe_pipeline_draw draw = xe_pipeline_for_draw(&pipeline->publication);
+    *is_placeholder_out = draw.placeholder != 0;
+    *is_interpreter_placeholder_out = draw.interpreter != 0;
+    return reinterpret_cast<ID3D12PipelineState*>(static_cast<uintptr_t>(draw.handle));
   }
   ID3D12PipelineState* AwaitD3D12PipelineByHandle(void* handle);
   // Waits until the real (non-placeholder) pipeline for the handle is ready,
@@ -475,22 +471,14 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   // Containers are owned directly, without a second bytecode allocation.
   XeDxilShaderBinary native_depth_only_pixel_shaders_[3][2] = {};
 
+  friend struct PipelinePublicationTest;
   struct Pipeline {
-    // nullptr if creation has failed or still pending. May hold a placeholder
-    // pipeline (see is_placeholder) until the real one is swapped in.
-    std::atomic<ID3D12PipelineState*> state{nullptr};
-    // True while state holds a hot-swap placeholder pipeline, before the
-    // creation thread swaps in the real one.
-    std::atomic<bool> is_placeholder{false};
-    // True when the placeholder rasterizes with the ucode interpreter VS (so
-    // the draw must feed it full float constants + the ucode location). Only
-    // meaningful while is_placeholder.
-    std::atomic<bool> uses_interpreter{false};
-    // The placeholder PSO handle (nullptr if none). A draw loads state once and
-    // compares it against this to know whether it is about to bind the
-    // placeholder, consistent even though is_placeholder is cleared a few
-    // instructions after the real pipeline is swapped into state.
-    std::atomic<ID3D12PipelineState*> placeholder_state{nullptr};
+    // Concrete handles and packed control flags use C89 common atomics.
+    // Draws pin the loaded handle; flags alone cannot identify its placeholder.
+    xe_pipeline_publication publication{};
+    Pipeline() { xe_pipeline_publication_init(&publication); }
+    Pipeline(const Pipeline&) = delete;
+    Pipeline& operator=(const Pipeline&) = delete;
     PipelineRuntimeDescription description;
     // For background creation: stores the untranslated shaders.
     // Background thread translates both VS and PS together, then creates the
@@ -501,17 +489,9 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
     // rebuild, which is what limits it to one attempt. A live pipeline that
     // fails is a real failure and is never retried.
     bool from_storage{false};
-    // Set by a creation thread when real creation failed. A warm-up build that
-    // ran before its shaders finished translating has no DXIL to create from,
-    // and the entry would otherwise skip its draws for the rest of the session.
-    std::atomic<bool> creation_failed{false};
-    // Set while the entry is in the creation queue, cleared once its result,
-    // real or failed, is stored.
-    std::atomic<bool> creation_pending{false};
-
     // Whether the next draw should rebuild this entry from live state.
     bool wants_rebuild() const {
-      return from_storage && creation_failed.load(std::memory_order_acquire);
+      return from_storage && xe_pipeline_flag_load(&publication, XE_PIPELINE_FAILED);
     }
   };
 

@@ -11,6 +11,7 @@
 #define XENIA_GPU_VULKAN_VULKAN_PIPELINE_STATE_CACHE_H_
 
 #include <atomic>
+#include "libretro/core_pipeline_publication.h"
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -60,65 +61,22 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
   };
 
   struct Pipeline {
-    std::atomic<VkPipeline> pipeline{VK_NULL_HANDLE};
-    // The layouts are owned by the VulkanCommandProcessor, and must not be
-    // destroyed by it while the pipeline cache is active. Atomic because an
-    // interpreter placeholder is created with a minimal (no-texture) layout on
-    // the draw thread, then upgraded to the real layout by the creation thread
-    // once the deferred shaders are translated (before the pipeline hot-swap).
-    std::atomic<const PipelineLayoutProvider*> pipeline_layout;
-
-    // Placeholder pipeline support for reduced stutter.
-    // When true, the current pipeline uses a placeholder pixel shader and
-    // the real pipeline is being compiled in the background.
-    std::atomic<bool> is_placeholder{false};
-    // When true, the placeholder rasterizes with the ucode interpreter VS (so
-    // the draw must feed it full float constants and the ucode location). Set
-    // once when the interpreter placeholder is built, gated by is_placeholder.
-    std::atomic<bool> uses_interpreter{false};
-    // The placeholder VkPipeline handle (VK_NULL_HANDLE if none). A draw
-    // compares the pipeline handle it bound against this to know whether it
-    // bound the placeholder - consistent with the single `pipeline` load,
-    // unlike the separate is_placeholder flag which is cleared a few
-    // instructions after the real pipeline is swapped in.
-    std::atomic<VkPipeline> placeholder_pipeline{VK_NULL_HANDLE};
-    // Set while the entry is in the creation queue, cleared once its result,
-    // real or failed, is stored.
-    std::atomic<bool> creation_pending{false};
-
-    Pipeline(const PipelineLayoutProvider* pipeline_layout_provider)
-        : pipeline_layout(pipeline_layout_provider) {}
-
-    // Copy constructor needed for unordered_map
-    Pipeline(const Pipeline& other)
-        : pipeline(other.pipeline.load(std::memory_order_acquire)),
-          pipeline_layout(
-              other.pipeline_layout.load(std::memory_order_acquire)),
-          is_placeholder(other.is_placeholder.load(std::memory_order_acquire)),
-          uses_interpreter(
-              other.uses_interpreter.load(std::memory_order_acquire)),
-          placeholder_pipeline(
-              other.placeholder_pipeline.load(std::memory_order_acquire)),
-          creation_pending(
-              other.creation_pending.load(std::memory_order_acquire)) {}
-
-    // Move constructor
-    Pipeline(Pipeline&& other) noexcept
-        : pipeline(other.pipeline.load(std::memory_order_acquire)),
-          pipeline_layout(
-              other.pipeline_layout.load(std::memory_order_acquire)),
-          is_placeholder(other.is_placeholder.load(std::memory_order_acquire)),
-          uses_interpreter(
-              other.uses_interpreter.load(std::memory_order_acquire)),
-          placeholder_pipeline(
-              other.placeholder_pipeline.load(std::memory_order_acquire)),
-          creation_pending(
-              other.creation_pending.load(std::memory_order_acquire)) {}
-
-    // Deleted copy assignment to prevent accidental copying
+    xe_pipeline_publication publication{};
+    // Owned by the command processor; layout is published before its handle.
+    retro_atomic_ptr_t pipeline_layout{nullptr};
+    explicit Pipeline(const PipelineLayoutProvider* provider) {
+      xe_pipeline_publication_init(&publication);
+      retro_atomic_store_relaxed_ptr(&pipeline_layout,
+          const_cast<PipelineLayoutProvider*>(provider));
+    }
+    Pipeline(const Pipeline& other) {
+      xe_pipeline_publication_copy(&publication, &other.publication);
+      retro_atomic_ptr_init(&pipeline_layout,
+          retro_atomic_load_acquire_ptr(&other.pipeline_layout));
+    }
+    // The old move copied atomic handles; it did not transfer native ownership.
+    Pipeline(Pipeline&& other) noexcept : Pipeline(static_cast<const Pipeline&>(other)) {}
     Pipeline& operator=(const Pipeline&) = delete;
-
-    // Deleted move assignment
     Pipeline& operator=(Pipeline&&) = delete;
   };
 
@@ -186,8 +144,8 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
   // True while this draw must be fed the ucode interpreter's inputs (full float
   // constants + ucode location). False once hot-swapped to the real VS.
   static bool IsInterpreterPlaceholder(const Pipeline* pipeline) {
-    return pipeline->uses_interpreter.load(std::memory_order_acquire) &&
-           pipeline->is_placeholder.load(std::memory_order_acquire);
+    const unsigned mask = XE_PIPELINE_INTERPRETER | XE_PIPELINE_PLACEHOLDER;
+    return (xe_pipeline_flags_load(&pipeline->publication) & mask) == mask;
   }
 
   // Whether ConfigurePipeline will create the pipeline asynchronously (so the

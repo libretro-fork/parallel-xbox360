@@ -419,9 +419,8 @@ void VulkanPipelineCache::Shutdown() {
   // Destroy all pipelines.
   last_pipeline_ = nullptr;
   for (const auto& pipeline_pair : pipelines_) {
-    if (pipeline_pair.second.pipeline != VK_NULL_HANDLE) {
-      dfn.vkDestroyPipeline(device, pipeline_pair.second.pipeline, nullptr);
-    }
+    VkPipeline handle = (VkPipeline)xe_pipeline_handle_load(&pipeline_pair.second.publication);
+    if (handle != VK_NULL_HANDLE) dfn.vkDestroyPipeline(device, handle, nullptr);
   }
   pipelines_.clear();
 
@@ -760,14 +759,13 @@ bool VulkanPipelineCache::ConfigurePipeline(
     // placeholder; the caller skips it until the real pipeline is ready. The
     // pipeline layout starts minimal (0 texture counts from untranslated
     // shaders) and is upgraded to the real one on the creation thread.
-    pipeline_pair.second.uses_interpreter.store(use_interpreter,
-                                                std::memory_order_release);
+    xe_pipeline_flag_store(&pipeline_pair.second.publication, XE_PIPELINE_INTERPRETER,
+        use_interpreter);
     bool make_placeholder = use_interpreter || vertex_shader->is_translated();
     if (make_placeholder) {
       // Set is_placeholder BEFORE creating the pipeline to avoid a race with
       // the creation thread checking this flag.
-      pipeline_pair.second.is_placeholder.store(true,
-                                                std::memory_order_release);
+      xe_pipeline_flag_store(&pipeline_pair.second.publication, XE_PIPELINE_PLACEHOLDER, true);
       PipelineCreationArguments placeholder_args;
       placeholder_args.pipeline = &pipeline_pair;
       placeholder_args.vertex_shader = vertex_shader;
@@ -800,10 +798,8 @@ bool VulkanPipelineCache::ConfigurePipeline(
             vertex_shader->shader().ucode_data_hash(),
             pixel_shader ? pixel_shader->shader().ucode_data_hash() : 0);
         // No placeholder - fall through to queue-only (drop until ready).
-        pipeline_pair.second.is_placeholder.store(false,
-                                                  std::memory_order_release);
-        pipeline_pair.second.uses_interpreter.store(false,
-                                                    std::memory_order_release);
+        xe_pipeline_flag_store(&pipeline_pair.second.publication, XE_PIPELINE_PLACEHOLDER, false);
+        xe_pipeline_flag_store(&pipeline_pair.second.publication, XE_PIPELINE_INTERPRETER, false);
       }
     }
 
@@ -818,8 +814,7 @@ bool VulkanPipelineCache::ConfigurePipeline(
         tessellation_control_shader;
     creation_arguments.render_pass = render_pass;
     creation_arguments.render_pass_key = render_pass_key;
-    pipeline_pair.second.creation_pending.store(true,
-                                                std::memory_order_relaxed);
+    xe_pipeline_flag_store(&pipeline_pair.second.publication, XE_PIPELINE_PENDING, true);
     creation_queue_.Push(creation_arguments);
   } else {
     // Sync mode (no creation threads / async off / no pixel shader): translate
@@ -833,8 +828,8 @@ bool VulkanPipelineCache::ConfigurePipeline(
       if (!real_layout) {
         return false;
       }
-      pipeline_pair.second.pipeline_layout.store(real_layout,
-                                                 std::memory_order_release);
+      retro_atomic_store_release_ptr(&pipeline_pair.second.pipeline_layout,
+          const_cast<PipelineLayoutProvider*>(real_layout));
     }
     PipelineCreationArguments creation_arguments;
     creation_arguments.pipeline = &pipeline_pair;
@@ -905,8 +900,8 @@ VkPipeline VulkanPipelineCache::CreateQueuedPipeline(
     const PipelineLayoutProvider* real_layout = GetGuestGraphicsPipelineLayout(
         creation_arguments.vertex_shader, creation_arguments.pixel_shader);
     if (real_layout) {
-      creation_arguments.pipeline->second.pipeline_layout.store(
-          real_layout, std::memory_order_release);
+      retro_atomic_store_release_ptr(&creation_arguments.pipeline->second.pipeline_layout,
+          const_cast<PipelineLayoutProvider*>(real_layout));
     }
     if (!EnsurePipelineCreated(creation_arguments, VK_NULL_HANDLE,
                                VK_NULL_HANDLE, &created_pipeline)) {
@@ -1637,10 +1632,9 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   // If it's a placeholder and we're not creating another placeholder,
   // we need to replace it with the real pipeline.
   VkPipeline existing_pipeline =
-      creation_arguments.pipeline->second.pipeline.load(
-          std::memory_order_acquire);
-  bool is_placeholder = creation_arguments.pipeline->second.is_placeholder.load(
-      std::memory_order_acquire);
+      (VkPipeline)xe_pipeline_handle_load(&creation_arguments.pipeline->second.publication);
+  bool is_placeholder = xe_pipeline_flag_load(&creation_arguments.pipeline->second.publication,
+      XE_PIPELINE_PLACEHOLDER);
   bool creating_placeholder = fragment_shader_override != VK_NULL_HANDLE;
 
   if (existing_pipeline != VK_NULL_HANDLE) {
@@ -2225,8 +2219,8 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   pipeline_create_info.pColorBlendState = &color_blend_state;
   pipeline_create_info.pDynamicState = &dynamic_state;
   pipeline_create_info.layout =
-      creation_arguments.pipeline->second.pipeline_layout
-          .load(std::memory_order_acquire)
+      static_cast<const
+          PipelineLayoutProvider*>(retro_atomic_load_acquire_ptr(&creation_arguments.pipeline->second.pipeline_layout))
           ->GetPipelineLayout();
   pipeline_create_info.renderPass =
       use_dynamic_rendering ? VK_NULL_HANDLE : creation_arguments.render_pass;
@@ -2293,8 +2287,8 @@ void VulkanPipelineCache::StoreCreatedPipeline(
     // Clearing the flag also stops it reporting as "waiting for real" forever,
     // which would hang an occlusion-query await.
     const bool had_placeholder =
-        creation_arguments.pipeline->second.is_placeholder.load(
-            std::memory_order_acquire);
+        xe_pipeline_flag_load(&creation_arguments.pipeline->second.publication,
+            XE_PIPELINE_PLACEHOLDER);
     XELOGE(
         "Pipeline stuck for the rest of the run, {} (VS {:016X}, PS {:016X})",
         had_placeholder ? "drawing through its placeholder"
@@ -2304,11 +2298,11 @@ void VulkanPipelineCache::StoreCreatedPipeline(
             ? creation_arguments.pixel_shader->shader().ucode_data_hash()
             : 0);
     if (had_placeholder) {
-      creation_arguments.pipeline->second.is_placeholder.store(
-          false, std::memory_order_release);
+      xe_pipeline_flag_store(&creation_arguments.pipeline->second.publication,
+          XE_PIPELINE_PLACEHOLDER, false);
     }
-    creation_arguments.pipeline->second.creation_pending.store(
-        false, std::memory_order_release);
+    xe_pipeline_flag_store(&creation_arguments.pipeline->second.publication,
+        XE_PIPELINE_PENDING, false);
     return;
   }
   // Record the placeholder handle before publishing it, so a draw that observes
@@ -2316,14 +2310,14 @@ void VulkanPipelineCache::StoreCreatedPipeline(
   // placeholder_pipeline). Stored before the exchange so the release on the
   // exchange carries it.
   if (creating_placeholder) {
-    creation_arguments.pipeline->second.placeholder_pipeline.store(
-        pipeline, std::memory_order_release);
+    xe_pipeline_placeholder_store(&creation_arguments.pipeline->second.publication,
+        (uint64_t)(pipeline));
   }
 
   // Store the new pipeline, handling placeholder hot-swap.
   VkPipeline old_pipeline =
-      creation_arguments.pipeline->second.pipeline.exchange(
-          pipeline, std::memory_order_acq_rel);
+      (VkPipeline)xe_pipeline_handle_exchange(&creation_arguments.pipeline->second.publication,
+          (uint64_t)(pipeline));
 
   if (old_pipeline != VK_NULL_HANDLE) {
     // We're replacing a placeholder pipeline with the real one.
@@ -2339,15 +2333,15 @@ void VulkanPipelineCache::StoreCreatedPipeline(
 
   // Mark as no longer a placeholder (for the case where we just created real).
   if (!creating_placeholder) {
-    creation_arguments.pipeline->second.is_placeholder.store(
-        false, std::memory_order_release);
+    xe_pipeline_flag_store(&creation_arguments.pipeline->second.publication,
+        XE_PIPELINE_PLACEHOLDER, false);
     XELOGI("Pipeline created for VS {:016X}, PS {:016X}",
            creation_arguments.vertex_shader->shader().ucode_data_hash(),
            creation_arguments.pixel_shader
                ? creation_arguments.pixel_shader->shader().ucode_data_hash()
                : 0);
-    creation_arguments.pipeline->second.creation_pending.store(
-        false, std::memory_order_release);
+    xe_pipeline_flag_store(&creation_arguments.pipeline->second.publication,
+        XE_PIPELINE_PENDING, false);
   }
 }
 
@@ -2649,8 +2643,8 @@ void VulkanPipelineCache::InitializeShaderStorage(
       creation_arguments.render_pass_key = pipeline_description.render_pass_key;
       if (creation_queue_.has_threads()) {
         // Nothing is drawing these yet, so they publish as they are built.
-        creation_arguments.pipeline->second.creation_pending.store(
-            true, std::memory_order_relaxed);
+        xe_pipeline_flag_store(&creation_arguments.pipeline->second.publication,
+            XE_PIPELINE_PENDING, true);
         creation_queue_.PushUnordered(creation_arguments);
       } else {
         // No creation threads - create synchronously.

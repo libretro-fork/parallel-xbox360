@@ -1,0 +1,63 @@
+Native pipeline publication (0171)
+=================================
+C89 core_pipeline_publication.h stores two full-width64-bit native handle words
+and one common atomic flag word: placeholder, interpreter, failed and pending.
+Native ABI glue casts D3D12 pointers via uintptr_t and Vulkan handles directly
+via uint64_t, retaining Vulkan's64-bit numeric-handle representation. A draw
+loads its concrete handle once and compares it to the placeholder handle; the
+independently changing control flag cannot make a real PSO use placeholder
+bindings. Vulkan layout pointers use common pointer atomics and still publish
+before the matching real handle. Existing native defer/retire work is unchanged.
+
+Packed flag writes use common atomic RMW operations to preserve other writers'
+bits. This trades byte-sized release stores for packed metadata and coherent
+completion; no timing improvement is assumed. Draw queries use acquire loads,
+with paired control queries reading one mask. No queue, heap, staging/pixel/PCM
+copy, buffer or profile counter is added. D3D12 remains noncopyable; Vulkan's
+explicit metadata copy/move still duplicates handle values without transferring
+native resource ownership. Such copies require an unpublished destination and
+live source/handles. Copies use separate loads, not a transactional snapshot of
+a concurrently changing entry. Cache emplace copies occur before job publication.
+This native record is not a savestate wire format.
+
+D3D12 previously stored creation_failed=true, then creation_pending=false.
+A draw could observe failure and start a warm-up retry before the old creator
+cleared pending, which then cleared the retry's bit. publish_failure now clears
+pending/placeholder and sets failed in one atomic operation after the final log
+reads the description. The old creator makes no further entry access. Warm-up
+entries are reused in place; this fixes a pending-state race, not a demonstrated
+use-after-free. Synchronous warm-up failures now use StoreCreatedPipeline too,
+so they get the same once-only live retry instead of a permanently null entry.
+
+Tests include all16 control masks, full64-bit handles, cold/copy, placeholder
+pinning across a real-handle exchange, physical fallback after failed creation,
+and20000 immediate retry handshakes plus2000 rounds with four simultaneous
+independent flag writers. A controlled external header splits failure
+and pending-clear and parks the creator between them; the invariant oracle
+rejects it deterministically. That helper/window exists only in test code and
+is never called by the production header. Native entry fixtures use actual
+D3D12 GetD3D12PipelineForDraw and Vulkan entry constructors/copy/move, including
+a non-null opaque layout token. Handles are opaque test values, never passed
+to a GPU or dereferenced. They do not execute actual PSO creation/dispatch.
+
+Storage flush booleans, startup job counters and the PM4 release fence still
+use C++ atomics. Creation/deferred-destruction and real layout-cache mutexes and
+retirement vectors remain; this is not whole-renderer lock/allocation freedom.
+No shader bytecode, cache format, guest timing or audio path changes.
+
+Windows x64 results: full static Make -j5 and native MSVC CMake --parallel5
+PASS. GNU strict C89 and MSVC /TC /W4 /WX unit cases, native entry ABI fixtures
+and scoped MSVC ASan fixtures PASS, including20000 retries and four independent
+writers across2000 rounds. ASan instruments the C89 algorithms/driver and native
+entry/header glue; actual device/PSO creation is not exercised and other linked
+core archives are ordinary. The controlled split-publication negative header
+fails the retry invariant as intended (exit1); production has no test hook.
+
+Cold baseline headers at402200bf9 plus current native-entry probes show Vulkan
+Pipeline40->32 bytes and D3D12 Pipeline208->208 on both MinGW and MSVC x64.
+The shared record is24 bytes. Allocator rounding/whole-game RSS is unmeasured.
+Windows native fixtures cover both backends; other platforms select Vulkan only
+without including Windows SDK headers. The Vulkan-only fixture mode also passes
+MinGW locally. CI invokes both new fixtures; remote CI/32-bit/weak-memory
+hardware runs are unverified. No GPU device, frontend, game, guest JIT or installed
+DLL replacement was used. No FPS/GPU-time/stutter improvement is claimed.

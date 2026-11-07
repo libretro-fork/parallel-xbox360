@@ -3608,9 +3608,9 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // If async mode is active, this may be a placeholder pipeline. The real
   // pipeline will be swapped in by the creation thread when ready.
   VkPipeline current_pipeline =
-      pipeline->pipeline.load(std::memory_order_acquire);
+      (VkPipeline)xe_pipeline_handle_load(&pipeline->publication);
   if (!stand_in_allowed &&
-      pipeline->creation_pending.load(std::memory_order_acquire)) {
+      xe_pipeline_flag_load(&pipeline->publication, XE_PIPELINE_PENDING)) {
     uint64_t await_start = xe::Clock::QueryHostTickCount();
     pipeline_cache_->AwaitPipelineCompletion();
     XELOGI(
@@ -3624,10 +3624,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         pixel_shader ? pixel_shader->ucode_data_hash() : 0,
         double(xe::Clock::QueryHostTickCount() - await_start) * 1000.0 /
             double(xe::Clock::QueryHostTickFrequency()));
-    current_pipeline = pipeline->pipeline.load(std::memory_order_acquire);
+    current_pipeline = (VkPipeline)xe_pipeline_handle_load(&pipeline->publication);
     if (current_pipeline != VK_NULL_HANDLE &&
         current_pipeline !=
-            pipeline->placeholder_pipeline.load(std::memory_order_acquire)) {
+            (VkPipeline)xe_pipeline_placeholder_load(&pipeline->publication)) {
       // The samplers were gathered while the bindings weren't ready - redo the
       // draw with the real pipeline, which won't wait again.
       return IssueDraw(prim_type, index_count, index_buffer_info,
@@ -3649,8 +3649,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // pipeline is ready rather than interpret from address 0.
   if (active_vertex_shader_ucode_address_ == 0 &&
       current_pipeline ==
-          pipeline->placeholder_pipeline.load(std::memory_order_acquire) &&
-      pipeline->uses_interpreter.load(std::memory_order_acquire)) {
+          (VkPipeline)xe_pipeline_placeholder_load(&pipeline->publication) &&
+      xe_pipeline_flag_load(&pipeline->publication, XE_PIPELINE_INTERPRETER)) {
     OnVIZSurveyDraw(false);
     return true;
   }
@@ -3693,7 +3693,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     current_external_graphics_pipeline_ = VK_NULL_HANDLE;
   }
   auto pipeline_layout = static_cast<const PipelineLayout*>(
-      pipeline->pipeline_layout.load(std::memory_order_acquire));
+      static_cast<const
+          VulkanPipelineCache::PipelineLayoutProvider*>(retro_atomic_load_acquire_ptr(&pipeline->pipeline_layout)));
   if (current_guest_graphics_pipeline_layout_ != pipeline_layout) {
     if (current_guest_graphics_pipeline_layout_) {
       // Keep descriptor set layouts for which the new pipeline layout is
@@ -3819,12 +3820,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // disagree).
   bool bound_is_placeholder =
       current_pipeline ==
-      pipeline->placeholder_pipeline.load(std::memory_order_acquire);
+      (VkPipeline)xe_pipeline_placeholder_load(&pipeline->publication);
   // The interpreter placeholder (interpreter VS + no-op PS) also needs its
   // ucode location + full float constants fed to it.
   bool interpreter_placeholder =
       bound_is_placeholder &&
-      pipeline->uses_interpreter.load(std::memory_order_acquire);
+      xe_pipeline_flag_load(&pipeline->publication, XE_PIPELINE_INTERPRETER);
   // Any placeholder draw binds the no-op placeholder pixel shader (which never
   // samples), so its pixel textures/samplers must not be bound - the
   // placeholder pipeline's layout has none.

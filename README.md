@@ -1,5 +1,7 @@
 # parallel_xbox360 libretro core
 
+Vulkan and D3D12 pipeline entries now use a C89 libretro-common publication record with full-width handles and packed control flags. Draws retain the concrete handle/placeholder comparison, and native retirement still follows submission completion. D3D12 warm-up failure grants a retry only after atomically clearing pending, preventing the old creator from clearing a new retry's bit; synchronous warm-up failures use the same path. See [pipeline publication checks](tools/tests/pipeline_publication_results.txt).
+
 Vulkan shader translation no longer builds unused texture/sampler layout UIDs. Their registry had no readers, yet hashed/compared and copied binding arrays into a growing vector/map under a mutex. The registry, copies, mutex and per-shader once flag/UID fields are removed. Actual shader binding metadata and the command processor's Vulkan pipeline-layout cache remain unchanged. See [layout registry audit](tools/tests/layout_uid_removal_results.txt).
 
 Texture invalidation hints now use one libretro-common atomic word per texture. GPU pre-checks no longer race plain callback-written booleans, and an unused cache-wide atomic exchange/store is removed. Base/mip writers still use the existing shared-memory critical region; readers fetch both flags once where possible. Watch ownership, reload rechecks, conversions and audio timing are unchanged. See [texture hint checks](tools/tests/texture_dirty_results.txt).

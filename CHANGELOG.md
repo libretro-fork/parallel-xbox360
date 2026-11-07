@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan/D3D12 pipeline entries replace C++ atomics with a C89 libretro-common publication record. Concrete placeholder handles remain the basis for draw bindings; packed flags retain independent concurrent updates. D3D12 warm-up failure and pending completion now publish together after the creator's last description read, preventing an old completion from clearing an immediate retry's pending bit. Synchronous warm-up failures also become retryable. Existing shader output, deferred retirement, completion waits and audio cadence remain.
+
 - Removed Vulkan's unused texture/sampler layout UID registry from shader translation. This removes its mutex, hash/collision comparisons, vector/map growth, binding-array copies and per-shader once flag/UID fields. No code consumed these IDs; actual binding metadata, pipeline layouts and shader output are unchanged. This removes avoidable translation work without changing audio or rendering accuracy; gameplay gains are unmeasured.
 
 - Texture invalidation pre-checks use a libretro-common atomic base/mip mask instead of racing plain booleans. Removed the unused cache-wide atomic flag and its exchange on texture requests. Combined pre-checks use one acquire load; existing watch/authoritative reload locking remains. Per-texture size is unchanged in local MSVC/MinGW x64 probes, and the cache object shrinks eight bytes. Rendering conversion and audio behavior are unchanged.
