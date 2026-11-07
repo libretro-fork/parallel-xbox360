@@ -405,7 +405,6 @@ void VulkanPipelineCache::Shutdown() {
     if (pipeline != VK_NULL_HANDLE)
       dfn.vkDestroyPipeline(device, pipeline, nullptr);
   });
-  startup_completion_ = 0;
 
   // Process any remaining deferred destructions (force destroy all since
   // device should be idle at shutdown).
@@ -700,18 +699,14 @@ bool VulkanPipelineCache::ConfigurePipeline(
   if (storage_writer_.is_active()) {
     VulkanShader& vs = static_cast<VulkanShader&>(vertex_shader->shader());
     if (vs.try_set_ucode_storage_index(storage_writer_.storage_index())) {
-      shader_storage_file_flush_needed_ = true;
       storage_writer_.QueueShaderWrite(&vs);
     }
     if (pixel_shader) {
       VulkanShader& ps = static_cast<VulkanShader&>(pixel_shader->shader());
       if (ps.try_set_ucode_storage_index(storage_writer_.storage_index())) {
-        shader_storage_file_flush_needed_ = true;
         storage_writer_.QueueShaderWrite(&ps);
       }
     }
-
-    pipeline_storage_file_flush_needed_ = true;
     storage_writer_.QueuePipelineWrite(description.GetHash(), &description);
   }
 
@@ -855,25 +850,11 @@ bool VulkanPipelineCache::ConfigurePipeline(
 }
 
 void VulkanPipelineCache::EndSubmission() {
-  if (shader_storage_file_flush_needed_ ||
-      pipeline_storage_file_flush_needed_) {
-    storage_writer_.RequestFlush(shader_storage_file_flush_needed_,
-                                 pipeline_storage_file_flush_needed_);
-    shader_storage_file_flush_needed_ = false;
-    pipeline_storage_file_flush_needed_ = false;
-  }
+  storage_writer_.RequestFlush();
 
-  if (creation_queue_.has_threads()) {
-    if (creation_queue_.CompletionPending(startup_completion_)) {
-      // Non-blocking: let background threads work asynchronously.
-      creation_queue_.Notify();
-    } else {
-      // Blocking: wait for all queued pipelines.
-      creation_queue_.AwaitCompletion();
-    }
-  }
-
-  // Process deferred destructions when the GPU is idle.
+  // Requests wake compilation workers when published. Maintenance must neither
+  // drain unrelated compilation nor wake idle workers on every submission.
+  // Retire only handles whose recorded submission has completed.
   ProcessDeferredDestructions();
 }
 
@@ -2387,7 +2368,6 @@ void VulkanPipelineCache::InitializeShaderStorage(
 
   shader_storage_title_id_ = title_id;
 
-  startup_completion_ = 0;
 
   bool edram_fsi_used = render_target_cache_.GetPath() ==
                         RenderTargetCache::Path::kPixelShaderInterlock;
@@ -2431,8 +2411,6 @@ void VulkanPipelineCache::InitializeShaderStorage(
           pipeline_stored_descriptions)) {
     return;
   }
-  shader_storage_file_flush_needed_ = false;
-  pipeline_storage_file_flush_needed_ = false;
 
   // Load VkPipelineCache from disk if available.
   auto shader_storage_local_root = GetShaderStorageLocalRoot(cache_root);
@@ -2676,7 +2654,6 @@ void VulkanPipelineCache::InitializeShaderStorage(
     }
   }
 
-  if (!blocking) startup_completion_ = creation_queue_.WatchCompletion();
 
 }
 
@@ -2715,8 +2692,6 @@ void VulkanPipelineCache::ShutdownShaderStorage() {
 
   // Shut down the storage writer (closes files, stops write thread).
   storage_writer_.ShutdownShaderStorage();
-  shader_storage_file_flush_needed_ = false;
-  pipeline_storage_file_flush_needed_ = false;
   shader_storage_title_id_ = 0;
 }
 

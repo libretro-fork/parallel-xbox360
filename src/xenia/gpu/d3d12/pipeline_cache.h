@@ -10,7 +10,6 @@
 #ifndef XENIA_GPU_D3D12_PIPELINE_CACHE_H_
 #define XENIA_GPU_D3D12_PIPELINE_CACHE_H_
 
-#include <atomic>
 #include "libretro/core_pipeline_publication.h"
 #include <cstdio>
 #include <deque>
@@ -511,8 +510,6 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
 
   // Currently open shader storage state.
   uint32_t shader_storage_title_id_ = 0;
-  std::atomic<bool> shader_storage_file_flush_needed_{false};
-  std::atomic<bool> pipeline_storage_file_flush_needed_{false};
 
   // Storage writer for shaders and pipelines (owns file handles and storage
   // index).

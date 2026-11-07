@@ -1,0 +1,52 @@
+Cache-writer ownership and Vulkan maintenance (0173)
+===================================================
+The actual ConfigurePipeline call sites enqueue persistence records only from
+the GPU command processor (or its quiescent lifecycle owner). Background pipeline
+creation publishes native handles; it is not an extra cache-writer producer.
+EndSubmission shares that same exclusive producer ownership. Four backend
+std::atomic<bool> flush flags and their duplicated resets are therefore removed,
+not replaced by an atomic wrapper. C89 queue publication marks plain producer
+bits only for successful nonempty shader/pipeline records. Dirty metadata is
+separated from the consumer's immutable sink/stride fields by128 bytes. Flush
+requests coalesce those bits into one ordered empty barrier, retain them if
+publication fails, and do nothing when clean. Full queues still backpressure.
+
+ShaderStorageWriter loading callbacks are now borrowed native callables for the
+synchronous initialization only, removing two std::function wrappers. All actual
+callers provide both callbacks; translation joins its bulk workers before
+returning. No callback escapes into the file worker. Existing microcode borrows,
+queue-owned descriptor copies, hashes, endianness and file formats remain.
+
+Source audit found VulkanPipelineCache::EndSubmission had no remaining caller.
+Its file-flush and completed-placeholder retirement work consequently wasn't
+being driven during normal submissions. VulkanCommandProcessor now calls it
+after a submission closes. The cache method does not drain compilation, call a
+GPU wait or wake idle compiler workers: requests already wake them on publish.
+The unused startup completion ticket and its registration are removed. Draw/query
+paths still await concrete dependencies. Existing retirement compares each
+recorded submission with GetCompletedSubmission; future/in-flight handles stay
+retained. It runs on the GPU owner, after deferred commands have been replayed
+and submitted. The next BeginSubmission resets CPU pipeline binding snapshots.
+Existing shutdown still joins creators before force retirement and shader release.
+The retirement mutex, persistent vector and temporary collection vector remain;
+allocation-free retirement and measured gameplay/RSS improvement are not claimed.
+
+Local Windows verification,2026-11-07:
+- Full MinGW Make -j5 and full MSVC CMake --parallel5 builds PASS.
+- Actual C89 writer FIFO/backpressure/shutdown tests PASS on both compilers.
+  New one-slot flush coverage uses1000 dirty batches with shader-only,
+  pipeline-only and mixed records, duplicate clean requests, invalid submits,
+  ring wrap and exact ordered barrier masks. Existing90 variable-capacity FIFO
+  rounds and90 empty start/stop rounds still pass.
+- MSVC /TC /W4 /WX and scoped AddressSanitizer module/driver PASS. The common
+  prebuilt library is not sanitizer-instrumented; no full race proof is claimed.
+- Real VFS split-record persistence tests PASS: short/interrupted transfers,
+  repair/append, bounds, errors, no truncating retry, native reopen, exact bytes
+  and coalesced flush barriers. Native API remains one-producer-only.
+- Actual Vulkan/D3D12 native entry/publication fixtures PASS with both compilers,
+  including full-width handles, concrete placeholder bindings, metadata copy,
+  independent flag writers and20000 immediate retries. Entry ABI stays32B/208B.
+No frontend, actual Vulkan API destruction, game or JIT execution was performed
+for this optimization. Wiring of live maintenance is compiled/source-audited;
+its impact on live driver memory/frametimes remains unmeasured. Remote Linux/ARM
+CI added or extended, not run locally. Installed RetroArch core is unchanged.

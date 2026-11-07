@@ -19,7 +19,6 @@
 #include <file/file_path.h>
 #include <cstring>
 #include <filesystem>
-#include <functional>
 #include <set>
 
 #include "third_party/fmt/include/fmt/format.h"
@@ -28,7 +27,6 @@
 #include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
-#include "xenia/base/threading.h"
 #include "xenia/base/xxhash.h"
 #include "xenia/gpu/shader.h"
 #include "xenia/gpu/xenos.h"
@@ -182,18 +180,6 @@ class ShaderStorageWriter {
     uint32_t version;         // Pipeline description version
   };
 
-  // Callback for loading a shader from ucode data.
-  // Return true to continue reading, false to stop.
-  using ShaderLoadCallback =
-      std::function<bool(xenos::ShaderType type, const uint32_t* ucode_dwords,
-                         uint32_t ucode_dword_count, uint64_t ucode_data_hash)>;
-
-  // Callback for translating shaders. Called with the set of
-  // (ucode_hash, modification) pairs that need translation.
-  // Implementation should handle parallel translation internally.
-  using TranslateCallback = std::function<void(
-      const std::set<std::pair<uint64_t, uint64_t>>& translations_needed)>;
-
   ShaderStorageWriter() = default;
   ~ShaderStorageWriter() { ShutdownShaderStorage(); }
 
@@ -203,10 +189,13 @@ class ShaderStorageWriter {
 
   // Opens files, loads shaders, triggers translation, starts write thread.
   // Caller must call ShutdownShaderStorage() first if re-initializing.
+  // Callbacks are borrowed for this synchronous load only. Translation joins
+  // its workers before returning; neither callable escapes into the writer.
+  template <typename ShaderLoad, typename Translate>
   bool InitializeShaderStorage(
       const std::filesystem::path& cache_root, uint32_t title_id,
       const PipelineStorageConfig& pipeline_config,
-      ShaderLoadCallback load_shader, TranslateCallback translate_shaders,
+      ShaderLoad&& load_shader, Translate&& translate_shaders,
       PipelineStorageRecords& pipeline_descriptions_out) {
     pipeline_descriptions_out.reset();
     std::set<std::pair<uint64_t, uint64_t>> translations_needed;
@@ -376,7 +365,7 @@ class ShaderStorageWriter {
            pipeline_description_count, translations_needed.size());
 
     // Translate shaders (callback handles parallel translation).
-    if (!translations_needed.empty() && translate_shaders) {
+    if (!translations_needed.empty()) {
       translate_shaders(translations_needed);
     }
 
@@ -432,10 +421,8 @@ class ShaderStorageWriter {
         sizeof(TPipelineStoredDescription::description));
   }
 
-  void RequestFlush(bool flush_shaders, bool flush_pipelines) {
-    if (flush_shaders || flush_pipelines)
-      xe_cache_writer_submit(storage_writer_,
-          4 | (flush_shaders ? 1 : 0) | (flush_pipelines ? 2 : 0), nullptr, 0);
+  void RequestFlush() {
+    xe_cache_writer_request_flush(storage_writer_);
   }
 
  private:

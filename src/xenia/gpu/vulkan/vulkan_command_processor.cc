@@ -3684,8 +3684,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // different layout, invalidate incompatible descriptor sets before updating
   // current_guest_graphics_pipeline_layout_.
   // The pipeline may be not ready yet if created asynchronously.
-  // EndSubmission must be called before submitting the command buffer to
-  // await its creation.
+  // Draw/query dependency paths await the concrete pipeline they need;
+  // submission maintenance does not wait for unrelated compilation.
   if (current_guest_graphics_pipeline_ != current_pipeline) {
     deferred_command_buffer_.CmdVkBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,
                                                current_pipeline);
@@ -5663,6 +5663,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
     }
 
     submission_open_ = false;
+
+    // Ordered file flushes and completion-gated placeholder retirement. This
+    // does not wait for asynchronous shader/pipeline creation or GPU progress.
+    pipeline_cache_->EndSubmission();
 
     // Process any query resolves that completed with this submission.
     PumpQueryResolves();

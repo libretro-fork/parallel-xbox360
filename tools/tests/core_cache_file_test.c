@@ -94,7 +94,7 @@ static int64_t RETRO_CALLCONV truncate_file(struct retro_vfs_file_handle *file, 
 struct writer_file_state { RFILE *file; unsigned rows, flushes; int ok; };
 static void writer_file_sink(void *opaque, unsigned kind, const void *data, size_t size) {
    struct writer_file_state *state = (struct writer_file_state *)opaque;
-   if (kind == 2) {
+   if (kind == 5) {
       if (size || filestream_flush(state->file)) state->ok = 0;
       ++state->flushes;
    } else {
@@ -121,7 +121,9 @@ static int writer_file_test(const char *path) {
       if (!xe_cache_writer_submit_parts(writer, 1, &hash, sizeof(hash),
             payload, sizeof(payload))) return 0;
       memset(payload, 0xcc, sizeof(payload));
-      if ((r + 1) % 8 == 0 && !xe_cache_writer_submit(writer, 2, NULL, 0)) return 0;
+      if ((r + 1) % 8 == 0 &&
+          (!xe_cache_writer_request_flush(writer) ||
+           !xe_cache_writer_request_flush(writer))) return 0;
    }
    xe_cache_writer_free(writer);
    if (!state.ok || state.rows != 64 || state.flushes != 8 ||

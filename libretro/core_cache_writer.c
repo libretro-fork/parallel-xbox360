@@ -17,6 +17,10 @@ struct xe_cache_writer {
    size_t stride, max_record;
    xe_cache_writer_sink sink;
    void *opaque;
+   /* Sole producer's dirty bits must not invalidate the consumer's immutable
+    * stride/sink/opaque cache line. No over-aligned allocation is required. */
+   unsigned char producer_pad[128];
+   unsigned dirty;
 };
 static void xe_cache_writer_run(void *opaque)
 {
@@ -111,6 +115,7 @@ int xe_cache_writer_submit_parts(xe_cache_writer *writer, unsigned kind,
    if (first_size) memcpy(payload, first, first_size);
    if (second_size) memcpy(payload + first_size, second, second_size);
    retro_spsc_write_end(&writer->queue, writer->stride);
+   if (size && (kind == 1 || kind == 2)) writer->dirty |= kind;
    retro_eventcount_notify(&writer->work);
    return 1;
 }
@@ -118,6 +123,16 @@ int xe_cache_writer_submit(xe_cache_writer *writer, unsigned kind,
       const void *data, size_t size)
 {
    return xe_cache_writer_submit_parts(writer, kind, data, size, NULL, 0);
+}
+int xe_cache_writer_request_flush(xe_cache_writer *writer)
+{
+   unsigned dirty;
+   if (!writer) return 0;
+   dirty = writer->dirty;
+   if (!dirty) return 1;
+   if (!xe_cache_writer_submit(writer, 4 | dirty, NULL, 0)) return 0;
+   writer->dirty = 0;
+   return 1;
 }
 void xe_cache_writer_free(xe_cache_writer *writer)
 {

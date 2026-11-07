@@ -10,7 +10,6 @@
 #ifndef XENIA_GPU_VULKAN_VULKAN_PIPELINE_STATE_CACHE_H_
 #define XENIA_GPU_VULKAN_VULKAN_PIPELINE_STATE_CACHE_H_
 
-#include <atomic>
 #include "libretro/core_pipeline_publication.h"
 #include <cstddef>
 #include <cstdio>
@@ -518,11 +517,6 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
   PipelineCreationQueue<PipelineCreationArguments, VkPipeline,
                         SpirvShaderTranslator>
       creation_queue_;
-  // During startup loading, don't block on pipeline creation to allow game
-  // boot.
-  // GPU-owner token only; workers complete the queue's C89 atomic latch.
-  uint64_t startup_completion_ = 0;
-
   // Deferred destruction of pipelines.
   // Pipelines are only destroyed after the GPU submission that might reference
   // them has completed (tracked via submission numbers from command processor).
@@ -532,8 +526,6 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
 
   // Shader and pipeline storage.
   uint32_t shader_storage_title_id_ = 0;
-  std::atomic<bool> shader_storage_file_flush_needed_{false};
-  std::atomic<bool> pipeline_storage_file_flush_needed_{false};
 
   // Storage writer for shaders and pipelines (owns file handles and storage
   // index).

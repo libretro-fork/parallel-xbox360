@@ -31,6 +31,49 @@ static void consume(void *opaque, unsigned kind, const void *data, size_t size)
    /* Keep reading the borrowed slot while the producer advances. */
    CHECK(memcmp(&record, data, sizeof(record)) == 0);
 }
+struct flush_state { unsigned next, dirty, barriers; uintptr_t producer; };
+static void consume_flush(void *opaque, unsigned kind, const void *data, size_t size)
+{
+   struct flush_state *state = (struct flush_state *)opaque;
+   unsigned index;
+   CHECK(sthread_get_current_thread_id() != state->producer);
+   if (kind & 4) {
+      CHECK(size == 0 && state->dirty && kind == (4 | state->dirty));
+      state->dirty = 0;
+      ++state->barriers;
+      return;
+   }
+   CHECK((kind == 1 || kind == 2) && size == sizeof(index));
+   memcpy(&index, data, size);
+   CHECK(index == state->next++);
+   state->dirty |= kind;
+}
+static void flush_test(void)
+{
+   struct flush_state state;
+   xe_cache_writer *writer;
+   unsigned round, index = 0, kind;
+   memset(&state, 0, sizeof(state));
+   state.producer = sthread_get_current_thread_id();
+   writer = xe_cache_writer_new(sizeof(index), 1, consume_flush, &state);
+   CHECK(writer && xe_cache_writer_request_flush(writer));
+   CHECK(!xe_cache_writer_submit(writer, 1, NULL, sizeof(index)));
+   CHECK(xe_cache_writer_request_flush(writer));
+   for (round = 0; round < 1000; ++round) {
+      kind = round % 3 == 1 ? 2 : 1;
+      CHECK(xe_cache_writer_submit(writer, kind, &index, sizeof(index)));
+      ++index;
+      if (round % 3 == 2) {
+         CHECK(xe_cache_writer_submit(writer, 2, &index, sizeof(index)));
+         ++index;
+      }
+      CHECK(xe_cache_writer_request_flush(writer));
+      /* Clean requests cannot insert duplicate barriers or a kind4 no-op. */
+      CHECK(xe_cache_writer_request_flush(writer));
+   }
+   xe_cache_writer_free(writer);
+   CHECK(state.next == index && state.barriers == 1000 && !state.dirty);
+}
 int main(void)
 {
    struct state state;
@@ -43,6 +86,7 @@ int main(void)
    CHECK(!xe_cache_writer_new(8, (size_t)-1, consume, NULL));
    CHECK(!xe_cache_writer_new(8, 1, NULL, NULL));
    CHECK(!xe_cache_writer_submit(NULL, 1, NULL, 0));
+   CHECK(!xe_cache_writer_request_flush(NULL));
    xe_cache_writer_free(NULL);
    for (round = 0; round < 90; ++round) {
       memset(&state, 0, sizeof(state));
@@ -76,6 +120,7 @@ int main(void)
       CHECK(writer);
       xe_cache_writer_free(writer);
    }
+   flush_test();
    puts("PASS bounded cache writer FIFO, backpressure, barriers and shutdown drain");
    return 0;
 }

@@ -264,8 +264,6 @@ void PipelineCache::InitializeShaderStorage(
           pipeline_stored_descriptions)) {
     return;
   }
-  shader_storage_file_flush_needed_ = false;
-  pipeline_storage_file_flush_needed_ = false;
 
   // Create the pipelines.
   const size_t pipeline_record_count = xe_file_records_count(pipeline_stored_descriptions.get());
@@ -439,19 +437,11 @@ void PipelineCache::InitializeShaderStorage(
 void PipelineCache::ShutdownShaderStorage() {
   // Shut down the storage writer (closes files, stops write thread).
   storage_writer_.ShutdownShaderStorage();
-  shader_storage_file_flush_needed_ = false;
-  pipeline_storage_file_flush_needed_ = false;
   shader_storage_title_id_ = 0;
 }
 
 void PipelineCache::EndSubmission() {
-  if (shader_storage_file_flush_needed_ ||
-      pipeline_storage_file_flush_needed_) {
-    storage_writer_.RequestFlush(shader_storage_file_flush_needed_,
-                                 pipeline_storage_file_flush_needed_);
-    shader_storage_file_flush_needed_ = false;
-    pipeline_storage_file_flush_needed_ = false;
-  }
+  storage_writer_.RequestFlush();
   // Release placeholder pipelines the GPU is now done with.
   ProcessDeferredDestructions();
   // Don't wait for pipeline creation - let background threads work
@@ -1042,13 +1032,11 @@ bool PipelineCache::ConfigurePipeline(
   if (storage_writer_.is_active()) {
     if (vertex_shader->shader().try_set_ucode_storage_index(
             storage_writer_.storage_index())) {
-      shader_storage_file_flush_needed_ = true;
       storage_writer_.QueueShaderWrite(&vertex_shader->shader());
     }
     if (pixel_shader != nullptr &&
         pixel_shader->shader().try_set_ucode_storage_index(
             storage_writer_.storage_index())) {
-      shader_storage_file_flush_needed_ = true;
       storage_writer_.QueueShaderWrite(&pixel_shader->shader());
     }
   }
@@ -1216,7 +1204,6 @@ bool PipelineCache::ConfigurePipeline(
   // reload can rebuild the DXIL (translated at the then-current resolution).
   // A rebuilt entry came from storage, so writing it again would duplicate it.
   if (storage_writer_.is_active() && !rebuild_pipeline) {
-    pipeline_storage_file_flush_needed_ = true;
     storage_writer_.QueuePipelineWrite(hash, &description);
   }
 

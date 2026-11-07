@@ -18,6 +18,11 @@ int xe_cache_writer_submit(xe_cache_writer *writer, unsigned kind,
  * concatenation buffer. Both ranges are copied before this call returns. */
 int xe_cache_writer_submit_parts(xe_cache_writer *writer, unsigned kind,
       const void *first, size_t first_size, const void *second, size_t second_size);
+/* Sole producer, as for submit. Nonempty kinds 1/2 dirty the shader/pipeline
+ * files only after successful enqueue. Coalesce them into an ordered empty
+ * barrier kind 4|dirty; a clean writer needs no queue slot or notification.
+ * Failure preserves pending dirty bits. Other message kinds are untouched. */
+int xe_cache_writer_request_flush(xe_cache_writer *writer);
 /* Producer must be quiescent. Drains, joins, then frees queue storage. */
 void xe_cache_writer_free(xe_cache_writer *writer);
 #ifdef __cplusplus
