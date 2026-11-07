@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Resolve watch rearming in Vulkan and D3D12 now uses two fixed page bitmaps instead of growing range vectors. Submission detaches a borrowed bitmap without copying; concurrent faults queue into the other. Adjacent/overlapping pages coalesce, reducing repeated memory-watch calls while preserving coverage across all physical aliases. This reserves about 32 KiB and adds bitmap work for sparse batches; required fault serialization remains.
+
 - Vulkan and D3D12 recent-read history now uses fixed C89 storage instead of a second node map. Exact keys, 60-frame expiry, full-map clearing and frame-counter wrap retain their previous behavior. Tracking no longer allocates nodes during play; it reserves about 97 KiB even with few reads. This GPU-thread history remains separate from fault-owner lifetimes.
 
 - Vulkan and D3D12 resolve ownership now use fixed C89 rows and a bounded hash index, removing owner-node/rehash allocations and the temporary pruning-age vector. Surviving fault-owner views stay stable while index links move; exact eviction and frame-wrap semantics match the legacy reference. This reserves about 209 KiB per processor even at low occupancy. Windows builds, MSVC ASan and reference fixtures pass; CPU traces improve, while gameplay gains remain unmeasured.

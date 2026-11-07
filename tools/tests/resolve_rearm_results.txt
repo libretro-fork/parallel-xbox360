@@ -1,0 +1,109 @@
+Fixed resolve-watch rearm handoff
+===============================
+
+Replace the shared Vulkan/D3D12 pair of std::vector<pair<uint32,uint32>> queues
+with two MSVC C89 page bitmaps. Reuse the existing memexport page-union/cursor
+algorithms instead of creating a second range collector. Tested x64 owner size
+is 32816 bytes. Each bitmap covers the entire 512 MiB physical aperture, so no
+assumption about 4096 owners or pending-range count is needed. Evicted owners,
+reused destination keys, duplicates and arbitrary pending-range counts remain
+representable. Initialization/reset clears both maps; normal finish clears only
+the detached map's touched word interval. No allocation/failure fallback exists.
+
+The fault lock protects marking and detach. At submission, pointer exchange
+hands the GPU thread an immutable borrowed bitmap and sends later faults into
+the empty second map. Existing owner rearm flags clear under that same lock.
+The GPU iterates contiguous page runs directly, outside the fault lock, and
+calls Memory::EnablePhysicalMemoryAccessCallbacks(base,size,false,true).
+Finish invalidates the cursor lease and clears only its detached map. It never
+clears the new pending batch. No bitmap/record list/guest payload is copied for
+handoff. A second detach while borrowed rejects without changing either batch.
+Reset remains after callback unregister/drain, and native submission/shutdown
+ordering is unchanged. This is not a claim that the fault lock was removed.
+
+Why page union is valid
+-----------------------
+The existing Memory API documents system-page snapping. PhysicalHeap's
+EnableAccessCallbacks first clips to its physical alias, then snaps to system
+pages. All current physical offsets/host offsets/heap extents are 4096-aligned;
+supported host pages are 4096 bytes or larger. Expanding a guest range to 4096-byte
+pages and merging only adjacent/overlapping pages therefore preserves the exact
+union of system pages touched. It does not bridge an unrequested guest-page gap.
+Tests model actual A/C/E/7F alias offsets/extents with 4/16/64 KiB host pages,
+including E's physical 4096 offset and host 4096 offset and 7F's shorter zero-based
+aperture. Page access/protection checks remain in the original native method.
+
+Rearm calls now occur in ascending page order, and duplicates/adjacent ranges
+coalesce. Exact old call counts/order are intentionally not retained. The same
+pending page coverage is rearmed after submission; fewer duplicate calls can
+avoid rearming a watch again after a concurrent fault already consumed it. A
+fault during drain that needs another arm marks the new pending bitmap. The
+thread fixture verifies that those marks survive finish. Existing completion
+and fault-owner correctness still govern whether a copy can happen.
+
+Tradeoffs
+---------
+The old vectors retained high-water capacity and did not allocate every batch.
+This removes their initial/growth allocations even when new mid-game destinations
+or many orphaned ranges exceed the previous high-water mark. Fixed 32 KiB costs
+more at low occupancy. Marking, union iteration and clearing add CPU work relative
+to a tiny vector, especially scattered ranges. Repeated/adjacent ranges can avoid
+many native Memory calls, each of which visits four aliases and their existing
+global locking/protection code. No native protection, gameplay, FPS, RSS or GPU
+roundtrip reduction is measured here. Necessary guest readback copies remain.
+
+Validation
+----------
+- Strict MinGW C89 and MSVC /TC /O2 /W4 /WX leaf: poisoned cold state, empty/invalid
+  ranges, duplicate/unaligned boundaries, truncated end-of-aperture/UINT32_MAX,
+  full-aperture coverage, 8193 simultaneously disjoint pending ranges, 1000 drains
+  interleaved with next-batch marks, reset with a borrowed view, repeated reuse
+  and 12 physical-alias/host-page configurations against independent byte flags.
+- Actual legacy vector reference: 1000 exact page-union snapshots, including 50000
+  next-batch marks while an older batch is borrowed. Legacy containers are only
+  in this offline reference; production storage/algorithms/leaf are C89.
+- Real libretro-common rthreads/retro_atomic fixture: 2000 detached leases with
+  256000 concurrent next-batch marks. Consumer verifies every old page while the
+  producer writes the other map, including while finish clears the borrowed map.
+  Phase gates exist only in the fixture. Both MinGW and native MSVC pass.
+- MSVC AddressSanitizer leaf + full legacy reference --check pass. No TSan/Linux
+  sanitizer claim: current WSL has no distro. Remote CI results unobserved.
+- Actual Vulkan/D3D12 command processors compile with MSVC, full Windows static
+  Make-j5 rebuild/link passes. No emulator/game/GPU/JIT launched, no installed
+  core overwritten. New leaf/reference/thread tests gate Linux/Windows builds.
+
+Reproduce
+---------
+sh tools/tests/run_resolve_rearm_tests.sh
+sh tools/tests/run_resolve_rearm_reference_tests.sh --check
+sh tools/tests/run_resolve_rearm_threads_tests.sh
+MSVC developer prompt: corresponding .cmd files.
+MinGW without ASan/UBSan runtimes: SANITIZER= for leaf/thread scripts.
+MSVC ASan: /fsanitize=address /Zi /MD on leaf and reference, reference --check.
+
+CPU experiment limits
+---------------------
+Reference without --check runs 7 interleaved paired medians, 500 warmed batches.
+Timed vectors use the standard allocator; an independent counting-allocator pass
+records cold/warm allocations. Both vectors are primed before timing. A noinline
+call proxy records address/size/count with no native memory protection/locking.
+It greatly understates the cost of real Memory calls. Do not convert its timing
+ratios into native watch or gameplay speedups. Sparse128 has the same number of
+calls and slower bitmap metadata; dense/duplicate4096 coalesces 4096 calls to 1 per
+batch. GCC metadata can still be slower despite coalescing because the proxy is
+so cheap. This exposes costs rather than claiming a universal improvement.
+
+MinGW GCC 16.2 /O2:
+Rearm legacy vectors: 1000 exact page-union snapshots and 50000 next-batch marks pass
+7 interleaved medians; 500 batches, warm capacity; noinline call proxy only, no native watches/GPU. Standard allocator timings; separate allocation trace.
+adjacent4096: vector 3.752 ms, bitmap 4.396 ms (0.85x), calls 2048000 -> 500; separate cold allocations 26, warm 0; fixed 32816 bytes
+sparse128: vector 0.120 ms, bitmap 0.805 ms (0.15x), calls 64000 -> 64000; separate cold allocations 16, warm 0; fixed 32816 bytes
+duplicate4096: vector 3.740 ms, bitmap 4.112 ms (0.91x), calls 2048000 -> 500; separate cold allocations 26, warm 0; fixed 32816 bytes
+
+MSVC 19.44 /O2:
+core_resolve_rearm_reference.cc
+Rearm legacy vectors: 1000 exact page-union snapshots and 50000 next-batch marks pass
+7 interleaved medians; 500 batches, warm capacity; noinline call proxy only, no native watches/GPU. Standard allocator timings; separate allocation trace.
+adjacent4096: vector 7.753 ms, bitmap 4.387 ms (1.77x), calls 2048000 -> 500; separate cold allocations 44, warm 0; fixed 32816 bytes
+sparse128: vector 0.230 ms, bitmap 1.005 ms (0.23x), calls 64000 -> 64000; separate cold allocations 26, warm 0; fixed 32816 bytes
+duplicate4096: vector 7.744 ms, bitmap 4.095 ms (1.89x), calls 2048000 -> 500; separate cold allocations 44, warm 0; fixed 32816 bytes

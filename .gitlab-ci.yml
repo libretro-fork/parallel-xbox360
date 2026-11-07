@@ -49,6 +49,9 @@ default:
     - sh tools/tests/run_resolve_owners_reference_tests.sh --check
     - sh tools/tests/run_resolve_recent_tests.sh
     - sh tools/tests/run_resolve_recent_reference_tests.sh --check
+    - sh tools/tests/run_resolve_rearm_tests.sh
+    - sh tools/tests/run_resolve_rearm_reference_tests.sh --check
+    - sh tools/tests/run_resolve_rearm_threads_tests.sh
     - make -j "$NUMPROC" platform=linux-$(uname -m) BUILD_DIR="$BUILD_DIR" HOST_CC="$CC" AR=ar
     - strip --strip-unneeded "$LIBNAME"
 

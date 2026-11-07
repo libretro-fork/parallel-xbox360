@@ -35,6 +35,7 @@
 #include "libretro/core_resolve_readback.h"
 #include "libretro/core_resolve_owners.h"
 #include "libretro/core_resolve_recent.h"
+#include "libretro/core_resolve_rearm.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/hash.h"
 #include "xenia/base/logging.h"

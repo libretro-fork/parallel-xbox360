@@ -52,6 +52,9 @@ jobs:
           sh tools/tests/run_resolve_owners_reference_tests.sh --check
           sh tools/tests/run_resolve_recent_tests.sh
           sh tools/tests/run_resolve_recent_reference_tests.sh --check
+          sh tools/tests/run_resolve_rearm_tests.sh
+          sh tools/tests/run_resolve_rearm_reference_tests.sh --check
+          sh tools/tests/run_resolve_rearm_threads_tests.sh
 
       - name: Build
         env:
@@ -86,7 +89,7 @@ jobs:
         run: |
           $env:XE_VS_PATH = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (!$env:XE_VS_PATH) { throw 'MSVC installation not found' }
-          & cmd /d /c 'call "%XE_VS_PATH%\VC\Auxiliary\Build\vcvars64.bat" && call tools\tests\run_pe_tests.cmd && call tools\tests\run_resolve_owners_tests.cmd && call tools\tests\run_resolve_owners_reference_tests.cmd --check && call tools\tests\run_resolve_recent_tests.cmd && call tools\tests\run_resolve_recent_reference_tests.cmd --check && cmake -S . -B build/windows-native -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl && cmake --build build/windows-native --target xenia-libretro --parallel'
+          & cmd /d /c 'call "%XE_VS_PATH%\VC\Auxiliary\Build\vcvars64.bat" && call tools\tests\run_pe_tests.cmd && call tools\tests\run_resolve_owners_tests.cmd && call tools\tests\run_resolve_owners_reference_tests.cmd --check && call tools\tests\run_resolve_recent_tests.cmd && call tools\tests\run_resolve_recent_reference_tests.cmd --check && call tools\tests\run_resolve_rearm_tests.cmd && call tools\tests\run_resolve_rearm_reference_tests.cmd --check && call tools\tests\run_resolve_rearm_threads_tests.cmd && cmake -S . -B build/windows-native -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl && cmake --build build/windows-native --target xenia-libretro --parallel'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Collect

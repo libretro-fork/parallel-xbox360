@@ -20,9 +20,10 @@
 // memory_ (Memory*), texture_cache_, xenia/memory.h (VirtualHeap,
 // IsWritableProtect), xenia/base/assert.h, xenia/base/logging.h,
 // xenia/gpu/draw_util.h, xenia/gpu/registers.h, the C89
-// core_resolve_readback.h/core_resolve_owners.h/core_resolve_recent.h declarations,
+// core_resolve_readback.h/core_resolve_owners.h/core_resolve_recent.h/
+// core_resolve_rearm.h declarations,
 // and <algorithm>
-// <cstring> <memory> <mutex> <unordered_set> <vector>. No
+// <cstring> <memory> <mutex> <unordered_set>. No
 // include guard: injected into a class body.
 //
 // It must also define, before including this:
@@ -340,20 +341,21 @@ void SubmitRequestedResolve() {
 // them used up are armed again.
 void OnResolveSubmissionEnded() {
   resolve_unsubmitted_owner_ = false;
+  xe_memexport_cursor cursor;
   {
     std::lock_guard<std::mutex> lock(resolve_read_mutex_);
-    if (resolve_rearm_ranges_.empty()) {
+    if (!xe_resolve_rearm_begin(&resolve_rearm_, &cursor)) {
       return;
     }
-    resolve_rearm_ranges_.swap(resolve_rearming_ranges_);
     xe_resolve_owners_clear_rearm(&resolve_owners_);
   }
   // Outside resolve_read_mutex_, as this takes the global lock.
-  for (const auto& range : resolve_rearming_ranges_) {
-    memory_->EnablePhysicalMemoryAccessCallbacks(range.first, range.second,
+  xe_memexport_run range;
+  while (xe_memexport_next(&cursor, &range)) {
+    memory_->EnablePhysicalMemoryAccessCallbacks(range.base, range.size,
                                                  false, true);
   }
-  resolve_rearming_ranges_.clear();
+  xe_resolve_rearm_finish(&resolve_rearm_);
 }
 
 // Before the guest can learn the GPU got past a resolve, the resolve has to be
@@ -490,7 +492,7 @@ void ResetResolveReadWatch() {
   }
   resolve_unsubmitted_owner_ = false;
   resolve_submit_requested_ = false;
-  resolve_rearm_ranges_.clear();
+  xe_resolve_rearm_reset(&resolve_rearm_);
   xe_resolve_recent_reset(&resolve_read_frames_);
 }
 
@@ -512,8 +514,8 @@ xe_resolve_owners_storage resolve_owners_;
 // Under resolve_read_mutex_.
 void RearmResolveAfterSubmission(ResolveOwner& owner) {
   if (!owner.rearm_pending) {
-    owner.rearm_pending = true;
-    resolve_rearm_ranges_.emplace_back(owner.address, owner.length);
+    owner.rearm_pending = xe_resolve_rearm_mark(
+        &resolve_rearm_, owner.address, owner.length) != 0;
   }
 }
 // Under resolve_read_mutex_, when a write to pages [first_page, last_page] goes
@@ -531,11 +533,10 @@ void ClipResolveEdgePagesWritten(ResolveOwner& owner, uint32_t owner_first_page,
     owner.clip_last_page = true;
   }
 }
-// Owners whose watch a read used up before they could be copied, to arm again
-// when the next submission ends. Under resolve_read_mutex_, and the GPU
-// thread's copy of them.
-std::vector<std::pair<uint32_t, uint32_t>> resolve_rearm_ranges_;
-std::vector<std::pair<uint32_t, uint32_t>> resolve_rearming_ranges_;
+// Pages whose watches an access consumed before copying could finish. The
+// fault lock protects pending marks and detachment. The GPU thread borrows
+// the detached bitmap until finish; later faults mark the other bitmap.
+xe_resolve_rearm_storage resolve_rearm_;
 // Frame the CPU last read each destination's output, by resolve key. GPU thread
 // only.
 xe_resolve_recent_storage resolve_read_frames_;
