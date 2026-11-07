@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Added exclusive XMA owner checkpoints covering raw codec history, pending PCM and loop/enable/allocation flags. A prepare phase creates the replacement codec without mutating live state; commit adopts it and consumes borrowed PCM before releasing old resources. Unopened owners restore explicitly, malformed inputs and stale stages reject, and discard is idempotent. Real-stream replay, native MSVC and scoped ASan checks pass. Codec allocation is confined to state preparation, and normal audio scheduling is unchanged; complete libretro savestates remain unfinished.
+
 - XMA frame assembly now borrows compressed packet spans instead of clearing and gathering two complete payloads into an intermediate array. Split headers read only their required bytes; the selected frame is copied once to its existing codec-owned packet. Tested MinGW x64 context size falls by 4 KiB including alignment. Offline real-stream PCM is unchanged across 24 ring/refill configurations; C89 bit-oracle and native ASan checks pass. Audio scheduling and required FFmpeg padding are unchanged.
 
 - Added a borrowed raw-XMA history checkpoint for future savestates. Restore validates configuration and both channel spans before copying history into initialized codec storage; opaque FFmpeg pointers are never serialized. This adds no work to normal decode or playback scheduling. Native C89/ASan and MinGW fixtures cover nonzero-overlap continuation and rejected-state nonmutation; full libretro savestates remain unavailable.

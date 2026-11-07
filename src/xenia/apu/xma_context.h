@@ -219,8 +219,8 @@ class XmaContext {
 
   uint32_t id() { return id_; }
   uint32_t guest_ptr() { return guest_ptr_; }
-  bool is_allocated() { return retro_atomic_load_acquire_int(&is_allocated_); }
-  bool is_enabled() { return retro_atomic_load_acquire_int(&is_enabled_); }
+  bool is_allocated() const { return retro_atomic_load_acquire_int(&is_allocated_); }
+  bool is_enabled() const { return retro_atomic_load_acquire_int(&is_enabled_); }
 
   void set_is_allocated(bool is_allocated) {
     retro_atomic_store_release_int(&is_allocated_, is_allocated);

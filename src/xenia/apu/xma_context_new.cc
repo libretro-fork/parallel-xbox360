@@ -80,6 +80,107 @@ int XmaContextNew::Setup(uint32_t id, Memory* memory, uint32_t guest_ptr) {
   return 0;
 }
 
+bool XmaContextNew::CaptureState(xe_xma_owner_view* out) const {
+  xe_xma_owner_view view = {};
+  uint32_t offset, bytes;
+  if (!out || !av_context_ || !av_packet_ || !av_frame_) return false;
+  view.state.version = 1;
+  view.state.id = id_;
+  view.state.guest_ptr = guest_ptr_;
+  view.state.allocated = is_allocated();
+  view.state.enabled = is_enabled();
+  view.state.pending_blocks = current_frame_remaining_subframes_;
+  view.state.loop_limit = loop_frame_output_limit_;
+  view.state.loop_start_pending = loop_start_skip_pending_;
+  if (avcodec_is_open(av_context_)) {
+    if (!ff_xmaframes_checkpoint_view(av_context_, &view.codec)) return false;
+    view.state.rate = view.codec.state.rate;
+    view.state.channels = view.codec.state.channels;
+  } else if (av_context_->sample_rate || av_context_->ch_layout.nb_channels) {
+    // A failed/partially configured codec is not a canonical cold owner.
+    return false;
+  }
+  if (!xe_xma_owner_layout(&view.state, &offset, &bytes)) return false;
+  view.pcm = bytes ? raw_frame_.data() + offset : nullptr;
+  view.pcm_bytes = bytes;
+  *out = view;
+  return true;
+}
+
+bool XmaContextNew::PrepareState(const xe_xma_owner_view* source,
+                                 xe_xma_owner_stage* stage) const {
+  xe_xma_owner_view view;
+  xe_xma_owner_stage prepared = {};
+  AVCodecContext* candidate;
+  uint32_t offset, bytes;
+  if (!source || !stage || stage->candidate || stage->owner ||
+      !av_context_ || !av_codec_ || !av_packet_ || !av_frame_) return false;
+  view = *source;
+  if (!xe_xma_owner_plan(&view, id_, guest_ptr_, &offset, &bytes)) return false;
+  candidate = avcodec_alloc_context3(av_codec_);
+  if (!candidate) return false;
+  if (view.state.rate) {
+    candidate->sample_rate = view.state.rate;
+    av_channel_layout_default(&candidate->ch_layout, view.state.channels);
+    candidate->flags2 |= AV_CODEC_FLAG2_SKIP_MANUAL;
+    if (view.codec.state.bit_exact) candidate->flags |= AV_CODEC_FLAG_BITEXACT;
+    if (avcodec_open2(candidate, av_codec_, nullptr) < 0 ||
+        !ff_xmaframes_checkpoint_apply(candidate, &view.codec)) {
+      avcodec_free_context(&candidate);
+      return false;
+    }
+  }
+  prepared.state = view.state;
+  prepared.pcm = view.pcm;
+  prepared.pcm_bytes = bytes;
+  prepared.candidate = candidate;
+  prepared.owner = this;
+  prepared.previous = av_context_;
+  *stage = prepared;
+  return true;
+}
+
+bool XmaContextNew::CommitState(xe_xma_owner_stage* stage) {
+  AVCodecContext* previous;
+  uint32_t offset, bytes;
+  if (!stage || stage->owner != this || !stage->candidate ||
+      stage->previous != av_context_ || stage->state.id != id_ ||
+      stage->state.guest_ptr != guest_ptr_ ||
+      !xe_xma_owner_layout(&stage->state, &offset, &bytes) ||
+      stage->pcm_bytes != bytes || (!!stage->pcm != !!bytes) ||
+      (bytes && (uintptr_t)stage->pcm > UINTPTR_MAX - bytes) ||
+      stage->candidate == av_context_) return false;
+  if (stage->state.rate) {
+    if (!avcodec_is_open(stage->candidate) ||
+        stage->candidate->sample_rate != (int)stage->state.rate ||
+        stage->candidate->ch_layout.nb_channels != (int)stage->state.channels)
+      return false;
+  } else if (avcodec_is_open(stage->candidate) ||
+             stage->candidate->sample_rate ||
+             stage->candidate->ch_layout.nb_channels) return false;
+  // Consume borrowed PCM before freeing any old codec or frame backing.
+  // Codec history already resides in the candidate's final storage.
+  if (bytes) memmove(raw_frame_.data() + offset, stage->pcm, bytes);
+  previous = av_context_;
+  av_context_ = stage->candidate;
+  current_frame_remaining_subframes_ = stage->state.pending_blocks;
+  loop_frame_output_limit_ = stage->state.loop_limit;
+  loop_start_skip_pending_ = stage->state.loop_start_pending != 0;
+  remaining_subframe_blocks_in_output_buffer_ = 0; // Recomputed by Work.
+  set_is_allocated(stage->state.allocated != 0);
+  set_is_enabled(stage->state.enabled != 0);
+  memset(stage, 0, sizeof(*stage));
+  av_frame_unref(av_frame_); // Old output is scratch; pending PCM is above.
+  avcodec_free_context(&previous);
+  return true;
+}
+
+void XmaContextNew::DiscardState(xe_xma_owner_stage* stage) {
+  if (!stage) return;
+  avcodec_free_context(&stage->candidate);
+  memset(stage, 0, sizeof(*stage));
+}
+
 RingBuffer XmaContextNew::PrepareOutputRingBuffer(XMA_CONTEXT_DATA* data) {
   const uint32_t output_capacity =
       data->output_buffer_block_count * kOutputBytesPerBlock;

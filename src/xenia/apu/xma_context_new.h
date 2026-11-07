@@ -13,6 +13,7 @@
 #include <array>
 
 #include "xenia/apu/xma_context.h"
+#include "libretro/core_xma_owner_state.h"
 #include "xenia/base/bit_stream.h"
 #include "xenia/base/ring_buffer.h"
 #include "xenia/memory.h"
@@ -63,6 +64,14 @@ class XmaContextNew : public XmaContext {
   void Clear();
   void Disable();
   void Release();
+
+  // Exclusive state owner only: pause worker AND synchronous guest callers.
+  // Views borrow storage. Prepare has no live-owner mutation; stage is noncopyable
+  // by contract and must be committed/discarded before either owner is destroyed.
+  bool CaptureState(xe_xma_owner_view* out) const;
+  bool PrepareState(const xe_xma_owner_view* view, xe_xma_owner_stage* stage) const;
+  bool CommitState(xe_xma_owner_stage* stage);
+  static void DiscardState(xe_xma_owner_stage* stage);
 
  private:
   friend struct XmaContextWritebackTest;

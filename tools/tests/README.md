@@ -1452,3 +1452,14 @@ input nonmutation. Set XMA_PAYLOAD_FLAGS=/fsanitize=address /Zi with a separate
 XMA_PAYLOAD_OUT for native ASan. Real-stream before/after evidence and ownership
 limits are documented in xma_payload_results.txt. The existing offline stream
 fixture is external and is not downloaded by these tests.
+
+XMA owner state replay
+----------------------
+`run_xma_owner_state_tests.sh` links matching current Make objects after a core
+build. Set XMA_INPUT_RAW to the local Title_Call.xma data chunk described in
+xma_stream_test.md. The C89 driver owns snapshot records and replay algorithms;
+the native bridge only exposes object, guest bitfield and resource lifetimes.
+`run_xma_owner_state_tests.cmd` links freshly built native libraries selected by
+XMA_OWNER_BUILD (default build/windows-native). Both runners require the external
+fixture and do not download it. See xma_owner_state_results.txt for exact native
+ASan scope and preparation/commit contracts. These APIs do not enable savestates.

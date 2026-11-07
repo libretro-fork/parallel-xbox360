@@ -1,0 +1,82 @@
+Exclusive XMA owner checkpoint (0161)
+====================================
+The new raw XMA owner exposes CaptureState, PrepareState, CommitState and
+DiscardState. They are for an exclusive state owner: both the asynchronous XMA
+worker AND every synchronous guest/control caller must remain quiescent. No
+new mutex, worker, timer or ordinary decode-path work is introduced. The existing
+context locks and normal guest audio schedule are not changed by these methods.
+
+C89 metadata/planning validates the slot identity, guest context address, codec
+profile, flags, pending block count and borrowed PCM interval. Persistent owner
+metadata is 40 bytes; codec scalar metadata and overlap history are separate.
+An unopened codec has an explicit zero profile/history representation. Failed or
+partially configured unopened codecs are rejected rather than silently normalized.
+A view is ephemeral and contains host pointers; never serialize the whole view.
+
+Only pending PCM blocks are borrowed, at their existing offset in raw_frame_.
+The guest 64-byte context and input/output rings belong to the global RAM state.
+remaining_subframe_blocks_in_output_buffer_ is recomputed at the next Work call.
+Compressed packet assembly, prior AVFrame output and codec parsing scratch are
+not carried across the Work boundary and are not serialized as owner state.
+
+Prepare allocates/opens an independent candidate codec and copies history directly
+into its final storage. This is a cold state operation, NOT allocation-free state
+restoration or normal per-frame allocation. It prepares both matching and cold
+unopened owner phases; allocation/open/validation failure frees the candidate and
+leaves the live owner and output stage untouched. Candidate resources must be
+prepared for every component before a future global restore mutates live RAM.
+
+Commit verifies the owner, current codec identity and candidate profile before
+mutation, consumes borrowed pending PCM (memmove permits self-borrow), adopts the
+already populated candidate and releases the old codec/frame output. The stage is
+consumed/zeroed. Discard releases a candidate and is idempotent. Stages are owned,
+noncopyable-by-contract native resource handles, NOT wire records. An owner and
+its source PCM must outlive its stage; there is no promise of concurrent mutation
+or stale-handle detection across an owner's destruction/address reuse. The caller
+must provide valid immutable native spans, normally from a separately bounds-
+validated state buffer. Pointer shape checks cannot validate arbitrary memory.
+
+Executed Windows x64 coverage:
+- full current static GNU Make -j5 succeeds.
+- full current native MSVC CMake xenia-libretro build succeeds with --parallel 5.
+- strict GNU C89 driver (-pedantic -Wall -Wextra -Werror) links actual current
+  core objects; native MSVC /TC /W4 /WX driver links fresh native core libraries.
+- nine real Title_Call.xma owner replays: output rings of 9/13/17 blocks and
+  decode quanta 1/2/4. Five checkpoints hold partially consumed converted PCM.
+  A 96-step stereo consumer produces byte-identical future PCM after snapshot
+  restoration, and after restoring the initial unopened owner and guest RAM.
+- malformed metadata/configuration/second-channel history/PCM size reject without
+  mutating live owner state, history or pending PCM. Failed preparation leaves
+  the output stage empty. Wrong owner, double preparation/commit, stale competing
+  preparations and repeated discard exercise resource-handle ownership.
+- nonzero loop limit/start flag and allocated/enabled flags survive restore.
+  This checks their state representation, not every real game's loop behavior.
+- native MSVC ASan instruments the actual xma_context_new.cc override object,
+  C89 driver and native fixture bridge. All nine replay cases pass. C++ string/
+  vector annotations are disabled consistently for these instrumented objects to
+  match ordinary native libraries; address instrumentation remains enabled.
+  Other core/FFmpeg/guest-mapped-memory code is NOT fully ASan-instrumented;
+  there is no broad leak-freedom or arbitrary mapped-memory corruption claim.
+
+The external coefficient-bearing fixture is not distributed and is not fetched
+by a test. See xma_stream_test.md. No frontend, GPU device or guest CPU/JIT is
+started and no installed core is replaced. Native fixtures use only Memory and
+XmaContextNew. No gameplay performance/audio-cadence gain is inferred.
+
+Unfinished scope: XmaDecoder register/bitmap/320-owner orchestration, old/master/
+fake decoder modes, media/mixer/client/cadence queues, GPU state and full CPU/IO/
+timer/frontend-clock quiescence must be captured and restored transactionally
+before enabling retro_serialize/retro_unserialize. They remain disabled.
+
+Reproduce after the matching core build:
+ XMA_INPUT_RAW=<Title_Call data> CC=gcc CXX=g++ sh tools/tests/run_xma_owner_state_tests.sh
+Native VS prompt:
+ set XMA_INPUT_RAW=<Title_Call data>
+ set XMA_OWNER_BUILD=build\tests\state-control-cmake
+ tools\tests\run_xma_owner_state_tests.cmd
+ASan: compile xma_context_new.cc with its generated CMake command, removing /GL,
+adding /fsanitize=address /Zi /D_DISABLE_VECTOR_ANNOTATION /D_DISABLE_STRING_ANNOTATION,
+and using separate /Fo and /Fd outputs. Set XMA_OWNER_OBJECT to that object,
+XMA_OWNER_FLAGS to the same instrumentation/annotation flags, and a separate
+XMA_OWNER_OUT, then run the native fixture. Never mix unmatched class/atomic ABIs
+or edit inputs while a build using them is live.
