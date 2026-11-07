@@ -97,7 +97,7 @@ VulkanCommandProcessor::VulkanCommandProcessor(
                                graphics_system->provider())
                                ->vulkan_device(),
                            "cp"),
-      deferred_command_buffer_(*this),
+      deferred_command_buffer_(),
       transient_descriptor_allocator_uniform_buffer_(
           static_cast<const ui::vulkan::VulkanProvider*>(
               graphics_system->provider())
@@ -2608,56 +2608,9 @@ bool VulkanCommandProcessor::PushBufferMemoryBarrier(
     VkAccessFlags src_access_mask, VkAccessFlags dst_access_mask,
     uint32_t src_queue_family_index, uint32_t dst_queue_family_index,
     bool skip_if_equal) {
-  if (skip_if_equal && src_stage_mask == dst_stage_mask &&
-      src_access_mask == dst_access_mask &&
-      src_queue_family_index == dst_queue_family_index) {
-    return false;
-  }
-
-  // Separate different barriers for overlapping buffer ranges into different
-  // pipeline barrier commands.
-  for (const VkBufferMemoryBarrier& other_buffer_memory_barrier :
-       pending_barriers_buffer_memory_barriers_) {
-    if (other_buffer_memory_barrier.buffer != buffer ||
-        (size != VK_WHOLE_SIZE &&
-         offset + size <= other_buffer_memory_barrier.offset) ||
-        (other_buffer_memory_barrier.size != VK_WHOLE_SIZE &&
-         other_buffer_memory_barrier.offset +
-                 other_buffer_memory_barrier.size <=
-             offset)) {
-      continue;
-    }
-    if (other_buffer_memory_barrier.offset == offset &&
-        other_buffer_memory_barrier.size == size &&
-        other_buffer_memory_barrier.srcAccessMask == src_access_mask &&
-        other_buffer_memory_barrier.dstAccessMask == dst_access_mask &&
-        other_buffer_memory_barrier.srcQueueFamilyIndex ==
-            src_queue_family_index &&
-        other_buffer_memory_barrier.dstQueueFamilyIndex ==
-            dst_queue_family_index) {
-      // The barrier is already pending.
-      current_pending_barrier_.src_stage_mask |= src_stage_mask;
-      current_pending_barrier_.dst_stage_mask |= dst_stage_mask;
-      return true;
-    }
-    SplitPendingBarrier();
-    break;
-  }
-
-  current_pending_barrier_.src_stage_mask |= src_stage_mask;
-  current_pending_barrier_.dst_stage_mask |= dst_stage_mask;
-  VkBufferMemoryBarrier& buffer_memory_barrier =
-      pending_barriers_buffer_memory_barriers_.emplace_back();
-  buffer_memory_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-  buffer_memory_barrier.pNext = nullptr;
-  buffer_memory_barrier.srcAccessMask = src_access_mask;
-  buffer_memory_barrier.dstAccessMask = dst_access_mask;
-  buffer_memory_barrier.srcQueueFamilyIndex = src_queue_family_index;
-  buffer_memory_barrier.dstQueueFamilyIndex = dst_queue_family_index;
-  buffer_memory_barrier.buffer = buffer;
-  buffer_memory_barrier.offset = offset;
-  buffer_memory_barrier.size = size;
-  return true;
+  return deferred_command_buffer_.PushBufferMemoryBarrier(buffer, offset, size,
+      src_stage_mask, dst_stage_mask, src_access_mask, dst_access_mask,
+      src_queue_family_index, dst_queue_family_index, skip_if_equal);
 }
 
 bool VulkanCommandProcessor::PushImageMemoryBarrier(
@@ -2667,120 +2620,19 @@ bool VulkanCommandProcessor::PushImageMemoryBarrier(
     VkImageLayout old_layout, VkImageLayout new_layout,
     uint32_t src_queue_family_index, uint32_t dst_queue_family_index,
     bool skip_if_equal) {
-  if (skip_if_equal && src_stage_mask == dst_stage_mask &&
-      src_access_mask == dst_access_mask && old_layout == new_layout &&
-      src_queue_family_index == dst_queue_family_index) {
-    return false;
-  }
-
-  // Separate different barriers for overlapping image subresource ranges into
-  // different pipeline barrier commands.
-  for (const VkImageMemoryBarrier& other_image_memory_barrier :
-       pending_barriers_image_memory_barriers_) {
-    if (other_image_memory_barrier.image != image ||
-        !(other_image_memory_barrier.subresourceRange.aspectMask &
-          subresource_range.aspectMask) ||
-        (subresource_range.levelCount != VK_REMAINING_MIP_LEVELS &&
-         subresource_range.baseMipLevel + subresource_range.levelCount <=
-             other_image_memory_barrier.subresourceRange.baseMipLevel) ||
-        (other_image_memory_barrier.subresourceRange.levelCount !=
-             VK_REMAINING_MIP_LEVELS &&
-         other_image_memory_barrier.subresourceRange.baseMipLevel +
-                 other_image_memory_barrier.subresourceRange.levelCount <=
-             subresource_range.baseMipLevel) ||
-        (subresource_range.layerCount != VK_REMAINING_ARRAY_LAYERS &&
-         subresource_range.baseArrayLayer + subresource_range.layerCount <=
-             other_image_memory_barrier.subresourceRange.baseArrayLayer) ||
-        (other_image_memory_barrier.subresourceRange.layerCount !=
-             VK_REMAINING_ARRAY_LAYERS &&
-         other_image_memory_barrier.subresourceRange.baseArrayLayer +
-                 other_image_memory_barrier.subresourceRange.layerCount <=
-             subresource_range.baseArrayLayer)) {
-      continue;
-    }
-    if (other_image_memory_barrier.subresourceRange.aspectMask ==
-            subresource_range.aspectMask &&
-        other_image_memory_barrier.subresourceRange.baseMipLevel ==
-            subresource_range.baseMipLevel &&
-        other_image_memory_barrier.subresourceRange.levelCount ==
-            subresource_range.levelCount &&
-        other_image_memory_barrier.subresourceRange.baseArrayLayer ==
-            subresource_range.baseArrayLayer &&
-        other_image_memory_barrier.subresourceRange.layerCount ==
-            subresource_range.layerCount &&
-        other_image_memory_barrier.srcAccessMask == src_access_mask &&
-        other_image_memory_barrier.dstAccessMask == dst_access_mask &&
-        other_image_memory_barrier.oldLayout == old_layout &&
-        other_image_memory_barrier.newLayout == new_layout &&
-        other_image_memory_barrier.srcQueueFamilyIndex ==
-            src_queue_family_index &&
-        other_image_memory_barrier.dstQueueFamilyIndex ==
-            dst_queue_family_index) {
-      // The barrier is already pending.
-      current_pending_barrier_.src_stage_mask |= src_stage_mask;
-      current_pending_barrier_.dst_stage_mask |= dst_stage_mask;
-      return true;
-    }
-    SplitPendingBarrier();
-    break;
-  }
-
-  current_pending_barrier_.src_stage_mask |= src_stage_mask;
-  current_pending_barrier_.dst_stage_mask |= dst_stage_mask;
-  VkImageMemoryBarrier& image_memory_barrier =
-      pending_barriers_image_memory_barriers_.emplace_back();
-  image_memory_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  image_memory_barrier.pNext = nullptr;
-  image_memory_barrier.srcAccessMask = src_access_mask;
-  image_memory_barrier.dstAccessMask = dst_access_mask;
-  image_memory_barrier.oldLayout = old_layout;
-  image_memory_barrier.newLayout = new_layout;
-  image_memory_barrier.srcQueueFamilyIndex = src_queue_family_index;
-  image_memory_barrier.dstQueueFamilyIndex = dst_queue_family_index;
-  image_memory_barrier.image = image;
-  image_memory_barrier.subresourceRange = subresource_range;
-  return true;
+  return deferred_command_buffer_.PushImageMemoryBarrier(image, subresource_range,
+      src_stage_mask, dst_stage_mask, src_access_mask, dst_access_mask,
+      old_layout, new_layout, src_queue_family_index, dst_queue_family_index, skip_if_equal);
 }
 
 bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
   assert_true(submission_open_);
-  SplitPendingBarrier();
-  if (pending_barriers_.empty()) {
-    if (force_end_render_pass) {
-      EndRenderPass();
-    }
+  if (!deferred_command_buffer_.HasPendingBarriers()) {
+    if (force_end_render_pass) EndRenderPass();
     return false;
   }
   EndRenderPass();
-  for (auto it = pending_barriers_.cbegin(); it != pending_barriers_.cend();
-       ++it) {
-    auto it_next = std::next(it);
-    bool is_last = it_next == pending_barriers_.cend();
-    // .data() + offset, not &[offset], for buffer and image barriers, because
-    // if there are no buffer or image memory barriers in the last pipeline
-    // barriers, the offsets may be equal to the sizes of the vectors.
-    deferred_command_buffer_.CmdVkPipelineBarrier(
-        it->src_stage_mask ? it->src_stage_mask
-                           : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        it->dst_stage_mask ? it->dst_stage_mask
-                           : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-        0, 0, nullptr,
-        uint32_t((is_last ? pending_barriers_buffer_memory_barriers_.size()
-                          : it_next->buffer_memory_barriers_offset) -
-                 it->buffer_memory_barriers_offset),
-        pending_barriers_buffer_memory_barriers_.data() +
-            it->buffer_memory_barriers_offset,
-        uint32_t((is_last ? pending_barriers_image_memory_barriers_.size()
-                          : it_next->image_memory_barriers_offset) -
-                 it->image_memory_barriers_offset),
-        pending_barriers_image_memory_barriers_.data() +
-            it->image_memory_barriers_offset);
-  }
-  pending_barriers_.clear();
-  pending_barriers_buffer_memory_barriers_.clear();
-  pending_barriers_image_memory_barriers_.clear();
-  current_pending_barrier_.buffer_memory_barriers_offset = 0;
-  current_pending_barrier_.image_memory_barriers_offset = 0;
+  deferred_command_buffer_.SubmitBarriers();
   return true;
 }
 
@@ -5743,7 +5595,8 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
                               gpu_time_query_pool_, gpu_time_slot * 2);
     }
 
-    deferred_command_buffer_.Execute(command_buffer.buffer);
+    deferred_command_buffer_.Execute(command_buffer.buffer, dfn,
+        vulkan_device->vulkan_instance()->functions());
 
     // Record query resolves before submitting.
     if (host_query_pool_) {
@@ -5887,28 +5740,6 @@ void VulkanCommandProcessor::ClearTransientDescriptorPools() {
   transient_descriptor_allocator_storage_buffer_.Reset();
   transient_descriptor_allocator_storage_buffer_and_image_.Reset();
   transient_descriptor_allocator_uniform_buffer_.Reset();
-}
-
-void VulkanCommandProcessor::SplitPendingBarrier() {
-  size_t pending_buffer_memory_barrier_count =
-      pending_barriers_buffer_memory_barriers_.size();
-  size_t pending_image_memory_barrier_count =
-      pending_barriers_image_memory_barriers_.size();
-  if (!current_pending_barrier_.src_stage_mask &&
-      !current_pending_barrier_.dst_stage_mask &&
-      current_pending_barrier_.buffer_memory_barriers_offset >=
-          pending_buffer_memory_barrier_count &&
-      current_pending_barrier_.image_memory_barriers_offset >=
-          pending_image_memory_barrier_count) {
-    return;
-  }
-  pending_barriers_.emplace_back(current_pending_barrier_);
-  current_pending_barrier_.src_stage_mask = 0;
-  current_pending_barrier_.dst_stage_mask = 0;
-  current_pending_barrier_.buffer_memory_barriers_offset =
-      pending_buffer_memory_barrier_count;
-  current_pending_barrier_.image_memory_barriers_offset =
-      pending_image_memory_barrier_count;
 }
 
 void VulkanCommandProcessor::DestroyScratchBuffer() {

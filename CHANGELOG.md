@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan pending barriers now construct in retained C89 pages and replay borrowed native arrays, removing three vectors and their intermediate copies. Deduplication no longer skips repeated transitions across dependency groups. Existing flush, render-pass and reset lifetimes remain. Page boundaries can add conservative barrier commands, and higher demand can still allocate. Offline native/sanitizer checks pass; GPU and gameplay performance remain unmeasured.
+
 - Removed the D3D12 command processor's growing barrier vector. Barriers construct in their retained replay storage and deferred packets borrow their spans, removing the intermediate array copy. Ordering, cancellation, retry ownership and out-of-submission pending rows are preserved. Pipeline-handle lookup no longer needs a command-processor reference. Native/MSVC ASan and MinGW mock replay checks pass; GPU/frametime gains remain unmeasured, and new high-water pages may still allocate.
 
 - Fixed missing D3D12 ordering between overlapping scaled-resolve UAV writes. A bounded C89 table replaces the unread pending-write flag, keeps the existing state/alias transitions and permits independent footprints without an extra UAV barrier. Footprints include expanded tiled groups and binding-base phase. Offline byte-scoreboard, MSVC/ASan and backend compile checks pass; gameplay/GPU behavior still needs hardware validation.

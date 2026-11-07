@@ -1,0 +1,86 @@
+Vulkan retained pending barriers (2026-11-07)
+===========================================
+
+Scope and ownership
+-------------------
+Replaces the three CP vectors (buffer barriers, image barriers and groups) with
+MSVC C89 retained pages. Native records construct in their final arrays; a group
+records their pointer/count pairs. Deferred packets borrow stable group spans.
+The only metadata copy freezes one 32-byte x64 group; no native barrier array is
+copied. Other CmdVkPipelineBarrier callers still own temporary arrays and keep
+the original copy-owning API, including global VkMemoryBarrier dependencies.
+
+Publication stays at SubmitBarriers, after EndRenderPass. Push does not insert
+an early command. Main packets are discarded before page reuse at Reset;
+pending records queued outside a submission prevent reuse. Already published
+native/group rows remain immutable through CPU replay. GPU completion need not
+retain these CPU argument arrays after native command recording returns.
+Destructor/failed construction release all pages. No locks, atomics, background
+workers, release instrumentation or pixel transfer paths are added.
+
+The deferred recorder now receives existing device/instance function tables at
+Execute rather than retaining the CP. This permits CPU-only native API mocks,
+without constructing a fake emulator/device or calling a Vulkan driver.
+
+Ordering correction
+-------------------
+Legacy deduplication searched every historical group, then merged stage masks
+into the current group. A->B->A could therefore omit the last transition after
+B had invalidated the first A. Deduplication now inspects only the current group.
+Overlapping unequal buffer ranges or image subresources close that group.
+Disjoint current ranges can share it even if they overlap an earlier group:
+the directed wide-range then two adjacent narrow-range fixture needs two groups,
+instead of the legacy search's three. Stages, access masks, layouts, queue-family
+indices and native resource/subresource fields remain intact. Subtraction-based
+overlap checks handle WHOLE_SIZE/REMAINING_* without end-address overflow.
+
+Pages bound contiguous native arrays. A full native page closes the current
+group before appending into another page. This can ADD conservative native
+barrier calls, even for disjoint ranges; it does not drop a dependency. Required
+repeated transitions can also add calls versus the incorrect legacy dedup.
+No weakened synchronization or timing/FPS improvement is claimed. Design basis:
+https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdPipelineBarrier.html
+Each buffer/image record defines a separate memory dependency; outside a render
+pass, scopes cover earlier and later commands in submission order. These page
+splits contain no intervening action command and retain each record's supplied
+stage/access scopes. Hardware synchronization validation remains outstanding.
+
+Verification performed
+----------------------
+MSVC /TC /W4 /WX C89 tests and actual production deferred recorder into C89 API
+mocks: PASS. MSVC AddressSanitizer, including actual recorder: PASS. MinGW GCC
+strict C89 -pedantic and actual C++ recorder/C89 mocks: PASS. Native MSVC /Zs
+checks for VulkanCommandProcessor and DeferredCommandBuffer: PASS.
+
+C89 tests cover 400000 retained native rows over 20 cycles, tiny page boundaries,
+1000000 scalar-reference overlap comparisons, sentinel/near-overflow ranges,
+A->B->A buffer/image transitions, independent aspects/mips/layers, stage unions,
+skip_if_equal, pointer identity, deferred lifetime after more appends,
+constructor/native-page/group-page faults, rejected publication with a committed
+prefix and retry, and refusal to reset pending rows. Nineteen warmed repeats
+perform no further storage allocation. Teardown balances every allocation.
+
+Actual production replay tests cover another 400265 native rows, 201063 native
+API calls, original row-page addresses at the API boundary, all consumed fields,
+delayed flush relative to a stencil marker, pending rows across Reset, original
+copy ownership for external stack arrays overwritten before replay, four cold
+constructor allocation failures, and packet-allocation failure after the first
+256-group span commits. Retry publishes only the two remaining groups. All API
+calls are C89 mocks; no Vulkan instance/device, RetroArch, game or JIT is started.
+
+Storage/tradeoffs and limits
+---------------------------
+Default cold native storage: 256 buffer rows (14336 B), 128 image rows (9216 B),
+256 group rows (8192 B), plus three 32 B x64 page headers = 31840 B. This is extra
+cold storage; the existing default 1 MiB command stream is unchanged. New
+high-water pages can still allocate during gameplay. Retained storage/RSS can
+increase at low occupancy, and the tiny test pages are not production sizes.
+Peak tracked test storage: 1540040 B portable leaf, 1638400 B including native
+replay fixture; zero live tracked bytes after teardown. These are allocation-hook
+measurements, NOT process RSS, VRAM, baseline comparisons or GPU measurements.
+
+Static Make, -j5: PASS (see journal for committed build/version verification).
+Remote CI, Linux/ARM execution, real GPU validation, gameplay and FPS are not
+claimed. Installed core and audio/runloop paths are untouched. Next candidates
+include redundant converted-resolve EDRAM traffic and scaled alias dependencies;
+4x Dark Souls II / RTX 5090 cost needs representative GPU measurements.

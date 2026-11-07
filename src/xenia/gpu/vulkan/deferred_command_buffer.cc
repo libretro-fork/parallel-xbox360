@@ -16,38 +16,81 @@
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
 #include "xenia/gpu/gpu_flags.h"
-#include "xenia/gpu/vulkan/vulkan_command_processor.h"
 #include "xenia/ui/vulkan/vulkan_instance.h"
 
 namespace xe {
 namespace gpu {
 namespace vulkan {
 
-DeferredCommandBuffer::DeferredCommandBuffer(
-    const VulkanCommandProcessor& command_processor, size_t initial_size)
-    : command_processor_(command_processor) {
+DeferredCommandBuffer::DeferredCommandBuffer(size_t initial_size) {
   size_t initial_bytes = (initial_size / sizeof(uintmax_t)) * sizeof(uintmax_t);
   if (!initial_bytes) initial_bytes = sizeof(uintmax_t);
-  if (!xe_command_stream_init(&command_stream_, initial_bytes)) {
+  if (!xe_command_stream_init(&command_stream_, initial_bytes) ||
+      !xe_vk_barriers_init(&barriers_, 256, 128, 256)) {
     throw std::bad_alloc();
   }
 }
 
-void DeferredCommandBuffer::Reset() { xe_command_stream_reset(&command_stream_); }
+void DeferredCommandBuffer::Reset() {
+  xe_command_stream_reset(&command_stream_);
+  xe_vk_barriers_reset(&barriers_);
+}
 
-void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
+bool DeferredCommandBuffer::PushBufferMemoryBarrier(
+    VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size,
+    VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage,
+    VkAccessFlags src_access, VkAccessFlags dst_access,
+    uint32_t src_queue, uint32_t dst_queue, bool skip_if_equal) {
+  int result = xe_vk_barriers_buffer(&barriers_, buffer, offset, size,
+      src_stage, dst_stage, src_access, dst_access, src_queue, dst_queue, skip_if_equal);
+  if (result < 0) throw std::bad_alloc();
+  return result != 0;
+}
+
+bool DeferredCommandBuffer::PushImageMemoryBarrier(
+    VkImage image, const VkImageSubresourceRange& range,
+    VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage,
+    VkAccessFlags src_access, VkAccessFlags dst_access,
+    VkImageLayout old_layout, VkImageLayout new_layout,
+    uint32_t src_queue, uint32_t dst_queue, bool skip_if_equal) {
+  int result = xe_vk_barriers_image(&barriers_, image, &range,
+      src_stage, dst_stage, src_access, dst_access, old_layout, new_layout,
+      src_queue, dst_queue, skip_if_equal);
+  if (result < 0) throw std::bad_alloc();
+  return result != 0;
+}
+
+int DeferredCommandBuffer::EmitBarrierGroups(void* context,
+                                            const xe_command_row_view* view) {
+  auto& self = *static_cast<DeferredCommandBuffer*>(context);
+  auto& args = *static_cast<ArgsBorrowedPipelineBarriers*>(self.WriteCommand(
+      Command::kBorrowedPipelineBarriers, sizeof(ArgsBorrowedPipelineBarriers)));
+  args.groups = static_cast<const xe_vk_barrier_group*>(view->data);
+  args.count = view->count;
+  return 1;
+}
+
+void DeferredCommandBuffer::SubmitBarriers() {
+  if (!xe_vk_barriers_submit(&barriers_, EmitBarrierGroups, this)) {
+    throw std::bad_alloc();
+  }
+}
+
+void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer,
+    const ui::vulkan::VulkanDevice::Functions& dfn,
+    const ui::vulkan::VulkanInstance::Functions& ifn) {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
   for (const xe_command_page* page = command_stream_.first; page; page = page->next) {
-    if (page->used) ExecutePage(command_buffer, page);
+    if (page->used) ExecutePage(command_buffer, page, dfn, ifn);
   }
 }
 
 void DeferredCommandBuffer::ExecutePage(VkCommandBuffer command_buffer,
-                                       const xe_command_page* page) {
-  const ui::vulkan::VulkanDevice::Functions& dfn =
-      command_processor_.GetVulkanDevice()->functions();
+    const xe_command_page* page,
+    const ui::vulkan::VulkanDevice::Functions& dfn,
+    const ui::vulkan::VulkanInstance::Functions& ifn) {
   const uintmax_t* stream = reinterpret_cast<const uintmax_t*>(
       xe_command_page_const_data(page));
   size_t stream_remaining = page->used / sizeof(uintmax_t);
@@ -305,6 +348,12 @@ void DeferredCommandBuffer::ExecutePage(VkCommandBuffer command_buffer,
         dfn.vkCmdEndRendering(command_buffer);
         break;
 
+      case Command::kBorrowedPipelineBarriers: {
+        const auto& args = *reinterpret_cast<const ArgsBorrowedPipelineBarriers*>(stream);
+        xe_vk_barrier_groups_execute(dfn.vkCmdPipelineBarrier, command_buffer,
+                                     args.groups, args.count);
+      } break;
+
       case Command::kVkPipelineBarrier: {
         auto& args = *reinterpret_cast<const ArgsVkPipelineBarrier*>(stream);
         size_t barrier_offset_bytes = sizeof(ArgsVkPipelineBarrier);
@@ -404,10 +453,6 @@ void DeferredCommandBuffer::ExecutePage(VkCommandBuffer command_buffer,
       } break;
 
       case Command::kVkBeginDebugUtilsLabelEXT: {
-        const ui::vulkan::VulkanInstance::Functions& ifn =
-            command_processor_.GetVulkanDevice()
-                ->vulkan_instance()
-                ->functions();
         if (ifn.vkCmdBeginDebugUtilsLabelEXT) {
           auto& args = *reinterpret_cast<const ArgsVkDebugUtilsLabel*>(stream);
           const char* label_name = reinterpret_cast<const char*>(
@@ -421,20 +466,12 @@ void DeferredCommandBuffer::ExecutePage(VkCommandBuffer command_buffer,
       } break;
 
       case Command::kVkEndDebugUtilsLabelEXT: {
-        const ui::vulkan::VulkanInstance::Functions& ifn =
-            command_processor_.GetVulkanDevice()
-                ->vulkan_instance()
-                ->functions();
         if (ifn.vkCmdEndDebugUtilsLabelEXT) {
           ifn.vkCmdEndDebugUtilsLabelEXT(command_buffer);
         }
       } break;
 
       case Command::kVkInsertDebugUtilsLabelEXT: {
-        const ui::vulkan::VulkanInstance::Functions& ifn =
-            command_processor_.GetVulkanDevice()
-                ->vulkan_instance()
-                ->functions();
         if (ifn.vkCmdInsertDebugUtilsLabelEXT) {
           auto& args = *reinterpret_cast<const ArgsVkDebugUtilsLabel*>(stream);
           const char* label_name = reinterpret_cast<const char*>(

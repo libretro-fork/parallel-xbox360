@@ -18,20 +18,35 @@
 #include "xenia/base/assert.h"
 #include "xenia/base/math.h"
 #include "xenia/ui/vulkan/vulkan_api.h"
+#include "xenia/ui/vulkan/vulkan_device.h"
+#include "libretro/core_vk_barriers.h"
 
 namespace xe {
 namespace gpu {
 namespace vulkan {
 
-class VulkanCommandProcessor;
-
 class DeferredCommandBuffer {
  public:
-  DeferredCommandBuffer(const VulkanCommandProcessor& command_processor,
-                        size_t initial_size_bytes = 1024 * 1024);
+  explicit DeferredCommandBuffer(size_t initial_size_bytes = 1024 * 1024);
 
   void Reset();
-  void Execute(VkCommandBuffer command_buffer);
+  void Execute(VkCommandBuffer command_buffer,
+               const ui::vulkan::VulkanDevice::Functions& dfn,
+               const ui::vulkan::VulkanInstance::Functions& ifn);
+
+  // Pending records own stable native arrays; Submit publishes their borrowed
+  // groups at the caller's original flush point, after ending the render pass.
+  bool PushBufferMemoryBarrier(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size,
+      VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage,
+      VkAccessFlags src_access, VkAccessFlags dst_access,
+      uint32_t src_queue, uint32_t dst_queue, bool skip_if_equal);
+  bool PushImageMemoryBarrier(VkImage image, const VkImageSubresourceRange& range,
+      VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage,
+      VkAccessFlags src_access, VkAccessFlags dst_access,
+      VkImageLayout old_layout, VkImageLayout new_layout,
+      uint32_t src_queue, uint32_t dst_queue, bool skip_if_equal);
+  bool HasPendingBarriers() const { return xe_vk_barriers_pending(&barriers_) != 0; }
+  void SubmitBarriers();
 
   // render_pass_begin->pNext of all barriers must be null.
   void CmdVkBeginRenderPass(const VkRenderPassBeginInfo* render_pass_begin,
@@ -536,6 +551,7 @@ class DeferredCommandBuffer {
     kVkBeginRendering,
     kVkEndRendering,
     kVkPipelineBarrier,
+    kBorrowedPipelineBarriers,
     kVkPushConstants,
     kVkSetBlendConstants,
     kVkSetDepthBias,
@@ -741,6 +757,11 @@ class DeferredCommandBuffer {
     static_assert(alignof(VkImageMemoryBarrier) <= alignof(uintmax_t));
   };
 
+  struct ArgsBorrowedPipelineBarriers {
+    const xe_vk_barrier_group* groups;
+    uint32_t count;
+  };
+
   struct ArgsVkPushConstants {
     VkPipelineLayout layout;
     VkShaderStageFlags stage_flags;
@@ -784,13 +805,15 @@ class DeferredCommandBuffer {
   };
 
   void* WriteCommand(Command command, size_t arguments_size_bytes);
-  void ExecutePage(VkCommandBuffer command_buffer, const xe_command_page* page);
-
-  const VulkanCommandProcessor& command_processor_;
+  void ExecutePage(VkCommandBuffer command_buffer, const xe_command_page* page,
+                   const ui::vulkan::VulkanDevice::Functions& dfn,
+                   const ui::vulkan::VulkanInstance::Functions& ifn);
+  static int EmitBarrierGroups(void* context, const xe_command_row_view* view);
 
   // Stable aligned packets. Reset retains high-water pages without clearing
   // payloads; writers initialize every consumed argument, not padding bytes.
   xe_command_stream_owner command_stream_;
+  xe_vk_barriers_owner barriers_;
 };
 
 }  // namespace vulkan

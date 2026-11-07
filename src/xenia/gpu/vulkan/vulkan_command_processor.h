@@ -535,7 +535,6 @@ class VulkanCommandProcessor final : public CommandProcessor {
 
   void ClearTransientDescriptorPools();
 
-  void SplitPendingBarrier();
 
   void DestroyScratchBuffer();
 
@@ -907,18 +906,6 @@ class VulkanCommandProcessor final : public CommandProcessor {
   // Descriptor sets for FXAA - source as storage image (for gamma+luma write).
   std::array<VkDescriptorSet, kMaxFramesInFlight>
       fxaa_source_storage_descriptors_;
-
-  // Pending pipeline barriers.
-  std::vector<VkBufferMemoryBarrier> pending_barriers_buffer_memory_barriers_;
-  std::vector<VkImageMemoryBarrier> pending_barriers_image_memory_barriers_;
-  struct PendingBarrier {
-    VkPipelineStageFlags src_stage_mask = 0;
-    VkPipelineStageFlags dst_stage_mask = 0;
-    size_t buffer_memory_barriers_offset = 0;
-    size_t image_memory_barriers_offset = 0;
-  };
-  std::vector<PendingBarrier> pending_barriers_;
-  PendingBarrier current_pending_barrier_;
 
   // GPU-local scratch buffer.
   static constexpr VkDeviceSize kScratchBufferSizeIncrement = 16 * 1024 * 1024;
