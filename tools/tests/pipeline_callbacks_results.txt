@@ -1,0 +1,47 @@
+Borrowed pipeline callbacks (0175)
+=================================
+The production C++ request-lifetime adapter now stores three function pointers
+and one borrowed owner pointer instead of three std::function objects. Native
+Vulkan and D3D12 callbacks cast that owner directly. Worker translator factories
+transfer a raw owned context to the existing pool; the existing typed context
+destructor still runs after workers stop. Initialize joins/releases the old pool
+before replacing callback pointers. The owner must outlive the joined workers.
+
+Request storage, scheduling, ordered publication, backpressure, completion
+indices and shutdown order are unchanged. Jobs still compile directly from the
+C89 pool slot; publication keeps that same slot borrowed until store/discard.
+Move-only requests and the one-copy lvalue budget remain covered by the real
+production adapter fixture. No new runtime algorithm or resampler is introduced.
+This is C++ ABI/lifetime glue around the existing C89 worker/order pools.
+
+The std::function captures were cold, small owner-pointer captures: their removal
+is not evidence that per-job heap allocation existed. GNU x64 adapter sizeof
+falls from 144 to 80 bytes. C-pool retained allocations are unchanged.
+
+Verification:
+- MSVC production adapter/pool/completion fixtures: PASS.
+- MSVC AddressSanitizer production adapter/pool/completion fixtures: PASS.
+- Linux GCC/G++ ASan+UBSan production adapter/pool/completion fixtures: PASS.
+- Native MSVC core build, --parallel 5: PASS.
+- GNU static Makefile core build, make -j5: PASS.
+The fixture checks the opaque owner in creator/store/context factory, then
+reinitializes the same queue with a different owner shape. It exercises worker
+resize, caller draining, failed creation, cancellation, independent unordered
+warmup, 20,000 completion replacements and ordered move-only request reuse.
+
+Linux WSL synthetic handoff benchmark vs exact parent 88d0f288c, five measured
+100,000-job batches after warmup; microseconds medians for baseline/current:
+  8-byte request, 1 worker:   21087 / 20140
+ 80-byte request, 1 worker:   21067 / 19346
+  8-byte request, 6 workers: 330138 / 385688
+ 80-byte request, 6 workers: 448126 / 522034
+A preceding run had mixed results in the opposite multiworker cases too.
+Scheduling variance is large; these measurements establish no consistent
+throughput win. No gameplay, native GPU timing or FPS improvement is claimed.
+Benchmark source supports both callback interfaces; baseline extraction now
+includes the completion header when that historical revision requires it.
+
+The independently reported intermittent frontend vkDestroyImageView close crash
+remains unresolved. No installed DLL, audio timing, GPU lifetime policy or
+frontend teardown code is changed by this patch. Other std::function uses,
+backend locks, C++ containers and allocations remain for subsequent migration.

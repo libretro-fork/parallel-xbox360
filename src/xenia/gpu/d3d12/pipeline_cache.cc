@@ -156,12 +156,12 @@ bool PipelineCache::Initialize() {
   // Set up even without creation threads - the storage warm-up starts some of
   // its own.
   creation_queue_.Initialize(
-      "D3D12 Pipelines",
-      [this](Pipeline* pipeline, uint8_t*) {
-        return CreateQueuedPipeline(pipeline);
+      "D3D12 Pipelines", this,
+      [](void* opaque, Pipeline* const& pipeline, uint8_t*) {
+        return static_cast<PipelineCache*>(opaque)->CreateQueuedPipeline(pipeline);
       },
-      [this](Pipeline* pipeline, ID3D12PipelineState* state) {
-        StoreCreatedPipeline(pipeline, state);
+      [](void* opaque, Pipeline* const& pipeline, ID3D12PipelineState* state) {
+        static_cast<PipelineCache*>(opaque)->StoreCreatedPipeline(pipeline, state);
       },
       {});
   if (cvars::d3d12_pipeline_creation_threads != 0) {

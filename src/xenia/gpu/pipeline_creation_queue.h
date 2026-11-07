@@ -11,7 +11,6 @@
 #define XENIA_GPU_PIPELINE_CREATION_QUEUE_H_
 
 #include <cstddef>
-#include <functional>
 #include <memory>
 #include <new>
 #include <type_traits>
@@ -31,17 +30,18 @@ class PipelineCreationQueue {
   struct Request;
  public:
   using Publication = std::pair<Request*, THandle>;
-  using Creator = std::function<THandle(const TRequest&, TThreadContext*)>;
-  using Store = std::function<void(const TRequest&, THandle)>;
-  using ContextFactory = std::function<std::unique_ptr<TThreadContext>()>;
+  using Creator = THandle (*)(void*, const TRequest&, TThreadContext*);
+  using Store = void (*)(void*, const TRequest&, THandle);
+  using ContextFactory = TThreadContext* (*)(void*);
 
   PipelineCreationQueue() { xe_completion_init(&completion_); }
   ~PipelineCreationQueue() {
     ReleasePending();
     xe_job_pool_free(pool_);
   }
-  void Initialize(const char* thread_name, Creator creator, Store store,
-                  ContextFactory context_factory) {
+  // The owner is borrowed until workers join; no callback owns a capture.
+  void Initialize(const char* thread_name, void* opaque, Creator creator,
+                  Store store, ContextFactory context_factory) {
     // Reinitialization follows Shutdown; release the previous cold owners.
     ReleasePending();
     xe_job_pool_free(pool_);
@@ -50,12 +50,13 @@ class PipelineCreationQueue {
     static_assert(alignof(Request) <= alignof(std::max_align_t));
     static_assert(std::is_nothrow_move_constructible<TRequest>::value);
     static_assert(std::is_nothrow_destructible<TRequest>::value);
-    creator_ = std::move(creator);
-    store_ = std::move(store);
-    context_factory_ = std::move(context_factory);
+    opaque_ = opaque;
+    creator_ = creator;
+    store_ = store;
+    context_factory_ = context_factory;
     publish_order_.Initialize([](void* opaque, Publication& publication) {
       auto* self = static_cast<PipelineCreationQueue*>(opaque);
-      self->store_(publication.first->request, publication.second);
+      self->store_(self->opaque_, publication.first->request, publication.second);
       self->Release(publication.first);
     }, this);
     pool_ = xe_job_pool_new(4096, sizeof(Request), thread_name, &Run, &Discard,
@@ -144,13 +145,13 @@ class PipelineCreationQueue {
     auto* job = static_cast<Request*>(payload);
     size_t sequence = size_t(job->sequence_or_lease);
     job->sequence_or_lease = lease;
-    THandle handle = self->creator_(job->request,
+    THandle handle = self->creator_(self->opaque_, job->request,
                                   static_cast<TThreadContext*>(context));
     // Publication owns the borrowed request until store/discard. No access to
     // job is allowed after either path releases its lease.
     if (sequence) self->publish_order_.Publish(sequence, job, handle);
     else {
-      self->store_(job->request, handle);
+      self->store_(self->opaque_, job->request, handle);
       self->Release(job);
     }
   }
@@ -159,7 +160,7 @@ class PipelineCreationQueue {
   }
   static void* NewContext(void* opaque) {
     auto* self = static_cast<PipelineCreationQueue*>(opaque);
-    return self->context_factory_ ? self->context_factory_().release() : nullptr;
+    return self->context_factory_ ? self->context_factory_(self->opaque_) : nullptr;
   }
   static void FreeContext(void*, void* context) {
     delete static_cast<TThreadContext*>(context);
@@ -176,9 +177,10 @@ class PipelineCreationQueue {
     if ((ticket&1) && !ArmCompletion(self))
       xe_completion_finish(&self->completion_,ticket);
   }
-  Creator creator_;
-  Store store_;
-  ContextFactory context_factory_;
+  void* opaque_ = nullptr;
+  Creator creator_ = nullptr;
+  Store store_ = nullptr;
+  ContextFactory context_factory_ = nullptr;
   PipelinePublishOrder<Publication> publish_order_;
   xe_completion completion_;
   xe_job_pool* pool_ = nullptr;

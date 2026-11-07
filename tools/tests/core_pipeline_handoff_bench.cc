@@ -23,11 +23,22 @@ template <typename T> static void measure(const char* label, unsigned workers) {
   size_t active;
   {
     xe::gpu::PipelineCreationQueue<T, uint64_t, unsigned> queue;
-    queue.Initialize("Handoff bench", [](const T& request, unsigned*) {
-      return create(request);
-    }, [&](const T& request, uint64_t handle) {
-      if (id(request) != expected++ || handle != create(request)) std::abort();
-    }, {});
+    std::printf("%s adapter_bytes=%u request_bytes=%u workers=%u\n", label,
+        unsigned(sizeof(queue)), unsigned(sizeof(T)), workers);
+    if constexpr (std::is_pointer<typename decltype(queue)::Creator>::value) {
+      queue.Initialize("Handoff bench", &expected,
+          [](void*, const T& request, unsigned*) { return create(request); },
+          [](void* opaque, const T& request, uint64_t handle) {
+            auto& expected = *static_cast<uint64_t*>(opaque);
+            if (id(request) != expected++ || handle != create(request)) std::abort();
+          }, nullptr);
+    } else {
+      queue.Initialize("Handoff bench", [](const T& request, unsigned*) {
+        return create(request);
+      }, [&](const T& request, uint64_t handle) {
+        if (id(request) != expected++ || handle != create(request)) std::abort();
+      }, {});
+    }
     queue.SetThreadCount(workers);
     active = xe_bench_live();
     for (unsigned round = 0; round < 6; ++round) {

@@ -8,6 +8,9 @@ for f in libretro/core_job_pool.c libretro/core_job_pool.h libretro/core_pipelin
  mkdir -p "$out/base/$(dirname "$f")"
  git -C "$root" show "$baseline:$f" > "$out/base/$f"
 done
+if git -C "$root" cat-file -e "$baseline:libretro/core_completion.h" 2>/dev/null; then
+ git -C "$root" show "$baseline:libretro/core_completion.h" > "$out/base/libretro/core_completion.h"
+fi
 flags="-std=c89 -O3 -D_GNU_SOURCE -DHAVE_THREADS -DHAVE_THREAD_STORAGE"
 common="$root/third_party/libretro-common"
 for f in rthreads retro_eventcount; do

@@ -29,17 +29,25 @@ int main() {
   }
   {
     xe::gpu::PipelineCreationQueue<Input, size_t, unsigned> queue;
-    queue.Initialize("Pipeline test",
-        [](const Input& input, unsigned* context) {
+    struct Owner { size_t* expected; unsigned magic; } owner = { &expected, 1234 };
+    queue.Initialize("Pipeline test", &owner,
+        [](void* opaque, const Input& input, unsigned* context) {
+          CHECK(static_cast<Owner*>(opaque)->magic == 1234);
           CHECK(input.owned && *input.owned == input.id);
           CHECK(!context || *context == 1234);
           return input.id == 17 ? size_t(0) : input.id + 1;
         },
-        [&](const Input& input, size_t handle) {
+        [](void* opaque, const Input& input, size_t handle) {
+          auto* owner = static_cast<Owner*>(opaque);
+          CHECK(owner->magic == 1234);
+          size_t& expected = *owner->expected;
           CHECK(input.id == expected++);
           CHECK(handle == (input.id == 17 ? size_t(0) : input.id + 1));
           CHECK(input.owned && *input.owned == input.id);
-        }, []() { return std::make_unique<unsigned>(1234); });
+        }, [](void* opaque) {
+          CHECK(static_cast<Owner*>(opaque)->magic == 1234);
+          return new unsigned(1234);
+        });
     CHECK(!queue.has_threads());
     queue.SetThreadCount(2);
     for (size_t i = 0; i < 12000; ++i) {
@@ -87,9 +95,10 @@ int main() {
       queue.AwaitCompletion();
     }
     size_t first = expected;
-    queue.Initialize("Reinitialized pool",
-        [](const Input& input, unsigned*) { return input.id + 1; },
-        [&](const Input& input, size_t handle) {
+    queue.Initialize("Reinitialized pool", &expected,
+        [](void*, const Input& input, unsigned*) { return input.id + 1; },
+        [](void* opaque, const Input& input, size_t handle) {
+          size_t& expected = *static_cast<size_t*>(opaque);
           CHECK(input.id == expected++ && handle == input.id + 1);
         }, {});
     queue.SetThreadCount(2);
@@ -102,11 +111,15 @@ int main() {
     size_t next = 0, unexpected = 0;
     unsigned seen[1000] = {};
     xe::gpu::PipelineCreationQueue<CopyInput, size_t, unsigned> queue;
-    queue.Initialize("Copy budget",
-        [](const CopyInput& input, unsigned*) {
+    struct CopyState { size_t* next; unsigned* seen; } state = { &next, seen };
+    queue.Initialize("Copy budget", &state,
+        [](void*, const CopyInput& input, unsigned*) {
           CHECK(input.copies == 1 && input.moves == 0 && input.identity == &input);
           return input.id + 1;
-        }, [&](const CopyInput& input, size_t handle) {
+        }, [](void* opaque, const CopyInput& input, size_t handle) {
+          auto* state = static_cast<CopyState*>(opaque);
+          size_t& next = *state->next;
+          unsigned* seen = state->seen;
           CHECK(handle == input.id + 1 && input.copies == 1 && input.identity == &input);
           if (input.id < 1000) {
             CHECK(input.id == next++ && input.moves == 0);
@@ -138,16 +151,20 @@ int main() {
     CHECK(blocked && state_lock && changed);
     slock_lock(blocked);
     xe::gpu::PipelineCreationQueue<Input, size_t, unsigned> queue;
-    queue.Initialize("Independent warmup", [&](const Input& input, unsigned*) {
-      if (!input.id) { slock_lock(blocked); slock_unlock(blocked); }
+    struct State { slock_t *blocked, *lock; scond_t* changed; unsigned *ordered, *warm; };
+    State state = { blocked, state_lock, changed, &ordered_stored, &warm_stored };
+    queue.Initialize("Independent warmup", &state, [](void* opaque, const Input& input, unsigned*) {
+      auto* state = static_cast<State*>(opaque);
+      if (!input.id) { slock_lock(state->blocked); slock_unlock(state->blocked); }
       return input.id + 1;
-    }, [&](const Input& input, size_t handle) {
+    }, [](void* opaque, const Input& input, size_t handle) {
+      auto* state = static_cast<State*>(opaque);
       CHECK(handle == input.id + 1 && input.owned);
-      slock_lock(state_lock);
-      if (input.id) ordered_stored = 1;
-      else { CHECK(ordered_stored); warm_stored = 1; }
-      scond_signal(changed);
-      slock_unlock(state_lock);
+      slock_lock(state->lock);
+      if (input.id) *state->ordered = 1;
+      else { CHECK(*state->ordered); *state->warm = 1; }
+      scond_signal(state->changed);
+      slock_unlock(state->lock);
     }, {});
     queue.SetThreadCount(2);
     queue.PushUnordered(Input(0));

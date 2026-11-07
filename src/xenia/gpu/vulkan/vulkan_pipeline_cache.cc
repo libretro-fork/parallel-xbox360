@@ -365,16 +365,21 @@ bool VulkanPipelineCache::Initialize() {
     logical_processor_count = 6;
   }
   creation_queue_.Initialize(
-      "Vulkan Pipelines",
-      [this](const PipelineCreationArguments& creation_arguments,
+      "Vulkan Pipelines", this,
+      [](void* opaque, const PipelineCreationArguments& creation_arguments,
              SpirvShaderTranslator* worker_translator) {
-        return CreateQueuedPipeline(creation_arguments, worker_translator);
+        return static_cast<VulkanPipelineCache*>(opaque)->CreateQueuedPipeline(
+            creation_arguments, worker_translator);
       },
-      [this](const PipelineCreationArguments& creation_arguments,
+      [](void* opaque, const PipelineCreationArguments& creation_arguments,
              VkPipeline pipeline) {
-        StoreCreatedPipeline(creation_arguments, pipeline, false);
+        static_cast<VulkanPipelineCache*>(opaque)->StoreCreatedPipeline(
+            creation_arguments, pipeline, false);
       },
-      [this]() { return guest_shader_cache_.CreateWorkerTranslator(); });
+      [](void* opaque) {
+        return static_cast<VulkanPipelineCache*>(opaque)->guest_shader_cache_
+            .CreateWorkerTranslator().release();
+      });
   if (cvars::vulkan_pipeline_creation_threads != 0) {
     size_t creation_thread_count;
     if (cvars::vulkan_pipeline_creation_threads < 0) {
