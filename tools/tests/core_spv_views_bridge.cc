@@ -57,16 +57,15 @@ int main(int argc, char** argv) {
 #ifdef XE_SPV_OUTPUT_LEGACY
   Id address = builder.createAccessChain(spv::StorageClass::Function, variable, WORDS(indices, 2));
 #else
-  // Direct base API must use its arguments and preserve unrelated frontend state.
-  builder.clearAccessChain();
-  builder.setAccessChainLValue(variable);
-  builder.accessChainPush(one, {}, 0);
+  // Direct base API consumes the supplied nested indices without frontend state.
   Id address = builder.spv::Builder::createAccessChainView(
       spv::StorageClass::Function, variable, WORDS(indices, 2));
-  CHECK(builder.getResultingAccessChainType() == float_type);
-  builder.clearAccessChain();
 #endif
   indices[0] = indices[1] = 0;
+  CHECK(builder.getOpCode(address) == spv::Op::OpAccessChain);
+  CHECK(builder.getIdOperand(address, 0) == variable);
+  CHECK(builder.getIdOperand(address, 1) == two);
+  CHECK(builder.getIdOperand(address, 2) == dynamic_index);
   CHECK(builder.getContainedTypeId(builder.getTypeId(address)) == uint_type);
   builder.createStore(one, address);
   Id loaded = builder.createLoad(address, spv::NoPrecision);

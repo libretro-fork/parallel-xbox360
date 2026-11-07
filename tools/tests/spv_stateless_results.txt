@@ -1,0 +1,117 @@
+Stateless core shader builder
+=============================
+
+The core passes explicit base IDs and counted offset words to OpAccessChain.
+A tracked-source audit found no production calls to the saved access-chain
+get/set/push/load/store/swizzle API. Its only external setup/clear calls were
+in an adapter that cleared the unused state before AND after the raw view API.
+One test exercised preservation of that unrelated mutable state. The high-level
+scalar/vector and matrix constructors and lvalue-swizzle implementation were
+also unreferenced outside this closed source-expression engine.
+
+Remove those declarations/implementations, the two stored AccessChain vectors,
+coherence/source-expression flags, constructor-time clear and adapter resets.
+Delete unused vector wrappers for access-chain and rvalue-swizzle emission;
+current core callers already use their counted views. No replacement buffers,
+algorithms, allocation, locks, atomics, callbacks or timing code are introduced.
+This removes over 800 lines of unused implementation/comments from the internal
+builder. It is a core-internal API removal, not a libretro ABI change.
+
+Preserved production behavior
+-----------------------------
+- Raw createAccessChainView still walks the supplied nested indices and emits
+  OpAccessChain directly. Direct RvalueSwizzleView is used by production shaders
+  and remains. Explicit load/store memory masks, scopes, alignments and precision
+  inputs remain. Removing unused implicit flags does not erase these operands.
+- Forward CFG/structural edges, OpCompositeConstruct and other direct opcode
+  constructors, type/constant caches, ownership, failure/unwind and workspace
+  leases are unchanged. No GLSL text parser was used in these core paths.
+- The current view fixture now checks raw opcode/base/both nested index operands
+  after its caller index buffer is overwritten. Existing nested type/load/store
+  checks and archived-vector/current-view byte comparisons remain. State-only
+  assertions disappear because the corresponding frontend API is removed;
+  parent revisions still compile their archived vector branch.
+
+Measured layout (MinGW GCC 16.2 x64)
+---------------------------------
+                                parent 02649b799    current
+spv::Builder                    1408              1320
+xe::gpu::SpirvBuilder            1416              1328
+Block                           112               112
+Instruction                     64                64
+Function                        136               136
+
+Builder object size drops 88 bytes; this is not an RSS measurement. The deleted
+vectors were empty in normal core generation, so no per-module allocation saving
+is attributed to their deletion. Removing the two clear calls per adapter access
+avoids source-expression bookkeeping/stores, while raw opcode generation remains.
+
+Correctness / build evidence
+----------------------------
+- Pinned parent 02649b799/current actual EDRAM helper output: 2624 standard-scale
+  modules and 2624 wide-scale modules byte-identical. Full GCC shader-output suite
+  passes with allocation adapters and installed spirv-val for supported fixtures.
+- Geometry: 18432 production generation variants have identical packed output;
+  all 128 exported current modules pass spirv-val. PROFILE=1 also compares a
+  representative 64-module geometry batch with identical bytes.
+- Actual freshly rebuilt core objects replay 256 vertex/pixel control-flow
+  translations and four retained depth outputs byte-for-byte against the
+  pre-change fixture. No game/GPU/JIT/emulated CPU was launched.
+- Native MSVC full shader-output tests and the same positive fixture suite with
+  /MD /O1 /Zi /fsanitize=address pass. Windows static Make-j5 rebuild/link passes.
+  No installed DLL overwritten, no Linux ASan/TSan or remote CI result claimed.
+- Production changes are deletions. New fixture checks use the existing typed
+  interop APIs; no new C++ runtime algorithm is introduced. Required hardware
+  arithmetic, raw SPIR-V instructions and native completion are untouched.
+
+Allocation trace (same retained arena/reserves on both revisions)
+---------------------------------------------------------------
+Per 2624-module standard OR wide cohort:
+                                    parent          current
+C++new/arena/ID-index calls           24524           24524
+Requested bytes                     414365          414365
+Peak tracked live bytes              184669          184669
+Tracked live bytes after cleanup     0               0
+
+These are bounded helper traces, not a statement about all compiler/driver memory.
+The previous two CFG storage changes have their own separate allocation results.
+
+Idle CPU experiment (GCC 16.2 /O2, profiling-only clock/adapters)
+-------------------------------------------------------------
+Use the existing PROFILE=1 geometry fixture: 64 representative production modules
+warm the exclusive arena, then time 20 repetitions (1280 modules). Timer excludes
+startup and output-file writes. Parent/current executables run as seven interleaved
+paired processes, alternating which runs first. All owned builds were terminal
+before these recorded samples. Counter results for every timed process: 0 new
+allocation calls, 0 requested bytes, retained 124421 and peak 124933 bytes.
+
+                              parent samples(ms)           current samples(ms)
+round0                        9.652                        9.288
+round1                        9.471                        9.182
+round2                        9.447                        9.202
+round3                        9.609                        9.484
+round4                        9.580                        9.276
+round5                        9.502                        9.230
+round6                        9.590                        9.346
+median                        9.580                        9.276
+
+About 1.033x throughput / 3.2% lower elapsed in this small CPU fixture. Ranges overlap;
+this is a modest local result, not a universal speedup, FPS, driver-compilation
+stutter or input/audio-latency measurement. Build-time timing logs taken under
+concurrent compiler load are not the samples used for this table.
+
+Reproduce
+---------
+BASELINE_COMMIT=02649b799 CAPTURE_ALLOCATIONS=1 \
+  sh tools/tests/run_spv_output_tests.sh
+BASELINE_ROOT=<complete-02649b799-source> SPIRV_VALIDATOR=<spirv-val> \
+  sh tools/tests/run_spv_geometry_tests.sh
+PROFILE=1 BASELINE_ROOT=<same-source> \
+  sh tools/tests/run_spv_geometry_tests.sh
+For timings, wait for builds to finish and run parent/current PROFILE executables
+seven times in alternating order with '<output-file> bench'. Native MSVC developer
+prompt: tools\tests\run_spv_output_tests.cmd; sanitizer builds use a separate output
+directory and matching /MD /O1 /Zi /fsanitize=address across C/C++ units.
+MinGW strict C89 fixtures: CC='gcc -Wno-long-long'. Guest replay uses the existing
+run_spv_guest_workspace_tests.sh with SPV_GUEST_REFERENCE from the parent build;
+finish Make before linking against actual core objects.

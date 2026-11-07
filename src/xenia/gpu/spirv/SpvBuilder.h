@@ -315,7 +315,6 @@ public:
     StorageClass getTypeStorageClass(Id typeId) const { return module.getStorageClass(typeId); }
     ImageFormat getImageTypeFormat(Id typeId) const
         { return (ImageFormat)module.getInstruction(typeId)->getImmediateOperand(6); }
-    Id getResultingAccessChainType() const;
     Id getIdOperand(Id resultId, int idx) { return module.getInstruction(resultId)->getIdOperand(idx); }
     Id getCooperativeVectorNumComponents(Id typeId) const { return module.getInstruction(typeId)->getIdOperand(1); }
 
@@ -552,7 +551,6 @@ public:
         spv::Scope scope = spv::Scope::Max, unsigned int alignment = 0);
 
     // Create an OpAccessChain instruction
-    Id createAccessChain(StorageClass, Id base, const std::vector<Id>& offsets);
     // Borrows words only until this call returns. No staging vector.
     Id createAccessChainView(StorageClass, Id base, xe_spv_word_view offsets);
 
@@ -594,15 +592,9 @@ public:
 
     // Take an rvalue (source) and a set of channels to extract from it to
     // make a new rvalue, which is returned.
-    Id createRvalueSwizzle(Decoration precision, Id typeId, Id source, const std::vector<unsigned>& channels);
     // Borrows words only until this call returns. No staging vector.
     Id createRvalueSwizzleView(Decoration precision, Id typeId, Id source, xe_spv_word_view channels);
 
-    // Take a copy of an lvalue (target) and a source of components, and set the
-    // source components into the lvalue where the 'channels' say to put them.
-    // An updated version of the target is returned.
-    // (No true lvalue or stores are used.)
-    Id createLvalueSwizzle(Id typeId, Id target, Id source, const std::vector<unsigned>& channels);
 
     // If both the id and precision are valid, the id
     // gets tagged with the requested precision.
@@ -680,11 +672,7 @@ public:
     // Borrows words only until this call returns. No staging vector.
     Id createCompositeConstructView(Id typeId, xe_spv_word_view constituents);
 
-    // vector or scalar constructor
-    Id createConstructor(Decoration precision, const std::vector<Id>& sources, Id resultTypeId);
 
-    // matrix constructor
-    Id createMatrixConstructor(Decoration precision, const std::vector<Id>& sources, Id constructee);
 
     // coopmat conversion
     Id createCooperativeMatrixConversion(Id typeId, Id source);
@@ -767,177 +755,6 @@ public:
     // Close the innermost loop that you're in
     void closeLoop();
 
-    //
-    // Access chain design for an R-Value vs. L-Value:
-    //
-    // There is a single access chain the builder is building at
-    // any particular time.  Such a chain can be used to either to a load or
-    // a store, when desired.
-    //
-    // Expressions can be r-values, l-values, or both, or only r-values:
-    //    a[b.c].d = ....  // l-value
-    //    ... = a[b.c].d;  // r-value, that also looks like an l-value
-    //    ++a[b.c].d;      // r-value and l-value
-    //    (x + y)[2];      // r-value only, can't possibly be l-value
-    //
-    // Computing an r-value means generating code.  Hence,
-    // r-values should only be computed when they are needed, not speculatively.
-    //
-    // Computing an l-value means saving away information for later use in the compiler,
-    // no code is generated until the l-value is later dereferenced.  It is okay
-    // to speculatively generate an l-value, just not okay to speculatively dereference it.
-    //
-    // The base of the access chain (the left-most variable or expression
-    // from which everything is based) can be set either as an l-value
-    // or as an r-value.  Most efficient would be to set an l-value if one
-    // is available.  If an expression was evaluated, the resulting r-value
-    // can be set as the chain base.
-    //
-    // The users of this single access chain can save and restore if they
-    // want to nest or manage multiple chains.
-    //
-
-    struct AccessChain {
-        Id base;                       // for l-values, pointer to the base object, for r-values, the base object
-        std::vector<Id> indexChain;
-        Id instr;                      // cache the instruction that generates this access chain
-        std::vector<unsigned> swizzle; // each std::vector element selects the next GLSL component number
-        Id component;                  // a dynamic component index, can coexist with a swizzle,
-                                       // done after the swizzle, NoResult if not present
-        Id preSwizzleBaseType;         // dereferenced type, before swizzle or component is applied;
-                                       // NoType unless a swizzle or component is present
-        bool isRValue;                 // true if 'base' is an r-value, otherwise, base is an l-value
-        unsigned int alignment;        // bitwise OR of alignment values passed in. Accumulates worst alignment.
-                                       // Only tracks base and (optional) component selection alignment.
-
-        // Accumulate whether anything in the chain of structures has coherent decorations.
-        struct CoherentFlags {
-            CoherentFlags() { clear(); }
-            bool isVolatile() const { return volatil; }
-            bool isNonUniform() const { return nonUniform; }
-            bool anyCoherent() const {
-                return coherent || devicecoherent || queuefamilycoherent || workgroupcoherent ||
-                    subgroupcoherent || shadercallcoherent;
-            }
-
-            unsigned coherent : 1;
-            unsigned devicecoherent : 1;
-            unsigned queuefamilycoherent : 1;
-            unsigned workgroupcoherent : 1;
-            unsigned subgroupcoherent : 1;
-            unsigned shadercallcoherent : 1;
-            unsigned nonprivate : 1;
-            unsigned volatil : 1;
-            unsigned nontemporal : 1;
-            unsigned isImage : 1;
-            unsigned nonUniform : 1;
-
-            void clear() {
-                coherent = 0;
-                devicecoherent = 0;
-                queuefamilycoherent = 0;
-                workgroupcoherent = 0;
-                subgroupcoherent = 0;
-                shadercallcoherent = 0;
-                nonprivate = 0;
-                volatil = 0;
-                nontemporal = 0;
-                isImage = 0;
-                nonUniform = 0;
-            }
-
-            CoherentFlags operator |=(const CoherentFlags &other) {
-                coherent |= other.coherent;
-                devicecoherent |= other.devicecoherent;
-                queuefamilycoherent |= other.queuefamilycoherent;
-                workgroupcoherent |= other.workgroupcoherent;
-                subgroupcoherent |= other.subgroupcoherent;
-                shadercallcoherent |= other.shadercallcoherent;
-                nonprivate |= other.nonprivate;
-                volatil |= other.volatil;
-                nontemporal = other.nontemporal;
-                isImage |= other.isImage;
-                nonUniform |= other.nonUniform;
-                return *this;
-            }
-        };
-        CoherentFlags coherentFlags;
-    };
-
-    //
-    // the SPIR-V builder maintains a single active chain that
-    // the following methods operate on
-    //
-
-    // for external save and restore
-    AccessChain getAccessChain() { return accessChain; }
-    void setAccessChain(AccessChain newChain) { accessChain = newChain; }
-
-    // clear accessChain
-    void clearAccessChain();
-
-    // set new base as an l-value base
-    void setAccessChainLValue(Id lValue)
-    {
-        assert(isPointer(lValue));
-        accessChain.base = lValue;
-    }
-
-    // set new base value as an r-value
-    void setAccessChainRValue(Id rValue)
-    {
-        accessChain.isRValue = true;
-        accessChain.base = rValue;
-    }
-
-    // push offset onto the end of the chain
-    void accessChainPush(Id offset, AccessChain::CoherentFlags coherentFlags, unsigned int alignment)
-    {
-        accessChain.indexChain.push_back(offset);
-        accessChain.coherentFlags |= coherentFlags;
-        accessChain.alignment |= alignment;
-    }
-
-    // push new swizzle onto the end of any existing swizzle, merging into a single swizzle
-    void accessChainPushSwizzle(std::vector<unsigned>& swizzle, Id preSwizzleBaseType,
-        AccessChain::CoherentFlags coherentFlags, unsigned int alignment);
-
-    // push a dynamic component selection onto the access chain, only applicable with a
-    // non-trivial swizzle or no swizzle
-    void accessChainPushComponent(Id component, Id preSwizzleBaseType, AccessChain::CoherentFlags coherentFlags,
-        unsigned int alignment)
-    {
-        if (accessChain.swizzle.size() != 1) {
-            accessChain.component = component;
-            if (accessChain.preSwizzleBaseType == NoType)
-                accessChain.preSwizzleBaseType = preSwizzleBaseType;
-        }
-        accessChain.coherentFlags |= coherentFlags;
-        accessChain.alignment |= alignment;
-    }
-
-    // use accessChain and swizzle to store value
-    void accessChainStore(Id rvalue, Decoration nonUniform,
-        spv::MemoryAccessMask memoryAccess = spv::MemoryAccessMask::MaskNone,
-        spv::Scope scope = spv::Scope::Max, unsigned int alignment = 0);
-
-    // use accessChain and swizzle to load an r-value
-    Id accessChainLoad(Decoration precision, Decoration l_nonUniform, Decoration r_nonUniform, Id ResultType,
-        spv::MemoryAccessMask memoryAccess = spv::MemoryAccessMask::MaskNone, spv::Scope scope = spv::Scope::Max,
-            unsigned int alignment = 0);
-
-    // Return whether or not the access chain can be represented in SPIR-V
-    // as an l-value.
-    // E.g., a[3].yx cannot be, while a[3].y and a[3].y[x] can be.
-    bool isSpvLvalue() const { return accessChain.swizzle.size() <= 1; }
-
-    // get the direct pointer for an l-value
-    Id accessChainGetLValue();
-
-    // Get the inferred SPIR-V type of the result of the current access chain,
-    // based on the type of the base and the chain of dereferences.
-    Id accessChainGetInferredType();
-
     void dump(std::vector<unsigned int>&) const;
     bool dump(xe_spv_binary&) const;
     // One final allocation after an operand-length sizing walk.
@@ -972,10 +789,6 @@ private:
     Id makeCompositeConstantSource(Id type, xe_spv_word_source source, bool specConst);
 protected:
     void publishConstant(Instruction* constant, bool cache);
-    Id collapseAccessChain();
-    void remapDynamicSwizzle();
-    void transferAccessChainSwizzle(bool dynamic);
-    void simplifyAccessChainSwizzle();
     void createAndSetNoPredecessorBlock(const char*);
     void createSelectionMerge(Block* mergeBlock, SelectionControlMask control);
     template <class Output> void dumpInternal(Output&, xe_spv_plan* = nullptr, bool record = false) const;
@@ -1036,7 +849,6 @@ protected:
     Function* entryPointFunction;
     bool generatingOpCodeForSpecConst;
     bool useReplicatedComposites { false };
-    AccessChain accessChain;
 
     // special blocks of instructions for output
     xe_spv_instruction_chain strings = {};

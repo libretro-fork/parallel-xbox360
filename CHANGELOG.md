@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Removed the unused source-expression access-chain engine and high-level constructors from the shader builder, including two stored vectors and redundant adapter state clears. Raw SPIR-V access chains, direct swizzles and explicit memory operands are preserved. Builder objects shrink by 88 bytes on measured GCC x64; offline geometry generation is modestly faster, while helper/guest shader bytes and tracked allocation counts remain unchanged.
+
 - Replaced shader-block successor vectors with C89 arrays in the existing reusable payload arena. Traversal borrows indexed spans, latest growth can stay in place, and failed growth preserves prior edges. This removes per-block edge heap allocations while keeping edge order, shader bytes and block size unchanged. Added C89 fault/reuse tests and ASan checks for expired views; larger modules can still grow retained pages.
 
 - Shader blocks no longer build unused predecessor vectors. Forward control-flow traversal and branch output stay the same, while reverse-edge allocations/copies disappear and measured x64 blocks shrink from 136 to 112 bytes. Helper/guest binary comparisons and native sanitizer checks pass. Corrected the optional profiling harness to keep allocator cleanup and baseline arena configuration consistent.

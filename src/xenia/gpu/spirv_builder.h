@@ -71,22 +71,6 @@ class SpirvBuilder : public spv::Builder {
                                            precisions, entry);
   }
 
-  // Preserve the adapter's clean-state contract without copying indices into
-  // the builder's mutable access-chain vector.
-  spv::Id createAccessChain(spv::StorageClass storage_class, spv::Id base,
-                           const std::vector<spv::Id>& offsets) {
-    return createAccessChainView(storage_class, base,
-        xe_spv_words_view(offsets.data(), offsets.size()));
-  }
-  spv::Id createAccessChainView(spv::StorageClass storage_class, spv::Id base,
-                               xe_spv_word_view offsets) {
-    clearAccessChain();
-    spv::Id result =
-        spv::Builder::createAccessChainView(storage_class, base, offsets);
-    clearAccessChain();
-    return result;
-  }
-
   spv::Id createQuadOp(spv::Op op_code, spv::Id type_id, spv::Id operand1,
                        spv::Id operand2, spv::Id operand3, spv::Id operand4);
 
