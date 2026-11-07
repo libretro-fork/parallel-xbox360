@@ -2,6 +2,7 @@
 #include "libretro/core_xma_decoder_state.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <rthreads/rthreads.h>
 #include "libretro/core_pause_gate.h"
 void *xe_xma_decoder_test_new(unsigned);
@@ -37,7 +38,7 @@ static void make_packet(unsigned channels) {
  put(&at,0,channels);put(&at,0,2);CHECK(at==32+bits);
 }
 static xe_xma_decoder_view view;
-static xe_xma_decoder_view saved,bad;
+static xe_xma_decoder_view saved,bad,cold;
 static xe_xma_decoder_stage stage,empty_stage;
 static uint32_t saved_registers[XE_XMA_REGISTERS];
 static unsigned char saved_history[XE_XMA_CONTEXTS][2][2048];
@@ -48,6 +49,17 @@ int xe_xma_decoder_test_commit(void *,xe_xma_decoder_stage *);
 void xe_xma_decoder_test_discard(xe_xma_decoder_stage *);
 const void *xe_xma_decoder_test_codec(void *,unsigned);
 int xe_xma_decoder_test_rotate(void *,unsigned);
+int xe_xma_decoder_test_configure(void *,unsigned,unsigned);
+void xe_xma_decoder_test_alloc_limit(size_t);
+#ifdef XE_XMA_OPEN_FAIL_TEST
+void xe_xma_decoder_test_open_failure(int);
+unsigned xe_xma_decoder_test_open_hits(void);
+#endif
+int xe_xma_decoder_test_load(void *,const void *,unsigned);
+const void *xe_xma_decoder_test_guest(void *);
+int xe_xma_decoder_test_work(void *);
+void xe_xma_decoder_test_cursor(void *,unsigned,unsigned);
+void xe_xma_decoder_test_current(void *,unsigned);
 #ifdef XE_DECODER_CLOCK_TEST
 #include <features/features_cpu.h>
 static unsigned clock_reads;
@@ -161,6 +173,69 @@ static void restore_tests(void *f,uint32_t first) {
 #endif
 }
 
+static void begin_codec_failure(unsigned kind) {
+ xe_xma_decoder_test_alloc_limit(kind?INT_MAX:1);
+#ifdef XE_XMA_OPEN_FAIL_TEST
+ xe_xma_decoder_test_open_failure(kind!=0);
+#endif
+}
+static void end_codec_failure(unsigned kind) {
+ xe_xma_decoder_test_alloc_limit(INT_MAX);
+#ifdef XE_XMA_OPEN_FAIL_TEST
+ if(kind) CHECK(xe_xma_decoder_test_open_hits()==1);
+ xe_xma_decoder_test_open_failure(0);
+#else
+ (void)kind;
+#endif
+}
+static void configuration_tests(void *f,uint32_t first) {
+ const void *token;
+ unsigned i,faults=1;
+ unsigned char guest[64];
+#ifdef XE_XMA_OPEN_FAIL_TEST
+ faults=2;
+#endif
+ cold=view;
+ CHECK(xe_xma_decoder_test_allocate(f)==first);
+ store_snapshot(f);token=xe_xma_decoder_test_codec(f,0);
+ for(i=0;i<faults;++i) {
+  begin_codec_failure(i);
+  CHECK(xe_xma_decoder_test_configure(f,3,1)==-1);
+  end_codec_failure(i);
+  CHECK(xe_xma_decoder_test_codec(f,0)==token);same_snapshot(f);
+ }
+ CHECK(xe_xma_decoder_test_configure(f,3,1)==1);
+ store_snapshot(f);token=xe_xma_decoder_test_codec(f,0);
+ for(i=0;i<faults;++i) {
+  begin_codec_failure(i);
+  CHECK(xe_xma_decoder_test_configure(f,3,1)==0);
+  CHECK(xe_xma_decoder_test_configure(f,2,2)==-1);
+  end_codec_failure(i);
+  CHECK(xe_xma_decoder_test_codec(f,0)==token);same_snapshot(f);
+ }
+ make_packet(2);CHECK(xe_xma_decoder_test_load(f,packet,2));
+ xe_xma_decoder_test_cursor(f,0x3ffffff,0);store_snapshot(f);
+ CHECK(xe_xma_decoder_test_work(f));
+ CHECK(xe_xma_decoder_test_codec(f,0)==token);same_snapshot(f);
+ xe_xma_decoder_test_cursor(f,32,2);
+ xe_xma_decoder_test_current(f,1);
+ memcpy(guest,xe_xma_decoder_test_guest(f),sizeof(guest));store_snapshot(f);
+ for(i=0;i<faults;++i) {
+  begin_codec_failure(i);CHECK(xe_xma_decoder_test_work(f));
+  end_codec_failure(i);
+  CHECK(xe_xma_decoder_test_codec(f,0)==token);same_snapshot(f);
+  CHECK(!memcmp(guest,xe_xma_decoder_test_guest(f),sizeof(guest)));
+ }
+ xe_xma_decoder_test_cursor(f,32,0);
+ xe_xma_decoder_test_current(f,0);
+ CHECK(xe_xma_decoder_test_work(f));CHECK(capture(f));
+ CHECK(xe_xma_decoder_test_codec(f,0)!=token);
+ CHECK(view.owners[0].state.channels==2 && view.owners[0].state.pending_blocks==5);
+ CHECK(xe_xma_decoder_test_prepare(f,&cold,&stage));
+ CHECK(xe_xma_decoder_test_commit(f,&stage));CHECK(capture(f));
+ for(i=0;i<XE_XMA_CONTEXTS;++i) CHECK(!view.owners[i].state.rate && !view.owners[i].state.allocated);
+}
+
 int main(void) {
  void *f;uint32_t first,last,i,mode;unsigned c,n;unsigned char *raw,expected[256];const void *drained;sthread_t *worker;xe_pause_gate *gate;
  f=xe_xma_decoder_test_new(XE_XMA_MODE_RAW);CHECK(f);
@@ -170,6 +245,7 @@ int main(void) {
  CHECK(view.registers==xe_xma_decoder_test_registers(f) && view.register_bytes==65536);
  CHECK(xe_xma_decoder_test_prepare(f,&view,&stage));
  CHECK(xe_xma_decoder_test_commit(f,&stage));CHECK(capture(f));
+ configuration_tests(f,first);
  gate=(xe_pause_gate *)xe_xma_decoder_test_gate(f);
  for(i=0;i<2;++i) {
   xe_xma_decoder_test_pending(f,1);
@@ -231,6 +307,9 @@ int main(void) {
 #ifdef XE_DECODER_CLOCK_TEST
  CHECK(clock_reads>0);
 #endif
- puts("PASS: 320 owners, all-slot transactional restore/reuse, late failure/stale owner without prefix mutation, alias checks, clock-free quiescence, PCM byte oracles and unsupported styles");
+#ifdef XE_XMA_OPEN_FAIL_TEST
+ puts("PASS: actual codec-open allocation failures retain cold/warm owners and guest cursors; later retry succeeds");
+#endif
+ puts("PASS: allocation failure/retry, 320-owner transactional restore/reuse, late failure without prefix mutation, aliases, clock-free quiescence, PCM byte oracles and unsupported styles");
  return 0;
 }

@@ -5,11 +5,26 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/profiling.h"
 #include <new>
+#include <limits.h>
+extern "C" {
+#if XE_COMPILER_MSVC
+#pragma warning(push)
+#pragma warning(disable : 4101 4244 5033)
+#endif
+#include "third_party/FFmpeg/libavcodec/avcodec.h"
+#include "third_party/FFmpeg/libavutil/mem.h"
+#if XE_COMPILER_MSVC
+#pragma warning(pop)
+#endif
+}
 using xe::X_STATUS;
 namespace xe {namespace apu {
 struct XmaContextStreamTest {
  static void *raw(XmaContextNew *context) {return context->raw_frame_;}
  static const void *codec(XmaContextNew *context) {return context->av_context_;}
+ static int configure(XmaContextNew *context,unsigned rate,unsigned channels) {
+  return context->PrepareDecoder(rate,channels==2);
+ }
 };
 }}
 class ColdDecoder : public xe::apu::XmaDecoder {
@@ -28,7 +43,7 @@ class ColdDecoder : public xe::apu::XmaDecoder {
   }
   void *gate() {return pause_gate_.get();}
   bool rebuild() {Shutdown();return Init(XE_XMA_MODE_RAW);}
-  int stream(const void *packet,unsigned channels) {
+  int stream(const void *packet,unsigned channels,bool execute=true) {
     contexts_[0]->Clear();
     uint32_t input=memory()->SystemHeapAlloc(4096,4096,xe::kSystemHeapPhysical);
     uint32_t output=memory()->SystemHeapAlloc(4096,4096,xe::kSystemHeapPhysical);
@@ -43,6 +58,7 @@ class ColdDecoder : public xe::apu::XmaDecoder {
     data.output_buffer_ptr=memory()->GetPhysicalAddress(output);
     data.output_buffer_block_count=3;data.output_buffer_valid=1;
     data.sample_rate=3;data.is_stereo=channels==2;data.subframe_decode_count=1;data.Store(context);
+    if(!execute) return 1;
     contexts_[0]->Enable();return contexts_[0]->Work();
   }
   void *raw() {return xe::apu::XmaContextStreamTest::raw(static_cast<xe::apu::XmaContextNew*>(contexts_[0]));}
@@ -65,6 +81,21 @@ class ColdDecoder : public xe::apu::XmaDecoder {
     if(!context->CaptureState(&view) || !context->PrepareState(&view,&stage)) return false;
     if(context->CommitState(&stage)) return true;
     context->DiscardState(&stage);return false;
+  }
+  int configure(unsigned rate,unsigned channels) {
+    return xe::apu::XmaContextStreamTest::configure(static_cast<xe::apu::XmaContextNew*>(contexts_[0]),rate,channels);
+  }
+  const void *guest() {return memory()->TranslateVirtual(context_data_first_ptr_);}
+  bool work() {contexts_[0]->Enable();return contexts_[0]->Work();}
+  void cursor(unsigned offset,unsigned loops) {
+    void *context=memory()->TranslateVirtual(context_data_first_ptr_);
+    xe::apu::XMA_CONTEXT_DATA data(context);
+    data.input_buffer_read_offset=offset;data.loop_count=loops;
+    data.loop_start=data.loop_end=32;data.Store(context);
+  }
+  void current(unsigned buffer) {
+    void *context=memory()->TranslateVirtual(context_data_first_ptr_);
+    xe::apu::XMA_CONTEXT_DATA data(context);data.current_buffer=buffer;data.Store(context);
   }
 };
 struct DecoderFixture {
@@ -130,3 +161,25 @@ extern "C" int xe_xma_decoder_test_commit(void *p,xe_xma_decoder_stage *s) {
 extern "C" void xe_xma_decoder_test_discard(xe_xma_decoder_stage *s) {xe::apu::XmaDecoder::DiscardState(s);}
 extern "C" const void *xe_xma_decoder_test_codec(void *p,unsigned i) {return static_cast<DecoderFixture*>(p)->decoder.codec(i);}
 extern "C" int xe_xma_decoder_test_rotate(void *p,unsigned i) {return static_cast<DecoderFixture*>(p)->decoder.rotate(i);}
+extern "C" int xe_xma_decoder_test_configure(void *p,unsigned r,unsigned c) {return static_cast<DecoderFixture*>(p)->decoder.configure(r,c);}
+extern "C" void xe_xma_decoder_test_alloc_limit(size_t n) {av_max_alloc(n);}
+#ifdef XE_XMA_OPEN_FAIL_TEST
+static int open_failure;
+static unsigned open_fail_hits;
+extern "C" void xe_xma_decoder_test_open_failure(int fail) {open_failure=fail;open_fail_hits=0;}
+extern "C" unsigned xe_xma_decoder_test_open_hits(void) {return open_fail_hits;}
+/* The test override changes only the production TU's avcodec_open2 call target.
+ * Actual FFmpeg open runs with its allocator exhausted after context creation. */
+extern "C" int xe_xma_test_open2(AVCodecContext *context,const AVCodec *codec,AVDictionary **options) {
+ int result;
+ if(open_failure) {++open_fail_hits;av_max_alloc(1);}
+ result=avcodec_open2(context,codec,options);
+ if(open_failure) av_max_alloc(INT_MAX);
+ return result;
+}
+#endif
+extern "C" int xe_xma_decoder_test_load(void *p,const void *b,unsigned c) {return static_cast<DecoderFixture*>(p)->decoder.stream(b,c,false);}
+extern "C" const void *xe_xma_decoder_test_guest(void *p) {return static_cast<DecoderFixture*>(p)->decoder.guest();}
+extern "C" int xe_xma_decoder_test_work(void *p) {return static_cast<DecoderFixture*>(p)->decoder.work();}
+extern "C" void xe_xma_decoder_test_cursor(void *p,unsigned o,unsigned l) {static_cast<DecoderFixture*>(p)->decoder.cursor(o,l);}
+extern "C" void xe_xma_decoder_test_current(void *p,unsigned b) {static_cast<DecoderFixture*>(p)->decoder.current(b);}

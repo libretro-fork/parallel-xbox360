@@ -488,6 +488,8 @@ void XmaContextNew::Consume(RingBuffer* XE_RESTRICT output_rb,
 }
 
 void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
+  int reconfigure;
+  uint32_t retry_offset = 0, retry_control = 0;
   SCOPE_profile_cpu_f("apu");
 
   // No available data.
@@ -499,6 +501,18 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
 
   if (current_frame_remaining_subframes_ > 0) {
     return;
+  }
+
+  reconfigure = !av_context_ ||
+      av_context_->sample_rate != GetSampleRate(data->sample_rate) ||
+      av_context_->ch_layout.nb_channels != (data->is_stereo ? 2 : 1);
+  if (reconfigure) {
+    // Only a profile change needs rollback metadata. Keep the unchanged-format
+    // path free of context copies and preserve setup timing for invalid packets.
+    retry_offset = data->input_buffer_read_offset;
+    retry_control = data->input_buffer_0_valid | (data->input_buffer_1_valid << 1) |
+        (data->current_buffer << 2) | (data->loop_count << 3) |
+        ((uint32_t)loop_start_skip_pending_ << 11);
   }
 
   if (!data->IsCurrentInputBufferValid()) {
@@ -708,7 +722,15 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
 
   // Successful raw decoding converts every byte of the retained frame span.
   // No stale/unused tail can be selected when guest channel settings change.
-  PrepareDecoder(data->sample_rate, bool(data->is_stereo));
+  if (reconfigure && PrepareDecoder(data->sample_rate, bool(data->is_stereo)) < 0) {
+    data->input_buffer_read_offset = retry_offset;
+    data->input_buffer_0_valid = retry_control & 1;
+    data->input_buffer_1_valid = (retry_control >> 1) & 1;
+    data->current_buffer = (retry_control >> 2) & 1;
+    data->loop_count = (retry_control >> 3) & 255;
+    loop_start_skip_pending_ = ((retry_control >> 11) & 1) != 0;
+    return;
+  }
   if (DecodePacket(av_context_, av_packet_, av_frame_)) {
     // dump_raw(av_frame_, id());
     ConvertFrame(reinterpret_cast<const uint8_t**>(&av_frame_->data),
@@ -1049,31 +1071,29 @@ int16_t XmaContextNew::GetPacketNumber(size_t size, size_t bit_offset) {
 }
 
 int XmaContextNew::PrepareDecoder(int sample_rate, bool is_two_channel) {
+  AVCodecContext* candidate;
+  AVCodecContext* previous;
+  uint32_t channels;
   sample_rate = GetSampleRate(sample_rate);
-
-  // Re-initialize the context with new sample rate and channels.
-  uint32_t channels = is_two_channel ? 2 : 1;
-  if (av_context_->sample_rate != sample_rate ||
-      av_context_->ch_layout.nb_channels != (int)channels) {
-    XELOGAPU("XmaContext {}: Codec reinit: rate {} -> {}, channels {} -> {}",
-             id(), av_context_->sample_rate, sample_rate,
-             av_context_->ch_layout.nb_channels, channels);
-    // We have to recreate the codec context so it'll realloc whatever data it
-    // needs.
-    avcodec_free_context(&av_context_);
-    av_context_ = avcodec_alloc_context3(av_codec_);
-
-    av_context_->sample_rate = sample_rate;
-    av_channel_layout_default(&av_context_->ch_layout, channels);
-    av_context_->flags2 |= AV_CODEC_FLAG2_SKIP_MANUAL;
-
-    if (avcodec_open2(av_context_, av_codec_, NULL) < 0) {
-      XELOGE("XmaContext: Failed to reopen FFmpeg context");
-      return -1;
-    }
-    return 1;
+  channels = is_two_channel ? 2 : 1;
+  if (!av_codec_) return -1;
+  // Only Setup's zero-profile codec or a fully opened codec is published.
+  if (av_context_ && av_context_->sample_rate == sample_rate &&
+      av_context_->ch_layout.nb_channels == (int)channels) return 0;
+  candidate = avcodec_alloc_context3(av_codec_);
+  if (!candidate) return -1;
+  candidate->sample_rate = sample_rate;
+  av_channel_layout_default(&candidate->ch_layout, channels);
+  candidate->flags2 |= AV_CODEC_FLAG2_SKIP_MANUAL;
+  if (avcodec_open2(candidate, av_codec_, NULL) < 0) {
+    avcodec_free_context(&candidate);
+    XELOGE("XmaContext: Failed to reopen FFmpeg context");
+    return -1;
   }
-  return 0;
+  previous = av_context_;
+  av_context_ = candidate;
+  avcodec_free_context(&previous);
+  return 1;
 }
 
 bool XmaContextNew::DecodePacket(AVCodecContext* av_context,

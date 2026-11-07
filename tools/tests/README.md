@@ -1498,3 +1498,11 @@ stale identity with unchanged prefix backing, allocation-map agreement, known
 storage-alias rejection and repeated use of caller-owned staging. Native borrowed
 input must remain immutable under exclusive quiescence. These do not enable the
 libretro serialization ABI or restore guest RAM/other subsystems.
+
+Use DECODER_STATE_OPEN_FAILURE_TEST=1 with a separate DECODER_STATE_OUT to test
+actual FFmpeg codec-open allocation failure after context creation. The runner
+recompiles only xma_context_new.cc with its open call redirected to a fixture
+adapter, then links it before the ordinary archive. The adapter calls real FFmpeg
+with its allocator exhausted for open only. No production test hook is compiled.
+For scoped ASan, pass DECODER_STATE_FLAGS and root/bitmap override objects as usual;
+do not also supply an ordinary raw-context override, since this mode builds it.

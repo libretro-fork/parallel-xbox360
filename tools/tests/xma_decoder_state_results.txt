@@ -141,3 +141,40 @@ checks all 320 owner metadata/history/PCM spans, allocation words and 64KiB regi
 bytes. Failure checks unchanged live content and the first codec identity, so
 content-equivalent prefix replacement cannot disguise a partial commit.
 Extension validation: full GNU Make -j5 and native MSVC core builds pass. Expanded GNU C89, native /TC /W4 /WX and scoped native ASan transaction drivers pass, including all-cold owners, mono/stereo pending PCM, released history, duplicate/borrowed-live codec rejection and clock-free quiescence. The 24-variant real stream remains byte-identical to the baseline (770048 bytes, SHA256 above); nine real owner replays pass. The x64 C89 stage-size probe measures 25680 bytes (80 per child), with no runtime scratch allocation. Candidate codecs still allocate during explicit state preparation. No fault-injected allocator failure or whole-core leak-freedom claim is made.
+
+Codec reconfiguration failure safety (0165 work):
+Ordinary PrepareDecoder now opens a candidate before publishing it and releasing
+the previous codec. Null allocation and failed open return failure without live
+mutation. Setup's zero profile and validated restore candidates keep the published
+codec either canonical cold or successfully opened. Matching profiles reuse it
+with only the existing profile comparisons; no extra per-frame codec-open query.
+Decode retains the original setup point after packet validation. Only a profile change saves two scalar rollback words (8 bytes), covering input cursor/valid bits/current buffer/loop count/private loop-start flag. Failed preparation restores those controls and returns without a guest error or invented silence. Matching formats take no context snapshot and no PrepareDecoder call. Invalid packets cannot reconfigure the codec and lose its overlap history. Resource setup may transiently retain one old
+and one new codec for the one owner being reconfigured. No normal queue/pacing,
+conversion arithmetic or callback policy is changed.
+The C89 driver uses real FFmpeg av_max_alloc only in its isolated offline process.
+Limit 1 rejects context/private-state allocation. For open failure, an optional test-only recompile redirects this translation unit's avcodec_open2 call to a fixture adapter. After actual candidate creation, the adapter limits allocations to 1 for the real FFmpeg open call, then resets the limit; a hit counter proves that path ran. Production builds have no adapter, flag, counter or injection branch. Test cases require
+cold/warm live identity/config/history preservation, matching-format reuse under
+allocation failure, unchanged 64-byte guest context after failed decode kicks,
+and successful later retry producing stereo PCM. Limits are reset to INT_MAX
+before any unrelated fixture work. This is targeted allocation-failure coverage,
+not a claim of whole-core OOM recovery or silicon timing validation.
+
+Final 0165 validation:
+Full GNU Make -j5 and native MSVC core builds pass. Normal actual-object C89
+allocation-failure drivers and optional real-open-failure drivers pass on GNU and
+MSVC. Scoped MSVC ASan covers actual root/bitmap state objects, the current raw
+context compiled with the test-only open redirection, C89 driver, native bridge
+and pause gate; other common/FFmpeg objects are ordinary, not a full ASan build.
+Final regressions include loop-count/private-loop-flag and invalid-current-buffer
+rollback with an exact 64-byte guest-context oracle, unchanged live codec and
+history, matching-profile reuse under allocation failure, and successful retry.
+An invalid packet requesting a new format retains the original live codec.
+A controlled variant adding early preparation before packet validation fails at
+that codec-identity oracle (expected exit 1, decoder line 219), without a crash.
+This is a deliberate variant, not a historical bisect or silicon measurement.
+Nine real owner replays (five partial PCM) pass. All 24 real-stream ring/refill
+variants remain byte-identical: 770048 bytes, 730350 nonzero, SHA256
+463708c0b7acfc6c013a018691d8429bfd93b0de3b90469dcf2851f00851469c.
+Local Windows x64 validation only; remote Linux/ARM CI additions are unrun here.
+No frontend/game/GPU/guest CPU execution, installed DLL overwrite or measured
+FPS/latency gain is claimed. Full libretro savestates remain unfinished.
