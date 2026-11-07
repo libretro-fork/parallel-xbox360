@@ -1,0 +1,90 @@
+Recent resolve-read history: fixed GPU-thread C89 table
+=====================================================
+
+Vulkan and D3D12 share this readwatch history. Replace the second unordered_map
+(resolve destination -> last guest frame read) with exact-key fixed storage:
+8192 key buckets, parallel uint32 frame words, 128 occupancy words and count.
+At most 4096 entries are live. Tested x64 sizeof is 99336 bytes. Dead key/frame
+payloads need no initialization; reset clears only the 1024-byte occupancy map
+and count. No heap allocation, callback, atomic, clock, lock or sleep is added.
+
+Queries probe metadata in place, never build/copy a list or mutate the history.
+Updating at the cap first removes entries with unsigned age > 60; if still full,
+clear, including before an existing-key update. Age exactly 60 is recent. This is
+the old policy, not a new renderer timing rule. Frame-counter wrap is preserved.
+Key mixing only chooses a bucket; equality compares every bit. Zero/UINT64_MAX
+are valid keys. Half-full capacity proves a probe always finds an empty bucket.
+Backshift removes tombstones and retains probe-chain reachability. It copies
+only displaced key/frame metadata, not guest bytes or native GPU resources.
+An occupancy-word iterator skips empty buckets during pruning without allocating
+a temporary record list, rechecking an erased slot after any cluster movement.
+
+This table has a single GPU-thread owner. Readwatch callback/fault synchronization
+is unchanged. Recent history is deliberately separate from the stable resolve
+owner registry: history survives owner eviction; combining their lifetimes would
+change the submission decisions. No owner views are moved by this table's erase.
+Reset and native completion order are unchanged. The two backend command
+processors are heap-owned, so this reservation is not added to a thread stack.
+
+Tradeoff: reserve about 97 KiB per command processor even with few reads. The old
+map can use less at low occupancy; the measured nearly-full traces request more.
+Allocation sizes below exclude allocator overhead; no RSS/VRAM/FPS improvement is
+claimed. Other read-key sets, rearm vectors, staging, native and driver resources
+remain outside this change. This does not remove required fault-thread locks.
+
+Correctness / builds
+--------------------
+- MSVC C89 /TC /O2 /W4 /WX and strict MinGW C89 leaf checks: poisoned initial
+  storage, all-bit keys, 4096-key collision cluster wrapping bucket-array end,
+  exact expiry and cap-clear, query purity, uint32 frame wrap, deletion/reuse,
+  occupied-word traversal and 100000 update events with index/count validation.
+- Actual legacy unordered_map reference: 422916 events, 189 prunes, 12 full clears,
+  614 exact key/frame snapshots; includes repeated full existing-key updates,
+  expiry ties, partial expiry and frame wrap. Return values match every event.
+- MSVC AddressSanitizer /O1: leaf and complete reference --check pass.
+- Actual Vulkan/D3D12 command processors compile with MSVC; Windows Make -j5
+  rebuild/link passes. No guest/game/GPU/JIT launched, installed DLL unchanged.
+- Linux/Windows GitHub and Linux GitLab build gates run both leaf and exact
+  reference --check. Remote CI not observed. No Linux sanitizer result claimed:
+  no current WSL distro. Local YAML parser unavailable; CI changes manually
+  inspected, not described as a successful parser run.
+
+Reproduce
+---------
+sh tools/tests/run_resolve_recent_tests.sh
+sh tools/tests/run_resolve_recent_reference_tests.sh --check
+MSVC developer prompt:
+  tools\tests\run_resolve_recent_tests.cmd
+  tools\tests\run_resolve_recent_reference_tests.cmd --check
+MSVC ASan: add /fsanitize=address /Zi /MD to corresponding compilations and run
+both fixtures (reference --check). A developer tool, not a core dependency.
+For MinGW leaf use SANITIZER= if ASan/UBSan runtimes are unavailable.
+
+Offline CPU experiment
+----------------------
+Run the reference without --check. Seven interleaved paired samples; same checksums,
+standard allocators in timings, separate untimed counting-allocator trace. Table
+priming (4095 keys) excluded. Hot run: 1M lookups/updates over 4095 keys, 75% updates.
+Churn: 200K lookups/updates over 6000 destinations, 75% updates, frame advances each
+61 operations; exact original cap/expiry policy. Timing uses steady_clock only in
+the offline C++ legacy fixture, never runtime. Production algorithms/storage and
+leaf fixture are MSVC C89, with only a thin C++ construction/ownership adapter.
+
+An initial full-bucket pruning scan had a slight GCC churn regression. The final
+occupancy-word iterator avoids scanning empty buckets. Final measurements below
+were taken sequentially with owned builds idle; subsequent native compile checks
+may also emit timing output under load and are not the reported timing source.
+Results vary with CPU/compiler/workload; these are not gameplay measurements.
+
+MSVC 19.44 /O2:
+core_resolve_recent_reference.cc
+Recent reference: 422916 events, 189 prunes, 12 clears, 614 exact snapshots pass (expiry ties, existing-key full update, all-bit keys, frame wrap)
+Seven interleaved medians, standard allocators in timed runs, separately counted trace; CPU only
+hot1M: map 7.208 ms, fixed 4.904 ms (1.47x); untimed map operation allocations=0 retained=196608 peak=196608, fixed=99336 no operation allocation
+churn200k: map 7.343 ms, fixed 4.254 ms (1.73x); untimed map operation allocations=146929 retained=185184 peak=196640, fixed=99336 no operation allocation
+
+MinGW GCC 16.2 /O2:
+Recent reference: 422916 events, 189 prunes, 12 clears, 614 exact snapshots pass (expiry ties, existing-key full update, all-bit keys, frame wrap)
+Seven interleaved medians, standard allocators in timed runs, separately counted trace; CPU only
+hot1M: map 3.487 ms, fixed 3.046 ms (1.14x); untimed map operation allocations=0 retained=138976 peak=138976, fixed=99336 no operation allocation
+churn200k: map 4.462 ms, fixed 3.913 ms (1.14x); untimed map operation allocations=146929 retained=130408 peak=139000, fixed=99336 no operation allocation

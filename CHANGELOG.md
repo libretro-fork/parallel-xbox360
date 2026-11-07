@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan and D3D12 recent-read history now uses fixed C89 storage instead of a second node map. Exact keys, 60-frame expiry, full-map clearing and frame-counter wrap retain their previous behavior. Tracking no longer allocates nodes during play; it reserves about 97 KiB even with few reads. This GPU-thread history remains separate from fault-owner lifetimes.
+
 - Vulkan and D3D12 resolve ownership now use fixed C89 rows and a bounded hash index, removing owner-node/rehash allocations and the temporary pruning-age vector. Surviving fault-owner views stay stable while index links move; exact eviction and frame-wrap semantics match the legacy reference. This reserves about 209 KiB per processor even at low occupancy. Windows builds, MSVC ASan and reference fixtures pass; CPU traces improve, while gameplay gains remain unmeasured.
 
 - Fixed Soulcalibur IV startup: XEX loading now accepts omitted tails of explicitly discardable PE sections and clips their resident snapshots, while retaining bounds checks for ordinary sections and guest-address overflow. Failed launches use the normal teardown path so stale input/graphics pointers cannot crash the next retro_run. Added the exact section-layout regression to Linux/Windows CI, plus an offline failed-launch callback test.

@@ -20,8 +20,9 @@
 // memory_ (Memory*), texture_cache_, xenia/memory.h (VirtualHeap,
 // IsWritableProtect), xenia/base/assert.h, xenia/base/logging.h,
 // xenia/gpu/draw_util.h, xenia/gpu/registers.h, the C89
-// core_resolve_readback.h/core_resolve_owners.h declarations, and <algorithm>
-// <cstring> <memory> <mutex> <unordered_map> <unordered_set> <vector>. No
+// core_resolve_readback.h/core_resolve_owners.h/core_resolve_recent.h declarations,
+// and <algorithm>
+// <cstring> <memory> <mutex> <unordered_set> <vector>. No
 // include guard: injected into a class body.
 //
 // It must also define, before including this:
@@ -372,29 +373,11 @@ bool TakeResolveRead(uint64_t resolve_key) {
 }
 
 // Whether the CPU has read this destination's output within the last
-// kResolveReadRecentFrames. Not only since its last resolve: one resolved twice
+// XE_RESOLVE_RECENT_FRAMES. Not only since its last resolve: one resolved twice
 // between two reads would have its second output unread by then.
 bool ResolveReadRecently(uint64_t resolve_key, bool read_before) {
-  if (read_before) {
-    if (resolve_read_frames_.size() >= kMaxResolveReadFrames) {
-      for (auto it = resolve_read_frames_.begin();
-           it != resolve_read_frames_.end();) {
-        if (resolve_frame_index_ - it->second > kResolveReadRecentFrames) {
-          it = resolve_read_frames_.erase(it);
-        } else {
-          ++it;
-        }
-      }
-      if (resolve_read_frames_.size() >= kMaxResolveReadFrames) {
-        resolve_read_frames_.clear();
-      }
-    }
-    resolve_read_frames_[resolve_key] = resolve_frame_index_;
-    return true;
-  }
-  auto it = resolve_read_frames_.find(resolve_key);
-  return it != resolve_read_frames_.end() &&
-         resolve_frame_index_ - it->second <= kResolveReadRecentFrames;
+  return xe_resolve_recent_read(&resolve_read_frames_, resolve_key,
+                                resolve_frame_index_, read_before) != 0;
 }
 
 // Makes a resolve the owner of the pages it writes, so later reads of them are
@@ -508,7 +491,7 @@ void ResetResolveReadWatch() {
   resolve_unsubmitted_owner_ = false;
   resolve_submit_requested_ = false;
   resolve_rearm_ranges_.clear();
-  resolve_read_frames_.clear();
+  xe_resolve_recent_reset(&resolve_read_frames_);
 }
 
 // Per guest page, the key of the resolve that last wrote it, or 0. Written on
@@ -555,10 +538,7 @@ std::vector<std::pair<uint32_t, uint32_t>> resolve_rearm_ranges_;
 std::vector<std::pair<uint32_t, uint32_t>> resolve_rearming_ranges_;
 // Frame the CPU last read each destination's output, by resolve key. GPU thread
 // only.
-std::unordered_map<uint64_t, uint32_t> resolve_read_frames_;
-static constexpr size_t kMaxResolveReadFrames = 4096;
-// About a second, chosen, not measured.
-static constexpr uint32_t kResolveReadRecentFrames = 60;
+xe_resolve_recent_storage resolve_read_frames_;
 // A resolve not copied into guest RAM is recorded since the last submission,
 // and one is to be submitted after IssueCopy. GPU thread only.
 bool resolve_unsubmitted_owner_ = false;
