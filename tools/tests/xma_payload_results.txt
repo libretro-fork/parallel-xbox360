@@ -1,0 +1,51 @@
+Borrowed raw XMA frame assembly (0160)
+=====================================
+XmaContextNew no longer retains its 4088-byte two-payload array. A C89 view
+borrows current/continuation packet payloads during the existing locked decode
+operation. A split length header reads only two/three bounded bytes; the final
+frame copies only the required byte intervals directly into the existing owned
+AVPacket buffer. Prefix/trailing unused bits are masked, and the existing packet
+owner still clears AV_INPUT_BUFFER_PADDING_SIZE bytes after the actual payload.
+No AVPacket refcount, lifetime, PCM conversion or guest ring publication changes.
+No new allocation, queue, lock, timing or release profiling is introduced.
+
+Removed per attempted ordinary frame: 4088 bytes of scratch clearing, 4098 bytes
+of packet-capacity clearing and a complete 2044-byte source payload gather.
+Split frames/headers formerly gathered additional full payloads too. The final
+selected payload copy and 64-byte FFmpeg padding clear remain. These are logical
+byte counts from the removed operations, not measured DRAM traffic or CPU time.
+raw_frame_ PCM zeroing/conversion and guest output-ring copies still remain.
+
+Measured MinGW x64 sizeof(XmaContextNew): 6336 -> 2240 bytes, alignment included.
+320 contexts therefore reserve 1,310,720 fewer object bytes (1.25 MiB). This is
+host object storage, not a measured RSS reduction. Old/master modes are unchanged.
+
+Validation executed on Windows x64:
+- strict GNU C89 -pedantic -Wall -Wextra -Werror oracle: 3880 valid gathers
+  covering all eight alignments, span boundaries and maximum two-payload lengths;
+  every one of 32690 valid 15-bit header positions matches scalar bit inspection.
+- absent continuation, short capacity/header, null/oversized spans, wrapped
+  bit offsets, invalid frame length and null output reject without changing
+  output bytes or output metadata. Exact-size source arrays support ASan bounds.
+- native MSVC /TC /W4 /WX normal and AddressSanitizer oracle runs pass.
+- actual production native xma_context_new.cc generated MSVC compile command
+  passes /Zs syntax checking; a complete native core build was not run here.
+- full static GNU Make -j5 succeeds; actual linked raw-codec checkpoint tests
+  still pass 24 configurations and 192 synthetic history-continuation frames.
+- actual XmaContextNew + Memory-only offline fixture, no frontend/device/JIT:
+  the real Title_Call.xma data chunk decodes identically before and after across
+  all 24 ring-size, decode-quantum and alternating-input refill configurations,
+  including input starvation while PCM remains queued. Each sequence is 770048
+  bytes, SHA256 463708c0b7acfc6c013a018691d8429bfd93b0de3b90469dcf2851f00851469c.
+The external fixture is described in xma_stream_test.md and is not redistributed.
+
+Sources remain borrowed only for this synchronous operation. Guest buffers must
+stay valid while the decoder consumes them as before. Owned/padded packet storage
+is deliberately retained for FFmpeg references and bitreader lookahead. Therefore
+this removes an intermediary copy, not all audio copies. No gameplay, audio-cadence
+or FPS improvement is inferred. Full savestate serialization remains incomplete.
+
+Reproduce: run_xma_payload_tests.sh/.cmd, build matching core, then set
+XMA_INPUT_RAW and XMA_OUTPUT_REFERENCE and run run_xma_stream_tests.sh before and
+after. Compare the full output byte-for-byte; the fixture also compares all 24
+consumption/refill variants internally. Never rebuild/edit live build inputs.

@@ -9,6 +9,7 @@
 
 #include "xenia/apu/xma_context_new.h"
 #include "xenia/apu/xma_helpers.h"
+#include "libretro/core_xma_payload.h"
 
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
@@ -390,8 +391,6 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
 
   uint8_t* current_input_buffer = GetCurrentInputBuffer(data);
 
-  input_buffer_.fill(0);
-
   // Detect if we're about to decode the loop end frame (before
   // UpdateLoopStatus may reset the offset).
   bool is_loop_end_frame = false;
@@ -493,6 +492,14 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
   const uint32_t packet_to_skip = skip_count + 1;
   const uint32_t next_packet_index = packet_index + packet_to_skip;
 
+  xe_xma_payload_view payload = {
+      packet + kBytesPerPacketHeader, nullptr, kBytesPerPacketData, 0};
+  if (relative_offset < kBitsPerPacketHeader ||
+      relative_offset >= kBitsPerPacket) {
+    data->error_status = 4;
+    return;
+  }
+
   // Frame header split across packet boundary — combine packets to read
   // the full 15-bit header and resolve the real frame size.
   if (packet_info.current_frame_size_ == 0) {
@@ -512,16 +519,14 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
       SwapInputBuffer(data);
       return;
     }
-    std::memcpy(input_buffer_.data(), packet + kBytesPerPacketHeader,
-                kBytesPerPacketData);
-    std::memcpy(input_buffer_.data() + kBytesPerPacketData,
-                next_packet + kBytesPerPacketHeader, kBytesPerPacketData);
-
-    BitStream combined(input_buffer_.data(),
-                       (kBitsPerPacket - kBitsPerPacketHeader) * 2);
-    combined.SetOffset(relative_offset - kBitsPerPacketHeader);
-
-    uint64_t frame_size = combined.Peek(kBitsPerFrameHeader);
+    payload.second = next_packet + kBytesPerPacketHeader;
+    payload.second_size = kBytesPerPacketData;
+    uint32_t frame_size;
+    if (!xe_xma_payload_length(&payload,
+          relative_offset - kBitsPerPacketHeader, &frame_size)) {
+      data->error_status = 4;
+      return;
+    }
     if (frame_size == xma::kMaxFrameLength) {
       XELOGW(
           "XmaContext {}: Split header resolved to kMaxFrameLength (0x7FFF), "
@@ -534,12 +539,9 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
     packet_info.current_frame_size_ = (uint32_t)frame_size;
   }
 
-  BitStream stream =
-      BitStream(current_input_buffer, (packet_index + 1) * kBitsPerPacket);
-  stream.SetOffset(data->input_buffer_read_offset);
-
+  const uint32_t remaining_packet_bits = kBitsPerPacket - relative_offset;
   const uint64_t bits_to_copy = GetAmountOfBitsToRead(
-      (uint32_t)stream.BitsRemaining(), packet_info.current_frame_size_);
+      remaining_packet_bits, packet_info.current_frame_size_);
 
   if (bits_to_copy == 0) {
     XELOGE("XmaContext {}: There is no bits to copy!", id());
@@ -549,7 +551,7 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
 
   if (packet_info.isLastFrameInPacket()) {
     // Frame is a splitted frame
-    if (stream.BitsRemaining() < packet_info.current_frame_size_) {
+    if (remaining_packet_bits < packet_info.current_frame_size_) {
       const uint8_t* next_packet =
           GetNextPacket(data, next_packet_index, current_input_packet_count);
 
@@ -560,21 +562,10 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
         data->error_status = 4;
         return;
       }
-      // Copy next packet to buffer
-      std::memcpy(input_buffer_.data() + kBytesPerPacketData,
-                  next_packet + kBytesPerPacketHeader, kBytesPerPacketData);
+      payload.second = next_packet + kBytesPerPacketHeader;
+      payload.second_size = kBytesPerPacketData;
     }
   }
-
-  // Copy current packet to buffer
-  std::memcpy(input_buffer_.data(), packet + kBytesPerPacketHeader,
-              kBytesPerPacketData);
-
-  stream = BitStream(input_buffer_.data(),
-                     (kBitsPerPacket - kBitsPerPacketHeader) * 2);
-  stream.SetOffset(relative_offset - kBitsPerPacketHeader);
-
-  std::memset(xma_frame_, 0, kFrameCapacity);
 
   XELOGAPU(
       "XmaContext {}: Reading Frame {}/{} (size: {}) From Packet "
@@ -583,12 +574,14 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
       packet_info.current_frame_size_, packet_index,
       current_input_packet_count);
 
-  const uint32_t padding_start = static_cast<uint32_t>(stream.offset_bits() & 7);
-  if (!PreparePacket(packet_info.current_frame_size_, padding_start)) {
+  xe_xma_packet_span frame_packet;
+  if (!xe_xma_payload_packet(&payload,
+        relative_offset - kBitsPerPacketHeader, packet_info.current_frame_size_,
+        xma_frame_, kFrameCapacity, &frame_packet) ||
+      !SetFramePacketSize(frame_packet.size)) {
     data->error_status = 4;
     return;
   }
-  stream.Copy(xma_frame_ + 1, packet_info.current_frame_size_);
 
   raw_frame_.fill(0);
 
@@ -957,15 +950,6 @@ int XmaContextNew::PrepareDecoder(int sample_rate, bool is_two_channel) {
     return 1;
   }
   return 0;
-}
-
-bool XmaContextNew::PreparePacket(const uint32_t frame_size,
-                                  const uint32_t frame_padding) {
-  xe_xma_packet_span packet;
-  if (!xe_xma_packet_layout(frame_size, frame_padding, kFrameCapacity, &packet) ||
-      !SetFramePacketSize(packet.size)) return false;
-  xma_frame_[0] = packet.header;
-  return true;
 }
 
 bool XmaContextNew::DecodePacket(AVCodecContext* av_context,

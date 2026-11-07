@@ -111,7 +111,6 @@ class XmaContextNew : public XmaContext {
 
   void UpdateLoopStatus(XMA_CONTEXT_DATA* data);
   int PrepareDecoder(int sample_rate, bool is_two_channel);
-  bool PreparePacket(const uint32_t frame_size, const uint32_t frame_padding);
 
   RingBuffer PrepareOutputRingBuffer(XMA_CONTEXT_DATA* data);
 
@@ -124,7 +123,6 @@ class XmaContextNew : public XmaContext {
                           const XMA_CONTEXT_DATA& initial_data,
                           uint8_t* context_ptr);
 
-  std::array<uint8_t, kBytesPerPacketData * 2> input_buffer_;
   std::array<uint8_t, kBytesPerFrameChannel * 2> raw_frame_;
 
   int32_t remaining_subframe_blocks_in_output_buffer_ = 0;

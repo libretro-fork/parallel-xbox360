@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- XMA frame assembly now borrows compressed packet spans instead of clearing and gathering two complete payloads into an intermediate array. Split headers read only their required bytes; the selected frame is copied once to its existing codec-owned packet. Tested MinGW x64 context size falls by 4 KiB including alignment. Offline real-stream PCM is unchanged across 24 ring/refill configurations; C89 bit-oracle and native ASan checks pass. Audio scheduling and required FFmpeg padding are unchanged.
+
 - Added a borrowed raw-XMA history checkpoint for future savestates. Restore validates configuration and both channel spans before copying history into initialized codec storage; opaque FFmpeg pointers are never serialized. This adds no work to normal decode or playback scheduling. Native C89/ASan and MinGW fixtures cover nonzero-overlap continuation and rejected-state nonmutation; full libretro savestates remain unavailable.
 
 - Graphics and APU state pauses now use one reusable C89 controller with borrowed static stage tables, a shared deadline and reverse ownership-aware rollback. A partially failed stage is cleaned up, reentrant transitions fail without blocking, and shutdown can reject new acquisitions without running cleanup on its stopping thread. Native exceptions are contained before the C boundary. CMake uses one C/C++ scalar atomic ABI. Graphics destruction now releases its leaked host register-file mapping. Protocol sanitizer tests, native compilation and a 128-owner OS mapping check pass; complete libretro savestates remain unfinished.

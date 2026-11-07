@@ -1443,3 +1443,12 @@ there is no emulator, frontend, GPU device or guest JIT invocation.
 from XMA_CODEC_BUILD (default build/windows-native). Set XMA_CHECKPOINT_OUT for a
 separate output directory. See xma_checkpoint_results.txt for sanitizer details
 and the synthetic-stream limitations. These tests do not enable savestates.
+
+Borrowed XMA frame payloads
+--------------------------
+`run_xma_payload_tests.sh` and `.cmd` run the production C89 span reader/gatherer
+against an independent bit oracle, all valid 15-bit header positions and invalid
+input nonmutation. Set XMA_PAYLOAD_FLAGS=/fsanitize=address /Zi with a separate
+XMA_PAYLOAD_OUT for native ASan. Real-stream before/after evidence and ownership
+limits are documented in xma_payload_results.txt. The existing offline stream
+fixture is external and is not downloaded by these tests.
