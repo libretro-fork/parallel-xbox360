@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "libretro/core_shader_loop.h"
 #include "xenia/gpu/register_file.h"
 #include "xenia/gpu/shader.h"
 #include "xenia/gpu/trace_writer.h"
@@ -77,7 +78,7 @@ class ShaderInterpreter {
     uint32_t call_stack_depth;
     uint32_t call_return_addresses[4];
     uint32_t loop_stack_depth;
-    xenos::LoopConstant loop_constants[4];
+    uint32_t loop_constants[4];
     uint32_t loop_iterators[4];
     int32_t address_register;
     bool predicate;
@@ -85,20 +86,10 @@ class ShaderInterpreter {
     void Reset() { std::memset(this, 0, sizeof(*this)); }
 
     int32_t GetLoopAddress() const {
-      assert_true(loop_stack_depth && loop_stack_depth < 4);
-      if (!loop_stack_depth || loop_stack_depth >= 4) {
-        return 0;
-      }
-      xenos::LoopConstant loop_constant = loop_constants[loop_stack_depth];
-      // Clamp to the real range specified in the IPR2015-00325 sequencer
-      // specification.
-      // https://portal.unifiedpatents.com/ptab/case/IPR2015-00325
-      return std::min(
-          INT32_C(256),
-          std::max(INT32_C(-256),
-                   int32_t(int32_t(loop_iterators[loop_stack_depth]) *
-                               loop_constant.step +
-                           loop_constant.start)));
+      assert_true(loop_stack_depth && loop_stack_depth <= 4);
+      // aL is the innermost live entry; the fifth entry is never accessible.
+      return xe_shader_loop_address(loop_stack_depth, loop_constants,
+                                    loop_iterators);
     }
   };
 

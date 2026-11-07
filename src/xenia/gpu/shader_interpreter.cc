@@ -128,23 +128,14 @@ void ShaderInterpreter::Execute() {
             *reinterpret_cast<const ucode::ControlFlowLoopStartInstruction*>(
                 &cf_instr);
         assert_true(state_.loop_stack_depth < 4);
-        if (++state_.loop_stack_depth > 4) {
+        uint32_t loop_constant =
+            register_file_[XE_GPU_REG_SHADER_CONSTANT_LOOP_00 +
+                           cf_loop_start.loop_id()];
+        if (!xe_shader_loop_enter(&state_.loop_stack_depth, state_.loop_constants,
+                                  state_.loop_iterators, loop_constant,
+                                  cf_loop_start.is_repeat())) {
           cf_index_next = cf_loop_start.address();
-          continue;
         }
-        auto loop_constant = register_file_.Get<xenos::LoopConstant>(
-            XE_GPU_REG_SHADER_CONSTANT_LOOP_00 + cf_loop_start.loop_id());
-        state_.loop_constants[state_.loop_stack_depth] = loop_constant;
-        uint32_t& loop_iterator_ref =
-            state_.loop_iterators[state_.loop_stack_depth];
-        if (!cf_loop_start.is_repeat()) {
-          loop_iterator_ref = 0;
-        }
-        if (loop_iterator_ref >= loop_constant.count) {
-          cf_index_next = cf_loop_start.address();
-          continue;
-        }
-        ++state_.loop_stack_depth;
       } break;
 
       case ucode::ControlFlowOpcode::kLoopEnd: {
@@ -154,14 +145,13 @@ void ShaderInterpreter::Execute() {
         }
         assert_true(state_.loop_stack_depth <= 4);
         if (state_.loop_stack_depth > 4) {
-          --state_.loop_stack_depth;
           continue;
         }
         ucode::ControlFlowLoopEndInstruction cf_loop_end =
             *reinterpret_cast<const ucode::ControlFlowLoopEndInstruction*>(
                 &cf_instr);
-        xenos::LoopConstant loop_constant =
-            state_.loop_constants[state_.loop_stack_depth - 1];
+        xenos::LoopConstant loop_constant;
+        loop_constant.value = state_.loop_constants[state_.loop_stack_depth - 1];
         assert_zero(
             std::memcmp(&loop_constant,
                         &register_file_[XE_GPU_REG_SHADER_CONSTANT_LOOP_00 +

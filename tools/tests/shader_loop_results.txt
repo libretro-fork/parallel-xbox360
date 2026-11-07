@@ -1,0 +1,49 @@
+Shader interpreter loop stack (0178)
+===================================
+Behavior reference: has207 Edge commit 990bfd85948abe6ec1066c71a5ff54601ce25d0c,
+reviewed through WizzardSK/xenia-libretro. Independent bounded C89 adaptation;
+no upstream history cherry-pick and no renderer/shader-cache format change.
+
+The previous interpreter incremented loop depth before indexing the four-slot
+arrays and again after entering the body. aL read slot depth, rather than
+depth-1, and rejected valid depth4. The production DrawExtentEstimator uses
+this interpreter for supported shaders, including those with loops.
+
+Entry now writes the private slot at depth and publishes depth+1 exactly once
+for a nonempty loop. Empty loops and a fifth nested loop leave depth unchanged.
+Relative source/destination/constant addressing shares the innermost live slot,
+including depth4. The C89 helper decodes unsigned start and signed 8-bit step
+explicitly, uses an overflow-safe wide intermediate and preserves the existing
+[-256,256] clamp (IPR2015-00325 sequencer specification, as cited in the prior
+implementation). Loop constants remain packed 32-bit records, with no stack
+capacity or storage growth. End/break behavior remains in the typed owner.
+No allocation, new lock, thread, timer or GPU synchronization is introduced.
+
+Verification:
+- MSVC Release core, cmake --parallel 5: PASS.
+- GNU static Makefile Release core, make -j5: PASS.
+- MSVC /TC /W4 /WX C89 driver and real ShaderInterpreter: PASS.
+- MinGW strict C89 driver and real ShaderInterpreter: PASS.
+- Linux GCC C89 helper ASan+UBSan: PASS.
+- Linux G++ actual interpreter implementation compilation: PASS.
+- Scoped MSVC ASan interpreter implementation + bridge + C89 driver: PASS.
+  Other native libraries retain their release build; STL string/vector
+  annotations are disabled for ABI compatibility. Not full-core ASan.
+- Same native fixture linked to parent e59e603b6 interpreter: runtime FAIL,
+  loop line 94 (wrong relative-addressed exported value), not a build failure.
+
+C89 checks guard sentinels, all four stack slots, full/empty entry ownership,
+zero/invalid depth, retained-iterator repeat entry and the full 256*256 set of
+start/step pairs at iterators0,1,2,3,255, plus a damaged UINT32_MAX iterator.
+The native bridge supplies real packed Xenos control-flow/ALU instructions and
+captures exported values. Cases cover one through four nested loops, release
+handling of a fifth nested loop, restoring outer aL after inner completion,
+empty inner/outer loops, false-predicate breaks, positive/negative steps,
+255-iteration address-clamping cases and repeated Execute resetting state.
+Expected exported samples come from a separate C89 recursive loop model.
+Native bridge only adapts typed Memory/RegisterFile/ExportSink lifetimes.
+
+Limits: this does not establish full Xenos interpreter conformance or redesign
+preexisting repeated-loop semantics. Debug assertions intentionally reject
+malformed fifth-level loops; release tests verify bounded handling. No live
+game, GPU/FPS improvement, full Linux core or remote CI result is claimed.
