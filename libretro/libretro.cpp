@@ -1442,10 +1442,11 @@ static bool xenia_setup_and_launch(const char *path) {
                 xe_libretro_notice_post(title.c_str(), answer.c_str());
             };
         // No window to ask for another disc in: Disc Control answers
-        disc::set_notice([](const std::string &text) {
-            xe_libretro_notice_post(nullptr, text.c_str());
+        disc::set_notice([](const char *text) {
+            xe_libretro_notice_post(nullptr, text);
         });
         xenia_emulator->set_disc_request(disc::request);
+        disc::resume();
         static bool s_patches_listed;
         s_patches_listed = false;
         xe::kernel::before_title_patches =
@@ -1554,6 +1555,8 @@ static void pause_watchdog_stop(void) {
 
 // The emulator only; the frontend's context stays (a reset keeps it).
 static void xenia_stop_emulator(void) {
+    // Release all guest disc requests before any worker can be joined.
+    disc::release();
     pause_watchdog_stop();
     if (xenia_emulator) {
         // Not paused while it stops: the title's threads have to run out
@@ -1700,6 +1703,7 @@ RETRO_API void retro_init(void) {
 
 RETRO_API void retro_deinit(void) {
     xenia_shutdown();
+    disc::deinit();
     xe_libretro_notice_clear();
     xe_audio_registry_free(s_audio_registry);
     s_audio_registry = nullptr;
@@ -1756,13 +1760,10 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info) {
     }
     // An .m3u is the game's discs; the game starts from its first (or the
     // one Disc Control had in last time), and asks for the others itself
-    const std::string start_disc = disc::load(info->path);
-    if (start_disc.empty()) {
+    if (!disc::load(info->path, core_state.game_path, sizeof(core_state.game_path))) {
         xenia_log(RETRO_LOG_ERROR, "No disc listed in %s\n", info->path);
         return false;
     }
-    snprintf(core_state.game_path, sizeof(core_state.game_path),
-             "%s", start_disc.c_str());
 
     // The game's title ID before anything is set up: the unlock list's rate
     // and the output rate RetroArch asks for right after this depend on it.

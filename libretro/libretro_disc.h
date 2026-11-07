@@ -1,46 +1,19 @@
-/*
- * Xenia Edge - Xbox 360 Emulator Libretro Core
- * Multi-disc games: the disc list (an .m3u, or the one disc loaded), the
- * frontend's disk control interface, and the answer to the game's disc swap
- * (XamSwapDisc) when there is no window to ask in.
- */
-
+/* C89 disc metadata/VFS implementation; minimal emulator-facing bridge. */
 #ifndef LIBRETRO_DISC_H
 #define LIBRETRO_DISC_H
-
-#include <cstdint>
-#include <filesystem>
-#include <functional>
-#include <string>
-
-#include "libretro.h"
-
+#include "core_disc.h"
 namespace disc {
-
-// Gives the frontend the disk control interface; from retro_set_environment.
-void set_environment(retro_environment_t environ_cb);
-
-// The content loaded: an .m3u's discs, or the one disc. Returns the disc to
-// start (the first, or the one the frontend last had in), empty when an .m3u
-// lists none.
-std::string load(const char* path);
-void unload();
-// Answers a game still waiting for a disc with the one in, before the
-// emulator stops, and every request after it the same way until resume (or
-// the next load): nothing may wait on the player while it shuts down.
-void release();
-void resume();
-
-// Messages for the frontend's screen.
-void set_notice(std::function<void(const std::string&)> notice);
-
-// Emulator::DiscRequest: the game asks for disc `disc_number`. The list's
-// disc of that number is put in at once; else, or when the game turned the
-// disc down (an "ERROR:" message), the answer waits for the player to put a
-// disc in through Disc Control.
-void request(uint8_t disc_number, const std::string& message,
-             std::function<void(std::filesystem::path)> answer);
-
-}  // namespace disc
-
-#endif  // LIBRETRO_DISC_H
+inline void set_environment(retro_environment_t cb) { xe_disc_set_environment(cb); }
+inline bool load(const char *path, char *start, size_t capacity) {
+  return xe_disc_load(path, start, capacity) != 0;
+}
+inline void unload() { xe_disc_unload(); }
+inline void deinit() { xe_disc_deinit(); }
+inline void release() { xe_disc_release(); }
+inline void resume() { xe_disc_resume(); }
+inline void set_notice(xe_disc_notice_fn fn) { xe_disc_set_notice(fn); }
+inline void request(uint8_t number, const char *message, xe_disc_request *node) {
+  xe_disc_dispatch(number, message, node);
+}
+}
+#endif

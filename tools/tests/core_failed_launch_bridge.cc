@@ -9,6 +9,7 @@ void xe_failed_poll(void);
 int16_t xe_failed_input(unsigned,unsigned,unsigned,unsigned);
 void xe_failed_video(const void*,unsigned,unsigned,size_t);
 size_t xe_failed_audio(const int16_t*,size_t);
+void xe_failed_disc_answer(void*, const char*);
 int xe_test_failed_launch_runloop(void) {
   core_state.environ_cb=xe_failed_env; /* Avoid device probing in set_environment. */
   retro_set_input_poll(xe_failed_poll);retro_set_input_state(xe_failed_input);
@@ -20,7 +21,15 @@ int xe_test_failed_launch_runloop(void) {
   lr_input_driver=reinterpret_cast<xe::hid::libretro_hid::LibretroInputDriver*>(uintptr_t(0x1001));
   lr_graphics=reinterpret_cast<xe::gpu::GraphicsSystem*>(uintptr_t(0x2001));
   for(unsigned i=0;i<4;++i)retro_run();
+  char start[64];
+  if (!disc::load("disc.iso", start, sizeof(start))) return 0;
+  xe_disc_request pending[2];
+  for (unsigned i = 0; i < 2; ++i) {
+    xe_disc_request_init(&pending[i], xe_failed_disc_answer, nullptr);
+    disc::request(2, "ERROR:", &pending[i]);
+  }
   xenia_stop_emulator();
+  if (pending[0].pending || pending[1].pending) return 0;
   if(lr_input_driver || lr_graphics || game_loaded)return 0;
   for(unsigned i=0;i<4;++i)retro_run();
   retro_deinit();

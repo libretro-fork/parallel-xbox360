@@ -1,0 +1,60 @@
+Disc metadata and callback migration (0139)
+===========================================
+Scope
+- Replaces libretro/libretro_disc.cc with MSVC C89 core_disc.c and a minimal
+  inline namespace bridge. No std::ifstream, vector<string>, std::mutex,
+  lock_guard or std::function remains in this frontend disc module.
+- Uses actual libretro-common RFILE/VFS (including frontend-owned URI paths).
+  A 4096-byte read window returns complete lines by view; only fragmented/final
+  lines use reusable spill storage. No whole-file slurp, size-based allocation,
+  seek or native filesystem access is added by the reader.
+- Final UTF-8 path bytes are owned once and atomically leased through callbacks.
+  Pointer-table growth copies pointer metadata, not existing path payloads.
+  Frontend output writes exactly the returned bytes plus a terminator, avoiding
+  strncpy padding and the previous temporary start-disc string/snprint copy.
+- BOM/comment/whitespace, missing final newline, UTF-8 and mixed-case M3U work.
+  Open/read/close/embedded-NUL/allocation failures reject staged partial lists.
+  An overlong launch path fails rather than silently truncating.
+- Raw function/context callbacks replace nested owning std::function wrappers.
+  Requests are intrusive, guest-stack-owned nodes, FIFO rather than one pending
+  callback overwritten by another guest. Completion clears/snapshots the node
+  before invoking its answer, which may immediately retire that node.
+- All paths through xenia_stop_emulator release disc waiters before joins.
+  Relaunch resumes requests; deinit frees the metadata after emulator shutdown.
+  The native-path conversion thunk always signals its fence, even on exception.
+
+Validation
+- run_disc_tests.sh: strict GCC C89 (-std=c89 -pedantic -Werror) and C++ reference
+  boundary on MinGW. Actual common file_stream/VFS/rthreads/atomics are linked.
+- run_disc_tests.cmd: native MSVC C89 /TC /W4 /WX and minimal legacy path oracle;
+  also run with /fsanitize=address /Zi on the actual module and common sources.
+- Short reads from 1 through 4096, CRLF/BOM, blank/comments, URI/relative paths,
+  long lines (9000 bytes), final line without newline, embedded NUL, injected
+  open/read/close errors, each module allocation failing in turn, no leaked VFS
+  handles/module allocations, borrowed whole-line identity, retained spill reuse.
+- Basic/ext frontend interface fallback, initial selection, insert/remove/replace,
+  empty slots, invalid indices, truncation/no-padding canaries, overlong launch.
+- FIFO exactly-once completion, callback frees its own request immediately,
+  callbacks unload the path table while reading a retained path, shutdown/late
+  requests/resume/reload, and 1600 stack-owned requests from four real threads.
+- Physical path joins compare with the previous native filesystem boundary;
+  URI schemes deliberately remain VFS byte strings. Native MSVC confirms UNC
+  root-only joins. MinGW's legacy oracle drops the server name in that case;
+  the golden MSVC result is preserved instead of reproducing that bug.
+- Actual emulator.cc/libretro.cpp native MSVC /Zs production checks pass.
+- Full Windows MinGW static Make -j5 builds and links the core. The offline
+  frontend fixture links actual core objects, queues two disc waiters and stops
+  via xenia_stop_emulator: both answers complete, input/graphics views clear,
+  and eight video callbacks plus 6400 consecutive audio frames pass. No game,
+  GPU device, JIT or installed-core replacement is involved.
+
+Limits
+- Mutable metadata and queue publication retain a libretro-common control mutex;
+  this is NOT a lock-free disc module. It adds no per-frame lock, sleep or pacing.
+- Pointer tables/owned paths/spill may allocate during cold load/control edits.
+  The legacy emulator boundary still owns a std::filesystem::path conversion.
+- Frontend lifecycle init/deinit are quiescent operations; deinit follows joins.
+  Detached request contexts remain alive until their answer signals completion.
+- Playlist reads are synchronous at load, not an asynchronous content-I/O claim.
+- Audio/video scheduling and renderer algorithms are unchanged by this batch.
+  No GPU, FPS, frametime or whole-core allocation-freedom claim is made.

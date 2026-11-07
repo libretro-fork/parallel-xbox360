@@ -9,7 +9,7 @@ add_library(xenia-libretro SHARED
   libretro_hid.cc
   libretro_vk_presenter.cc
   libretro_gamedb.cc
-  libretro_disc.cc
+  core_disc.c
 )
 
 # The frame rate unlock list (libretro/data), carried inside the core and

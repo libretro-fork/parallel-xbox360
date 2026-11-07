@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Multi-disc playlists now use frontend VFS, reject incomplete reads instead of publishing a partial list, and avoid temporary C++ path/string/vector copies. Multiple guest disc requests are answered in order, including before shutdown joins; callback path bytes survive reentrant edits. The frontend disc module uses C89/common primitives with a retained control lock. Windows rooted joins preserve UNC server names. No gameplay performance improvement is claimed.
+
 - Removed the unused source-expression access-chain engine and high-level constructors from the shader builder, including two stored vectors and redundant adapter state clears. Raw SPIR-V access chains, direct swizzles and explicit memory operands are preserved. Builder objects shrink by 88 bytes on measured GCC x64; offline geometry generation is modestly faster, while helper/guest shader bytes and tracked allocation counts remain unchanged.
 
 - Replaced shader-block successor vectors with C89 arrays in the existing reusable payload arena. Traversal borrows indexed spans, latest growth can stay in place, and failed growth preserves prior edges. This removes per-block edge heap allocations while keeping edge order, shader bytes and block size unchanged. Added C89 fault/reuse tests and ASan checks for expired views; larger modules can still grow retained pages.

@@ -1313,21 +1313,37 @@ void Emulator::MountStandardDrives() {
   }
 }
 
+namespace {
+struct DiscAnswerContext {
+  std::filesystem::path* path;
+  xe::threading::Fence* fence;
+};
+void DiscAnswer(void* opaque, const char* chosen) noexcept {
+  DiscAnswerContext* context = static_cast<DiscAnswerContext*>(opaque);
+  // The legacy emulator API still owns a native path. Never unwind through C
+  // completion or strand this (or another) guest on a failed path conversion.
+  try {
+    *context->path = xe::to_path(std::string_view(chosen));
+  } catch (...) {
+    context->path->clear();
+  }
+  context->fence->Signal();
+}
+}  // namespace
+
 const std::filesystem::path Emulator::GetNewDiscPath(
     std::string window_message, uint8_t disc_number) {
   std::filesystem::path path;
   if (disc_request_) {
     xe::threading::Fence fence;
-    disc_request_(disc_number, window_message,
-                  [&path, &fence](std::filesystem::path chosen) {
-                    path = std::move(chosen);
-                    fence.Signal();
-                  });
+    DiscAnswerContext context = {&path, &fence};
+    xe_disc_request request;
+    xe_disc_request_init(&request, DiscAnswer, &context);
+    disc_request_(disc_number, window_message.c_str(), &request);
     kernel::GuestScheduler::WaitOnFence(fence);
   }
   return path;
 }
-
 bool Emulator::ExceptionCallbackThunk(Exception* ex, void* data) {
   return reinterpret_cast<Emulator*>(data)->ExceptionCallback(ex);
 }

@@ -23,6 +23,7 @@
 #include "xenia/apu/audio_media_player.h"
 #include "xenia/base/exception_handler.h"
 #include "libretro/core_launch_state.h"
+#include "libretro/core_disc_request.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/game_info_database.h"
 #include "xenia/kernel/util/xlast.h"
@@ -323,11 +324,9 @@ class Emulator {
   // Without a window the app is asked for the disc instead: it calls answer
   // once, with the disc's path (an empty one asks again), whenever it has it;
   // the guest thread waits until then.
-  using DiscRequest = std::function<void(
-      uint8_t disc_number, const std::string& message,
-      std::function<void(std::filesystem::path)> answer)>;
+  using DiscRequest = void (*)(uint8_t, const char*, xe_disc_request*);
   void set_disc_request(DiscRequest request) {
-    disc_request_ = std::move(request);
+    disc_request_ = request;
   }
 
   void WaitUntilExit();
@@ -365,7 +364,7 @@ class Emulator {
   std::filesystem::path xbox_disc_path_;
   std::optional<vfs::XbeMetadata> xbox_game_;
   std::string missing_xefu_file_;
-  DiscRequest disc_request_;
+  DiscRequest disc_request_ = nullptr;
   std::filesystem::path storage_root_;
   std::filesystem::path content_root_;
   std::filesystem::path cache_root_;
