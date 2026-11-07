@@ -10,6 +10,16 @@ typedef struct xe_gpu_resolve_view {
   uint32_t shader_base;
   int persistent;
 } xe_gpu_resolve_view;
+/* Bound the unscaled prefix before multiplying it by the resolution area. */
+static INLINE int xe_gpu_resolve_extent(uint64_t capacity, uint64_t base,
+    uint64_t start, uint64_t length, uint32_t *out) {
+  uint64_t prefix;
+  if (!out || !length || base > start || start > capacity ||
+      length > capacity-start) return 0;
+  prefix = start-base+length;
+  if (prefix > UINT32_MAX) return 0;
+  *out = (uint32_t)prefix; return 1;
+}
 static INLINE int xe_gpu_resolve_view_plan(uint64_t capacity, uint64_t base,
     uint64_t start, uint64_t length, uint64_t max_range, uint64_t alignment,
     int persistent_available, xe_gpu_resolve_view *out) {

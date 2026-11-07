@@ -184,6 +184,15 @@ class VulkanTextureCache final : public TextureCache {
                                      uint32_t length_unscaled,
                                      uint32_t length_scaled_alignment_log2 = 0);
 
+  // Borrow an immutable whole-buffer set where possible, or prepare an
+  // existing transient range view. Caller owns access barriers and emits the
+  // descriptor write only if info.buffer is non-null. No pixel data moves.
+  bool PrepareScaledResolveView(uint32_t address, uint32_t length,
+      VkDescriptorSet& descriptor, VkDescriptorBufferInfo& info,
+      uint32_t& shader_offset) {
+    return PrepareLoadSource(true, address, length, descriptor, info, shader_offset);
+  }
+
   VkBuffer GetCurrentScaledResolveBuffer() const;
   uint64_t GetCurrentScaledResolveBufferSize() const {
     return sparse_scaled_resolve_supported_ ? kScaledResolveSparseBufferSize

@@ -1,0 +1,64 @@
+Scaled direct-resolve descriptor reuse (0151)
+===========================================
+Vulkan scaled direct resolves previously allocated and updated a transient
+storage-buffer descriptor for every destination, even when the immutable bank
+already described that same scaled buffer for texture loads.
+
+The destination now uses the existing PrepareLoadSource view preparation via
+minimal native ABI glue. A descriptor describes storage, not read-only access;
+existing compatible kStorageBuffer layouts are shared by compute load/store.
+The immutable bank is already cold-created and retired with the same backing
+buffers. Source loads and direct writes can borrow its sets without mutation.
+No additional descriptor bank, staging buffer, pixel copy, GPU readback, barrier
+or wait is added. The existing write barrier and resolved-range tracking remain.
+
+The C89 source-view planner returns the buffer-relative byte origin within an
+immutable whole-buffer view, or zero for the original range view. Direct SPIR-V
+adds that origin AFTER tiled addressing is scaled and the within-group host
+offset is added. Both stores use the resulting common address. Packing,
+quantization, source fetches, dispatch layout and write masks are unchanged.
+Native direct SPIR-V and all DXIL are byte-identical to0150; D3D12 already binds
+a destination GPU address and needs no extra shader origin addition.
+
+The helper also bounds the unscaled destination prefix before conversion to
+u32 and multiplication by the resolution area, rejecting invalid/wrapped extents.
+Scaled backing allocation and window selection use the existing16-byte-aligned
+range path used by texture loads. Sparse residency and alias ownership remain.
+A bank miss, unsuitable device range, pool setup failure or wide shader origin
+keeps checked transient views; failure returns before direct dispatch.
+
+Costs and limits
+----------------
+The 1,008 scaled-direct shader variants each grow72 SPIR-V bytes: a member
+constant, push-constant access/load and integer add. This trades GPU addressing
+work for removing eligible per-resolve CPU descriptor allocation/update; no GPU
+speedup is claimed. The existing536-byte CPU bank and its cold native sets are
+reused. Native memory/pipeline allocation, fallback descriptor pool growth and
+other staging/conversion passes remain. Not whole-core allocation-free or
+end-to-end zero-copy. No change to audio, frontend pacing or shutdown joins.
+
+Validation
+----------
+MSVC C89 /W4 /WX normal and AddressSanitizer, MinGW strict C89: PASS.
+One million source address pairs across49 scale combinations,320000 immutable
+lookups with no native allocation/update calls, cold failure/reinit/double-close.
+One million bounded resolve intervals plus extent-prefix overflow checks PASS.
+Native MSVC /Zs actual Vulkan render-target and texture-cache files PASS.
+Windows static Make -j5 PASS. No Python/CMake/Clang requirement added.
+
+Actual production shader matrix against ea6a76ef7:
+2646 SPIR-V:1638 byte-identical;1008 scaled-direct modules enlarged72B each.
+Aggregate27458484 ->27531060 bytes. Source-fetch and exact reciprocal checks PASS.
+C89 interpreter follows the actual output access-chain/bitcast/shift/add nodes;
+225792 numerical store addresses per build, zero/nonzero origins, modulo-u32
+boundaries, 2D/3D and scaled/native layouts. Origin addition is proven after
+area multiplication; second store retains16B scaled/32B native offset.
+MSVC normal+ASan and MinGW current matrices PASS. All2646 GNU SPIR-V outputs
+pass spirv-val. The strengthening of the address interpreter changes no output
+module bytes. DXIL2268 per build remains byte-identical in GNU; Microsoft
+validator passes6804 outputs across GNU/MSVC/MSVC-ASan. MSVC-ASan binary size
+8841872 differs from normal8841856 as previously; no cross-toolchain identity
+claim. Test hooks/interpretation are absent from release builds.
+
+No RetroArch, game, JIT or graphics device launched. Installed DLL untouched.
+No GPU timer, rendered-image, Dark Souls II/5090 FPS result yet.

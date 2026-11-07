@@ -1262,11 +1262,12 @@ bool BuildEdramDumpShaderSpirv(
       dest_address =
           add(scale_up(dest_address, layout_scale_x * layout_scale_y),
               host_byte_offset_in_guest_group);
-    } else {
-      dest_address =
-          add(dest_address,
-              load_push_constant(kEdramDumpShaderPushConstantResolveDestBase));
     }
+    // The binding origin may precede the resolve base in either layout.
+    // Add it after scaled tiling so immutable whole-buffer views are usable.
+    dest_address =
+        add(dest_address,
+            load_push_constant(kEdramDumpShaderPushConstantResolveDestBase));
 
     for (uint32_t block = 0; block < 2; ++block) {
       spv::Id block_address =

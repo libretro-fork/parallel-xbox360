@@ -155,6 +155,15 @@ static void resolve_view_tests(void) {
   uint64_t tiled, old_address, rebased_address;
   unsigned i, j, transient = 0, persistent = 0, rejected = 0;
   int available, success, expected;
+  uint32_t prefix;
+  prefix=0x12345678;
+  CHECK(!xe_gpu_resolve_extent(UINT64_MAX,0,UINT64_MAX-16,17,&prefix));
+  CHECK(!xe_gpu_resolve_extent(UINT64_MAX,0,UINT64_MAX-16,16,&prefix));
+  CHECK(!xe_gpu_resolve_extent(capacity,16,0,16,&prefix));
+  CHECK(!xe_gpu_resolve_extent(capacity,0,0,0,&prefix));
+  CHECK(prefix==0x12345678);
+  CHECK(!xe_gpu_resolve_extent(capacity,0,0,16,NULL));
+  CHECK(xe_gpu_resolve_extent(capacity,4,8,12,&prefix) && prefix==16);
   memset(&sentinel,0x5a,sizeof(sentinel)); view = sentinel;
 #define REJECT(c,b,s,n,m,a,p) do { \
   CHECK(!xe_gpu_resolve_view_plan(c,b,s,n,m,a,p,&view)); \
@@ -189,6 +198,8 @@ static void resolve_view_tests(void) {
     limit = UINT64_C(1) << (20 + random_word()%10);
     alignment = UINT64_C(1) << (random_word()%17);
     available = (int)(random_word()&1);
+    CHECK(xe_gpu_resolve_extent(capacity,base,start,length,&prefix));
+    CHECK(prefix==start+length-base);
     end = start+length; padded = (end+15)&~UINT64_C(15);
     /* Independent CPU reference uses division to round the view origin. */
     expected_offset = base / (alignment<16 ? 16 : alignment) *

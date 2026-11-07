@@ -1340,3 +1340,15 @@ one million bounded intervals, aligned rebasing, persistent/range selection,
 The address runners additionally apply range views to actual native Xenos
 Tiled2D/Tiled3D offsets and compare every component byte. Existing shell and
 MSVC/ASan flags apply. See resolve_view_results.txt. No GPU/device is created.
+
+Scaled direct-resolve descriptor reuse
+-------------------------------------
+The actual-emitter runners now follow both output store indices back to the
+real destination-base load. Their C89 interpreter evaluates that instruction
+slice with zero and nonzero origins and verifies origin addition occurs after
+scaled tiling. Use shell BASELINE_COMMIT=ea6a76ef7 BASELINE_MODE=origin to require
+all DXIL plus ordinary/native-layout SPIR-V to stay byte-identical, while scaled
+direct SPIR-V gains the base load/add. BASELINE_MODE defaults to the historical
+shrink check; no history is needed for ordinary current-module checks.
+Source-view runners also check unscaled extent prefixes before multiplication.
+See scaled_resolve_views_results.txt for exact coverage and remaining costs.
