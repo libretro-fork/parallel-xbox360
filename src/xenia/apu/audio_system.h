@@ -121,6 +121,7 @@ class AudioSystem {
   };
   ClientSlot clients_[kMaximumClientCount];
 
+  unsigned state_pause_owned_ = 0;
   int FindFreeClient();
 
   std::unique_ptr<xe::threading::Semaphore>

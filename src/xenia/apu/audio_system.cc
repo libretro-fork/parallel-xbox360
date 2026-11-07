@@ -9,6 +9,8 @@
 
 #include "xenia/apu/audio_system.h"
 #include <limits>
+#include "libretro/core_state_budget.h"
+#include <features/features_cpu.h>
 
 #include "xenia/apu/apu_flags.h"
 #include "xenia/apu/audio_driver.h"
@@ -484,25 +486,35 @@ void AudioSystem::Pause() {
 }
 
 bool AudioSystem::PauseForState(int64_t timeout_us) {
-  if (timeout_us < 0 || (worker_thread_ &&
-      kernel::XThread::IsInThread(worker_thread_.get()))) return false;
-  xe_pause_gate_set(pause_gate_.get(), 1);
-  if (pending_work_event_) pending_work_event_->Set();
-  if (retro_atomic_load_acquire_int(&worker_running_) &&
-      !xe_pause_gate_wait_workers(pause_gate_.get(), 1, timeout_us)) {
-    xe_pause_gate_set(pause_gate_.get(), 0);
+  xe_state_budget budget;
+  if(!xe_state_budget_begin(&budget,cpu_features_get_time_usec(),timeout_us) ||
+      (worker_thread_ && kernel::XThread::IsInThread(worker_thread_.get()))) return false;
+  const bool had_apu=is_paused();
+  const bool had_xma=xma_decoder_ && xma_decoder_->is_paused();
+  xe_pause_gate_set(pause_gate_.get(),1);
+  if(pending_work_event_) pending_work_event_->Set();
+  if(retro_atomic_load_acquire_int(&worker_running_) &&
+      !xe_pause_gate_wait_workers(pause_gate_.get(),1,
+          xe_state_budget_left(&budget,cpu_features_get_time_usec()))) {
+    if(!had_apu) xe_pause_gate_set(pause_gate_.get(),0);
     return false;
   }
-  if (xma_decoder_ && !xma_decoder_->PauseForState(timeout_us)) {
-    xe_pause_gate_set(pause_gate_.get(), 0);
+  if(xma_decoder_ && !xma_decoder_->PauseForState(
+      xe_state_budget_left(&budget,cpu_features_get_time_usec()))) {
+    if(!had_apu) xe_pause_gate_set(pause_gate_.get(),0);
     return false;
   }
+  if(!had_apu) state_pause_owned_=0;
+  if(!had_apu) state_pause_owned_|=1;
+  if(xma_decoder_ && !had_xma) state_pause_owned_|=2;
   return true;
 }
 
 void AudioSystem::Resume() {
-  if (xma_decoder_) xma_decoder_->Resume();
-  xe_pause_gate_set(pause_gate_.get(), 0);
+  unsigned owned=state_pause_owned_;
+  state_pause_owned_=0;
+  if((owned&2) && xma_decoder_) xma_decoder_->Resume();
+  if(owned&1) xe_pause_gate_set(pause_gate_.get(),0);
 }
 
 }  // namespace apu

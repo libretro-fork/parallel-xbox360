@@ -413,6 +413,7 @@ void XmaDecoder::Pause() {
 bool XmaDecoder::PauseForState(int64_t timeout_us) {
   if (timeout_us < 0 || (worker_thread_ &&
       kernel::XThread::IsInThread(worker_thread_.get()))) return false;
+  const bool was_paused=is_paused();
   xe_pause_gate_set(pause_gate_.get(), 1);
   SignalWork();
   // Without a decoder worker, the controller has already stopped synchronous
@@ -420,7 +421,7 @@ bool XmaDecoder::PauseForState(int64_t timeout_us) {
   if (!cvars::use_dedicated_xma_thread ||
       !retro_atomic_load_acquire_int(&worker_running_) ||
       xe_pause_gate_wait_workers(pause_gate_.get(), 1, timeout_us)) return true;
-  Resume();
+  if(!was_paused) Resume();
   return false;
 }
 

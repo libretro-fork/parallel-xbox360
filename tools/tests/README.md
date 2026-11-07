@@ -1412,3 +1412,12 @@ malformed final-heap input before touching earlier live RAM and restores freed
 virtual/physical allocations. It uses Memory only, with no GPU or guest JIT.
 Its optional argument is only for reproducing the archived partial-mutation
 behavior with the archived memory object. See heap_state_results.txt.
+
+Vblank state-operation boundary
+-------------------------------
+`run_vblank_tests.sh` or `.cmd` builds the production C89 vblank queue, pause
+gate and owned common eventcount/rthreads/time support. It checks active-callback
+timeout, retained credits, repeated pause ownership and stop/join while paused.
+The pure C89 budget fixture covers sharing one deadline and signed overflow
+boundaries. Native ASan uses VBLANK_TEST_FLAGS=/fsanitize=address /Zi and a
+separate VBLANK_TEST_OUT. See state_quiescence_results.txt for coverage limits.

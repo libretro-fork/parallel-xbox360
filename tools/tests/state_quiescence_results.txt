@@ -1,0 +1,63 @@
+Bounded component quiescence (0157)
+==================================
+Graphics pause previously stopped only the command processor, leaving the
+vblank interrupt worker able to change guest state. The C89 vblank queue now
+owns one pause gate allocated at queue setup. Its single consumer acknowledges
+only on entering the next take, after its previous interrupt callback returns.
+Pausing wakes an idle take and waits for that acknowledgement. Pending frontend
+credits remain queued; resume consumes those same credits. Queue stop signals
+both ordinary and pause waiters, and the existing worker join precedes free.
+Requests and ordinary callback delivery allocate no new storage or mutex.
+
+GraphicsSystem::PauseForState pauses vblank before the command worker, rejecting
+self-pause from the interrupt worker. Timeout or a command-queue exception
+releases only its newly acquired vblank pause. Ownership masks retain any
+preexisting command/vblank pauses through a successful parent pause/resume.
+CommandProcessor and XmaDecoder timeout paths likewise preserve earlier pauses.
+AudioSystem records which APU/XMA pauses it owns rather than unconditionally
+resuming both components. These transitions require one control owner.
+
+C89 core_state_budget.h computes remaining time without signed overflow.
+Graphics and APU/XMA phases share the original timeout rather than each getting
+a fresh full wait. Backwards host-clock observations conservatively exhaust the
+remaining budget. Host time is used only for bounded state-control waits, never
+as a new guest clock, frame limiter, periodic watchdog or sample resampler.
+
+GraphicsSystem's two vblank tick anchors and GPU-loss flag now use owned common
+retro_atomic primitives. Tick bit patterns and acquire/release/exchange ordering
+are retained; GPU-loss suppression uses a stronger integer exchange. No new
+logging or profiling counter enters normal frame/audio delivery.
+
+C89 fixture coverage:
+- 20,001 frontend requests, with no autonomous ticks.
+- An intentionally held interrupt callback prevents zero-time pause success;
+  failure resumes only the new pause, then callback completion permits pause.
+- 20,000 credits queued while paused remain unconsumed until resume.
+- Repeated acknowledged pause succeeds without releasing its predecessor;
+  invalid timeout leaves an existing pause intact.
+- 128 queues stop/join while paused (including queued credits discarded only
+  by stop), plus 128 ordinary idle stop/join races; later requests are rejected.
+- Shared timeout budget, zero/negative input, backwards clock and full int64
+  elapsed range checks avoid signed overflow and extra per-stage timeout.
+- MSVC /TC /W4 /WX normal and ASan plus MinGW fixtures use actual owned common
+  thread/eventcount/time support, not a replacement timing implementation.
+
+These tests exercise production C89 queue/gate logic. Native graphics/APU glue
+is separately compiled, not run with a GPU or audio decoder here. No TSan,
+gameplay, FPS or latency claim. Full serialization still needs a controller
+coordinating guest CPUs, outstanding I/O, frontend pause/clock ownership, media
+workers and GPU completion/readback, plus complete component capture/restore.
+The legacy file-level save path and frontend pause watchdog remain unfinished.
+Libretro savestate callbacks remain disabled; ordinary retro_run/audio delivery
+and existing stop/join order are preserved by this change.
+
+Final local checks: strict C89/MSVC /TC /W4 /WX vblank and budget sources pass;
+normal and MSVC ASan fixtures both pass, as does MinGW. The final fixture keeps
+128 ordinary idle stop/join races in addition to 128 paused stop/join cases.
+Actual graphics_system.cc, command_processor.cc, audio_system.cc and
+xma_decoder.cc MSVC syntax checks pass, and static Windows Make -j5 passes.
+No live graphics/APU integration or GPU completion test was run in this batch.
+Shutdown inspection confirms APU and XMA stop their own pause gates before
+joining, independently of Resume ownership. Graphics retains the original
+command-worker then vblank-worker stop/join order. No post-shutdown reuse of
+stopped component gates is introduced or promised.

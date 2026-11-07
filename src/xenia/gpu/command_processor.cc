@@ -559,7 +559,8 @@ bool CommandProcessor::PauseForState(int64_t timeout_us) {
   auto* owner=static_cast<kernel::XThread*>(xe_gpu_tasks_owner(pending_tasks_.get()));
   if (timeout_us < 0 || (owner && kernel::XThread::IsInThread(owner))) return false;
   if (!owner || !retro_atomic_load_acquire_int(&worker_running_)) return false;
-  if (!is_paused()) {
+  const bool was_paused=is_paused();
+  if (!was_paused) {
     xe_pause_gate_set(pause_gate_.get(), 1);
     const int generation = xe_pause_gate_generation(pause_gate_.get());
     // Owned by this processor, so timing out never leaves a callback holding
@@ -577,7 +578,7 @@ bool CommandProcessor::PauseForState(int64_t timeout_us) {
     }
   }
   if (xe_pause_gate_wait_workers(pause_gate_.get(), 1, timeout_us)) return true;
-  xe_pause_gate_set(pause_gate_.get(), 0);
+  if (!was_paused) xe_pause_gate_set(pause_gate_.get(), 0);
   return false;
 }
 

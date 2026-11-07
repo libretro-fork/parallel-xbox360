@@ -10,7 +10,7 @@
 #ifndef XENIA_GPU_GRAPHICS_SYSTEM_H_
 #define XENIA_GPU_GRAPHICS_SYSTEM_H_
 
-#include <atomic>
+#include <retro_atomic.h>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -111,6 +111,7 @@ class GraphicsSystem {
 
   bool is_paused() const { return paused_; }
   void Pause();
+  bool PauseForState(int64_t timeout_us);
   void Resume();
 
   bool Save(ByteStream* stream);
@@ -157,13 +158,14 @@ class GraphicsSystem {
   // the guest tick at the most recent MarkVblank; vblank_period_ticks_ is
   // the most recent measured interval between MarkVblank calls. Both are
   // 0 before the first vblank fires.
-  std::atomic<uint64_t> last_vblank_guest_tick_{0};
-  std::atomic<uint64_t> vblank_period_ticks_{0};
+  retro_atomic_64_t last_vblank_guest_tick_{};
+  retro_atomic_64_t vblank_period_ticks_{};
 
   RegisterFile* register_file_;
   std::unique_ptr<CommandProcessor> command_processor_;
 
   bool paused_ = false;
+  unsigned state_pause_owned_ = 0;
 
   xe_vblank_queue* vblank_queue_ = nullptr;
 
@@ -173,7 +175,7 @@ class GraphicsSystem {
  private:
   std::unique_ptr<ui::Presenter> presenter_;
 
-  std::atomic_flag host_gpu_loss_reported_;
+  retro_atomic_int_t host_gpu_loss_reported_{};
 };
 
 }  // namespace gpu

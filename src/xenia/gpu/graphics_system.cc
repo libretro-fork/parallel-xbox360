@@ -11,7 +11,8 @@
 
 #include <retro_atomic.h>
 
-#include <atomic>
+#include "libretro/core_state_budget.h"
+#include <features/features_cpu.h>
 
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/clock.h"
@@ -182,7 +183,7 @@ void GraphicsSystem::StopVblankWorker() {
 }
 void GraphicsSystem::OnHostGpuLossFromAnyThread(
     [[maybe_unused]] bool is_responsible) {
-  if (host_gpu_loss_reported_.test_and_set(std::memory_order_relaxed)) {
+  if (retro_atomic_exchange_int(&host_gpu_loss_reported_,1)) {
     return;
   }
 
@@ -220,7 +221,7 @@ uint32_t GraphicsSystem::ReadRegister(uint32_t addr) {
       // V_COUNTER crossings.
       const uint32_t vblank_hz = GetGuestVblankRateHz();
       const uint32_t total_lines = (vblank_hz == 50) ? 625u : 750u;
-      uint64_t period = vblank_period_ticks_.load(std::memory_order_acquire);
+      uint64_t period = uint64_t(retro_atomic_load_acquire_64(&vblank_period_ticks_));
       if (!period) {
         // Pre-first-vblank bootstrap: assume the configured rate.
         period = Clock::guest_tick_frequency() / vblank_hz;
@@ -229,7 +230,7 @@ uint32_t GraphicsSystem::ReadRegister(uint32_t addr) {
         }
       }
       const uint64_t last =
-          last_vblank_guest_tick_.load(std::memory_order_acquire);
+          uint64_t(retro_atomic_load_acquire_64(&last_vblank_guest_tick_));
       if (!last) {
         return 0;
       }
@@ -306,9 +307,9 @@ void GraphicsSystem::MarkVblank() {
   // (50Hz, 60Hz, or the frontend target refresh rate), not just the configured one.
   const uint64_t now = Clock::QueryGuestTickCount();
   const uint64_t prev =
-      last_vblank_guest_tick_.exchange(now, std::memory_order_acq_rel);
+      uint64_t(retro_atomic_exchange_64(&last_vblank_guest_tick_,int64_t(now)));
   if (prev && now > prev) {
-    vblank_period_ticks_.store(now - prev, std::memory_order_release);
+    retro_atomic_store_release_64(&vblank_period_ticks_,int64_t(now-prev));
   }
 
   // Increment vblank counter (so the game sees us making progress).
@@ -395,15 +396,37 @@ bool GraphicsSystem::is_tracing_stream() const {
 }
 
 void GraphicsSystem::Pause() {
-  paused_ = true;
+  if(!PauseForState(2000000)) XELOGE("Graphics workers did not reach their state pause boundary");
+}
 
-  command_processor_->Pause();
+bool GraphicsSystem::PauseForState(int64_t timeout_us) {
+  xe_state_budget budget;
+  if(!xe_state_budget_begin(&budget,cpu_features_get_time_usec(),timeout_us) ||
+      !command_processor_ || !vblank_queue_ ||
+      (vblank_worker_thread_ && kernel::XThread::IsInThread(vblank_worker_thread_.get()))) return false;
+  const bool had_vblank=xe_vblank_queue_is_paused(vblank_queue_)!=0;
+  const bool had_gpu=command_processor_->is_paused();
+  if(!xe_vblank_queue_pause(vblank_queue_,xe_state_budget_left(&budget,cpu_features_get_time_usec()))) return false;
+  try {
+    if(!command_processor_->PauseForState(xe_state_budget_left(&budget,cpu_features_get_time_usec()))) {
+      if(!had_vblank) xe_vblank_queue_resume(vblank_queue_);
+      return false;
+    }
+  } catch(...) {
+    if(!had_vblank) xe_vblank_queue_resume(vblank_queue_);
+    throw;
+  }
+  if(!paused_) state_pause_owned_=0;
+  if(!had_vblank) state_pause_owned_|=1;
+  if(!had_gpu) state_pause_owned_|=2;
+  paused_=true;return true;
 }
 
 void GraphicsSystem::Resume() {
-  paused_ = false;
-
-  command_processor_->Resume();
+  unsigned owned=state_pause_owned_;
+  state_pause_owned_=0;paused_=false;
+  if((owned&2) && command_processor_) command_processor_->Resume();
+  if(owned&1) xe_vblank_queue_resume(vblank_queue_);
 }
 
 bool GraphicsSystem::Save(ByteStream* stream) {
