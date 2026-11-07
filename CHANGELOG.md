@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Vulkan and D3D12 EDRAM dumps/direct resolves replace runtime source-pitch divide/modulo with a shared exact C89 integer sequence and a CPU-prepared reciprocal. Pixel addressing, fetches, packing and stores remain unchanged. No shader int64, floating-point approximation, GPU branch or extra synchronization is introduced. Offline arithmetic, shader-matrix and validator checks pass; GPU-time gains remain unmeasured.
+
 - Vulkan scaled texture loads reuse cold persistent buffer views on capable devices, removing per-load source descriptor allocations/rewrites and redundant source rebinds. Devices with smaller limits or cold pool failures retain range views. Source offsets and 128-bit tails use checked planning; CPU invalidation/residency remain intact. Scaled loads also avoid an unrelated native-buffer read transition. Native C89/ASan/address checks pass; GPU timing remains unmeasured.
 
 - Reduced duplicate source fetches and packing in Vulkan/D3D12 direct resolves for native-resolution fragments inside scaled output. Eligible 4x runs emit 75% fewer source fetches while keeping the same coordinates, selected samples, stores and conversions. Shared C89 planning adds no runtime storage or GPU branch. Coordinate tests, actual shader matrices, native sanitizers and SPIR-V/Microsoft DXIL validation pass; gameplay/GPU-time gains remain unmeasured.

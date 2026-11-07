@@ -9,6 +9,7 @@
 
 #include "xenia/gpu/d3d12/d3d12_render_target_cache.h"
 #include <new>
+#include "libretro/core_gpu_divide.h"
 #include "libretro/core_resolve_dispatch.h"
 
 #include <cstdint>
@@ -3764,7 +3765,7 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
       resolve_constants_set = true;
       command_list.D3DSetComputeRoot32BitConstants(
           kDumpRootParameterPushConstants,
-          kEdramDumpShaderPushConstantCount -
+          kEdramDumpShaderPushConstantSourcePitchReciprocal -
               kEdramDumpShaderPushConstantResolveEdramInfo,
           &resolve_constants[kEdramDumpShaderPushConstantResolveEdramInfo],
           kEdramDumpShaderPushConstantResolveEdramInfo);
@@ -3778,11 +3779,16 @@ bool D3D12RenderTargetCache::DirectResolveRenderTargets(
       pitches_set = false;
     }
     if (!pitches_set) {
+      uint32_t reciprocal;
+      if (!xe_gpu_divide_prepare(pitches.source_pitch, &reciprocal)) return false;
       pitches_set = true;
       command_list.D3DSetComputeRoot32BitConstants(
           kDumpRootParameterPushConstants,
           sizeof(last_pitches) / sizeof(uint32_t), &last_pitches,
           kEdramDumpShaderPushConstantPitches);
+      command_list.D3DSetComputeRoot32BitConstants(
+          kDumpRootParameterPushConstants, 1, &reciprocal,
+          kEdramDumpShaderPushConstantSourcePitchReciprocal);
     }
 
     if (pipeline_key.is_depth) {
@@ -4008,10 +4014,15 @@ void D3D12RenderTargetCache::DumpRenderTargets(uint32_t dump_base,
       pitches_set = false;
     }
     if (!pitches_set) {
+      uint32_t reciprocal;
+      if (!xe_gpu_divide_prepare(pitches.source_pitch, &reciprocal)) return;
       command_list.D3DSetComputeRoot32BitConstants(
           kDumpRootParameterPushConstants,
           sizeof(last_pitches) / sizeof(uint32_t), &last_pitches,
           kEdramDumpShaderPushConstantPitches);
+      command_list.D3DSetComputeRoot32BitConstants(
+          kDumpRootParameterPushConstants, 1, &reciprocal,
+          kEdramDumpShaderPushConstantSourcePitchReciprocal);
       pitches_set = true;
     }
 

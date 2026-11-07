@@ -1,0 +1,58 @@
+Exact EDRAM source-pitch division (0146)
+=======================================
+
+Production scope
+----------------
+Both raw SPIR-V and native C DXIL EDRAM dump and direct-resolve emitters
+replace source_tile / source_pitch and source_tile % source_pitch. Compile-time
+tile/scale divisions are unchanged. Pixel fetches, selected samples, packing,
+rounding, destination addressing and stores are otherwise unchanged.
+
+C89 core_gpu_divide.h prepares m = floor(2^32 / d), zero encoding d=1.
+For d>1, q0 = high32(n*m) is exact or one low for every uint32 numerator:
+the reciprocal error is less than 1/2^32, so multiplication by n introduces
+less than one quotient unit of error. Since q0*d <= n, r0 = n-q0*d cannot
+overflow. r0>=d selects q0+1 and r0-d; otherwise q0 and r0. d=1 selects n
+before this correction. All speculative arithmetic uses defined u32 wrapping.
+The CPU rejects d=0 without changing the output. Every emission failure stops
+immediately without publishing quotient/remainder IDs.
+
+One new push-constant word at index 9 travels with the existing source pitch.
+All four backend paths update it on pitch/root/pipeline-layout rebinds.
+Direct-resolve common constants exclude this independently bound word.
+Vulkan's normal range grows 36 -> 40 bytes; the existing Turnip workaround
+remains. The D3D12 root constant allocation stays 12 dwords; dump CBV metadata
+now covers all 48 bytes, matching direct resolves. No descriptor, pixel buffer,
+queue wait, shaderInt64 capability or GPU control-flow branch is added.
+There is one additional constant command per pitch bind, plus a CPU division
+at that binding boundary. The shader uses integer multiply-high and selects.
+
+Offline checks
+--------------
+- 5,260,076 exact div/mod pairs per run: all 1..1023 EDRAM pitches across
+  0..4095, full-u32 edge/quotient boundaries, and 1M arbitrary u32 pairs.
+  All 12 callback failure points and invalid arguments checked.
+  MSVC /TC /W4 /WX, MSVC ASan and MinGW strict C89 PASS.
+- Actual emitters: 1764 SPIR-V and 1512 DXIL modules per compiler/configuration.
+  Formats/depth/MSAA, native/scaled layouts, direct/dump, true 4x4 and
+  asymmetric scales covered. Source-fetch counts remain as expected.
+  Every module emits exactly one extended multiply and one high extraction;
+  all remaining divide/modulo operands are compile-time constants.
+  SPIR-V extracts pair word 1; DXIL UMul opcode42 extracts pair word0.
+  Native MSVC, native MSVC ASan and MinGW matrices PASS.
+- SPIR-V validator: every MinGW matrix module PASS.
+- Microsoft DXIL validator: 4536 native/native-ASan/MinGW modules PASS via
+  explicit development-only dxil.dll, no GPU/device or compiler launched.
+- Native MSVC syntax checks of Vulkan/D3D12 render-target cache TUs PASS.
+
+Limits
+------
+No GPU device, JIT or game was launched. These checks validate arithmetic,
+emission structure and native shader validity, not complete rendered images.
+There is no measured GPU-time, bandwidth, occupancy or FPS claim. Driver
+lowering and register pressure still require hardware measurements. The
+texture decode scratch-buffer/image staging path remains separate work.
+No historical pre-reciprocal shader is byte-identical: the constant ABI and
+integer instructions intentionally changed every shader.
+
+Full static Windows Make build (MinGW, -j5): PASS. Installed core untouched.

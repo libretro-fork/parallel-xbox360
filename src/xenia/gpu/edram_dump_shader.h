@@ -128,6 +128,9 @@ enum EdramDumpShaderPushConstant : uint32_t {
   // threads can place themselves without dividing the linear index back out.
   kEdramDumpShaderPushConstantResolveDispatchTile,
 
+  // floor(2^32 / source pitch), with zero encoding source pitch one.
+  kEdramDumpShaderPushConstantSourcePitchReciprocal,
+
   kEdramDumpShaderPushConstantCount,
 };
 

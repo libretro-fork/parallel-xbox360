@@ -4,6 +4,7 @@
 #include "edram_format.h"
 #include "guest_resources.h"
 #include "../../../../libretro/core_resolve_native_loads.h"
+#include "../../../../libretro/core_gpu_divide.h"
 #include <dxil_module.h>
 #include <dxil_function.h>
 
@@ -73,6 +74,52 @@ static XeDxilValue equal(XeDxilAlu *s, XeDxilValue value, unsigned constant) {
   if (!value) s->failed = 1;
   return value;
 }
+typedef struct DivideBuilder {
+  XeDxilAlu *alu;
+  const struct dxil_func *multiply;
+} DivideBuilder;
+static uintptr_t emit_divide(void *opaque, enum xe_gpu_divide_op op,
+    uintptr_t a, uintptr_t b, uintptr_t c) {
+  DivideBuilder *state = (DivideBuilder *)opaque;
+  XeDxilAlu *s = state->alu;
+  XeDxilValue av = (XeDxilValue)a, bv = (XeDxilValue)b, cv = (XeDxilValue)c;
+  XeDxilValue value = NULL, args[3];
+  switch (op) {
+    case XE_GPU_DIV_CONST: value = ic(s, (uint32_t)a); break;
+    case XE_GPU_DIV_MUL_HIGH:
+      args[0] = ic(s, 42); args[1] = av; args[2] = bv;
+      value = args[0] ? dxil_emit_call(s->module, state->multiply, args, 3) : NULL;
+      /* DXIL BinaryWithTwoOuts UMul is {high, low}, unlike SPIR-V. */
+      value = value ? dxil_emit_extractval(s->module, value, 0) : NULL;
+      break;
+    case XE_GPU_DIV_EQ: value = dxil_emit_cmp(s->module, DXIL_ICMP_EQ, av, bv); break;
+    case XE_GPU_DIV_GE: value = dxil_emit_cmp(s->module, DXIL_ICMP_UGE, av, bv); break;
+    case XE_GPU_DIV_SELECT: value = pick(s, av, bv, cv); break;
+    case XE_GPU_DIV_MUL: value = mul(s, av, bv); break;
+    case XE_GPU_DIV_SUB: value = bin(s, DXIL_BINOP_SUB, av, bv); break;
+    case XE_GPU_DIV_ADD: value = add(s, av, bv); break;
+  }
+  if (!value) s->failed = 1;
+  return (uintptr_t)value;
+}
+static int divide_pitch(XeDxilAlu *s, XeDxilValue numerator, XeDxilValue pitch,
+    XeDxilValue constants, XeDxilValue *quotient, XeDxilValue *remainder) {
+  DivideBuilder state;
+  const struct dxil_type *parts[2], *pair;
+  XeDxilValue reciprocal;
+  uintptr_t q, r;
+  state.alu = s;
+  parts[0] = dxil_module_get_int_type(s->module, 32); parts[1] = parts[0];
+  if (!parts[0]) return 0;
+  pair = dxil_module_get_struct_type(s->module, "dx.types.twoi32", parts, 2);
+  state.multiply = pair ? dxil_alloc_func_with_rettype(s->module,
+      "dx.op.binaryWithTwoOuts", DXIL_I32, pair, "iOO", DXIL_ATTR_KIND_READ_NONE) : NULL;
+  reciprocal = xe_dxil_cbuffer_word(s, constants, ic(s, 9));
+  if (!state.multiply || !xe_gpu_divide_emit(emit_divide, &state,
+      (uintptr_t)numerator, (uintptr_t)pitch, (uintptr_t)reciprocal, &q, &r)) return 0;
+  *quotient = (XeDxilValue)q; *remainder = (XeDxilValue)r;
+  return 1;
+}
 static XeDxilValue combine_address(XeDxilAlu *s, XeDxilValue bytes, XeDxilValue bank,
                                      XeDxilValue pipe, XeDxilValue y_lsb) {
   return bor(s, bor(s, bor(s, shl(s, y_lsb, 4), shl(s, pipe, 6)), shl(s, bank, 11)),
@@ -90,6 +137,7 @@ static int emit_direct_resolve(XeDxilAlu *s, const XeDxilEdramDumpOptions *o,
   XeDxilValue info, coordinate, dest_info, dest_coordinate, dispatch, resolve_height;
   XeDxilValue tile_x, tile_y, in_x, in_y, dest_x, dest_y, condition, valid_x, valid_y;
   XeDxilValue tile, source_tile, source_pitch, source_x, source_y, sample, fill_enabled;
+  XeDxilValue source_tile_x, source_tile_y;
   XeDxilValue packed[8], pixel[2], pixel_x, endian, swap, swap8, swap10, swap64, swap_dwords;
   XeDxilValue a, b, value, bytes, bank, pipe, address2d, address3d, address, slice, pitch;
   XeDxilValue tiled_x, tiled_y, host_offset = NULL, gx, gy, hx, hy, group;
@@ -122,8 +170,9 @@ static int emit_direct_resolve(XeDxilAlu *s, const XeDxilEdramDumpOptions *o,
   tile = add(s, add(s, field(s, info, 13, 2047), mul(s, field(s, info, 0, 1023), tile_y)), tile_x);
   source_tile = bin(s, DXIL_BINOP_SUB, tile, field(s, offsets, 12, 2047));
   source_pitch = field(s, pitches, 10, 1023);
-  source_x = add(s, mul(s, bin(s, DXIL_BINOP_UREM, source_tile, source_pitch), ic(s, tile_width)), in_x);
-  source_y = add(s, mul(s, bin(s, DXIL_BINOP_UDIV, source_tile, source_pitch), ic(s, tile_height)), in_y);
+  if (!divide_pitch(s, source_tile, source_pitch, constants, &source_tile_y, &source_tile_x)) return 0;
+  source_x = add(s, mul(s, source_tile_x, ic(s, tile_width)), in_x);
+  source_y = add(s, mul(s, source_tile_y, ic(s, tile_height)), in_y);
   if (scaled && scale_y > 1) source_y = add(s, source_y, fill_bias(s, dest_y, scale_y / 2, fill_enabled));
   if (o->native_source && scaled) source_y = bin(s, DXIL_BINOP_UDIV, source_y, ic(s, o->scale_y));
   sample = field(s, dest_coordinate, 28, 7);
@@ -228,6 +277,7 @@ int xe_dxil_build_edram_dump(const XeDxilEdramDumpOptions *o, XeDxilShaderBinary
   XeDxilValue output, texture, stencil = NULL, constants, pitches, offsets;
   XeDxilValue x, y, tile_x, tile_y, local_x, local_y, tile, address;
   XeDxilValue source_tile, source_pitch, source_x, source_y, sample, u, v, sub_x, sub_y;
+  XeDxilValue source_tile_x, source_tile_y;
   XeDxilValue packed[2], args[9];
   const struct dxil_func *function;
   unsigned words, layout_x, layout_y, width, height, kind, i;
@@ -249,7 +299,7 @@ int xe_dxil_build_edram_dump(const XeDxilEdramDumpOptions *o, XeDxilShaderBinary
       xe_dxil_shader_resource_typed(shader, XE_DXIL_RESOURCE_SRV, kind, o->source_space, 0, 1, 0,
         integer_source ? DXIL_COMP_TYPE_U32 : DXIL_COMP_TYPE_F32) != 0 ||
       (o->depth && xe_dxil_shader_resource_typed(shader, XE_DXIL_RESOURCE_SRV, kind, o->source_space, 1, 1, 0, DXIL_COMP_TYPE_U32) != 1) ||
-      xe_dxil_shader_resource(shader, XE_DXIL_RESOURCE_CBV, DXIL_RESOURCE_KIND_CBUFFER, 31, 1, 1, o->direct_resolve ? 48 : 16) != 0) goto done;
+      xe_dxil_shader_resource(shader, XE_DXIL_RESOURCE_CBV, DXIL_RESOURCE_KIND_CBUFFER, 31, 1, 1, 48) != 0) goto done;
   output = xe_dxil_resource_handle(&s, XE_DXIL_RESOURCE_UAV, 0, 0);
   texture = xe_dxil_resource_handle(&s, XE_DXIL_RESOURCE_SRV, 0, 0);
   if (o->depth) stencil = xe_dxil_resource_handle(&s, XE_DXIL_RESOURCE_SRV, 1, 1);
@@ -276,10 +326,11 @@ int xe_dxil_build_edram_dump(const XeDxilEdramDumpOptions *o, XeDxilShaderBinary
     select_less(&s, local_x, ic(&s, width / 2), ic(&s, width / 2), ic(&s, 0u - width / 2)));
   source_tile = bin(&s, DXIL_BINOP_SUB, tile, field(&s, offsets, 12, 2047));
   source_pitch = field(&s, pitches, 10, 1023);
+  if (!divide_pitch(&s, source_tile, source_pitch, constants, &source_tile_y, &source_tile_x)) goto done;
   source_x = bin(&s, DXIL_BINOP_ADD, bin(&s, DXIL_BINOP_MUL,
-    bin(&s, DXIL_BINOP_UREM, source_tile, source_pitch), ic(&s, width)), local_x);
+    source_tile_x, ic(&s, width)), local_x);
   source_y = bin(&s, DXIL_BINOP_ADD, bin(&s, DXIL_BINOP_MUL,
-    bin(&s, DXIL_BINOP_UDIV, source_tile, source_pitch), ic(&s, height)), local_y);
+    source_tile_y, ic(&s, height)), local_y);
   sample = ic(&s, 0);
   if (o->msaa) {
     u = bin(&s, DXIL_BINOP_UDIV, source_x, ic(&s, layout_x)); sub_x = bin(&s, DXIL_BINOP_UREM, source_x, ic(&s, layout_x));

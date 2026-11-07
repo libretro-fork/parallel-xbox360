@@ -10,7 +10,7 @@ extern "C" int xe_test_resolve_spv(const xe_test_resolve_options* p,
   key.msaa_samples = xe::gpu::xenos::MsaaSamples(p->msaa);
   key.direct_resolve = p->direct; key.source_scale_native = p->config != 0;
   key.native_layout = p->config == 2;
-  options.resolution_scale_x = p->scale; options.resolution_scale_y = p->scale == 1 ? 1 : 3;
+  options.resolution_scale_x = p->scale; options.resolution_scale_y = p->scale == 1 ? 1 : (p->scale == 4 ? 4 : 3);
   options.msaa_2x_attachments_supported = p->config != 0;
   options.source_is_uint = !p->depth && ((p->format >= 4 && p->format <= 7) || p->format >= 14);
   options.depth_float24_round = true;

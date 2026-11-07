@@ -1,5 +1,7 @@
 # parallel_xbox360 libretro core
 
+EDRAM dump/direct-resolve shaders in both renderers use exact reciprocal-based source-pitch division. The CPU supplies one additional constant when binding the pitch; GPU address calculation uses 32-bit multiply-high and a bounded correction. This preserves the integer quotient/remainder across the full 32-bit input range, including pitch one, without shader int64 or approximate floating point. It adds one constant update per pitch bind; it does not remove pixel transfers or establish a measured 4x GPU/FPS improvement. See [division coverage and limits](tools/tests/gpu_divide_results.txt).
+
 A [libretro](https://www.libretro.com/) core of [Xenia Edge](https://github.com/has207/xenia-edge), the Xbox 360 emulator, for RetroArch and other libretro frontends.
 
 This repository follows xenia-edge and adds the libretro frontend in `libretro/` plus owned shader and build paths. It holds the core only; upstream's standalone UI, packaging and CI are not part of it (the paths are listed in `.upstream-excluded`). The version the core reports is upstream's, with the upstream commit it is merged to (`upstream.version`). The core is currently on xenia-edge commit 8dc77b0 of 7 October 2026.

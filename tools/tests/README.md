@@ -1252,11 +1252,14 @@ Native-fragment resolve load sharing
 C89 independent coordinate/bit-pattern equivalence checks. The shell runner
 uses ASan/UBSan by default; set SANITIZER= on MinGW without those runtimes.
 
-`run_resolve_loads_emit_tests.sh` compares actual SPIR-V and DXIL production
-emitters with baseline 5fa800e99 (override BASELINE_COMMIT). It builds serially,
+`run_resolve_loads_emit_tests.sh` checks actual SPIR-V and DXIL production
+emitters at the current push-constant ABI. It builds serially,
 counts SPIR-V image-fetch instructions / test-hooked DXIL texture-load emission,
-and requires unaffected variants to remain byte-identical. It requires the
-baseline commit locally. SPIRV_VALIDATOR and DXIL_VALIDATOR optionally specify
+and requires every dynamic pitch division to be replaced by one extended
+multiply with the backend's correct high-word extraction. The matrix includes
+4x4 and asymmetric scales. The historical 0144 byte-identical comparisons are
+recorded in resolve_native_loads_results.txt; the new pitch constant intentionally
+changes every shader. SPIRV_VALIDATOR and DXIL_VALIDATOR optionally specify
 standalone validator executables. Normal core builds require neither tool.
 `run_resolve_loads_emit_tests.cmd` builds the current actual emitters with MSVC;
 set RESOLVE_EMIT_FLAGS=/fsanitize=address /Zi and a separate RESOLVE_EMIT_OUT
@@ -1280,3 +1283,15 @@ flags: SOURCE_VIEW_TEST_FLAGS=/fsanitize=address /Zi, with a separate
 SOURCE_VIEW_TEST_OUT. Fake Vulkan function-table calls verify actual native
 structures and cold failures without creating a Vulkan device. See
 source_views_results.txt for coverage, resource lifetime and remaining copies.
+
+Exact GPU pitch division
+------------------------
+`run_gpu_divide_tests.sh` (or `.cmd` from an x64 VS prompt) evaluates the same
+C89 emission sequence used by both backends against native division/remainder.
+It covers all EDRAM pitches, full-u32 boundary cases, one million arbitrary
+u32 pairs and every callback failure boundary. Shell sanitizers default on;
+use SANITIZER= on MinGW without those runtimes. Native ASan uses
+GPU_DIVIDE_TEST_FLAGS=/fsanitize=address /Zi and a separate GPU_DIVIDE_TEST_OUT.
+The actual-emitter matrix above additionally checks no variable-divisor GPU
+division remains, and the native DXIL hook verifies the UMul opcode and high
+result index. These hooks exist only in test builds. See gpu_divide_results.txt.

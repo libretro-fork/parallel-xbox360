@@ -9,6 +9,7 @@
 
 #include "xenia/gpu/vulkan/vulkan_render_target_cache.h"
 #include <new>
+#include "libretro/core_gpu_divide.h"
 #include "libretro/core_resolve_dispatch.h"
 
 #include <cstddef>
@@ -4084,7 +4085,7 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
   std::sort(DumpInvocations().begin(), DumpInvocations().end());
 
   // The resolve is one destination and one rectangle for every invocation.
-  uint32_t resolve_push_constants[kEdramDumpShaderPushConstantCount];
+  uint32_t resolve_push_constants[kEdramDumpShaderPushConstantCount] = {};
   resolve_push_constants[kEdramDumpShaderPushConstantResolveEdramInfo] =
       copy_shader_constants.dest_relative.edram_info.packed;
   resolve_push_constants[kEdramDumpShaderPushConstantResolveCoordinateInfo] =
@@ -4141,7 +4142,7 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
       command_buffer.CmdVkPushConstants(
           pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
           sizeof(uint32_t) * kEdramDumpShaderPushConstantResolveEdramInfo,
-          sizeof(uint32_t) * (kEdramDumpShaderPushConstantCount -
+          sizeof(uint32_t) * (kEdramDumpShaderPushConstantSourcePitchReciprocal -
                               kEdramDumpShaderPushConstantResolveEdramInfo),
           &resolve_push_constants
               [kEdramDumpShaderPushConstantResolveEdramInfo]);
@@ -4155,11 +4156,17 @@ bool VulkanRenderTargetCache::DirectResolveRenderTargets(
       pitches_bound = false;
     }
     if (!pitches_bound) {
+      uint32_t reciprocal;
+      if (!xe_gpu_divide_prepare(pitches.source_pitch, &reciprocal)) return false;
       pitches_bound = true;
       command_buffer.CmdVkPushConstants(
           pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
           sizeof(uint32_t) * kEdramDumpShaderPushConstantPitches,
           sizeof(last_pitches), &last_pitches);
+      command_buffer.CmdVkPushConstants(
+          pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+          sizeof(uint32_t) * kEdramDumpShaderPushConstantSourcePitchReciprocal,
+          sizeof(reciprocal), &reciprocal);
     }
 
     // Tiles cover this many destination pixels, which is what the dispatch is
@@ -4586,11 +4593,17 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
       pitches_bound = false;
     }
     if (!pitches_bound) {
+      uint32_t reciprocal;
+      if (!xe_gpu_divide_prepare(pitches.source_pitch, &reciprocal)) return;
       pitches_bound = true;
       command_buffer.CmdVkPushConstants(
           pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
           sizeof(uint32_t) * kEdramDumpShaderPushConstantPitches,
           sizeof(last_pitches), &last_pitches);
+      command_buffer.CmdVkPushConstants(
+          pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+          sizeof(uint32_t) * kEdramDumpShaderPushConstantSourcePitchReciprocal,
+          sizeof(reciprocal), &reciprocal);
     }
 
     EdramDumpShaderOffsets offsets;

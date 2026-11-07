@@ -12,6 +12,7 @@
 #include <initializer_list>
 #include "libretro/core_spv_words.h"
 #include "libretro/core_resolve_native_loads.h"
+#include "libretro/core_gpu_divide.h"
 
 #include "xenia/gpu/spirv/GLSL.std.450.h"
 
@@ -25,6 +26,38 @@
 
 namespace xe {
 namespace gpu {
+
+// Native builder ABI only; the exact division sequence is shared C89.
+struct DivideBuilder {
+  SpirvBuilder* builder;
+  spv::Id type_uint, type_bool;
+};
+static uintptr_t EmitDivide(void* opaque, enum xe_gpu_divide_op op,
+                            uintptr_t a, uintptr_t b, uintptr_t c) {
+  auto& state = *static_cast<DivideBuilder*>(opaque);
+  auto& builder = *state.builder;
+  switch (op) {
+    case XE_GPU_DIV_CONST: return builder.makeUintConstant(uint32_t(a));
+    case XE_GPU_DIV_MUL_HIGH:
+      return builder.createCompositeExtract(
+          builder.createBinOp(spv::OpUMulExtended,
+              builder.makeStructResultType(state.type_uint, state.type_uint),
+              spv::Id(a), spv::Id(b)), state.type_uint, 1);
+    case XE_GPU_DIV_EQ:
+      return builder.createBinOp(spv::OpIEqual, state.type_bool, spv::Id(a), spv::Id(b));
+    case XE_GPU_DIV_GE:
+      return builder.createBinOp(spv::OpUGreaterThanEqual, state.type_bool, spv::Id(a), spv::Id(b));
+    case XE_GPU_DIV_SELECT:
+      return builder.createTriOp(spv::OpSelect, state.type_uint, spv::Id(a), spv::Id(b), spv::Id(c));
+    case XE_GPU_DIV_MUL:
+      return builder.createBinOp(spv::OpIMul, state.type_uint, spv::Id(a), spv::Id(b));
+    case XE_GPU_DIV_SUB:
+      return builder.createBinOp(spv::OpISub, state.type_uint, spv::Id(a), spv::Id(b));
+    case XE_GPU_DIV_ADD:
+      return builder.createBinOp(spv::OpIAdd, state.type_uint, spv::Id(a), spv::Id(b));
+  }
+  return 0;
+}
 
 // C89 storage reports capacity failures; this is the existing C++ builder's
 // allocation-failure boundary. No heap work is performed on the normal path.
@@ -209,6 +242,7 @@ bool BuildEdramDumpShaderSpirv(
       "resolve_dest_base",
       "resolve_height_div_8",
       "resolve_dispatch_tile",
+      "source_pitch_reciprocal",
   };
   static_assert(
       xe::countof(kPushConstantNames) == kEdramDumpShaderPushConstantCount,
@@ -623,10 +657,14 @@ bool BuildEdramDumpShaderSpirv(
     spv::Id source_pitch_tiles = builder.createTriOp(
         spv::OpBitFieldUExtract, type_uint, pitches_constant,
         const_edram_pitch_tiles_bits, const_edram_pitch_tiles_bits);
-    spv::Id source_tile_index_y = builder.createBinOp(
-        spv::OpUDiv, type_uint, source_tile_index, source_pitch_tiles);
-    spv::Id source_tile_index_x = builder.createBinOp(
-        spv::OpUMod, type_uint, source_tile_index, source_pitch_tiles);
+    DivideBuilder divide{&builder, type_uint, type_bool};
+    uintptr_t source_y, source_x;
+    if (!xe_gpu_divide_emit(EmitDivide, &divide, source_tile_index,
+            source_pitch_tiles,
+            load_push_constant(kEdramDumpShaderPushConstantSourcePitchReciprocal),
+            &source_y, &source_x)) throw std::bad_alloc();
+    spv::Id source_tile_index_y = spv::Id(source_y);
+    spv::Id source_tile_index_x = spv::Id(source_x);
     // Combine the source tile offset and the sample index within the tile.
     spv::Id source_sample_x = builder.createBinOp(
         spv::OpIAdd, type_uint,
@@ -938,19 +976,24 @@ bool BuildEdramDumpShaderSpirv(
         spv::OpBitFieldUExtract, type_uint, pitches_constant,
         const_edram_pitch_tiles_bits, const_edram_pitch_tiles_bits);
 
+    DivideBuilder divide{&builder, type_uint, type_bool};
+    uintptr_t source_y, source_x;
+    if (!xe_gpu_divide_emit(EmitDivide, &divide, source_tile_index,
+            source_pitch_tiles,
+            load_push_constant(kEdramDumpShaderPushConstantSourcePitchReciprocal),
+            &source_y, &source_x)) throw std::bad_alloc();
+
     // The canonical sample rearrangement of XeEdramOffsetBytes only permutes
     // the samples within a tile, so the source pixel is the source tile's
     // origin plus the position within the tile, and the selected sample is the
     // same for every pixel of the run.
     spv::Id source_pixel_x = add(
         multiply(builder.makeUintConstant(tile_pixels_x),
-                 builder.createBinOp(spv::OpUMod, type_uint, source_tile_index,
-                                     source_pitch_tiles)),
+                 spv::Id(source_x)),
         pixel_in_tile_x);
     spv::Id source_pixel_y = add(
         multiply(builder.makeUintConstant(tile_pixels_y),
-                 builder.createBinOp(spv::OpUDiv, type_uint, source_tile_index,
-                                     source_pitch_tiles)),
+                 spv::Id(source_y)),
         pixel_in_tile_y);
     if (fill_bias_y != spv::NoResult) {
       source_pixel_y = add(source_pixel_y, fill_bias_y);

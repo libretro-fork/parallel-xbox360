@@ -5,6 +5,7 @@
 #include "core_resolve_loads_emit.h"
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"line %u: %s\n",(unsigned)__LINE__,#x); exit(1); } } while (0)
 static unsigned calls, modules, compared;
+static unsigned wide_multiplies, high_extracts;
 static size_t binary_bytes;
 #ifdef XE_TEST_RESOLVE_DXIL
 #ifdef _MSC_VER
@@ -16,10 +17,39 @@ static size_t binary_bytes;
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
+static const struct dxil_value *wide_product;
+static int constant_value(struct dxil_module *m, const struct dxil_value *value, uint32_t *out) {
+  struct dxil_const *c;
+  LIST_FOR_EACH_ENTRY(struct dxil_const, c, &m->const_list, head) {
+    if (&c->value == value && !c->undef) { *out = (uint32_t)c->int_value; return 1; }
+  }
+  return 0;
+}
 const struct dxil_value *xe_test_resolve_call(struct dxil_module *m, const struct dxil_func *f,
     const struct dxil_value **args, size_t n) {
+  uint32_t opcode;
+  const struct dxil_value *result;
   if (!strncmp(f->name, "dx.op.textureLoad", 17)) ++calls;
-  return dxil_emit_call(m, f, args, n);
+  result = dxil_emit_call(m, f, args, n);
+  if (!strcmp(f->name, "dx.op.binaryWithTwoOuts.i32")) {
+    CHECK(n == 3 && constant_value(m, args[0], &opcode) && opcode == 42);
+    ++wide_multiplies; wide_product = result;
+  }
+  return result;
+}
+const struct dxil_value *xe_test_resolve_binop(struct dxil_module *m, enum dxil_bin_opcode op,
+    const struct dxil_value *a, const struct dxil_value *b, enum dxil_opt_flags flags) {
+#ifndef XE_RESOLVE_LOADS_BASELINE
+  uint32_t divisor;
+  if (op == DXIL_BINOP_UDIV || op == DXIL_BINOP_UREM)
+    CHECK(constant_value(m, b, &divisor) && divisor);
+#endif
+  return dxil_emit_binop(m, op, a, b, flags);
+}
+const struct dxil_value *xe_test_resolve_extract(struct dxil_module *m,
+    const struct dxil_value *value, unsigned index) {
+  if (value == wide_product) { CHECK(index == 0); ++high_extracts; }
+  return dxil_emit_extractval(m, value, index);
 }
 #define EXTENSION "dxil"
 #else
@@ -42,17 +72,36 @@ static int inspect(void *opaque, const uint32_t *words, size_t count) {
   size_t bytes = count * sizeof(uint32_t);
 #ifndef XE_TEST_RESOLVE_DXIL
   size_t offset = 5;
+  static unsigned char constants[65536];
+  uint32_t product = 0;
   CHECK(count >= 5 && words[0] == 0x07230203);
+  CHECK(words[3] <= sizeof(constants)); memset(constants, 0, sizeof(constants));
   calls = 0;
   while (offset < count) {
     uint32_t length = words[offset] >> 16;
+    unsigned op = words[offset] & 65535;
     CHECK(length && length <= count - offset);
-    if ((words[offset] & 65535) == 95) ++calls; /* OpImageFetch. */
+    if (op == 95) ++calls; /* OpImageFetch. */
+    if (op == 43) { CHECK(length >= 4 && words[offset + 2] < words[3]); constants[words[offset + 2]] = 1; }
+#ifndef XE_RESOLVE_LOADS_BASELINE
+    if (op == 134 || op == 137) { /* OpUDiv, OpUMod: only literal divisors. */
+      CHECK(length == 5 && words[offset + 4] < words[3] && constants[words[offset + 4]]);
+    }
+    if (op == 151) { CHECK(length == 5); product = words[offset + 2]; ++wide_multiplies; }
+    if (op == 81 && length == 5 && words[offset + 3] == product) {
+      CHECK(words[offset + 4] == 1); ++high_extracts;
+    }
+#else
+    (void)product;
+#endif
     offset += length;
   }
   CHECK(offset == count);
 #else
   CHECK(count > 8 && words[0] == 0x43425844); /* DXBC container. */
+#endif
+#ifndef XE_RESOLVE_LOADS_BASELINE
+  CHECK(wide_multiplies == 1 && high_extracts == 1);
 #endif
   if (calls != c->expected) {
     fprintf(stderr, "%u/%u/%u scale %u config %u direct %u: %u loads, wanted %u\n",
@@ -93,6 +142,7 @@ int main(int argc, char **argv) {
 #endif
     c.options.format = formats[f]; c.options.depth = f >= 12; c.options.msaa = msaa;
     c.options.scale = scales[s]; c.options.config = config; c.options.direct = direct;
+    wide_multiplies = 0; high_extracts = 0;
     c.optimized = direct && config == 1 && scales[s] > 1 && scales[s] <= 16 && !(scales[s] & (scales[s] - 1));
     c.expected = direct ? run : 1;
 #ifndef XE_RESOLVE_LOADS_BASELINE
@@ -105,7 +155,7 @@ int main(int argc, char **argv) {
       XeDxilShaderBinary binary;
       memset(&options, 0, sizeof(options)); memset(&binary, 0, sizeof(binary));
       options.format = formats[f]; options.depth = f >= 12; options.msaa = msaa;
-      options.scale_x = scales[s]; options.scale_y = scales[s] == 1 ? 1 : 3;
+      options.scale_x = scales[s]; options.scale_y = scales[s] == 1 ? 1 : (scales[s] == 4 ? 4 : 3);
       options.native_source = config != 0; options.native_layout = config == 2;
       options.direct_resolve = direct; options.msaa_2x_supported = config != 0;
       options.source_uint = !options.depth && ((options.format >= 4 && options.format <= 7) || options.format >= 14);
