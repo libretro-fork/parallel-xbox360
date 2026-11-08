@@ -1,0 +1,73 @@
+Vulkan host GPU profiling gate: focused validation, 2026-11-08
+
+Change scope
+Runtime changes are confined to VulkanCommandProcessor .cc/.h (20 insertions).
+Header explicitly includes xenia/base/profiling.h, providing its default macro.
+XE_OPTION_PROFILING now gates profiler-only class storage/helpers, timestamp pool
+creation/destruction, collection, command reset and two timestamps per submission,
+profiler counter windows, render-pass profiler increments and missing-slot warning.
+No guest query logic, command submission/queue completion, fences, synchronization,
+resolve, shader, draw or presentation semantics were edited. Profiler-enabled code
+inside the new guards is unchanged. No new logging, waits, locks or dependencies.
+
+Reason
+Default XENIA_ENABLE_PROFILER=OFF compiles COUNT_profile_set to no-op but previously
+retained host timestamp work and private counters. This change removes discarded
+work from that configuration. It is not evidence that this overhead causes DS2's
+4x resolution GPU load, and no speedup or memory reduction was measured in-game.
+
+Actual compiler validation
+Tool: MSVC 14.44.35207, Hostx64/x64 cl.exe.
+Base command: actual VulkanCommandProcessor entry from
+work/audio-release/build/tests/state-control-cmake/compile_commands.json,
+Release, NDEBUG, XENIA_LIBRETRO=1, /std:c++20, /WX and existing includes/defines.
+Object/PDB/parallel/LTCG/debug-info output flags removed for private checks.
+The compiler environment was initialized with the installed vcvars64.bat.
+Each run operated in ROOT/tmp/ds2-profile-gate-check, never the live build directory.
+
+1. /DXE_OPTION_PROFILING=0 /Zs: PASS, exit 0.
+2. /DXE_OPTION_PROFILING=1 /Zs: PASS, exit 0.
+3. /DXE_OPTION_PROFILING=0 /P /Fi(profile-0.i): PASS, exit 0.
+4. /DXE_OPTION_PROFILING=1 /P /Fi(profile-1.i): PASS, exit 0.
+All four logs contain no diagnostics beyond the source filename.
+Exact response files, launch scripts, compiler logs and .i outputs remain under
+ROOT/tmp/ds2-profile-gate-check/profile-{0,1}.{syntax,preprocess}.{rsp,cmd,log}.
+The first attempted direct cmd.exe launch encountered shell quoting before cl.exe
+ran; corrected private .cmd launch scripts completed the four checks above.
+
+Preprocessor assertions
+All 13 profiler-only symbols below are absent in disabled .i and present in enabled:
+gpu_time_query_pool_, gpu_time_query_submissions_, gpu_time_query_slot_,
+gpu_time_total_ns_, gpu_time_untimed_submissions_, gpu_time_submissions_window_start_,
+gpu_time_window_start_ns_, CreateGpuTimeQueryPool, DestroyGpuTimeQueryPool,
+CollectCompletedGpuTimeQueries, render_passes_total_, render_passes_window_start_,
+render_pass_window_frames_.
+Guest-path token counts match in both actual preprocessed translation units:
+- host_query_pool_ = std::make_unique<VulkanQueryPool>(); : 1 / 1
+- host_query_pool_->RecordResolveBatch(command_buffer.buffer); : 1 / 1
+- ShutdownQueryResources(); : 1 / 1
+- OpenQuerySegment(false); : 2 / 2
+Scoped git diff --check: PASS.
+
+Source integration points after change
+Header:43 profiling configuration dependency; :688 profiler-only storage region.
+CC:1443 setup; :1467 shutdown; :1985 swap collection/counter window;
+:2734 and :2840 render-pass profiler increments; :5394 helper definitions;
+:5579 and :5606 submission timestamp brackets. Guest query resolve batch remains
+between the brackets and outside both guards.
+
+Full Release core builds
+------------------------
+- Static GNU Make/MinGW, make -j5: PASS.
+- MSVC/Ninja, xenia-libretro --parallel5: PASS.
+Builds ran serially. No installed DLL replacement.
+
+Limits
+------
+The focused compiler checks do not execute GPU commands. No physical GPU capture,
+FPS/latency measurement or attributable DS2 pass timing was obtained. The DS2
+ARM64 recomp repository at f70d684 is experimental and delegates GPU work to
+ReXGlue's xenos backend; it supplies no demonstrated DS2 rendering optimization
+suitable for copying. Four times as many pixels at4x4 vs2x2 is a hypothesis for
+resolution-dependent cost, not identification of an expensive pass.
+No installed core replacement or application/game launch accompanied this patch.

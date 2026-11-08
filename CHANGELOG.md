@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Compile Vulkan host GPU timing queries and render-pass profiler counters only when profiling is enabled. Default builds no longer create the otherwise-unused timestamp pool, collect its results or bracket submissions with diagnostic timestamps. Guest occlusion queries and GPU completion behavior remain intact. This removes discarded profiling work; its effect on Dark Souls II performance has not been measured.
+
 - Fix invalid SPIR-V references when a forward jump skips an unreachable block: emitted phi inputs, names and decorations now follow the same live block plan. Filtering borrows original operand spans and retains reusable storage. Remove redundant Vulkan jump-to-next control flow and unused DXIL loop/call/dispatcher state; native DXIL forward jumps branch directly, retaining the dominating dispatcher for backward edges and subroutines. Actual shader tests cover forward branches, calls, loops and orphan blocks. No gameplay speedup is claimed; Vulkan subroutine lowering remains separate work.
 
 - Add an NG2-only "Hi-res Shadows" option in Patch Manager for verified World disc and TU3 executable hashes. Enabled by default, it retains the game's existing 1024x1024 shadow surfaces during combat instead of selecting 512x512. Restart content after changing it; Apply Game Patches must be enabled. Unknown revisions and TU2 remain untouched. Fix incremental Make/CMake patch dependencies and an empty-input build-generator UB case.

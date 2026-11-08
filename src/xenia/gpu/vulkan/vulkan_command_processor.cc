@@ -1440,7 +1440,9 @@ bool VulkanCommandProcessor::SetupContext() {
   // Initialize the occlusion query pool and resources.
   host_query_pool_ = std::make_unique<VulkanQueryPool>();
   EnsureQueryResources();
+#if XE_OPTION_PROFILING
   CreateGpuTimeQueryPool();
+#endif  // XE_OPTION_PROFILING
 
   // Just not to expose uninitialized memory.
   std::memset(&system_constants_, 0, sizeof(system_constants_));
@@ -1462,11 +1464,13 @@ void VulkanCommandProcessor::ShutdownContext() {
 
   ShutdownVIZQueryResources();
 
+#if XE_OPTION_PROFILING
   if (gpu_time_untimed_submissions_) {
     XELOGW("GPU busy total is missing {} submission(s) with no free query slot",
            gpu_time_untimed_submissions_);
   }
   DestroyGpuTimeQueryPool();
+#endif  // XE_OPTION_PROFILING
 
   const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
@@ -1978,6 +1982,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // too.
   NoteResolveFrame();
 
+#if XE_OPTION_PROFILING
   CollectCompletedGpuTimeQueries();
   static constexpr uint32_t kRenderPassWindowFrames = 60;
   if (++render_pass_window_frames_ >= kRenderPassWindowFrames) {
@@ -2000,6 +2005,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
 
     render_pass_window_frames_ = 0;
   }
+#endif  // XE_OPTION_PROFILING
 
   ui::Presenter* presenter = graphics_system_->presenter();
   if (!presenter) {
@@ -2725,7 +2731,9 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
                                                   VK_SUBPASS_CONTENTS_INLINE);
   }
   in_render_pass_ = true;
+#if XE_OPTION_PROFILING
   ++render_passes_total_;
+#endif  // XE_OPTION_PROFILING
 
   // Resume any pending ZPD segment now that the pass is open.
   OpenQuerySegment(false);
@@ -2829,7 +2837,9 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
                                                   VK_SUBPASS_CONTENTS_INLINE);
   }
   in_render_pass_ = true;
+#if XE_OPTION_PROFILING
   ++render_passes_total_;
+#endif  // XE_OPTION_PROFILING
 
   OpenQuerySegment(false);
 }
@@ -5381,6 +5391,7 @@ bool VulkanCommandProcessor::CanEndSubmissionImmediately() const {
          !pipeline_cache_->IsCreatingPipelines();
 }
 
+#if XE_OPTION_PROFILING
 void VulkanCommandProcessor::CreateGpuTimeQueryPool() {
   ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
   if (!vulkan_device->properties().timestampPeriod) {
@@ -5432,6 +5443,8 @@ void VulkanCommandProcessor::CollectCompletedGpuTimeQueries() {
     gpu_time_query_submissions_[slot] = 0;
   }
 }
+
+#endif  // XE_OPTION_PROFILING
 
 bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
   ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
@@ -5563,6 +5576,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
       XELOGE("Failed to begin a Vulkan command buffer");
       return false;
     }
+#if XE_OPTION_PROFILING
     // Bracket the whole submission. Recycle finished slots first, or a frame
     // with more submissions than slots leaves the later ones untimed.
     CollectCompletedGpuTimeQueries();
@@ -5580,6 +5594,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
                               VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                               gpu_time_query_pool_, gpu_time_slot * 2);
     }
+#endif  // XE_OPTION_PROFILING
 
     deferred_command_buffer_.Execute(command_buffer.buffer, dfn,
         vulkan_device->vulkan_instance()->functions());
@@ -5588,6 +5603,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
     if (host_query_pool_) {
       host_query_pool_->RecordResolveBatch(command_buffer.buffer);
     }
+#if XE_OPTION_PROFILING
     if (gpu_time_recorded) {
       dfn.vkCmdWriteTimestamp(command_buffer.buffer,
                               VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
@@ -5596,6 +5612,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
       gpu_time_query_slot_ =
           (gpu_time_query_slot_ + 1) % kGpuTimeQuerySubmissions;
     }
+#endif  // XE_OPTION_PROFILING
     if (dfn.vkEndCommandBuffer(command_buffer.buffer) != VK_SUCCESS) {
       XELOGE("Failed to end a Vulkan command buffer");
       return false;

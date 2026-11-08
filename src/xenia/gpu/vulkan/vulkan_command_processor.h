@@ -40,6 +40,7 @@
 #include "xenia/base/hash.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/memory.h"
+#include "xenia/base/profiling.h"
 #include "xenia/gpu/command_processor.h"
 #include "xenia/gpu/draw_util.h"
 #include "xenia/gpu/gpu_flags.h"
@@ -684,6 +685,7 @@ class VulkanCommandProcessor final : public CommandProcessor {
 
   static constexpr uint32_t kMaxFramesInFlight = 3;
   bool frame_open_ = false;
+#if XE_OPTION_PROFILING
   // Comparable against the Metal backend's render encoder count: on a TBDR GPU
   // each one is a tile store plus an attachment reload.
   uint64_t render_passes_total_ = 0;
@@ -707,6 +709,7 @@ class VulkanCommandProcessor final : public CommandProcessor {
   void CreateGpuTimeQueryPool();
   void DestroyGpuTimeQueryPool();
   void CollectCompletedGpuTimeQueries();
+#endif  // XE_OPTION_PROFILING
   // Guest frame index, since some transient resources can be reused across
   // submissions. Values updated in the beginning of a frame.
   uint64_t frame_current_ = 1;
