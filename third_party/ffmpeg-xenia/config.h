@@ -348,13 +348,15 @@
     #define HAVE_SYMVER 1
     #define HAVE_SYS_SOUNDCARD_H 1
     #define HAVE_GLOB 1
-    #define CONFIG_ICONV 1
   #endif
 #endif
 
 /* ------------------------------------------------------------------ */
 /*  Common to all platforms                                           */
 /* ------------------------------------------------------------------ */
+
+/* The core decodes audio, not text subtitles. No iconv dependency. */
+#define CONFIG_ICONV 0
 
 #define HAVE_FAST_UNALIGNED 1
 #define HAVE_THREADS 1

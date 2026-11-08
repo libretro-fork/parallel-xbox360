@@ -373,16 +373,22 @@ static void split_test(void) {
 int main(int argc, char **argv) {
   xe_spv_sink_workspace work = {0}; xe_spv_binary out = {0};
   unsigned i;
+  size_t root_length;
   char source[512], dest[512];
   FILE *f;
-  CHECK(argc == 2); atlas_test(); split_test();
+  CHECK(argc == 2);
+  root_length = strlen(argv[1]);
+  CHECK(root_length <= sizeof(dest)-sizeof("/.spv"));
+  atlas_test(); split_test();
   for (i = 0; i < sizeof(fixtures)/sizeof(fixtures[0]); ++i) {
     uint32_t *input; size_t count;
     current = fixtures[i].name;
-    CHECK(snprintf(source,sizeof(source),"src/xenia/gpu/shaders/bytecode/vulkan_spirv/texture_load_%s_cs.spv",current) > 0);
+    CHECK(strlen(current) <= sizeof(source)-sizeof("src/xenia/gpu/shaders/bytecode/vulkan_spirv/texture_load__cs.spv"));
+    CHECK(sprintf(source,"src/xenia/gpu/shaders/bytecode/vulkan_spirv/texture_load_%s_cs.spv",current) > 0);
     input = read_module(source,&count);
     check_module(&work,&out,input,count,fixtures[i].bytes);
-    CHECK(snprintf(dest,sizeof(dest),"%s/%s.spv",argv[1],current) > 0);
+    CHECK(strlen(current) <= sizeof(dest)-root_length-sizeof("/.spv"));
+    CHECK(sprintf(dest,"%s/%s.spv",argv[1],current) > 0);
     f = fopen(dest,"wb"); CHECK(f && fwrite(out.words,4,out.count,f) == out.count && !fclose(f));
     free(input);
   }

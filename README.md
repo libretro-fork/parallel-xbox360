@@ -1,5 +1,7 @@
 # parallel_xbox360 libretro core
 
+FFmpeg text-subtitle encoding conversion is disabled: this core does not use it, so its decoder build needs no libiconv dependency. XMA and the other enabled audio decoders remain available.
+
 Default Vulkan builds omit host profiler timestamp pools, readbacks and per-submission timestamp commands when profiling is disabled. Guest occlusion queries remain active. This removes discarded diagnostic work, without a measured Dark Souls II frame-time improvement; see [profiling gate checks](tools/tests/gpu_profile_gate_results.txt).
 
 Shader control-flow lowering uses direct forward edges in native DXIL and omits unused loop/call/dispatcher state. Vulkan discards redundant jump-to-next labels and conditions while retaining its real-label NVIDIA switch workaround. SPIR-V serialization filters phi inputs, names and decorations using the actual emitted block plan, borrowing original operand spans without rebuilding payloads. See [control-flow coverage and limits](tools/tests/forward_flow_results.txt); Vulkan call/return lowering now uses a guarded four-entry return stack only in shaders with calls; gameplay speedups are unmeasured. See also [subroutine checks](tools/tests/shader_call_results.txt). Actual translated vertex subroutines also pass exact-output Vulkan transform-feedback tests on an RTX 5090, with a failing pre-fix control; see [GPU coverage](tools/tests/shader_call_gpu_results.txt).
