@@ -190,14 +190,20 @@ static void native(void) {
 #endif
 static void native_filesystem(const char* root) {
    struct retro_vfs_interface_info info;char path[4096],directory_path[4096];
-   RFILE* file;xe_svod_files* files;const uint8_t* view;unsigned i;int written;
+   RFILE* file;xe_svod_files* files;const uint8_t* view;unsigned i;size_t root_bytes;
    info.iface=NULL;info.required_interface_version=3;
    filestream_set_mapped_ptr_cb(NULL);filestream_vfs_init(&info);dirent_vfs_init(&info);path_vfs_init(&info);
-   written=snprintf(directory_path,sizeof(directory_path),"%s.data",root);
-   CHECK(written>0 && (size_t)written<sizeof(directory_path) && path_mkdir(directory_path));
+   root_bytes=strlen(root);
+   CHECK(root_bytes<=sizeof(directory_path)-sizeof(".data"));
+   memcpy(directory_path,root,root_bytes);
+   memcpy(directory_path+root_bytes,".data",sizeof(".data"));
+   CHECK(path_mkdir(directory_path));
+   root_bytes+=sizeof(".data")-1;
+   CHECK(root_bytes<=sizeof(path)-sizeof("/Data0000"));
    for(i=0;i<3;++i) {
-      written=snprintf(path,sizeof(path),"%s/Data%04u",directory_path,i);
-      CHECK(written>0 && (size_t)written<sizeof(path));
+      memcpy(path,directory_path,root_bytes);
+      memcpy(path+root_bytes,"/Data0000",sizeof("/Data0000"));
+      path[root_bytes+8]=(char)('0'+i);
       file=filestream_open(path,RETRO_VFS_FILE_ACCESS_WRITE,RETRO_VFS_FILE_ACCESS_HINT_NONE);CHECK(file);
       CHECK(filestream_write(file,contents[i],(int64_t)lengths[i])==(int64_t)lengths[i]);CHECK(!filestream_close(file));
    }

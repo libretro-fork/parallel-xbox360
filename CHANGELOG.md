@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Build the SVOD regression fixture with strict C89 path construction on Linux and Windows. Production file I/O is unchanged.
+
 - Decode modern/raw XMA with the MIT libretro-common decoder. Borrow complete compressed frames, copy only packet crossings into reusable scratch, and reserve profile storage at setup. Preserve guest PCM layout and audio scheduling. Native checkpoint metadata is versioned separately; legacy modes and media playback retain FFmpeg. Add offline decoder comparisons and allocation/state regressions.
 
 - Disable unused FFmpeg text-subtitle encoding conversion so macOS links without libiconv. Keep audio decoding unchanged. Fix the image-sink regression fixture's bounded path formatting for strict C89 builds on Linux.
