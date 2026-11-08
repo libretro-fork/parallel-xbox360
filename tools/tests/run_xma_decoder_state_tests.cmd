@@ -6,12 +6,18 @@ if not defined DECODER_STATE_BUILD set DECODER_STATE_BUILD=build\windows-native
 if not defined DECODER_STATE_OUT set DECODER_STATE_OUT=build\tests\xma-decoder-state-msvc
 set OUT=%DECODER_STATE_OUT%
 if not exist "%OUT%" mkdir "%OUT%"
-if "%DECODER_STATE_OPEN_FAILURE_TEST%"=="1" (
-  set DECODER_STATE_FLAGS=%DECODER_STATE_FLAGS% /DXE_XMA_OPEN_FAIL_TEST
-  cl %DECODER_STATE_FLAGS% /nologo /MD /O2 /EHsc /utf-8 /std:c++20 /arch:AVX /DNDEBUG /DXENIA_LIBRETRO /DRETRO_ATOMIC_FORCE_MSVC /Davcodec_open2=xe_xma_test_open2 /I. /Isrc /Ithird_party\libretro-common\include /Ithird_party\fmt\include /Ithird_party\FFmpeg /Ithird_party\ffmpeg-xenia /c src\xenia\apu\xma_context_new.cc /Fo"%OUT%\context.obj" /Fd"%OUT%\context.pdb"
-  if errorlevel 1 goto fail
-  set DECODER_STATE_OBJECT=%DECODER_STATE_OBJECT% "%OUT%\context.obj"
-)
+if "%DECODER_STATE_OPEN_FAILURE_TEST%"=="1" set DECODER_STATE_FLAGS=%DECODER_STATE_FLAGS% /DXE_XMA_OPEN_FAIL_TEST
+cl %DECODER_STATE_FLAGS% /nologo /MD /O2 /EHsc /utf-8 /std:c++20 /arch:AVX /DNDEBUG /DXENIA_LIBRETRO /DRETRO_ATOMIC_FORCE_MSVC /I. /Isrc /Ithird_party\libretro-common\include /Ithird_party\fmt\include /Ithird_party\FFmpeg /Ithird_party\ffmpeg-xenia /c src\xenia\apu\xma_context_new.cc /Fo"%OUT%\context.obj"
+if errorlevel 1 goto fail
+cl %DECODER_STATE_FLAGS% /nologo /MD /O2 /EHsc /utf-8 /std:c++20 /arch:AVX /DNDEBUG /DXENIA_LIBRETRO /DRETRO_ATOMIC_FORCE_MSVC /I. /Isrc /Ithird_party\libretro-common\include /Ithird_party\fmt\include /Ithird_party\FFmpeg /Ithird_party\ffmpeg-xenia /c src\xenia\apu\xma_decoder.cc /Fo"%OUT%\decoder.obj"
+if errorlevel 1 goto fail
+cl %DECODER_STATE_FLAGS% /nologo /TC /MD /O2 /W4 /WX /I. /Ithird_party\libretro-common\include /c libretro\core_xma_native.c /Fo"%OUT%\native.obj"
+if errorlevel 1 goto fail
+cl %DECODER_STATE_FLAGS% /nologo /TC /MD /O2 /D_CRT_SECURE_NO_WARNINGS /Dcalloc=xe_xma_test_calloc /Dfree=xe_xma_test_free /Ithird_party\libretro-common\include /c third_party\libretro-common\formats\wma\rwma_pro.c /Fo"%OUT%\pro.obj"
+if errorlevel 1 goto fail
+cl %DECODER_STATE_FLAGS% /nologo /TC /MD /O2 /D_CRT_SECURE_NO_WARNINGS /Dcalloc=xe_xma_test_calloc /Dfree=xe_xma_test_free /Ithird_party\libretro-common\include /c third_party\libretro-common\formats\wma\rwma_standard.c /Fo"%OUT%\standard.obj"
+if errorlevel 1 goto fail
+set DECODER_STATE_OBJECT="%OUT%\context.obj" "%OUT%\decoder.obj" "%OUT%\native.obj" "%OUT%\pro.obj" "%OUT%\standard.obj"
 cl %DECODER_STATE_FLAGS% /nologo /TC /MD /O2 /W4 /WX /DXE_DECODER_CLOCK_TEST /D_CRT_SECURE_NO_WARNINGS /I. /Ithird_party\libretro-common\include /c tools\tests\core_xma_decoder_state_test.c /Fo"%OUT%\driver.obj" /Fd"%OUT%\driver.pdb"
 if not "%errorlevel%"=="0" goto fail
 cl %DECODER_STATE_FLAGS% /nologo /MD /O2 /EHsc /utf-8 /std:c++20 /arch:AVX /DNDEBUG /DXENIA_LIBRETRO /DRETRO_ATOMIC_FORCE_MSVC /I. /Isrc /Ithird_party\libretro-common\include /Ithird_party\fmt\include /Ithird_party\FFmpeg /Ithird_party\ffmpeg-xenia /c tools\tests\xma_decoder_state_bridge.cc /Fo"%OUT%\bridge.obj" /Fd"%OUT%\bridge.pdb"

@@ -17,6 +17,8 @@ static INLINE int xe_xma_payload_range(const xe_xma_payload_view *view,
          view->second_size > XE_XMA_PACKET_CAPACITY ||
          (view->first_size && !view->first) ||
          (view->second_size && !view->second)) return 0;
+   if ((view->first_size && (uintptr_t)view->first > UINTPTR_MAX-view->first_size) ||
+         (view->second_size && (uintptr_t)view->second > UINTPTR_MAX-view->second_size)) return 0;
    total = view->first_size + view->second_size;
    return offset <= total && count <= total - offset;
 }
@@ -64,6 +66,41 @@ static INLINE int xe_xma_payload_packet(const xe_xma_payload_view *view,
    trailing = (plan.header >> 2) & 7;
    output[plan.size - 1] &= (uint8_t)(255u << trailing);
    *packet = plan;
+   return 1;
+}
+typedef struct xe_xma_raw_span {
+   const uint8_t *data;
+   size_t size;
+   uint32_t bit_offset,bit_count;
+} xe_xma_raw_span;
+/* Borrow complete spans. Only a frame crossing payloads needs scratch. */
+static INLINE int xe_xma_payload_raw(const xe_xma_payload_view *view,
+      uint32_t bit_offset,uint32_t bits,uint8_t *scratch,size_t capacity,
+      xe_xma_raw_span *out)
+{
+   xe_xma_raw_span span;
+   uint32_t offset=bit_offset/8,padding=bit_offset&7,bytes,first;
+   uintptr_t target,source;
+   if (!out || bits<18 || bits>=XE_XMA_FRAME_MAX_BITS) return 0;
+   bytes=(padding+bits+7)/8;
+   if (!xe_xma_payload_range(view,offset,bytes)) return 0;
+   span.size=bytes;span.bit_offset=padding;span.bit_count=bits;
+   if (offset>=view->first_size) span.data=view->second+(offset-view->first_size);
+   else if (bytes<=view->first_size-offset) span.data=view->first+offset;
+   else {
+      if (!scratch || capacity<bytes) return 0;
+      target=(uintptr_t)scratch;
+      if (target>UINTPTR_MAX-bytes) return 0;
+      first=view->first_size-offset;
+      source=(uintptr_t)view->first;
+      if (target<source+view->first_size && source<target+bytes) return 0;
+      source=(uintptr_t)view->second;
+      if (target<source+view->second_size && source<target+bytes) return 0;
+      memcpy(scratch,view->first+offset,first);
+      memcpy(scratch+first,view->second,bytes-first);
+      span.data=scratch;
+   }
+   *out=span;
    return 1;
 }
 #endif

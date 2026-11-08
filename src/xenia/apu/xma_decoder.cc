@@ -240,7 +240,7 @@ bool XmaDecoder::CaptureState(xe_xma_decoder_view* out) const {
         !static_cast<const XmaContextNew*>(contexts_[i])->CaptureState(&out->owners[i]))
       return false;
   }
-  out->state.version = 1;
+  out->state.version = 2;
   // Structural slot/bitmap checks only; restore must also prepare and validate
   // every saved codec payload before it mutates any live component.
   if (!xe_xma_decoder_view_valid(out, context_data_first_ptr_, context_data_last_ptr_)) {
@@ -300,7 +300,7 @@ bool XmaDecoder::PrepareState(const xe_xma_decoder_view* source,
             source->owners[i].pcm_bytes)) return false;
     for (c = 0; c < 2; ++c) {
       if (!xe_xma_state_disjoint(stage, sizeof(*stage), source->owners[i].codec.history[c],
-            source->owners[i].codec.history_bytes[c])) return false;
+            source->owners[i].codec.history_samples[c] * sizeof(float))) return false;
     }
   }
   stage->state = source->state;

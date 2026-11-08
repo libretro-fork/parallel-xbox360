@@ -40,21 +40,29 @@ APU client callback borrows and render credits now use a fixed C89 generation-ta
 
 Audio queue and driver state can retain unread PCM plus pause/volume and the existing resampler's position/history under exclusive quiescence. Capture borrows one or two SPSC spans without moving a cursor or allocating. Restore copies external spans straight into the reusable final ring and publishes a complete frame interval; an exact unchanged live view restores without copying PCM. Stopped/retired streams, active frontend read leases, mismatched formats/phases and unsafe aliases reject. These component APIs do not pause producers themselves or enable full libretro savestates. Normal audio pacing, conversion and queue limits are unchanged. See [audio checkpoint checks](tools/tests/audio_checkpoint_results.txt).
 
-XMA format reconfiguration prepares a fully opened replacement before releasing the live codec. Failed allocation/open retains the old decoder and restores input/loop controls before returning, so a later guest kick can retry the same input. Matching profiles reuse the existing codec without allocation. The offline regression uses FFmpeg's allocation limit to exercise actual cold/warm failures and retry through the production decode path; no allocation-failure test hook is added to release code. See [XMA checks](tools/tests/xma_decoder_state_results.txt).
+The modern/raw XMA context uses the MIT libretro-common decoder. Setup reserves
+stereo capacity once per owner; mono/stereo and supported sample-rate changes
+reuse that storage without allocation. Complete compressed frames borrow guest
+packet payloads; only frames crossing two payloads use the retained bounded
+scratch buffer. Native decoded planes feed the existing guest big-endian S16
+conversion and output ring. Mixing, frontend delivery and guest scheduling stay
+unchanged. Legacy XMA modes and media playback still use FFmpeg.
 
-Raw XMA decoder restore now stages all 320 replacement codecs before changing any live slot. It validates every owner identity, allocation bit, register mapping and known mutable-storage alias before committing under exclusive quiescence; a late failure discards candidates without a partial restore. Fixed caller-owned C89 staging borrows immutable register/PCM backing and adopts candidate codecs, with no new normal-decode allocation or pacing work. This restores decoder-internal state only: guest RAM, other APU/media state and full libretro savestates still require orchestration. See [transaction checks](tools/tests/xma_decoder_state_results.txt).
+Raw XMA capture and transactional restore cover all 320 owners with native
+schema-2 metadata and borrowed overlap/partial-PCM views. Restore prepares every
+candidate before committing; invalid input or late allocation failure leaves all
+live contexts unchanged. State preparation may allocate; playback and profile
+changes do not. This is decoder-internal state support, not complete libretro
+savestates. Source history and pending guest PCM retain their actual layouts.
 
-Pending XMA PCM keeps its decoded frame layout when the guest changes mono/stereo settings. This fixes wrong source selection and a possible wrapped source offset while draining a stereo frame. The reusable PCM array is C89-shaped, and its redundant 2 KiB clear is removed because successful conversion fills the frame being consumed. Both layout-change directions pass source-byte oracles; a controlled legacy-index variant fails that oracle. Stable-format real-stream PCM remains byte-identical. The layout byte fits existing padding on tested MinGW/MSVC builds; see [capture and PCM checks](tools/tests/xma_decoder_state_results.txt).
-
-Raw XMA decoder capture covers all 320 owners, including released contexts retaining codec history or pending PCM. It borrows the register file and validates the allocation bitmap against owner flags using fixed C89 metadata. Capture rejects a requested-but-unacknowledged worker pause; zero-timeout acknowledgment checks read no clock. The cold factory freezes its actual decoder style, rejects duplicate setup and resets allocation bits when rebuilding fresh owners. The remaining decoder modes and complete libretro savestates are unfinished. See [all-slot capture checks](tools/tests/xma_decoder_state_results.txt).
-
-Launch signature checks use a small C89 libretro-common VFS probe: one read-only handle and four logical header bytes, with a four-byte tail read only when needed. Short reads, seek failures and interrupted reads are checked without mapping or slurping the file. Recognized virtual-file inputs now reach the existing classifier. Removed the unused standalone file-savestate APIs, their fixed 2 GiB mapping path, global pause/resume helpers and exit-wait polling. Debug guest faults still log and halt the faulting thread, but no longer enter a blocking global pause from the exception callback. Existing raw-disc detection and live launch/shutdown serialization remain; libretro savestates are still disabled. See [probe checks and cleanup scope](tools/tests/file_probe_results.txt).
-
-The new XMA owner can checkpoint live codec history, pending converted PCM and loop/allocation/enable flags under exclusive quiescence. Restore prepares a separate codec first, then adopts it and copies only the borrowed pending PCM interval; failed preparation leaves the live owner untouched. Cold unopened owners are represented explicitly, and stale prepared handles are rejected. A real coefficient-bearing stream replays identically across nine owner configurations, including five partial-PCM checkpoints, on MinGW and native MSVC. State preparation allocates codec resources; ordinary decoding gains no work or lock. This does not yet capture the entire APU or enable libretro savestates. See [owner checkpoint checks](tools/tests/xma_owner_state_results.txt).
-
-The new XMA decoder borrows one or two guest packet payloads and gathers only the selected frame directly into its retained codec packet. Split headers inspect at most three bytes; the 4,088-byte intermediate array and whole-array clears are removed. Tested MinGW x64 owners shrink from 6,336 to 2,240 bytes (1.25 MiB across 320 contexts). A real stream produces identical PCM across all 24 ring/refill configurations. Final packet ownership/padding, PCM conversion, guest-ring copies and playback scheduling remain; this is not end-to-end zero-copy audio. See [borrowed payload checks](tools/tests/xma_payload_results.txt).
-
-The owned raw-XMA decoder exposes a borrowed history checkpoint for savestate work: fixed metadata and overlap samples, without serializing host pointers, rebuilding DSP plans or changing ordinary decoding. Matching drained decoders validate every channel before restoring directly into codec history. Offline native MSVC, ASan and MinGW fixtures reproduce 192 subsequent synthetic frames bit for bit from nonzero overlap. This does not yet capture caller PCM/partial packets or implement libretro savestates; real coefficient-bearing gameplay coverage remains pending. See [checkpoint coverage](tools/tests/xma_checkpoint_results.txt).
+The native decoder uses bounded word reads, immutable Huffman prefix/gain tables
+and scalar/SSE2 matrix and transform paths. Small transforms fill their FFT
+permutation directly, and paired post-rotation writes final samples once. Offline
+comparison beats the existing FFmpeg raw decoder on the measured stereo/mono
+corpora while retaining float error below 3.6e-7 and guest S16 differences of at
+most one LSB. This does not establish gameplay cadence or all-format performance.
+See [native comparison](tools/tests/xma_native_benchmark.md) and [results](tools/tests/xma_native_benchmark_results.txt). Guest PCM conversion
+and guest-ring copies remain; the entire audio path is not zero-copy.
 
 Optional GPU trace capture now writes through libretro-common VFS using a C89 stream owner, checked 64-bit header fixups and latched transfer failures. Snappy borrows gamma-ramp spans instead of building a second heap concatenation; its existing block scratch still gathers split input. The unused standalone raw-EDRAM-file dump API is removed from both renderers. Trace bytes match the archived writer across MSVC, ASan and MinGW fixtures. Default release tracing remains disabled; this does not establish a gameplay speedup. See [trace I/O checks](tools/tests/gpu_trace_results.txt).
 

@@ -15,13 +15,14 @@ int xe_xma_owner_test_commit(void *,xe_xma_owner_stage *);
 int xe_xma_owner_test_wrong_owner(xe_xma_owner_stage *);
 void xe_xma_owner_test_discard(xe_xma_owner_stage *);
 #define CHECK(x) do {if(!(x)) {fprintf(stderr,"owner line %u\n",(unsigned)__LINE__);exit(1);}} while(0)
-static unsigned char input[131072],history[2][2048],pcm[2048];
+static unsigned char input[131072],pcm[2048];
+static float history[2][256];
 static unsigned char guest[64],ring[8192],initial_guest[64],initial_ring[8192];
 static unsigned char reference[65536],replayed[65536];
 static void store(xe_xma_owner_view *view) {
  unsigned c;
  for(c=0;c<view->state.channels;++c) {
-  CHECK(view->codec.history_bytes[c]==sizeof(history[c]));
+  CHECK(view->codec.history_samples[c]==256);
   memcpy(history[c],view->codec.history[c],sizeof(history[c]));view->codec.history[c]=history[c];
  }
  if(view->pcm_bytes) {CHECK(view->pcm_bytes<=sizeof(pcm));memcpy(pcm,view->pcm,view->pcm_bytes);view->pcm=pcm;}
@@ -44,7 +45,7 @@ static unsigned future(void *f,unsigned capacity,unsigned char *out) {
 static void rejected(void *f,const xe_xma_owner_view *bad) {
  xe_xma_owner_view before,after;
  xe_xma_owner_stage stage={0},empty={0};
- unsigned char saved[2][2048],pending[2048];unsigned c;
+ float saved[2][256];unsigned char pending[2048];unsigned c;
  CHECK(xe_xma_owner_test_capture(f,&before));
  for(c=0;c<before.state.channels;++c) memcpy(saved[c],before.codec.history[c],sizeof(saved[c]));
  if(before.pcm_bytes) memcpy(pending,before.pcm,before.pcm_bytes);
@@ -81,7 +82,7 @@ int main(void) {
   bad=saved;bad.state.pending_blocks=9;rejected(f,&bad);
   bad=saved;bad.state.rate=32000;rejected(f,&bad);
   bad=saved;bad.codec.state.version=0;rejected(f,&bad);
-  bad=saved;bad.codec.history_bytes[1]--;rejected(f,&bad);
+  bad=saved;bad.codec.history_samples[1]--;rejected(f,&bad);
   bad=saved;bad.pcm_bytes++;rejected(f,&bad);
   CHECK(xe_xma_owner_test_prepare(f,&saved,&stage));
   CHECK(!xe_xma_owner_test_prepare(f,&saved,&stage));

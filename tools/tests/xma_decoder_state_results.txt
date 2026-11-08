@@ -1,3 +1,22 @@
+Native raw XMA integration (schema 2)
+=====================================
+Modern/raw owners now use rwma_xma_view rather than FFmpeg private checkpoints.
+320-owner restore retains preflight, exclusive quiescence and all-or-nothing
+candidate adoption. Setup preallocates stereo capacity; profile changes reuse it.
+Failed native decode resets its damaged history before the next valid frame.
+The existing guest ring, subframe, loop and frontend scheduling paths are retained.
+
+Native MSVC and MinGW production-TU tests pass: normal 320-owner state/capture,
+late NaN rejection without prefix mutation, alias rejection, stale candidates,
+PCM block-byte oracles and unsupported legacy styles. Native allocation-failure
+injection is test-only; setup failure frees all successfully created contexts.
+Unchanged and changed mono/stereo/rate profiles work with native allocations denied.
+The complete MSVC core link, nine real-stream owner replays, all 24 ring/refill
+configurations and final MSVC/MinGW comparisons pass. See
+xma_native_benchmark_results.txt for raw timings and unmeasured coverage.
+
+Historical FFmpeg-state coverage before schema 2
+----------------------------------------------
 All-slot raw XMA capture and transactional restore (0163/0164)
 ===============================================================
 XmaDecoder::CaptureState covers 320 modern/raw owners, not just allocated slots.

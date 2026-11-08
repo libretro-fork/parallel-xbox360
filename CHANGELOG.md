@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Decode modern/raw XMA with the MIT libretro-common decoder. Borrow complete compressed frames, copy only packet crossings into reusable scratch, and reserve profile storage at setup. Preserve guest PCM layout and audio scheduling. Native checkpoint metadata is versioned separately; legacy modes and media playback retain FFmpeg. Add offline decoder comparisons and allocation/state regressions.
+
 - Disable unused FFmpeg text-subtitle encoding conversion so macOS links without libiconv. Keep audio decoding unchanged. Fix the image-sink regression fixture's bounded path formatting for strict C89 builds on Linux.
 
 - Add per-commit shader compilation comparisons on software Vulkan and D3D12 WARP, with opt-in hardware jobs, retained per-case timings and failure checks. Document cold-play smoothness as a development requirement and a phased plan for fixing the existing stalls. These component tests do not certify gameplay smoothness; hardware replay coverage and a last-known-good anchor still need to be established. Cache defaults and production rendering behavior are unchanged.

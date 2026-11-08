@@ -163,6 +163,8 @@ target_compile_definitions(snappy PRIVATE HAVE_CONFIG_H)
 # Selected owned RetroArch libretro-common primitives
 # ==============================================================================
 add_library(retro-common STATIC
+  libretro-common/formats/wma/rwma_pro.c
+  libretro-common/formats/wma/rwma_standard.c
   libretro-common/formats/xml/rxml.c
   libretro-common/hash/lrc_hash.c
   libretro-common/crypto/crypto.c

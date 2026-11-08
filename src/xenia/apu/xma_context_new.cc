@@ -15,76 +15,28 @@
 #include "xenia/base/platform.h"
 #include "xenia/base/profiling.h"
 
-extern "C" {
-#if XE_COMPILER_MSVC
-#pragma warning(push)
-#pragma warning(disable : 4101 4244 5033)
-#endif
-#include "third_party/FFmpeg/libavcodec/avcodec.h"
-#include "third_party/FFmpeg/libavutil/channel_layout.h"
-#include "third_party/FFmpeg/libavutil/error.h"
-#if XE_COMPILER_MSVC
-#pragma warning(pop)
-#endif
-}  // extern "C"
-
-// Credits for most of this code goes to:
-// https://github.com/koolkdev/libertyv/blob/master/libav_wrapper/xma2dec.c
-
 namespace xe {
 namespace apu {
 
 XmaContextNew::XmaContextNew() = default;
 
 XmaContextNew::~XmaContextNew() {
-  if (av_context_) {
-    avcodec_free_context(&av_context_);
-  }
-  if (av_frame_) {
-    av_frame_free(&av_frame_);
-  }
+  xe_xma_native_dispose(&native_);
 }
 
 int XmaContextNew::Setup(uint32_t id, Memory* memory, uint32_t guest_ptr) {
   id_ = id;
   memory_ = memory;
   guest_ptr_ = guest_ptr;
-
-  // Allocate ffmpeg stuff:
-  if (!AllocateFramePacket()) return 1;
-
-  // find the XMA2 audio decoder
-  av_codec_ = avcodec_find_decoder(AV_CODEC_ID_XMAFRAMES);
-  if (!av_codec_) {
-    XELOGE("XmaContext {}: Codec not found", id);
-    return 1;
-  }
-
-  av_context_ = avcodec_alloc_context3(av_codec_);
-  if (!av_context_) {
-    XELOGE("XmaContext {}: Couldn't allocate context", id);
-    return 1;
-  }
-
-  // Initialize these to 0. They'll actually be set later.
-  av_context_->ch_layout = AVChannelLayout{};
-  av_context_->sample_rate = 0;
-
-  av_frame_ = av_frame_alloc();
-  if (!av_frame_) {
-    XELOGE("XmaContext {}: Couldn't allocate frame", id);
-    return 1;
-  }
-
-  // FYI: We're purposely not opening the codec here. That is done later.
-  return 0;
+  return xe_xma_native_init(&native_) ? 0 : 1;
 }
 
 bool XmaContextNew::CaptureState(xe_xma_owner_view* out) const {
-  xe_xma_owner_view view = {};
+  xe_xma_owner_view view;
   uint32_t offset, bytes;
-  if (!out || !av_context_ || !av_packet_ || !av_frame_) return false;
-  view.state.version = 1;
+  memset(&view, 0, sizeof(view));
+  if (!out || !native_.codec) return false;
+  view.state.version = 2;
   view.state.id = id_;
   view.state.guest_ptr = guest_ptr_;
   view.state.allocated = is_allocated();
@@ -92,74 +44,60 @@ bool XmaContextNew::CaptureState(xe_xma_owner_view* out) const {
   view.state.pending_blocks = current_frame_remaining_subframes_;
   view.state.loop_limit = loop_frame_output_limit_;
   view.state.loop_start_pending = loop_start_skip_pending_;
-  if (avcodec_is_open(av_context_)) {
-    if (!ff_xmaframes_checkpoint_view(av_context_, &view.codec)) return false;
-    view.state.rate = view.codec.state.rate;
-    view.state.channels = view.codec.state.channels;
-  } else if (av_context_->sample_rate || av_context_->ch_layout.nb_channels) {
-    // A failed/partially configured codec is not a canonical cold owner.
-    return false;
-  }
-  if (view.state.pending_blocks && (uint32_t)current_frame_total_subframes_ != view.state.channels * 4)
+  if (!xe_xma_native_capture(&native_, &view.codec)) return false;
+  view.state.rate = native_.rate;
+  view.state.channels = native_.channels;
+  if (view.state.pending_blocks && current_frame_total_subframes_ != view.state.channels * 4)
     return false;
   if (!xe_xma_owner_layout(&view.state, &offset, &bytes)) return false;
-  view.pcm = bytes ? raw_frame_ + offset : nullptr;
+  view.pcm = bytes ? raw_frame_ + offset : 0;
   view.pcm_bytes = bytes;
   *out = view;
   return true;
 }
 
 bool XmaContextNew::PrepareState(const xe_xma_owner_view* source,
-                                 xe_xma_owner_stage* stage) const {
+                                xe_xma_owner_stage* stage) const {
   xe_xma_owner_view view;
-  xe_xma_owner_stage prepared = {};
-  AVCodecContext* candidate;
+  xe_xma_owner_stage prepared;
+  rwma_config cfg;
+  rwma_t* candidate = 0;
   uint32_t offset, bytes;
-  if (!source || !stage || stage->candidate || stage->owner ||
-      !av_context_ || !av_codec_ || !av_packet_ || !av_frame_) return false;
+  if (!source || !stage || stage->candidate || stage->owner || !native_.codec) return false;
   view = *source;
   if (!xe_xma_owner_plan(&view, id_, guest_ptr_, &offset, &bytes)) return false;
-  candidate = avcodec_alloc_context3(av_codec_);
-  if (!candidate) return false;
-  if (view.state.rate) {
-    candidate->sample_rate = view.state.rate;
-    av_channel_layout_default(&candidate->ch_layout, view.state.channels);
-    candidate->flags2 |= AV_CODEC_FLAG2_SKIP_MANUAL;
-    if (view.codec.state.bit_exact) candidate->flags |= AV_CODEC_FLAG_BITEXACT;
-    if (avcodec_open2(candidate, av_codec_, nullptr) < 0 ||
-        !ff_xmaframes_checkpoint_apply(candidate, &view.codec)) {
-      avcodec_free_context(&candidate);
-      return false;
-    }
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.codec = RWMA_XMA_RAW; cfg.sample_rate = 48000; cfg.channels = 2;
+  if (rwma_create(&candidate, &cfg)) return false;
+  if (view.state.rate && (rwma_xma_configure(candidate,view.state.rate,view.state.channels) ||
+        rwma_xma_restore(candidate,&view.codec))) {
+    rwma_free(candidate);
+    return false;
   }
+  memset(&prepared, 0, sizeof(prepared));
   prepared.state = view.state;
   prepared.pcm = view.pcm;
   prepared.pcm_bytes = bytes;
   prepared.candidate = candidate;
   prepared.owner = this;
-  prepared.previous = av_context_;
+  prepared.previous = native_.codec;
   *stage = prepared;
   return true;
 }
 
 bool XmaContextNew::CanCommitState(const xe_xma_owner_stage* stage) const {
+  rwma_xma_view view;
   uint32_t offset, bytes;
   if (!stage || stage->owner != this || !stage->candidate ||
-      stage->previous != av_context_ || stage->state.id != id_ ||
+      stage->previous != native_.codec || stage->state.id != id_ ||
       stage->state.guest_ptr != guest_ptr_ ||
-      !xe_xma_owner_layout(&stage->state, &offset, &bytes) ||
+      !xe_xma_owner_layout(&stage->state,&offset,&bytes) ||
       stage->pcm_bytes != bytes || (!!stage->pcm != !!bytes) ||
-      (bytes && (uintptr_t)stage->pcm > UINTPTR_MAX - bytes) ||
-      stage->candidate == av_context_) return false;
-  if (stage->state.rate) {
-    if (!avcodec_is_open(stage->candidate) ||
-        stage->candidate->sample_rate != (int)stage->state.rate ||
-        stage->candidate->ch_layout.nb_channels != (int)stage->state.channels)
-      return false;
-  } else if (avcodec_is_open(stage->candidate) ||
-             stage->candidate->sample_rate ||
-             stage->candidate->ch_layout.nb_channels) return false;
-  return true;
+      (bytes && (uintptr_t)stage->pcm > UINTPTR_MAX-bytes) ||
+      stage->candidate == native_.codec || rwma_xma_capture(stage->candidate,&view)) return false;
+  if (stage->state.rate) return view.state.sample_rate == stage->state.rate &&
+      view.state.channels == stage->state.channels && !view.state.drained;
+  return !view.state.pending && !view.state.failed && !view.state.drained;
 }
 
 bool XmaContextNew::CommitState(xe_xma_owner_stage* stage) {
@@ -169,31 +107,32 @@ bool XmaContextNew::CommitState(xe_xma_owner_stage* stage) {
 }
 
 void XmaContextNew::CommitPreparedState(xe_xma_owner_stage* stage) {
-  AVCodecContext* previous;
+  rwma_t* previous;
+  rwma_xma_view view;
   uint32_t bytes = stage->state.pending_blocks * 256;
   uint32_t offset = bytes ? stage->state.channels * 1024 - bytes : 0;
-  // Consume borrowed PCM before freeing any old codec or frame backing.
-  // Codec history already resides in the candidate's final storage.
-  if (bytes) memmove(raw_frame_ + offset, stage->pcm, bytes);
-  previous = av_context_;
-  av_context_ = stage->candidate;
+  if (bytes) memmove(raw_frame_+offset,stage->pcm,bytes);
+  previous = native_.codec;
+  native_.codec = stage->candidate;
+  native_.rate = stage->state.rate;
+  native_.channels = stage->state.channels;
+  rwma_xma_capture(native_.codec,&view);
+  native_.damaged = view.state.failed;
   current_frame_remaining_subframes_ = stage->state.pending_blocks;
-  current_frame_total_subframes_ = stage->state.pending_blocks ?
-      static_cast<uint8_t>(stage->state.channels * 4) : 0;
+  current_frame_total_subframes_ = bytes ? (uint8_t)(stage->state.channels*4) : 0;
   loop_frame_output_limit_ = stage->state.loop_limit;
   loop_start_skip_pending_ = stage->state.loop_start_pending != 0;
-  remaining_subframe_blocks_in_output_buffer_ = 0; // Recomputed by Work.
+  remaining_subframe_blocks_in_output_buffer_ = 0;
   set_is_allocated(stage->state.allocated != 0);
   set_is_enabled(stage->state.enabled != 0);
-  memset(stage, 0, sizeof(*stage));
-  av_frame_unref(av_frame_); // Old output is scratch; pending PCM is above.
-  avcodec_free_context(&previous);
+  memset(stage,0,sizeof(*stage));
+  rwma_free(previous);
 }
 
 void XmaContextNew::DiscardState(xe_xma_owner_stage* stage) {
   if (!stage) return;
-  avcodec_free_context(&stage->candidate);
-  memset(stage, 0, sizeof(*stage));
+  rwma_free(stage->candidate);
+  memset(stage,0,sizeof(*stage));
 }
 
 RingBuffer XmaContextNew::PrepareOutputRingBuffer(XMA_CONTEXT_DATA* data) {
@@ -489,6 +428,9 @@ void XmaContextNew::Consume(RingBuffer* XE_RESTRICT output_rb,
 
 void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
   int reconfigure;
+  rwma_frame decoded;
+  xe_xma_raw_span frame_span;
+  const uint8_t* samples[2];
   uint32_t retry_offset = 0, retry_control = 0;
   SCOPE_profile_cpu_f("apu");
 
@@ -503,9 +445,8 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
     return;
   }
 
-  reconfigure = !av_context_ ||
-      av_context_->sample_rate != GetSampleRate(data->sample_rate) ||
-      av_context_->ch_layout.nb_channels != (data->is_stereo ? 2 : 1);
+  reconfigure = native_.rate != (unsigned)GetSampleRate(data->sample_rate) ||
+      native_.channels != (data->is_stereo ? 2u : 1u);
   if (reconfigure) {
     // Only a profile change needs rollback metadata. Keep the unchanged-format
     // path free of context copies and preserve setup timing for invalid packets.
@@ -711,11 +652,9 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
       packet_info.current_frame_size_, packet_index,
       current_input_packet_count);
 
-  xe_xma_packet_span frame_packet;
-  if (!xe_xma_payload_packet(&payload,
-        relative_offset - kBitsPerPacketHeader, packet_info.current_frame_size_,
-        xma_frame_, kFrameCapacity, &frame_packet) ||
-      !SetFramePacketSize(frame_packet.size)) {
+  if (!xe_xma_payload_raw(&payload,
+        relative_offset-kBitsPerPacketHeader,packet_info.current_frame_size_,
+        native_.scratch,sizeof(native_.scratch),&frame_span)) {
     data->error_status = 4;
     return;
   }
@@ -731,10 +670,10 @@ void XmaContextNew::Decode(XMA_CONTEXT_DATA* data) {
     loop_start_skip_pending_ = ((retry_control >> 11) & 1) != 0;
     return;
   }
-  if (DecodePacket(av_context_, av_packet_, av_frame_)) {
-    // dump_raw(av_frame_, id());
-    ConvertFrame(reinterpret_cast<const uint8_t**>(&av_frame_->data),
-                 bool(data->is_stereo), raw_frame_);
+  if (xe_xma_native_decode(&native_,&frame_span,&decoded)) {
+    samples[0] = (const uint8_t*)decoded.planes[0];
+    samples[1] = (const uint8_t*)decoded.planes[1];
+    ConvertFrame(samples,bool(data->is_stereo),raw_frame_);
     current_frame_total_subframes_ = (uint8_t)(4u << data->is_stereo);
     current_frame_remaining_subframes_ = current_frame_total_subframes_;
 
@@ -1071,54 +1010,7 @@ int16_t XmaContextNew::GetPacketNumber(size_t size, size_t bit_offset) {
 }
 
 int XmaContextNew::PrepareDecoder(int sample_rate, bool is_two_channel) {
-  AVCodecContext* candidate;
-  AVCodecContext* previous;
-  uint32_t channels;
-  sample_rate = GetSampleRate(sample_rate);
-  channels = is_two_channel ? 2 : 1;
-  if (!av_codec_) return -1;
-  // Only Setup's zero-profile codec or a fully opened codec is published.
-  if (av_context_ && av_context_->sample_rate == sample_rate &&
-      av_context_->ch_layout.nb_channels == (int)channels) return 0;
-  candidate = avcodec_alloc_context3(av_codec_);
-  if (!candidate) return -1;
-  candidate->sample_rate = sample_rate;
-  av_channel_layout_default(&candidate->ch_layout, channels);
-  candidate->flags2 |= AV_CODEC_FLAG2_SKIP_MANUAL;
-  if (avcodec_open2(candidate, av_codec_, NULL) < 0) {
-    avcodec_free_context(&candidate);
-    XELOGE("XmaContext: Failed to reopen FFmpeg context");
-    return -1;
-  }
-  previous = av_context_;
-  av_context_ = candidate;
-  avcodec_free_context(&previous);
-  return 1;
-}
-
-bool XmaContextNew::DecodePacket(AVCodecContext* av_context,
-                                 const AVPacket* av_packet, AVFrame* av_frame) {
-  auto ret = avcodec_send_packet(av_context, av_packet);
-  if (ret < 0) {
-    char errbuf[AV_ERROR_MAX_STRING_SIZE];
-    av_strerror(ret, errbuf, sizeof(errbuf));
-    XELOGE("XmaContext {}: Error sending packet for decoding: {} ({})", id(),
-           errbuf, ret);
-    return false;
-  }
-  ret = avcodec_receive_frame(av_context, av_frame);
-
-  if (ret == AVERROR(EAGAIN)) {
-    // Codec needs more input before producing output (e.g. first frame warmup).
-    return false;
-  }
-  if (ret < 0) {
-    char errbuf[AV_ERROR_MAX_STRING_SIZE];
-    av_strerror(ret, errbuf, sizeof(errbuf));
-    XELOGE("XmaContext {}: Error during decoding: {} ({})", id(), errbuf, ret);
-    return false;
-  }
-  return true;
+  return xe_xma_native_configure(&native_,GetSampleRate(sample_rate),is_two_channel ? 2 : 1);
 }
 
 void XmaContextNew::StoreContextMerged(const XMA_CONTEXT_DATA& data,

@@ -40,7 +40,7 @@ static INLINE int xe_xma_state_disjoint(const void *a,size_t an,
 static INLINE int xe_xma_decoder_state_valid(const xe_xma_decoder_state *state,
       uint32_t first,uint32_t last)
 {
- if (!state || state->version!=1 || state->mode!=XE_XMA_MODE_RAW ||
+ if (!state || state->version!=2 || state->mode!=XE_XMA_MODE_RAW ||
        state->count!=XE_XMA_CONTEXTS || !first || (first&63) ||
        first>UINT32_MAX-(XE_XMA_CONTEXTS*64-1) ||
        last!=first+XE_XMA_CONTEXTS*64-1 || state->context_first!=first ||

@@ -41,7 +41,8 @@ static xe_xma_decoder_view view;
 static xe_xma_decoder_view saved,bad,cold;
 static xe_xma_decoder_stage stage,empty_stage;
 static uint32_t saved_registers[XE_XMA_REGISTERS];
-static unsigned char saved_history[XE_XMA_CONTEXTS][2][2048];
+static float saved_history[XE_XMA_CONTEXTS][2][256];
+static float bad_history[256];
 static unsigned char saved_pcm[XE_XMA_CONTEXTS][2048];
 int xe_xma_decoder_test_prepare(void *,const xe_xma_decoder_view *,xe_xma_decoder_stage *);
 int xe_xma_decoder_test_ready(void *,const xe_xma_decoder_stage *);
@@ -51,10 +52,9 @@ const void *xe_xma_decoder_test_codec(void *,unsigned);
 int xe_xma_decoder_test_rotate(void *,unsigned);
 int xe_xma_decoder_test_configure(void *,unsigned,unsigned);
 void xe_xma_decoder_test_alloc_limit(size_t);
-#ifdef XE_XMA_OPEN_FAIL_TEST
-void xe_xma_decoder_test_open_failure(int);
-unsigned xe_xma_decoder_test_open_hits(void);
-#endif
+unsigned xe_xma_decoder_test_alloc_hits(void);
+unsigned xe_xma_decoder_test_live_allocations(void);
+void xe_xma_decoder_test_fail_after(size_t);
 int xe_xma_decoder_test_load(void *,const void *,unsigned);
 const void *xe_xma_decoder_test_guest(void *);
 int xe_xma_decoder_test_work(void *);
@@ -83,9 +83,10 @@ static void store_snapshot(void *f) {
  memcpy(saved_registers,saved.registers,sizeof(saved_registers));saved.registers=saved_registers;
  for(i=0;i<XE_XMA_CONTEXTS;++i) {
   for(c=0;c<saved.owners[i].state.channels;++c) {
-   CHECK(saved.owners[i].codec.history_bytes[c]==2048);
-   memcpy(saved_history[i][c],saved.owners[i].codec.history[c],2048);
-   saved.owners[i].codec.history[c]=saved_history[i][c];
+   size_t n=saved.owners[i].codec.history_samples[c];
+   CHECK(n==0 || n==256);
+   if(n) {memcpy(saved_history[i][c],saved.owners[i].codec.history[c],n*sizeof(float));
+    saved.owners[i].codec.history[c]=saved_history[i][c];}
   }
   if(saved.owners[i].pcm_bytes) {
    CHECK(saved.owners[i].pcm_bytes<=2048);
@@ -102,15 +103,18 @@ static void same_snapshot(void *f) {
  for(i=0;i<XE_XMA_CONTEXTS;++i) {
   CHECK(!memcmp(&view.owners[i].state,&saved.owners[i].state,sizeof(view.owners[i].state)));
   CHECK(!memcmp(&view.owners[i].codec.state,&saved.owners[i].codec.state,sizeof(view.owners[i].codec.state)));
-  for(c=0;c<saved.owners[i].state.channels;++c)
-   CHECK(!memcmp(view.owners[i].codec.history[c],saved_history[i][c],2048));
+  for(c=0;c<saved.owners[i].state.channels;++c) {
+   size_t n=saved.owners[i].codec.history_samples[c];
+   CHECK(view.owners[i].codec.history_samples[c]==n);
+   if(n) CHECK(!memcmp(view.owners[i].codec.history[c],saved_history[i][c],n*sizeof(float)));
+  }
   CHECK(view.owners[i].pcm_bytes==saved.owners[i].pcm_bytes);
   if(view.owners[i].pcm_bytes) CHECK(!memcmp(view.owners[i].pcm,saved_pcm[i],view.owners[i].pcm_bytes));
  }
 }
 static void restore_tests(void *f,uint32_t first) {
  const void *prefix,*last,*owner;
- struct AVCodecContext *candidate;
+ rwma_t *candidate;
  unsigned i;uint32_t physical;
 #ifdef XE_DECODER_CLOCK_TEST
  unsigned before=clock_reads;
@@ -119,7 +123,9 @@ static void restore_tests(void *f,uint32_t first) {
  prefix=xe_xma_decoder_test_codec(f,0);last=xe_xma_decoder_test_codec(f,319);
  bad=saved;bad.owners[319]=saved.owners[0];
  bad.owners[319].state.id=319;bad.owners[319].state.guest_ptr=first+319*64;
- bad.owners[319].state.allocated=1;bad.owners[319].codec.state.version=0;
+ bad.owners[319].state.allocated=1;
+ {uint32_t nan=0x7fc00000u;memcpy(bad_history,saved.owners[0].codec.history[0],sizeof(bad_history));
+  memcpy(bad_history,&nan,sizeof(nan));bad.owners[319].codec.history[0]=bad_history;}
  CHECK(xe_xma_decoder_view_valid(&bad,saved.state.context_first,saved.state.context_last));
  CHECK(!xe_xma_decoder_test_prepare(f,&bad,&stage));
  CHECK(!memcmp(&stage,&empty_stage,sizeof(stage)));same_snapshot(f);
@@ -141,7 +147,7 @@ static void restore_tests(void *f,uint32_t first) {
  CHECK(!xe_xma_decoder_test_commit(f,&stage));stage.owners[319].owner=owner;
  candidate=stage.owners[319].candidate;stage.owners[319].candidate=stage.owners[318].candidate;
  CHECK(!xe_xma_decoder_test_commit(f,&stage));stage.owners[319].candidate=candidate;
- stage.owners[319].candidate=(struct AVCodecContext *)stage.owners[318].previous;
+ stage.owners[319].candidate=(rwma_t *)stage.owners[318].previous;
  CHECK(!xe_xma_decoder_test_commit(f,&stage));stage.owners[319].candidate=candidate;
  same_snapshot(f);CHECK(xe_xma_decoder_test_codec(f,0)==prefix);
  CHECK(xe_xma_decoder_test_rotate(f,319));
@@ -173,64 +179,34 @@ static void restore_tests(void *f,uint32_t first) {
 #endif
 }
 
-static void begin_codec_failure(unsigned kind) {
- xe_xma_decoder_test_alloc_limit(kind?INT_MAX:1);
-#ifdef XE_XMA_OPEN_FAIL_TEST
- xe_xma_decoder_test_open_failure(kind!=0);
-#endif
-}
-static void end_codec_failure(unsigned kind) {
- xe_xma_decoder_test_alloc_limit(INT_MAX);
-#ifdef XE_XMA_OPEN_FAIL_TEST
- if(kind) CHECK(xe_xma_decoder_test_open_hits()==1);
- xe_xma_decoder_test_open_failure(0);
-#else
- (void)kind;
-#endif
-}
 static void configuration_tests(void *f,uint32_t first) {
  const void *token;
- unsigned i,faults=1;
- unsigned char guest[64];
-#ifdef XE_XMA_OPEN_FAIL_TEST
- faults=2;
-#endif
+ unsigned i,before;
  cold=view;
  CHECK(xe_xma_decoder_test_allocate(f)==first);
- store_snapshot(f);token=xe_xma_decoder_test_codec(f,0);
- for(i=0;i<faults;++i) {
-  begin_codec_failure(i);
-  CHECK(xe_xma_decoder_test_configure(f,3,1)==-1);
-  end_codec_failure(i);
-  CHECK(xe_xma_decoder_test_codec(f,0)==token);same_snapshot(f);
- }
+ token=xe_xma_decoder_test_codec(f,0);
+ xe_xma_decoder_test_alloc_limit(1);before=xe_xma_decoder_test_alloc_hits();
  CHECK(xe_xma_decoder_test_configure(f,3,1)==1);
- store_snapshot(f);token=xe_xma_decoder_test_codec(f,0);
- for(i=0;i<faults;++i) {
-  begin_codec_failure(i);
-  CHECK(xe_xma_decoder_test_configure(f,3,1)==0);
-  CHECK(xe_xma_decoder_test_configure(f,2,2)==-1);
-  end_codec_failure(i);
-  CHECK(xe_xma_decoder_test_codec(f,0)==token);same_snapshot(f);
- }
+ CHECK(xe_xma_decoder_test_configure(f,3,1)==0);
+ CHECK(xe_xma_decoder_test_configure(f,2,2)==1);
+ CHECK(xe_xma_decoder_test_configure(f,3,1)==1);
+ CHECK(xe_xma_decoder_test_alloc_hits()==before && xe_xma_decoder_test_codec(f,0)==token);
+ xe_xma_decoder_test_alloc_limit(INT_MAX);
  make_packet(2);CHECK(xe_xma_decoder_test_load(f,packet,2));
  xe_xma_decoder_test_cursor(f,0x3ffffff,0);store_snapshot(f);
  CHECK(xe_xma_decoder_test_work(f));
  CHECK(xe_xma_decoder_test_codec(f,0)==token);same_snapshot(f);
- xe_xma_decoder_test_cursor(f,32,2);
- xe_xma_decoder_test_current(f,1);
- memcpy(guest,xe_xma_decoder_test_guest(f),sizeof(guest));store_snapshot(f);
- for(i=0;i<faults;++i) {
-  begin_codec_failure(i);CHECK(xe_xma_decoder_test_work(f));
-  end_codec_failure(i);
-  CHECK(xe_xma_decoder_test_codec(f,0)==token);same_snapshot(f);
-  CHECK(!memcmp(guest,xe_xma_decoder_test_guest(f),sizeof(guest)));
- }
- xe_xma_decoder_test_cursor(f,32,0);
- xe_xma_decoder_test_current(f,0);
- CHECK(xe_xma_decoder_test_work(f));CHECK(capture(f));
- CHECK(xe_xma_decoder_test_codec(f,0)!=token);
+ xe_xma_decoder_test_cursor(f,32,0);xe_xma_decoder_test_current(f,0);
+ xe_xma_decoder_test_alloc_limit(1);before=xe_xma_decoder_test_alloc_hits();
+ CHECK(xe_xma_decoder_test_work(f));
+ CHECK(xe_xma_decoder_test_alloc_hits()==before);
+ xe_xma_decoder_test_alloc_limit(INT_MAX);
+ CHECK(capture(f) && xe_xma_decoder_test_codec(f,0)==token);
  CHECK(view.owners[0].state.channels==2 && view.owners[0].state.pending_blocks==5);
+ store_snapshot(f);xe_xma_decoder_test_alloc_limit(1);
+ CHECK(!xe_xma_decoder_test_prepare(f,&saved,&stage));
+ xe_xma_decoder_test_alloc_limit(INT_MAX);
+ CHECK(!memcmp(&stage,&empty_stage,sizeof(stage)));same_snapshot(f);
  CHECK(xe_xma_decoder_test_prepare(f,&cold,&stage));
  CHECK(xe_xma_decoder_test_commit(f,&stage));CHECK(capture(f));
  for(i=0;i<XE_XMA_CONTEXTS;++i) CHECK(!view.owners[i].state.rate && !view.owners[i].state.allocated);
@@ -238,6 +214,20 @@ static void configuration_tests(void *f,uint32_t first) {
 
 int main(void) {
  void *f;uint32_t first,last,i,mode;unsigned c,n;unsigned char *raw,expected[256];const void *drained;sthread_t *worker;xe_pause_gate *gate;
+#ifdef XE_XMA_OPEN_FAIL_TEST
+ {
+  unsigned count, fault;
+  void *probe=xe_xma_decoder_test_new(XE_XMA_MODE_RAW);CHECK(probe);
+  count=xe_xma_decoder_test_alloc_hits();CHECK(count>1);
+  xe_xma_decoder_test_free(probe);CHECK(!xe_xma_decoder_test_live_allocations());
+  for(fault=0;fault<3;++fault) {
+   xe_xma_decoder_test_fail_after(fault<2?fault:count-1);
+   CHECK(!xe_xma_decoder_test_new(XE_XMA_MODE_RAW));
+   CHECK(!xe_xma_decoder_test_live_allocations());
+  }
+  xe_xma_decoder_test_fail_after(SIZE_MAX);
+ }
+#endif
  f=xe_xma_decoder_test_new(XE_XMA_MODE_RAW);CHECK(f);
  CHECK(capture(f));first=view.state.context_first;last=view.state.context_last;
  CHECK(xe_xma_decoder_test_duplicate_setup(f));
@@ -278,7 +268,7 @@ int main(void) {
  make_packet(1);CHECK(xe_xma_decoder_test_stream(f,packet,1));CHECK(capture(f));
  CHECK(view.owners[0].state.rate==48000 && view.owners[0].state.channels==1);
  CHECK(view.owners[0].state.pending_blocks==1 && view.owners[0].pcm_bytes==256);
- CHECK(view.owners[0].codec.history_bytes[0]==2048);
+ CHECK(view.owners[0].codec.history_samples[0]==256);
  for(i=0;i<320;i+=3) xe_xma_decoder_test_release(f,first+i*64);
  CHECK(capture(f));CHECK(xe_xma_decoder_view_valid(&view,first,last));
  for(i=0;i<320;++i) CHECK(view.owners[i].state.allocated==(uint32_t)(i%3!=0));
@@ -308,8 +298,8 @@ int main(void) {
  CHECK(clock_reads>0);
 #endif
 #ifdef XE_XMA_OPEN_FAIL_TEST
- puts("PASS: actual codec-open allocation failures retain cold/warm owners and guest cursors; later retry succeeds");
+ puts("PASS: native context allocation-failure cleanup and allocation-free profile changes");
 #endif
- puts("PASS: allocation failure/retry, 320-owner transactional restore/reuse, late failure without prefix mutation, aliases, clock-free quiescence, PCM byte oracles and unsupported styles");
+ puts("PASS: native profiles, rejected imports, 320-owner transactional restore/reuse, late failure without prefix mutation, aliases, clock-free quiescence, PCM byte oracles and unsupported styles");
  return 0;
 }

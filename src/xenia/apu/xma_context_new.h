@@ -12,17 +12,11 @@
 
 #include "xenia/apu/xma_context.h"
 #include "libretro/core_xma_owner_state.h"
+#include "libretro/core_xma_native.h"
 #include "xenia/base/bit_stream.h"
 #include "xenia/base/ring_buffer.h"
 #include "xenia/memory.h"
 #include "xenia/xbox.h"
-
-// Forward declarations
-struct AVCodec;
-struct AVCodecParserContext;
-struct AVCodecContext;
-struct AVFrame;
-struct AVPacket;
 
 namespace xe {
 namespace apu {
@@ -125,15 +119,13 @@ class XmaContextNew : public XmaContext {
 
   RingBuffer PrepareOutputRingBuffer(XMA_CONTEXT_DATA* data);
 
-  bool DecodePacket(AVCodecContext* av_context, const AVPacket* av_packet,
-                    AVFrame* av_frame);
-
   // Re-reads context from guest memory and merges only decoder-owned fields,
   // preserving any game modifications made during decoding.
   void StoreContextMerged(const XMA_CONTEXT_DATA& data,
                           const XMA_CONTEXT_DATA& initial_data,
                           uint8_t* context_ptr);
 
+  xe_xma_native_owner native_ = {};
   uint8_t raw_frame_[kBytesPerFrameChannel * 2];
 
   int32_t remaining_subframe_blocks_in_output_buffer_ = 0;

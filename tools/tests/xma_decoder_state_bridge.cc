@@ -6,22 +6,28 @@
 #include "xenia/base/profiling.h"
 #include <new>
 #include <limits.h>
-extern "C" {
-#if XE_COMPILER_MSVC
-#pragma warning(push)
-#pragma warning(disable : 4101 4244 5033)
-#endif
-#include "third_party/FFmpeg/libavcodec/avcodec.h"
-#include "third_party/FFmpeg/libavutil/mem.h"
-#if XE_COMPILER_MSVC
-#pragma warning(pop)
-#endif
+#include <stdlib.h>
+static size_t xma_alloc_limit = SIZE_MAX, xma_fail_after = SIZE_MAX;
+static unsigned xma_alloc_calls, xma_live_allocations;
+extern "C" void *xe_xma_test_calloc(size_t n,size_t size) {
+ void *p;
+ ++xma_alloc_calls;
+ if (xma_alloc_calls>xma_fail_after || (size && n>xma_alloc_limit/size)) return 0;
+ p=calloc(n,size);
+ if(p) ++xma_live_allocations;
+ return p;
 }
+extern "C" void xe_xma_test_free(void *p) {
+ if(p) {--xma_live_allocations;free(p);}
+}
+extern "C" unsigned xe_xma_decoder_test_alloc_hits(void) {return xma_alloc_calls;}
+extern "C" unsigned xe_xma_decoder_test_live_allocations(void) {return xma_live_allocations;}
+extern "C" void xe_xma_decoder_test_fail_after(size_t n) {xma_alloc_calls=0;xma_fail_after=n;}
 using xe::X_STATUS;
 namespace xe {namespace apu {
 struct XmaContextStreamTest {
  static void *raw(XmaContextNew *context) {return context->raw_frame_;}
- static const void *codec(XmaContextNew *context) {return context->av_context_;}
+ static const void *codec(XmaContextNew *context) {return context->native_.codec;}
  static int configure(XmaContextNew *context,unsigned rate,unsigned channels) {
   return context->PrepareDecoder(rate,channels==2);
  }
@@ -162,22 +168,7 @@ extern "C" void xe_xma_decoder_test_discard(xe_xma_decoder_stage *s) {xe::apu::X
 extern "C" const void *xe_xma_decoder_test_codec(void *p,unsigned i) {return static_cast<DecoderFixture*>(p)->decoder.codec(i);}
 extern "C" int xe_xma_decoder_test_rotate(void *p,unsigned i) {return static_cast<DecoderFixture*>(p)->decoder.rotate(i);}
 extern "C" int xe_xma_decoder_test_configure(void *p,unsigned r,unsigned c) {return static_cast<DecoderFixture*>(p)->decoder.configure(r,c);}
-extern "C" void xe_xma_decoder_test_alloc_limit(size_t n) {av_max_alloc(n);}
-#ifdef XE_XMA_OPEN_FAIL_TEST
-static int open_failure;
-static unsigned open_fail_hits;
-extern "C" void xe_xma_decoder_test_open_failure(int fail) {open_failure=fail;open_fail_hits=0;}
-extern "C" unsigned xe_xma_decoder_test_open_hits(void) {return open_fail_hits;}
-/* The test override changes only the production TU's avcodec_open2 call target.
- * Actual FFmpeg open runs with its allocator exhausted after context creation. */
-extern "C" int xe_xma_test_open2(AVCodecContext *context,const AVCodec *codec,AVDictionary **options) {
- int result;
- if(open_failure) {++open_fail_hits;av_max_alloc(1);}
- result=avcodec_open2(context,codec,options);
- if(open_failure) av_max_alloc(INT_MAX);
- return result;
-}
-#endif
+extern "C" void xe_xma_decoder_test_alloc_limit(size_t n) {xma_alloc_limit=n;}
 extern "C" int xe_xma_decoder_test_load(void *p,const void *b,unsigned c) {return static_cast<DecoderFixture*>(p)->decoder.stream(b,c,false);}
 extern "C" const void *xe_xma_decoder_test_guest(void *p) {return static_cast<DecoderFixture*>(p)->decoder.guest();}
 extern "C" int xe_xma_decoder_test_work(void *p) {return static_cast<DecoderFixture*>(p)->decoder.work();}

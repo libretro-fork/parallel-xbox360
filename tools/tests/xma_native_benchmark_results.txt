@@ -1,0 +1,153 @@
+Native raw-XMA offline results (2026-11-08)
+=============================================
+CPU: AMD Ryzen 9 9950X3D, Windows x64.
+Native sources: RetroArch libretro-common 89800f3e1f.
+MSVC 19.44 /TC /MD /O2, default precise FP; completed core CMake Release FFmpeg libs.
+MinGW GCC 16.2 /O2 /std=gnu89, completed static Make FFmpeg archive at core 34a3fb2ad.
+No AVX2-only native path is required; x64 native SIMD uses SSE2.
+Correctness runs before timing; no compiler/frontend/game was running during measurement.
+Each row is eight alternating-order rounds, at least 20,000 frames per timed round.
+Units: microseconds per 512-sample frame. Private compressed data is not included.
+
+Compiler case       native median  FFmpeg median  reduction  native range  FFmpeg range
+msvc    large        5.968858       6.213512     3.94%  5.964..6.013  6.193..6.232
+msvc    stereo       3.293248       4.982913    33.91%  3.274..3.326  4.968..5.025
+msvc    mono         1.303199       1.693356    23.04%  1.301..1.306  1.690..1.702
+mingw   large        5.371090       6.786621    20.86%  5.325..5.435  6.659..6.870
+mingw   stereo       2.858434       5.404148    47.11%  2.852..2.871  5.394..5.434
+mingw   mono         1.070798       1.866040    42.62%  1.069..1.072  1.862..1.874
+
+large = 376 consecutive stereo frames; stereo/mono = separate 17-frame XMA2 stream captures.
+Every native round beats every FFmpeg round on each measured compiler/corpus pair.
+This is decoder throughput evidence, not all WMA formats, other CPUs, or gameplay cadence.
+376-frame coefficient differential: 385024 channel samples, maximum float error 3.57627869e-7;
+existing guest S16 conversion differs in 171 samples, all by at most 1 LSB. Native checkpoint
+reset/restore replay after each frame remains bit-identical to uninterrupted native decoding.
+
+Core validation: complete MSVC Release core link; MSVC/MinGW 320-owner transactional restore
+and allocation-fault tests; real-stream nine owner replays (five partial PCM); all 24 ring/refill
+configurations; native strict C89 payload oracle. No installed DLL or frontend was changed.
+RetroArch formats CI and builtin-player Linux/Windows jobs pass; scalar/SSE2 ASan/UBSan and
+MSVC /fp:fast checks pass. Full Linux/MinGW core links and gameplay remain unmeasured here.
+
+Raw alternating samples:
+
+msvc large
+correctness: 376 frames, 2 channels, max float error 3.57627869e-07, libavcodec headers 4069477
+round,decoder,microseconds_per_frame,frames
+0,native,5.970085,20304
+0,ffmpeg,6.214332,20304
+1,ffmpeg,6.193430,20304
+1,native,5.965608,20304
+2,native,5.964204,20304
+2,ffmpeg,6.212554,20304
+3,ffmpeg,6.212692,20304
+3,native,5.971946,20304
+4,native,5.967632,20304
+4,ffmpeg,6.227290,20304
+5,ffmpeg,6.231703,20304
+5,native,5.965297,20304
+6,native,5.970740,20304
+6,ffmpeg,6.227719,20304
+7,ffmpeg,6.207560,20304
+7,native,6.012633,20304
+
+msvc stereo
+correctness: 17 frames, 2 channels, max float error 1.78813934e-07, libavcodec headers 4069477
+round,decoder,microseconds_per_frame,frames
+0,native,3.286566,20009
+0,ffmpeg,5.024804,20009
+1,ffmpeg,5.015738,20009
+1,native,3.276945,20009
+2,native,3.273617,20009
+2,ffmpeg,5.009621,20009
+3,ffmpeg,4.981623,20009
+3,native,3.299930,20009
+4,native,3.286261,20009
+4,ffmpeg,4.982618,20009
+5,ffmpeg,4.971553,20009
+5,native,3.305862,20009
+6,native,3.319646,20009
+6,ffmpeg,4.983208,20009
+7,ffmpeg,4.968134,20009
+7,native,3.325529,20009
+
+msvc mono
+correctness: 17 frames, 1 channels, max float error 1.11758709e-08, libavcodec headers 4069477
+round,decoder,microseconds_per_frame,frames
+0,native,1.301404,20009
+0,ffmpeg,1.693943,20009
+1,ffmpeg,1.691184,20009
+1,native,1.303124,20009
+2,native,1.304318,20009
+2,ffmpeg,1.692768,20009
+3,ffmpeg,1.691944,20009
+3,native,1.306037,20009
+4,native,1.303274,20009
+4,ffmpeg,1.702319,20009
+5,ffmpeg,1.695382,20009
+5,native,1.302204,20009
+6,native,1.304118,20009
+6,ffmpeg,1.694363,20009
+7,ffmpeg,1.690159,20009
+7,native,1.302809,20009
+
+mingw large
+correctness: 376 frames, 2 channels, max float error 3.57627869e-007, libavcodec headers 4069477
+round,decoder,microseconds_per_frame,frames
+0,native,5.357757,20304
+0,ffmpeg,6.802157,20304
+1,ffmpeg,6.771085,20304
+1,native,5.377187,20304
+2,native,5.435106,20304
+2,ffmpeg,6.870031,20304
+3,ffmpeg,6.807102,20304
+3,native,5.372557,20304
+4,native,5.370587,20304
+4,ffmpeg,6.825064,20304
+5,ffmpeg,6.746341,20304
+5,native,5.371592,20304
+6,native,5.325227,20304
+6,ffmpeg,6.675522,20304
+7,ffmpeg,6.658535,20304
+7,native,5.325832,20304
+
+mingw stereo
+correctness: 17 frames, 2 channels, max float error 1.78813934e-007, libavcodec headers 4069477
+round,decoder,microseconds_per_frame,frames
+0,native,2.857124,20009
+0,ffmpeg,5.434489,20009
+1,ffmpeg,5.409526,20009
+1,native,2.853856,20009
+2,native,2.858629,20009
+2,ffmpeg,5.403513,20009
+3,ffmpeg,5.397726,20009
+3,native,2.863856,20009
+4,native,2.860393,20009
+4,ffmpeg,5.403044,20009
+5,ffmpeg,5.394368,20009
+5,native,2.871003,20009
+6,native,2.852366,20009
+6,ffmpeg,5.404783,20009
+7,ffmpeg,5.404878,20009
+7,native,2.858239,20009
+
+mingw mono
+correctness: 17 frames, 1 channels, max float error 1.11758709e-008, libavcodec headers 4069477
+round,decoder,microseconds_per_frame,frames
+0,native,1.072218,20009
+0,ffmpeg,1.874446,20009
+1,ffmpeg,1.861712,20009
+1,native,1.071153,20009
+2,native,1.071803,20009
+2,ffmpeg,1.867190,20009
+3,ffmpeg,1.862042,20009
+3,native,1.069559,20009
+4,native,1.071678,20009
+4,ffmpeg,1.867819,20009
+5,ffmpeg,1.862717,20009
+5,native,1.069789,20009
+6,native,1.070443,20009
+6,ffmpeg,1.868459,20009
+7,ffmpeg,1.864891,20009
+7,native,1.069469,20009
