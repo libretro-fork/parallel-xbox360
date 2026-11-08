@@ -270,6 +270,17 @@ void xe_job_pool_await(xe_job_pool *pool)
       else retro_eventcount_commit_wait(&pool->idle_event, key);
    }
 }
+void xe_job_pool_await_pending(xe_job_pool *pool, xe_job_pending pending,
+      const void *state)
+{
+   int key;
+   if (!pool || !pending) return;
+   while (pending(state)) {
+      key = retro_eventcount_prepare_wait(&pool->space);
+      if (!pending(state)) retro_eventcount_cancel_wait(&pool->space);
+      else retro_eventcount_commit_wait(&pool->space, key);
+   }
+}
 void xe_job_pool_clear(xe_job_pool *pool)
 {
    uint64_t position;

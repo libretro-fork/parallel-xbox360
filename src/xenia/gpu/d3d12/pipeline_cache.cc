@@ -468,7 +468,8 @@ ID3D12PipelineState* PipelineCache::AwaitD3D12PipelineByHandle(void* handle) {
   if (pipeline != nullptr) {
     return pipeline;
   }
-  AwaitPipelineCompletion();
+  creation_queue_.AwaitPending(&xe_pipeline_is_pending,
+      &static_cast<Pipeline*>(handle)->publication);
   return GetD3D12PipelineByHandle(handle);
 }
 
@@ -479,9 +480,9 @@ ID3D12PipelineState* PipelineCache::AwaitRealD3D12PipelineByHandle(
       !IsPlaceholderPipeline(handle)) {
     return GetD3D12PipelineByHandle(handle);
   }
-  // Drain all background creation. Afterwards the real pipeline has been
-  // swapped in (or its creation failed, leaving the placeholder or nullptr).
-  AwaitPipelineCompletion();
+  // Keep later compilation jobs out of this draw dependency.
+  creation_queue_.AwaitPending(&xe_pipeline_is_pending,
+      &static_cast<Pipeline*>(handle)->publication);
   return GetD3D12PipelineByHandle(handle);
 }
 

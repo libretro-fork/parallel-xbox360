@@ -1,5 +1,13 @@
 # parallel_xbox360 libretro core
 
+Draw-side Vulkan and D3D12 pipeline waits now observe the requested pipeline's
+publication instead of draining the whole worker queue. This reuses existing
+notifications and borrows stable publication state without adding allocation,
+locks or copies. Publication ordering and GPU-completion retirement are retained;
+startup and strict submission-wide waits still drain when requested. The required
+pipeline can still block its draw, and placeholder/fallback correctness and
+large-shader compile stalls remain unfinished cold-play work.
+
 The default core build uses native libretro-common XMA, WMA and MP3 audio decoders and needs neither FFmpeg nor libiconv. FFmpeg sources are optional offline comparison dependencies, enabled only with `XENIA_BUILD_FFMPEG_REFERENCE=ON` in CMake or `FFMPEG_REFERENCE=1` in Make. Guest software decodes movie video; removing the host audio dependency does not remove FMV video support.
 
 Default Vulkan builds omit host profiler timestamp pools, readbacks and per-submission timestamp commands when profiling is disabled. Guest occlusion queries remain active. This removes discarded diagnostic work, without a measured Dark Souls II frame-time improvement; see [profiling gate checks](tools/tests/gpu_profile_gate_results.txt).

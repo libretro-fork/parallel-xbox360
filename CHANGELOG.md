@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Wait for the requested Vulkan or D3D12 draw pipeline instead of draining later unrelated compilation jobs. Reuse the worker pool's existing completion notifications and borrowed publication state; preserve ordered publication, failure handling and GPU retirement. Required pipeline compilation can still stall a draw; this does not establish stutter-free cold play.
+
 - Remove FFmpeg from default core builds without disabling legacy XMA or XMP music. Decode MP3/WMA through native float spans backed by borrowed mappings or bounded guest-file windows; skip large ID3 tags without slurping them. Preserve exact partial media blocks and mono stride, guest PCM conversion and APU scheduling. Keep FFmpeg available only for optional offline comparisons.
 
 - Preserve full float precision in the media-player surround downmix instead of rounding its gain to four decimal places. Keep guest planar audio conversion and frontend pacing unchanged; add exact coefficient and span-boundary regressions.

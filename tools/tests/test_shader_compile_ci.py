@@ -16,6 +16,12 @@ class ComparisonTests(unittest.TestCase):
     def sample(self,values,stage="vulkan.vs_ps_pso"):
         return {(stage,0):values}
 
+    def test_target_wait_is_not_a_queue_drain(self):
+        calls="cache->AwaitPipelineCompletion(); cache->AwaitPipelineCompletion(pipeline);"
+        self.assertEqual(ci.source_wait_alarms(calls, "")["queue_drain_references"], 1)
+        self.assertEqual(ci.source_wait_alarms(calls.replace("pipeline);", ");"), "")
+                         ["queue_drain_references"], 2)
+
     def test_equal_and_faster(self):
         for values in [[.01]*7,[.005]*7]:
             self.assertFalse(ci.compare(self.sample([.01]*7),self.sample(values),7)[0]["failures"])

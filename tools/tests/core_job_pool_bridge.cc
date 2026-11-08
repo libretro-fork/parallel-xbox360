@@ -1,5 +1,6 @@
 /* Object/callback interoperability test for the production C89 worker pool. */
 #include "xenia/gpu/pipeline_creation_queue.h"
+#include "libretro/core_pipeline_publication.h"
 #include <cstdio>
 #include <cstdlib>
 struct Input {
@@ -148,11 +149,14 @@ int main() {
     slock_t* state_lock = slock_new();
     scond_t* changed = scond_new();
     unsigned ordered_stored = 0, warm_stored = 0, unexpected = 0;
+    xe_pipeline_publication target;
+    xe_pipeline_publication_init(&target);
+    xe_pipeline_flag_store(&target, XE_PIPELINE_PENDING, 1);
     CHECK(blocked && state_lock && changed);
     slock_lock(blocked);
     xe::gpu::PipelineCreationQueue<Input, size_t, unsigned> queue;
-    struct State { slock_t *blocked, *lock; scond_t* changed; unsigned *ordered, *warm; };
-    State state = { blocked, state_lock, changed, &ordered_stored, &warm_stored };
+    struct State { slock_t *blocked, *lock; scond_t* changed; unsigned *ordered, *warm; xe_pipeline_publication* target; };
+    State state = { blocked, state_lock, changed, &ordered_stored, &warm_stored, &target };
     queue.Initialize("Independent warmup", &state, [](void* opaque, const Input& input, unsigned*) {
       auto* state = static_cast<State*>(opaque);
       if (!input.id) { slock_lock(state->blocked); slock_unlock(state->blocked); }
@@ -161,7 +165,11 @@ int main() {
       auto* state = static_cast<State*>(opaque);
       CHECK(handle == input.id + 1 && input.owned);
       slock_lock(state->lock);
-      if (input.id) *state->ordered = 1;
+      if (input.id) {
+        *state->ordered = 1;
+        xe_pipeline_handle_store(state->target, handle);
+        xe_pipeline_flag_store(state->target, XE_PIPELINE_PENDING, 0);
+      }
       else { CHECK(*state->ordered); *state->warm = 1; }
       scond_signal(state->changed);
       slock_unlock(state->lock);
@@ -174,6 +182,8 @@ int main() {
       CHECK(scond_wait_timeout(changed, state_lock, 5000000));
     CHECK(!warm_stored);
     slock_unlock(state_lock);
+    queue.AwaitPending(&xe_pipeline_is_pending, &target);
+    CHECK(queue.IsBusy() && xe_pipeline_handle_load(&target) == 2);
     slock_unlock(blocked);
     queue.AwaitCompletion();
     queue.Shutdown([&](const Input&, size_t) { ++unexpected; });

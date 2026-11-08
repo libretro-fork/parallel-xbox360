@@ -1,0 +1,52 @@
+Target-specific draw pipeline waits
+===================================
+Parent: d811f86fcf035b0e797423894860c557e87dcef9.
+Candidate: C89 target-pending wait plus typed Vulkan/D3D12 call sites.
+
+Vulkan IssueDraw and both D3D12 pipeline-by-handle awaits stop waiting once the
+required pipeline is published or fails. Earlier ordered publication still
+applies; later unrelated jobs and independent warmups need not finish. Startup
+and strict submission-wide drains remain. This is not a complete correct
+nonblocking fallback, and does not hide a target pipeline's own compile time.
+
+The wait borrows stable publication metadata and reuses the worker pool's
+existing slot-release eventcount. No new allocation, copies, per-pipeline event,
+release notification, polling, GPU roundtrip or release logging is introduced.
+The owner retains cache/publication storage through shutdown's worker joins.
+
+Correctness:
+- 128 C89 target waits alternate success/failure with three unrelated leases held.
+  Each returns before the unrelated jobs finish; published handles/flags match.
+- Replacing the wait with the old global drain fails the bounded negative control.
+- The production typed adapter returns for a ready ordered pipeline while an
+  independent warmup remains blocked. Existing ordering, cancellation, context,
+  lease and generation-latch tests remain passing.
+- MSVC, MinGW C89 and Linux ASan/UBSan worker suites pass; native backend
+  publication checks and full MSVC core link pass. No game/core frontend launched.
+- Comparator tests distinguish target-specific calls from zero-argument drains.
+
+Shader/PSO comparison on Windows, MSVC Release, RTX 5090:
+- Parent and candidate rebuilt at identical source/build paths, with three build
+  jobs. Separate statically linked fixture executables retain each revision.
+- Seven alternating/reverse-order samples; exact same public procedural corpus.
+- D3D12 WARP: 80 case metrics (64 SPIR-V translation batches, eight native DXIL
+  translations, eight graphics PSOs), no declared timing threshold exceeded.
+- Vulkan hardware: 96 case metrics (64 translation batches, 16 module creations,
+  16 graphics PSOs), no declared timing threshold exceeded.
+- All 64 SPIR-V files and eight DXIL files are byte-identical between revisions.
+  Hardware correctness separately executes sixteen guest call/return programs.
+- Per-case raw samples, median/p95/p99/max, module hashes and toolchain manifests
+  are retained outside the repository in outputs/shader-target-wait-results.
+
+Limits: these are procedural component timings, not real-game replay or a
+certified empty driver cache. No application pipeline cache is supplied, but
+hardware-driver internal/disk cache coldness is unverified. No cross-game
+last-known-good anchor has been certified. Giant shader compilation, missing
+semantic fallback coverage, ordered predecessor waits and queue-full admission
+still need work; no stutter-free gameplay or FPS improvement is claimed here.
+
+Reproduce correctness with tools/tests/run_job_pool_tests.sh or .cmd and
+run_pipeline_publication_native_tests.cmd. JOB_POOL_TEST_FLAGS can enable MSVC
+ASan in a separate JOB_POOL_TEST_OUT. XE_JOB_TEST_GLOBAL_WAIT is a test-only
+negative control and is expected to fail. The per-commit shader workflow retains
+its existing corpus, seven samples, correctness requirements and noise floors.

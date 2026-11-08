@@ -1419,6 +1419,11 @@ fixtures with MSVC; JOB_POOL_TEST_FLAGS=/fsanitize=address /Zi and a separate
 JOB_POOL_TEST_OUT enable native ASan. Four workers attempt 200,000 stale
 completions; the actual adapter exercises 20,000 rearm cycles as well as its
 existing lease, ordering, copy-budget, cancellation and teardown checks.
+The C89 fixture additionally repeats target-specific publication waits 128 times,
+including failed creation, while three unrelated job leases remain held. Its
+bounded negative control (`XE_JOB_TEST_GLOBAL_WAIT`) fails with the old global
+queue drain. The typed queue adapter also observes a ready ordered target while
+an independent warmup remains blocked. No game or frontend is needed.
 See pipeline_completion_results.txt for the remaining callbacks and waits.
 
 Borrowed memory restore plans

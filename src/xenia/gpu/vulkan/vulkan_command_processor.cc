@@ -3622,7 +3622,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   if (!stand_in_allowed &&
       xe_pipeline_flag_load(&pipeline->publication, XE_PIPELINE_PENDING)) {
     uint64_t await_start = xe::Clock::QueryHostTickCount();
-    pipeline_cache_->AwaitPipelineCompletion();
+    pipeline_cache_->AwaitPipelineCompletion(pipeline);
     XELOGI(
         "Awaited real pipeline for a draw into {} ({}): VS {:016X}, PS "
         "{:016X}, {:.2f} ms",

@@ -183,6 +183,26 @@ This is a target and a required follow-up, not a claim made by the component job
 Maintain per-case exception records tied to exact revisions and explicit user
 approval; never silently loosen or regenerate a baseline.
 
+### Draw dependency wait containment
+
+Vulkan IssueDraw and D3D12's two pipeline-by-handle await paths now wait on the
+requested publication's pending bit. The C89 worker pool reuses its existing
+slot-release eventcount, so no per-pipeline event, polling loop, allocation or
+release-path notification is added. Callers retain the pool and publication;
+a queued creator clears pending before releasing its lease. Cache shutdown
+continues to join creators before destroying publication storage.
+
+Ordered publication is retained: an earlier ordered job may still hold up the
+requested pipeline. Later jobs and independent unordered warmups do not need
+to finish. Startup and strict submission-wide drains remain. A 128-round fixture
+covers successful and failed target publication with three unrelated leases
+held; substituting the old whole-queue wait fails its bounded negative control.
+The CI textual alarm counts zero-argument queue drains separately from target
+waits; it is still not a dynamic counter. See
+`tools/tests/pipeline_target_wait_results.txt` for component comparisons.
+This contains one stall amplifier, not the target compiler's own latency or a
+semantically complete fallback. Full cold-play acceptance remains outstanding.
+
 ## Phase 2 - make unknown first draws correct and nonblocking
 
 Prepare a semantically complete fallback family before gameplay. Inventory its

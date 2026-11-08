@@ -163,6 +163,13 @@ def prepare(source, out, results, backend, reuse_build=None):
     return {"cpu": cpu, "dxil": generator, "warp": runtime, "source": source, "out": out}
 
 
+def source_wait_alarms(command_processor, pipeline_cache):
+    return dict(queue_drain_references=len(re.findall(
+        r"\bAwaitPipelineCompletion\s*\(\s*\)", command_processor)),
+        placeholder_creation_references=len(re.findall(
+        r"\bEnsurePipelineCreatedWith(?:Interpreter)?Placeholder\s*\(", pipeline_cache)))
+
+
 def read_samples(path):
     samples = {}
     with Path(path).open(newline="", encoding="utf-8") as source:
@@ -340,8 +347,7 @@ def run_comparison(args):
     for version,b in builds.items():
         cp=(b["source"]/"src/xenia/gpu/vulkan/vulkan_command_processor.cc").read_text(encoding="utf-8")
         pc=(b["source"]/"src/xenia/gpu/vulkan/vulkan_pipeline_cache.cc").read_text(encoding="utf-8")
-        source_alarms[version]=dict(queue_drain_references=len(re.findall(r"\bAwaitPipelineCompletion\s*\(",cp)),
-            placeholder_creation_references=len(re.findall(r"\bEnsurePipelineCreatedWith(?:Interpreter)?Placeholder\s*\(",pc)))
+        source_alarms[version]=source_wait_alarms(cp,pc)
     alarm_failures=[name for name,n in source_alarms["base"].items() if source_alarms["candidate"][name]>n]
     report=dict(environment=manifest,device=identities,cases=rows,anchor_cases=anchor_rows,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",

@@ -93,6 +93,9 @@ class PipelineCreationQueue {
   void AwaitCompletion() {
     if (has_threads()) xe_job_pool_await(pool_);
   }
+  void AwaitPending(xe_job_pending pending, const void* state) {
+    if (has_threads()) xe_job_pool_await_pending(pool_, pending, state);
+  }
   // Sole producer arms after its startup batch. No captured callable crosses
   // threads; only an atomic generation-tagged token is completed by workers.
   uint64_t WatchCompletion() {

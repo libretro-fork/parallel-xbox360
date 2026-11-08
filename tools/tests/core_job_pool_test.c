@@ -3,6 +3,8 @@
 #include <windows.h>
 #endif
 #include "libretro/core_job_pool.h"
+#include "libretro/core_pipeline_publication.h"
+#include <rthreads/rthreads.h>
 #include <retro_atomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -103,6 +105,78 @@ static void held_test(void)
    CHECK(!xe_job_pool_busy(state.pool));
    xe_job_pool_free(state.pool);
 }
+struct dependency_state {
+   xe_job_pool *pool;
+   xe_pipeline_publication publication;
+   slock_t *lock;
+   scond_t *changed;
+   int started, done;
+};
+static void dependency_waiter(void *opaque)
+{
+   struct dependency_state *state = (struct dependency_state *)opaque;
+   slock_lock(state->lock);
+   state->started = 1; scond_signal(state->changed);
+   slock_unlock(state->lock);
+#ifdef XE_JOB_TEST_GLOBAL_WAIT
+   xe_job_pool_await(state->pool);
+#else
+   xe_job_pool_await_pending(state->pool, xe_pipeline_is_pending, &state->publication);
+#endif
+   slock_lock(state->lock);
+   state->done = 1; scond_signal(state->changed);
+   slock_unlock(state->lock);
+}
+static int dependency_test(void)
+{
+   struct held_state held;
+   struct dependency_state state;
+   sthread_t *waiter;
+   unsigned round, i;
+   int early;
+   memset(&held, 0, sizeof(held)); memset(&state, 0, sizeof(state));
+   held.pool = xe_job_pool_new(4, sizeof(struct job), "Dependency", hold,
+         discard_held, NULL, NULL, NULL, &held);
+   CHECK(held.pool);
+   state.pool = held.pool; state.lock = slock_new(); state.changed = scond_new();
+   CHECK(state.lock && state.changed);
+   for (round = 0; round < 128; ++round) {
+      held.count = 0; state.started = state.done = 0;
+      xe_pipeline_publication_init(&state.publication);
+      xe_pipeline_flag_store(&state.publication, XE_PIPELINE_PENDING, 1);
+      for (i = 0; i < 4; ++i) { submit(held.pool, i); CHECK(xe_job_pool_run_one(held.pool, NULL)); }
+      waiter = sthread_create(dependency_waiter, &state); CHECK(waiter);
+      slock_lock(state.lock);
+      while (!state.started) CHECK(scond_wait_timeout(state.changed, state.lock, 5000000));
+      slock_unlock(state.lock);
+      if (round & 1) xe_pipeline_publish_failure(&state.publication);
+      else {
+         xe_pipeline_handle_store(&state.publication, round + 1);
+         xe_pipeline_flag_store(&state.publication, XE_PIPELINE_PENDING, 0);
+      }
+      CHECK(xe_job_pool_finish(held.pool, held.leases[0]));
+      slock_lock(state.lock);
+      while (!state.done)
+         if (!scond_wait_timeout(state.changed, state.lock, 5000000)) break;
+      early = state.done;
+      slock_unlock(state.lock);
+      CHECK(xe_job_pool_busy(held.pool));
+      for (i = 1; i < 4; ++i) CHECK(xe_job_pool_finish(held.pool, held.leases[i]));
+      sthread_join(waiter);
+      if (!early) {
+         fputs("dependency wait drained unrelated held jobs\n", stderr);
+         scond_free(state.changed); slock_free(state.lock); xe_job_pool_free(held.pool);
+         return 0;
+      }
+      CHECK(!xe_pipeline_is_pending(&state.publication));
+      if (round & 1) CHECK(xe_pipeline_flag_load(&state.publication, XE_PIPELINE_FAILED));
+      else CHECK(xe_pipeline_handle_load(&state.publication) == round + 1);
+      xe_job_pool_clear(held.pool);
+   }
+   scond_free(state.changed); slock_free(state.lock); xe_job_pool_free(held.pool);
+   puts("PASS: 128 target publications return with three unrelated jobs still held, including failed creation");
+   return 1;
+}
 int main(void)
 {
    struct state *state = (struct state *)calloc(1, sizeof(*state));
@@ -156,6 +230,7 @@ int main(void)
             retro_atomic_load_acquire_int(&state->freed) == 9);
    }
    held_test();
+   CHECK(dependency_test());
    free(state);
    puts("PASS: bounded SPMC jobs, exact-once ownership, context lifetime, growth/shrink, caller drain, idle waits and cancellation");
    return 0;

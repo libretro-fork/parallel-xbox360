@@ -868,8 +868,9 @@ bool VulkanPipelineCache::IsCreatingPipelines() {
   return creation_queue_.IsBusy();
 }
 
-void VulkanPipelineCache::AwaitPipelineCompletion() {
-  creation_queue_.AwaitCompletion();
+void VulkanPipelineCache::AwaitPipelineCompletion(Pipeline* pipeline) {
+  if (pipeline) creation_queue_.AwaitPending(&xe_pipeline_is_pending, &pipeline->publication);
+  else creation_queue_.AwaitCompletion();
 }
 
 VkPipeline VulkanPipelineCache::CreateQueuedPipeline(

@@ -34,6 +34,9 @@ static INLINE unsigned xe_pipeline_flags_load(const xe_pipeline_publication *p) 
 static INLINE int xe_pipeline_flag_load(const xe_pipeline_publication *p,unsigned bit) {
   return (xe_pipeline_flags_load(p) & bit) != 0;
 }
+static INLINE int xe_pipeline_is_pending(const void *state) {
+  return xe_pipeline_flag_load((const xe_pipeline_publication *)state, XE_PIPELINE_PENDING);
+}
 static INLINE void xe_pipeline_flag_store(xe_pipeline_publication *p,unsigned bit,int value) {
   if(value) retro_atomic_fetch_or_int(&p->flags,(int)bit);
   else retro_atomic_fetch_and_int(&p->flags,~(int)bit);

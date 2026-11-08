@@ -32,6 +32,11 @@ int xe_job_pool_finish(xe_job_pool *pool, uint64_t lease);
 int xe_job_pool_busy(xe_job_pool *pool);
 void xe_job_pool_notify(xe_job_pool *pool);
 void xe_job_pool_await(xe_job_pool *pool);
+/* Condition storage and pool outlive the wait. A queued job must clear pending
+ * before finishing its lease; later unrelated jobs need not finish. */
+typedef int (*xe_job_pending)(const void *);
+void xe_job_pool_await_pending(xe_job_pool *, xe_job_pending, const void *);
+
 /* Arm an idle callback, then recheck busy. If already idle, disarm and handle
  * completion on the caller. Exchanges synchronize with the final worker. */
 void xe_job_pool_arm_idle(xe_job_pool *pool, int armed);
