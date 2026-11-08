@@ -22,16 +22,33 @@
 namespace xe {
 namespace gpu {
 
-/* Typed backend adapter; the integer arithmetic recipe is shared C89. */
+/* Typed vector adapter; the lane-independent arithmetic recipe is C89. */
+SpirvShaderTranslator::RtzEmitContext SpirvShaderTranslator::RtzContext(unsigned count) {
+  RtzEmitContext context;
+  context.translator = this;
+  context.components = count;
+  context.uint_type = count == 1 ? type_uint_ : builder_->makeVectorType(type_uint_, count);
+  context.bool_type = count == 1 ? type_bool_ : builder_->makeVectorType(type_bool_, count);
+  return context;
+}
+spv::Id SpirvShaderTranslator::EmitRtzConstant(const RtzEmitContext* context, uint32_t value) {
+  auto* builder = context->translator->builder_.get();
+  spv::Id scalar = builder->makeUintConstant(value);
+  if (context->components == 1) return scalar;
+  spv::Id lanes[4] = {scalar, scalar, scalar, scalar};
+  xe_spv_word_view view = {lanes, context->components};
+  return builder->makeCompositeConstantView(context->uint_type, view);
+}
 xe_rtz_id SpirvShaderTranslator::EmitRtzNode(void* opaque, unsigned op,
     xe_rtz_id a, xe_rtz_id b, xe_rtz_id c, uint32_t literal) {
-  auto* s = static_cast<SpirvShaderTranslator*>(opaque);
+  auto* context = static_cast<RtzEmitContext*>(opaque);
+  auto* s = context->translator;
   auto* builder = s->builder_.get();
   spv::Id x = spv::Id(a), y = spv::Id(b);
   spv::Op code;
-  spv::Id type = s->type_uint_;
+  spv::Id type = context->uint_type;
   switch (op) {
-    case XE_RTZ_CONST: return builder->makeUintConstant(literal);
+    case XE_RTZ_CONST: return EmitRtzConstant(context, literal);
     case XE_RTZ_SELECT: return builder->createTriOp(spv::OpSelect,type,x,y,spv::Id(c));
     case XE_RTZ_MUL_TRUNC16: {
       spv::Id members[2]={type,type};
@@ -42,12 +59,12 @@ xe_rtz_id SpirvShaderTranslator::EmitRtzNode(void* opaque, unsigned op,
       spv::Id low=builder->createCompositeExtract(product,type,0);
       spv::Id high=builder->createCompositeExtract(product,type,1);
       return builder->createBinOp(spv::OpBitwiseOr,type,
-          builder->createBinOp(spv::OpShiftLeftLogical,type,high,builder->makeUintConstant(16)),
-          builder->createBinOp(spv::OpShiftRightLogical,type,low,builder->makeUintConstant(16)));
+          builder->createBinOp(spv::OpShiftLeftLogical,type,high,EmitRtzConstant(context, 16)),
+          builder->createBinOp(spv::OpShiftRightLogical,type,low,EmitRtzConstant(context, 16)));
     }
     case XE_RTZ_CLZ: {
       spv::Id msb = builder->createUnaryBuiltinCall(type,s->ext_inst_glsl_std_450_,GLSLstd450FindUMsb,x);
-      return builder->createBinOp(spv::OpISub,type,builder->makeUintConstant(31),msb);
+      return builder->createBinOp(spv::OpISub,type,EmitRtzConstant(context, 31),msb);
     }
     case XE_RTZ_ADD: code=spv::OpIAdd;break;
     case XE_RTZ_SUB: code=spv::OpISub;break;
@@ -57,24 +74,42 @@ xe_rtz_id SpirvShaderTranslator::EmitRtzNode(void* opaque, unsigned op,
     case XE_RTZ_XOR: code=spv::OpBitwiseXor;break;
     case XE_RTZ_SHL: code=spv::OpShiftLeftLogical;break;
     case XE_RTZ_SHR: code=spv::OpShiftRightLogical;break;
-    case XE_RTZ_EQ: code=spv::OpIEqual;type=s->type_bool_;break;
-    case XE_RTZ_ULT: code=spv::OpULessThan;type=s->type_bool_;break;
-    case XE_RTZ_ULE: code=spv::OpULessThanEqual;type=s->type_bool_;break;
-    case XE_RTZ_UGE: code=spv::OpUGreaterThanEqual;type=s->type_bool_;break;
-    case XE_RTZ_BOOL_AND: code=spv::OpLogicalAnd;type=s->type_bool_;break;
+    case XE_RTZ_EQ: code=spv::OpIEqual;type=context->bool_type;break;
+    case XE_RTZ_ULT: code=spv::OpULessThan;type=context->bool_type;break;
+    case XE_RTZ_ULE: code=spv::OpULessThanEqual;type=context->bool_type;break;
+    case XE_RTZ_UGE: code=spv::OpUGreaterThanEqual;type=context->bool_type;break;
+    case XE_RTZ_BOOL_AND: code=spv::OpLogicalAnd;type=context->bool_type;break;
     default: return 0;
   }
   return builder->createBinOp(code,type,x,y);
 }
+spv::Id SpirvShaderTranslator::FlushAluDenormals(spv::Id type, spv::Id value) {
+  const unsigned count = builder_->getNumComponents(value);
+  if (!count || count > 4) throw std::bad_alloc();
+  RtzEmitContext context = RtzContext(count);
+  xe_rtz_emitter emitter = {&context, &EmitRtzNode, 0};
+  xe_rtz_id clean = xe_rtz_emit_flush(&emitter,
+      builder_->createUnaryOp(spv::OpBitcast, context.uint_type, value));
+  if (!clean || emitter.failed) throw std::bad_alloc();
+  return builder_->createUnaryOp(spv::OpBitcast, type, spv::Id(clean));
+}
 spv::Id SpirvShaderTranslator::AluBinaryOperation(spv::Op opcode,
     spv::Id type, spv::Id a, spv::Id b) {
+  if (is_vertex_shader() && features_.rounding_mode_rtz_float32 &&
+      !features_.denorm_flush_to_zero_float32 &&
+      (opcode == spv::OpFAdd || opcode == spv::OpFSub || opcode == spv::OpFMul)) {
+    a = FlushAluDenormals(type, a);
+    b = FlushAluDenormals(type, b);
+    return FlushAluDenormals(type, builder_->createNoContractionBinOp(opcode, type, a, b));
+  }
   spv::Id native = builder_->createNoContractionBinOp(opcode,type,a,b);
   if (!is_vertex_shader() || (features_.rounding_mode_rtz_float32 && features_.denorm_flush_to_zero_float32) ||
       (opcode!=spv::OpFAdd && opcode!=spv::OpFSub && opcode!=spv::OpFMul)) return native;
   const unsigned count=builder_->getNumComponents(native);
   if (!count || count>4) throw std::bad_alloc();
   spv::Id components[4];
-  xe_rtz_emitter emitter={this,&EmitRtzNode,0};
+  RtzEmitContext context = RtzContext(1);
+  xe_rtz_emitter emitter={&context,&EmitRtzNode,0};
   for (unsigned i=0;i<count;++i) {
     spv::Id x=count==1?a:builder_->createCompositeExtract(a,type_float_,i);
     spv::Id y=count==1?b:builder_->createCompositeExtract(b,type_float_,i);
@@ -98,7 +133,8 @@ spv::Id SpirvShaderTranslator::AluFract(spv::Id type, spv::Id operand) {
   const unsigned count=builder_->getNumComponents(operand);
   if (!count || count>4) throw std::bad_alloc();
   spv::Id components[4];
-  xe_rtz_emitter emitter={this,&EmitRtzNode,0};
+  RtzEmitContext context = RtzContext(1);
+  xe_rtz_emitter emitter={&context,&EmitRtzNode,0};
   for (unsigned i=0;i<count;++i) {
     spv::Id a=count==1?operand:builder_->createCompositeExtract(operand,type_float_,i);
     xe_rtz_id clean=xe_rtz_emit_flush(&emitter,builder_->createUnaryOp(spv::OpBitcast,type_uint_,a));

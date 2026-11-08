@@ -63,6 +63,9 @@ class ComparisonTests(unittest.TestCase):
     def test_expected_cases_are_identified_not_just_counted(self):
         self.assertEqual(len(ci.expected_keys("vulkan-software")),96)
         self.assertEqual(len(ci.expected_keys("d3d12-warp")),80)
+        self.assertEqual(len(ci.expected_keys("vulkan-hardware")),192)
+        self.assertIn(("spirv.rtz_translate_batch4",63),ci.expected_keys("vulkan-hardware"))
+        self.assertIn(("vulkan.rtz_vs_ps_pso",15),ci.expected_keys("vulkan-hardware"))
         self.assertIn(("vulkan.vs_ps_pso",15),ci.expected_keys("vulkan-hardware"))
         self.assertNotIn(("vulkan.vs_ps_pso",16),ci.expected_keys("vulkan-hardware"))
 

@@ -19,8 +19,10 @@ flush signed input/output denormals. Separate products and sums remain
 uncontracted. Existing nonfinite/native behavior and shader-model-3 zero/NaN
 multiplication handling remain. CPU wrappers never change host rounding state.
 
-Vulkan uses hardware RTZ only with float32 RTZ and FTZ device support. The
-fallback and native DXIL share the same C89 integer SSA recipe. Multiplication
+Vulkan uses hardware RTZ whenever float32 RTZ is supported. If hardware FTZ
+is absent, the existing C89 flush recipe emits vector input/output bit operations
+around uncontracted native arithmetic. Devices lacking RTZ and native DXIL
+share the same C89 integer SSA recipe. Multiplication
 uses a native 32x32 extended product, extracting bits 47:16, rather than a
 partial-product sequence. SPIR-V pair order is low/high; DXIL is high/low.
 No shader Int64 or Float64 capability is needed. New helper metadata is bounded,
@@ -75,8 +77,10 @@ Verification
 Limits
 ------
 Hardware DXIL execution is a test compute fixture, not console reference output
-or an NG2 gameplay capture. Vulkan modules were generated/validated, not executed
-on a physical Vulkan GPU in this test. Native RTZ changes all vertex arithmetic
+or an NG2 gameplay capture. Subsequent Vulkan verification executes 192 actual
+packed-guest ALU shaders on RTX 5090, comparing finite outputs bit-exactly and
+allowing only NaN payload canonicalization. Both software and hardware-RTZ/manual-FTZ
+paths pass. See shader_hw_rtz_ftz_results.txt for matched compile measurements. Native RTZ changes all vertex arithmetic
 and may expose accuracy/performance differences needing game coverage. Pixel
 RTZ, complete savestates and the broader optimization goal remain unfinished.
 Test-only XE_DXIL_TEST_HARDWARE=1 chooses adapter0; normal runtime fixtures use

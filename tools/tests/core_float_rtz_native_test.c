@@ -52,7 +52,7 @@ int main(int argc,char** argv) {
       for(ftz=0;ftz<2;++ftz)for(hardware=0;hardware<4;++hardware) {
          size=xe_rtz_native_spirv(code,6,pixel,hardware,ftz,binary,65536);CHECK(size);
          integers=scan(size,&rtz,&rte,!pixel);
-         CHECK(rtz==(unsigned)(!pixel && (hardware&1) && ftz) && rte==(unsigned)!rtz);
+         CHECK(rtz==(unsigned)(!pixel && (hardware&1)) && rte==(unsigned)!rtz);
          if(!pixel && ftz) {if(hardware&1)fast=integers;else soft=integers;}
          if(pixel) {
             if(!(hardware&1)){pixel_size=size;memcpy(pixel_baseline,binary,size*4);}

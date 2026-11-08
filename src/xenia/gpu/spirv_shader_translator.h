@@ -901,6 +901,14 @@ class SpirvShaderTranslator : public ShaderTranslator {
   spv::Id ReduceFloatPrecision(spv::Id value, uint32_t mantissa_bits);
   spv::Id AluFract(spv::Id type, spv::Id operand);
   spv::Id AluBinaryOperation(spv::Op opcode, spv::Id type, spv::Id a, spv::Id b);
+  struct RtzEmitContext {
+    SpirvShaderTranslator* translator;
+    spv::Id uint_type, bool_type;
+    unsigned components;
+  };
+  RtzEmitContext RtzContext(unsigned components);
+  static spv::Id EmitRtzConstant(const RtzEmitContext*, uint32_t);
+  spv::Id FlushAluDenormals(spv::Id type, spv::Id value);
   static xe_rtz_id EmitRtzNode(void*, unsigned, xe_rtz_id, xe_rtz_id, xe_rtz_id, uint32_t);
 
   // Pack/unpack two floats as Xbox 360 extended-range float16, where exponent

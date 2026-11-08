@@ -6,6 +6,11 @@ struct ShaderCompileContext {
   static SpirvShaderTranslator::Features Features(unsigned profile) {
     SpirvShaderTranslator::Features f(false);
     f.spirv_version=spv::Spv_1_3;
+    if (profile&8) {
+      f.rounding_mode_rtz_float32=true;
+      f.rounding_mode_rte_float32=true;
+      f.signed_zero_inf_nan_preserve_float32=true;
+    }
     f.image_view_format_swizzle=(profile&1)!=0;
     return f;
   }

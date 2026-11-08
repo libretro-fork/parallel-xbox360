@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Reduce large Vulkan vertex shaders on devices with hardware round-toward-zero but no hardware denormal flush mode, including the tested RTX 5090. Flush signed inputs/outputs explicitly instead of expanding each operation into integer arithmetic. Retain software fallback and add real-GPU arithmetic checks and per-commit compile comparisons for this capability combination. Cold-play stutter is not yet eliminated.
+
 - Wait for the requested Vulkan or D3D12 draw pipeline instead of draining later unrelated compilation jobs. Reuse the worker pool's existing completion notifications and borrowed publication state; preserve ordered publication, failure handling and GPU retirement. Required pipeline compilation can still stall a draw; this does not establish stutter-free cold play.
 
 - Remove FFmpeg from default core builds without disabling legacy XMA or XMP music. Decode MP3/WMA through native float spans backed by borrowed mappings or bounded guest-file windows; skip large ID3 tags without slurping them. Preserve exact partial media blocks and mono stride, guest PCM conversion and APU scheduling. Keep FFmpeg available only for optional offline comparisons.

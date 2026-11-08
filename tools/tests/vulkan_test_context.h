@@ -8,6 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "shader_compile_bench.h"
+#ifdef XE_SHADER_COMPILE_BENCH
+static const char *xe_test_module_stage="vulkan.module";
+#endif
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -112,7 +115,7 @@ static int shader(const char *path, VkShaderModule *module)
    info.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO; info.codeSize=(size_t)size; info.pCode=words;
    XE_COMPILE_BEGIN();
    result=g.vkCreateShaderModule(g.device,&info,NULL,module);
-   XE_COMPILE_END("vulkan.module",xe_compile_case);
+   XE_COMPILE_END(xe_test_module_stage,xe_compile_case);
    free(words); return result==VK_SUCCESS;
 }
 #endif

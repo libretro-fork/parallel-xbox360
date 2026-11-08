@@ -5,6 +5,19 @@
 #define XE_VK_TEST_GRAPHICS
 #include "vulkan_test_context.h"
 #include "shader_compile_bench.h"
+#ifndef XE_VERTEX_TEST_CASES
+#define XE_VERTEX_TEST_CASES 16
+#endif
+static int vertex_matches(const void *bytes,const uint32_t *golden) {
+#ifdef XE_FLOAT_RTZ_GPU_TEST
+ const uint32_t *actual=(const uint32_t*)bytes;unsigned i;
+ for(i=0;i<4;++i)if(actual[i]!=golden[i] &&
+       !((actual[i]&0x7fffffff)>0x7f800000 && (golden[i]&0x7fffffff)>0x7f800000))return 0;
+ return 1;
+#else
+ return !memcmp(bytes,golden,16);
+#endif
+}
 int main(int argc,char **argv) {
 #ifdef _WIN32
  HMODULE loader=LoadLibraryA("vulkan-1.dll");FARPROC entry;
@@ -37,6 +50,10 @@ int main(int argc,char **argv) {
  VkDeviceSize zero=0,feedback_size=16;
  float priority=1.0f;uint32_t count,family,i,which,j,golden[4];char path[512];FILE *file;
  int result=1;
+#ifdef XE_FLOAT_RTZ_GPU_TEST
+ VkPhysicalDeviceProperties2 properties2={0};VkPhysicalDeviceFloatControlsProperties controls={0};
+ PFN_vkGetPhysicalDeviceProperties2 get_properties2;PFN_vkVoidFunction raw_properties2;
+#endif
  memset(buffers,0,sizeof(buffers));
  if(argc!=2 || strlen(argv[1])>400 || !loader)goto done;
 #ifdef _WIN32
@@ -55,6 +72,16 @@ int main(int argc,char **argv) {
  count=8;OK(g.vkEnumeratePhysicalDevices(g.instance,&count,physical));if(!count)goto done;
  g.vkGetPhysicalDeviceProperties(physical[0],&properties);
  fprintf(stderr,"BENCH_DEVICE Vulkan vendor=%u device=%u driver=%u name=%s\n",properties.vendorID,properties.deviceID,properties.driverVersion,properties.deviceName);
+#ifdef XE_FLOAT_RTZ_GPU_TEST
+ raw_properties2=g.get(g.instance,"vkGetPhysicalDeviceProperties2");if(!raw_properties2)goto done;
+ memcpy(&get_properties2,&raw_properties2,sizeof(get_properties2));
+ properties2.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+ controls.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES;properties2.pNext=&controls;
+ get_properties2(physical[0],&properties2);
+ if(!controls.shaderRoundingModeRTZFloat32 || !controls.shaderSignedZeroInfNanPreserveFloat32){
+  fputs("Unsupported float32 RTZ/signed-zero coverage on this device\n",stderr);goto done;
+ }
+#endif
  g.vkGetPhysicalDeviceMemoryProperties(physical[0],&g.memory);
  tf.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
  features.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;features.pNext=&tf;
@@ -142,8 +169,13 @@ int main(int argc,char **argv) {
  render_begin.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;render_begin.renderPass=render;render_begin.framebuffer=framebuffer;
  render_begin.renderArea.extent.width=render_begin.renderArea.extent.height=1;
  barrier.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER;
- for(which=0;which<16;++which){
+ for(which=0;which<XE_VERTEX_TEST_CASES;++which){
   ((uint32_t*)((unsigned char*)buffers[0].mapped+2048))[0]=(which>=5 && which<10)?1u:0u;
+#ifdef XE_FLOAT_RTZ_GPU_TEST
+  sprintf(path,"%s/call%u.input",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
+  i=(uint32_t)fread((unsigned char*)buffers[0].mapped+1024,1,32,file);
+  j=(uint32_t)fgetc(file);fclose(file);if(i!=32 || j!=(uint32_t)EOF)goto done;
+#endif
   if(!cache_buffer(&buffers[0],0))goto done;
   XE_COMPILE_CASE(which);sprintf(path,"%s/call%u.spv",argv[1],which);if(!shader(path,&module))goto done;
   sprintf(path,"%s/call%u.expected",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
@@ -167,12 +199,12 @@ int main(int argc,char **argv) {
   OK(g.vkEndCommandBuffer(command));OK(g.vkResetFences(g.device,1,&fence));OK(g.vkQueueSubmit(queue,1,&submit,fence));
   if(g.vkWaitForFences(g.device,1,&fence,VK_TRUE,UINT64_C(10000000000))!=VK_SUCCESS){fprintf(stderr,"GPU completion failed, retaining pending resources\n");exit(1);}
   if(!cache_buffer(&buffers[1],1))goto done;
-  if(memcmp(buffers[1].mapped,golden,16)){uint32_t *actual=(uint32_t*)buffers[1].mapped;
+  if(!vertex_matches(buffers[1].mapped,golden)){uint32_t *actual=(uint32_t*)buffers[1].mapped;
    fprintf(stderr,"Vulkan call%u: %08x %08x %08x %08x expected %08x %08x %08x %08x\n",which,actual[0],actual[1],actual[2],actual[3],golden[0],golden[1],golden[2],golden[3]);goto done;}
   for(i=16;i<4096;++i)if(((unsigned char*)buffers[1].mapped)[i]!=0xA5){fprintf(stderr,"Feedback guard overwritten\n");goto done;}
   g.vkDestroyPipeline(g.device,pipeline,NULL);pipeline=VK_NULL_HANDLE;g.vkDestroyShaderModule(g.device,module,NULL);module=VK_NULL_HANDLE;
  }
- printf("PASS: sixteen actual guest vertex call/return shaders, exact4-word output and feedback guards (%s)\n",properties.deviceName);result=0;
+ printf("PASS: %u actual guest vertex shaders, exact4-word output and feedback guards (%s)\n",(unsigned)XE_VERTEX_TEST_CASES,properties.deviceName);result=0;
 done:
  if(g.device){
   if(fence)g.vkDestroyFence(g.device,fence,NULL);

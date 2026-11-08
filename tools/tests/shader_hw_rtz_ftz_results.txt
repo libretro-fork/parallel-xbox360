@@ -1,0 +1,69 @@
+Vulkan hardware RTZ with explicit signed denormal flushing
+2026-11-08
+
+Parent: e3bc8472e8610c0b0be55d91a5be7008f4d43023
+Device: NVIDIA RTX 5090, vendor4318/device11141, driver2604679168
+Measured float32 properties: RTZ=1, RTE=1, FTZ=0, signed-zero/NaN preserve=1.
+
+Production
+----------
+Select RTZ independently of FTZ. Reuse the bounded C89 xe_rtz_emit_flush recipe
+through a thin scalar/vector typed adapter, with stack constant views. Flush
+signed operands/results around uncontracted native ADD/SUB/MUL. Keep the full
+integer fallback where RTZ is absent and the native RTZ+FTZ path where supported.
+Pixel policy, DXIL, guest audio, frame pacing and cache defaults are unchanged.
+No copied shader payload, new compiler arena, diagnostic logging, readback,
+thread, sleep or runtime queue is added. Existing translator/driver allocations
+remain. Smaller IR is not proof of zero allocation or lower GPU execution time.
+
+Correctness
+-----------
+- MSVC /TC /W4 /WX /fp:strict integer/SSA tests: PASS, 4M random operations
+  against SSE RTZ+FTZ/DAZ plus edge/cancellation and injected emitter failures.
+- MinGW strict C89 numeric/SSA tests: PASS. New GPU fixture/runtime C89 TUs build.
+- Linux GCC ASan+UBSan numeric/SSA tests: PASS. New fixture/runtime strict C89
+  compile/link: PASS. No claim of physical Linux GPU execution.
+- 49 native packed guest/interpreter/feature-matrix modules: PASS. SPIR-V1.0
+  fallback retained; all outputs plus the 192 annotated fixtures pass spirv-val.
+- 192 actual packed guest ADD/MUL/FRC shaders run on RTX5090: PASS for both
+  parent and candidate, finite bit-exact, NaN payload canonicalization only.
+  Inputs cover mixed lanes, signed denormals/zeros, cancellation, finite overflow,
+  FRC(-FLT_MIN), random finite operands, infinities and zero-times-NaN/Inf.
+- Existing sixteen call/return GPU fixtures: PASS for both versions.
+- Parent fails updated RTZ-without-FTZ execution-mode assertion; candidate passes.
+- Full MSVC Release core, three parallel jobs: PASS.
+- Thirteen comparator/coverage tests: PASS.
+
+Paired component timings
+-----------------------
+Same current harness and CMake Release/MSVC toolchain, identical build paths,
+exact parent versus candidate. Seven alternating/reverse-order samples, no
+competing build. Correctness ran before timing. Fresh processes, no application
+cache; driver disk/internal cache NOT certified cold. No performance thresholds
+were loosened. Vulkan hardware: 192 metrics, zero threshold alarms. WARP: 80
+metrics, zero threshold alarms. Existing 64 SPIR-V modules remain byte-identical.
+
+Additional RTZ corpus aggregate module bytes: 12,489,152 -> 1,729,472 (-86.15%).
+Translation median across case medians (batch4): 0.311 -> 0.13355 ms.
+Translation maximum observed: 11.8427 -> 1.7246 ms.
+RTZ graphics PSO median across case medians: 0.11935 -> 0.0941 ms.
+RTZ graphics PSO maximum observed: 364.8671 -> 135.919 ms.
+Per-case seven samples, median/p95/p99/max and manifests retained as artifacts.
+
+Private authorized NG2 replay (microcode never published)
+-------------------------------------------------------
+Read the exact 855-word entry from a borrowed VFS-mapped shader cache range;
+no ISO/cache slurp. Software lowering: 1,087,256 bytes; new path: 366,156 bytes.
+Single indicative translation observation: 2.9107 -> 1.2262 ms. First observed
+NVIDIA graphics PSO: 1.1116281 -> 0.3142312 s. These are not controlled cold-driver
+ratios and do not establish gameplay smoothness. Raw game shaders/disassembly
+are private and excluded from published artifacts.
+
+Limits
+------
+Required pipeline creation still blocks draws; ~136ms is still too long. No
+certified empty driver cache, full cross-game cold/warm play, first-correct-draw
+latency, GPU execution-time or console-reference claim. Public profiles use
+procedural redistributable shaders. Hardware float controls vary; unsupported
+devices fail the hardware suite explicitly. General shader/control-flow, query
+submission and queue-saturation work remains; the broad goal is unfinished.

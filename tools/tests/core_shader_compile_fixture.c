@@ -35,17 +35,19 @@ int main(int argc,char **argv)
    unsigned profile,pixel,scenario,repeat,id=0;
    size_t count,bytes=0;const void *data=NULL;void *context;
    const char *no_dump=getenv("XE_SHADER_BENCH_NO_DUMP");
+   const char *rtz=getenv("XE_SHADER_BENCH_RTZ_PROFILE");
+   unsigned hardware_rtz=rtz && !strcmp(rtz,"1");
    char path[512];FILE *file;
    if(argc!=2 || strlen(argv[1])>400)return 2;
    for(profile=0;profile<4;++profile) {
-      context=xe_compile_open(profile);if(!context)return 1;
+      context=xe_compile_open(profile|(hardware_rtz?8u:0u));if(!context)return 1;
       for(pixel=0;pixel<2;++pixel)for(scenario=0;scenario<8;++scenario,++id) {
          count=scenario<5?nested_scenario(code,pixel,scenario):
                stress(pixel,additions[scenario-5]);
          XE_COMPILE_BEGIN();
          for(repeat=0;repeat<4;++repeat)
             if(!xe_compile_step(context,code,count,pixel,&data,&bytes))return 1;
-         XE_COMPILE_END("spirv.translate_batch4",id);
+         XE_COMPILE_END(hardware_rtz?"spirv.rtz_translate_batch4":"spirv.translate_batch4",id);
          if(!data || bytes<20 || bytes%4)return 1;
          if(no_dump && !strcmp(no_dump,"1"))continue;
          sprintf(path,"%s/shader%03u.spv",argv[1],id);

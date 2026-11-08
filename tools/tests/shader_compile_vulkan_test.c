@@ -15,6 +15,12 @@ int main(int argc,char **argv)
 #else
    void *loader=dlopen("libvulkan.so.1",RTLD_NOW|RTLD_LOCAL),*entry;
 #endif
+   const char *rtz=getenv("XE_SHADER_BENCH_RTZ_PROFILE");
+   unsigned hardware_rtz=rtz && !strcmp(rtz,"1");
+
+   const char *pso_stage=hardware_rtz?"vulkan.rtz_vs_ps_pso":"vulkan.vs_ps_pso";
+   VkPhysicalDeviceProperties2 properties2={0};VkPhysicalDeviceFloatControlsProperties controls={0};
+   PFN_vkGetPhysicalDeviceProperties2 get_properties2;PFN_vkVoidFunction raw_properties2;
    VkApplicationInfo app={0};VkInstanceCreateInfo instance={0};
    VkPhysicalDevice physical[8];VkPhysicalDeviceProperties properties;
    VkQueueFamilyProperties families[32];VkDeviceQueueCreateInfo queue={0};
@@ -38,7 +44,7 @@ int main(int argc,char **argv)
    entry=dlsym(loader,"vkGetInstanceProcAddr");
 #endif
    memcpy(&g.get,&entry,sizeof(g.get));if(!g.get)goto done;
-   LOAD(vkCreateInstance);app.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO;app.apiVersion=VK_API_VERSION_1_1;
+   LOAD(vkCreateInstance);app.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO;app.apiVersion=hardware_rtz?VK_API_VERSION_1_2:VK_API_VERSION_1_1;
    instance.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;instance.pApplicationInfo=&app;
    OK(g.vkCreateInstance(&instance,NULL,&g.instance));
    LOAD(vkDestroyInstance);LOAD(vkEnumeratePhysicalDevices);LOAD(vkGetPhysicalDeviceProperties);
@@ -47,6 +53,16 @@ int main(int argc,char **argv)
    g.vkGetPhysicalDeviceProperties(physical[0],&properties);
    fprintf(stderr,"BENCH_DEVICE Vulkan vendor=%u device=%u driver=%u name=%s\n",
          properties.vendorID,properties.deviceID,properties.driverVersion,properties.deviceName);
+   if(hardware_rtz){
+      raw_properties2=g.get(g.instance,"vkGetPhysicalDeviceProperties2");if(!raw_properties2)goto done;
+      memcpy(&get_properties2,&raw_properties2,sizeof(get_properties2));
+      properties2.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+      controls.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES;properties2.pNext=&controls;
+      get_properties2(physical[0],&properties2);
+      if(!controls.shaderRoundingModeRTZFloat32 || !controls.shaderSignedZeroInfNanPreserveFloat32){
+         fputs("Required hardware RTZ/signed-zero profile unsupported\n",stderr);goto done;
+      }
+   }
    count=32;g.vkGetPhysicalDeviceQueueFamilyProperties(physical[0],&count,families);
    for(family=0;family<count;++family)if(families[family].queueFlags&VK_QUEUE_GRAPHICS_BIT)break;
    if(family==count)goto done;
@@ -56,6 +72,7 @@ int main(int argc,char **argv)
    LOAD(vkDestroyDevice);LOAD(vkCreateDescriptorSetLayout);LOAD(vkDestroyDescriptorSetLayout);
    LOAD(vkCreatePipelineLayout);LOAD(vkDestroyPipelineLayout);LOAD(vkCreateShaderModule);LOAD(vkDestroyShaderModule);
    LOAD(vkCreateRenderPass);LOAD(vkDestroyRenderPass);LOAD(vkCreateGraphicsPipelines);LOAD(vkDestroyPipeline);
+   xe_test_module_stage=hardware_rtz?"vulkan.rtz_module":"vulkan.module";
    memset(bindings,0,sizeof(bindings));
    for(i=0;i<2;++i){bindings[i].binding=i;bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
       bindings[i].descriptorCount=i?1:4;bindings[i].stageFlags=VK_SHADER_STAGE_ALL_GRAPHICS;}
@@ -93,7 +110,7 @@ int main(int argc,char **argv)
          blend.srcColorBlendFactor=VK_BLEND_FACTOR_ONE;blend.dstColorBlendFactor=VK_BLEND_FACTOR_ZERO;
          blend.srcAlphaBlendFactor=VK_BLEND_FACTOR_ONE;blend.dstAlphaBlendFactor=VK_BLEND_FACTOR_ZERO;
          XE_COMPILE_BEGIN();OK(g.vkCreateGraphicsPipelines(g.device,VK_NULL_HANDLE,1,&info,NULL,&pipeline));
-         XE_COMPILE_END("vulkan.vs_ps_pso",which*2+variant);
+         XE_COMPILE_END(pso_stage,which*2+variant);
          g.vkDestroyPipeline(g.device,pipeline,NULL);pipeline=VK_NULL_HANDLE;
       }
       for(i=0;i<2;++i){g.vkDestroyShaderModule(g.device,modules[i],NULL);modules[i]=VK_NULL_HANDLE;}

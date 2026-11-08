@@ -481,7 +481,7 @@ void SpirvShaderTranslator::StartTranslation() {
     if (features_.signed_zero_inf_nan_preserve_float32 ||
         features_.denorm_flush_to_zero_float32 ||
         features_.rounding_mode_rte_float32 ||
-        (is_vertex_shader() && features_.rounding_mode_rtz_float32 && features_.denorm_flush_to_zero_float32)) {
+        (is_vertex_shader() && features_.rounding_mode_rtz_float32)) {
       builder_->addExtension("SPV_KHR_float_controls");
     }
   }
@@ -1304,7 +1304,7 @@ ShaderBinary SpirvShaderTranslator::CompleteTranslation() {
     builder_->addExecutionMode(function_main_,
                                spv::ExecutionModeSignedZeroInfNanPreserve, 32);
   }
-  if (is_vertex_shader() && features_.rounding_mode_rtz_float32 && features_.denorm_flush_to_zero_float32) {
+  if (is_vertex_shader() && features_.rounding_mode_rtz_float32) {
     builder_->addCapability(spv::Capability::RoundingModeRTZ);
     builder_->addExecutionMode(function_main_, spv::ExecutionMode::RoundingModeRTZ, 32);
   } else if (features_.rounding_mode_rte_float32 &&
