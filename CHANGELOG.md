@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Add numerical GPU regression coverage for translated vertex shader subroutines: sixteen real guest programs exercise nested calls, full-stack skips, bool/predicate polarity and call-to-next/empty returns through Vulkan transform feedback. The RTX 5090 produces exact expected output; the pre-fix translator produces 1.0 instead of 5.0 for the first nested case despite valid SPIR-V. Shared C89 test context avoids duplicating the existing downscale Vulkan setup. This is test coverage, with no production renderer or game-speed change.
+
 - Implement Vulkan guest shader calls and returns, which previously reached empty handlers. Calls honor bool/predicate conditions, retain a fixed four-entry return stack only in shaders that use subroutines, and return through the existing PC loop. Empty-stack returns fall through; full-stack calls skip without corrupting live return addresses. Apply that overflow behavior to native DXIL too. New stack-lowering algorithms are MSVC C89 with typed builder callbacks. Raise the shared shader/pipeline cache version so stale compiled output is rebuilt once. No game-specific accuracy or performance improvement is claimed without gameplay coverage.
 
 - Compile Vulkan host GPU timing queries and render-pass profiler counters only when profiling is enabled. Default builds no longer create the otherwise-unused timestamp pool, collect its results or bracket submissions with diagnostic timestamps. Guest occlusion queries and GPU completion behavior remain intact. This removes discarded profiling work; its effect on Dark Souls II performance has not been measured.

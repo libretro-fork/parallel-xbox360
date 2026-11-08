@@ -4,9 +4,10 @@ for %%R in ("%~dp0..\..") do set ROOT=%%~fR
 pushd "%ROOT%"
 if not defined FORWARD_FLOW_BUILD set FORWARD_FLOW_BUILD=build\windows-native
 if not defined FORWARD_FLOW_OUT set FORWARD_FLOW_OUT=build\tests\forward-flow-msvc
+if not defined FORWARD_FLOW_SOURCE set FORWARD_FLOW_SOURCE=tools\tests\core_forward_flow_test.c
 set OUT=%FORWARD_FLOW_OUT%
 if not exist "%OUT%" mkdir "%OUT%"
-cl %FORWARD_FLOW_FLAGS% /nologo /TC /MD /O2 /W4 /WX /DHAVE_THREADS /DHAVE_THREAD_STORAGE /DRETRO_ATOMIC_FORCE_MSVC /D_CRT_SECURE_NO_WARNINGS /I. /Ithird_party\libretro-common\include /c tools\tests\core_forward_flow_test.c /Fo"%OUT%\driver.obj" /Fd"%OUT%\driver.pdb"
+cl %FORWARD_FLOW_FLAGS% /nologo /TC /MD /O2 /W4 /WX /DHAVE_THREADS /DHAVE_THREAD_STORAGE /DRETRO_ATOMIC_FORCE_MSVC /D_CRT_SECURE_NO_WARNINGS /I. /Ithird_party\libretro-common\include /c "%FORWARD_FLOW_SOURCE%" /Fo"%OUT%\driver.obj" /Fd"%OUT%\driver.pdb"
 if not "%errorlevel%"=="0" goto fail
 cl %FORWARD_FLOW_FLAGS% /nologo /MD /O2 /EHsc /utf-8 /std:c++20 /arch:AVX /DNDEBUG /DXENIA_LIBRETRO /DRETRO_ATOMIC_FORCE_MSVC /I. /Isrc /Ithird_party\libretro-common\include /Ithird_party\fmt\include /c tools\tests\forward_flow_bridge.cc /Fo"%OUT%\bridge.obj" /Fd"%OUT%\bridge.pdb"
 if not "%errorlevel%"=="0" goto fail

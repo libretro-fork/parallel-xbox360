@@ -3,7 +3,7 @@
 #include "xenia/gpu/spirv_shader_translator.h"
 #include "xenia/gpu/shader_interpreter.h"
 #include <cstring>
-extern "C" size_t xe_forward_spirv(const uint32_t* code,size_t count,unsigned pixel,
+static size_t ForwardSpirv(bool portable,const uint32_t* code,size_t count,unsigned pixel,
     uint32_t* out,size_t capacity,unsigned* labels,uint32_t* bools) {
   using namespace xe::gpu;
   SpirvShader shader(pixel?xenos::ShaderType::kPixel:xenos::ShaderType::kVertex,29,code,count,std::endian::native);
@@ -11,12 +11,20 @@ extern "C" size_t xe_forward_spirv(const uint32_t* code,size_t count,unsigned pi
   *labels=unsigned(shader.label_addresses().size());
   *bools=shader.constant_register_map().bool_bitmap[0];
   auto* translation=shader.GetOrCreateTranslation(0);
-  SpirvShaderTranslator::Features features(true);features.spirv_version=spv::Spv_1_3;
+  SpirvShaderTranslator::Features features(!portable);features.spirv_version=spv::Spv_1_3;
   SpirvShaderTranslator translator(features,false,false,false,false,1,1);
   if(!translator.TranslateAnalyzedShader(*translation) || !translation->is_valid())return 0;
   auto binary=translation->translated_binary();
   if(binary.size()%4 || binary.size()/4>capacity)return 0;
   std::memcpy(out,binary.data(),binary.size());return binary.size()/4;
+}
+extern "C" size_t xe_forward_spirv(const uint32_t* code,size_t count,unsigned pixel,
+    uint32_t* out,size_t capacity,unsigned* labels,uint32_t* bools) {
+  return ForwardSpirv(false,code,count,pixel,out,capacity,labels,bools);
+}
+extern "C" size_t xe_forward_spirv_portable(const uint32_t* code,size_t count,unsigned pixel,
+    uint32_t* out,size_t capacity,unsigned* labels,uint32_t* bools) {
+  return ForwardSpirv(true,code,count,pixel,out,capacity,labels,bools);
 }
 class ForwardSink final:public xe::gpu::ShaderInterpreter::ExportSink {
  public:
@@ -26,13 +34,23 @@ class ForwardSink final:public xe::gpu::ShaderInterpreter::ExportSink {
     std::memcpy(out,value,16);++count;
   }
 };
-extern "C" int xe_forward_interpret(const uint32_t* code,unsigned pixel,const float* inputs,float* out) {
+static int ForwardInterpret(bool constants,uint32_t bool_constant,const uint32_t* code,unsigned pixel,const float* inputs,float* out) {
   xe::Memory memory;xe::gpu::RegisterFile registers;
+  if(constants)for(unsigned i=0;i<4;++i)registers[xe::gpu::XE_GPU_REG_SHADER_CONSTANT_000_X+i]=0x3f800000;
+  registers[xe::gpu::XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031]=bool_constant;
   xe::gpu::ShaderInterpreter interpreter(registers,memory);
+  std::memset(interpreter.temp_registers(),0,xe::gpu::xenos::kMaxShaderTempRegisters*16);
   std::memcpy(interpreter.temp_registers(),inputs,32);
   ForwardSink sink;sink.out=out;interpreter.SetExportSink(&sink);
   interpreter.SetShader(pixel?xe::gpu::xenos::ShaderType::kPixel:xe::gpu::xenos::ShaderType::kVertex,code);
   interpreter.Execute();return sink.count==1;
+}
+
+extern "C" int xe_forward_interpret(const uint32_t* code,unsigned pixel,const float* inputs,float* out) {
+  return ForwardInterpret(false,0,code,pixel,inputs,out);
+}
+extern "C" int xe_forward_interpret_constants(const uint32_t* code,unsigned pixel,const float* inputs,float* out,uint32_t bool_constant) {
+  return ForwardInterpret(true,bool_constant,code,pixel,inputs,out);
 }
 
 class ForwardBuilder final:public xe::gpu::SpirvBuilder {

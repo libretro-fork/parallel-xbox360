@@ -53,7 +53,8 @@ Verification
 
 Limits
 ------
-Vulkan modules were validated, not numerically executed on a physical Vulkan GPU.
+At0188 Vulkan modules were validated, not numerically GPU-executed. Later0189
+adds physical vertex execution coverage; see shader_call_gpu_results.txt.
 The packed interpreter's golden results do not prove emitted Vulkan numerical
 execution; they establish the intended guest semantics. C89 SSA execution tests
 exercise stack lowering, not the whole renderer. No game/installed-DLL test,

@@ -1,0 +1,104 @@
+Actual Vulkan guest vertex subroutine execution (0189, 2026-11-08)
+Parent03a6af8a0
+
+Test method
+-----------
+Generate sixteen real vertex shaders through Shader::AnalyzeUcode and the
+production SpirvShaderTranslator. Portable feature settings select the existing
+integer RTZ fallback, without assuming optional native float controls. The guest
+ALU reads explicit c0.y=1.0; input GPRs start zero just as they do on the GPU.
+Golden values (3,5 or2) are independently asserted and checked by the existing
+CPU ShaderInterpreter. Uniform bool input is explicitly varied and predicate
+true is produced by a real guest setp instruction.
+
+Add only SPIR-V TransformFeedback capability, Xfb execution mode, and buffer/
+stride/member-offset annotations to the existing gl_Position output. IDs, CFG,
+ALU instructions and the vertex postamble remain intact. System constants use
+W-as-W, unit NDC scale and zero offsets, so the postamble preserves the expected
+four words. A discard-only graphics pipeline runs one vertex, with no fragment
+stage, image allocation or CPU emulation of emitted SPIR-V. Capture16bytes into
+a persistently mapped buffer and compare exact bits plus all4080 guard bytes.
+
+Coverage/results
+----------------
+- GNU portable fixture generation: PASS; all16 raw and16 Xfb modules pass
+  spirv-val --target-env vulkan1.1. No shader validation failures suppressed.
+- Actual Vulkan runtime on NVIDIA GeForce RTX5090: PASS, all16 exact outputs
+  and guards. Covers four nested calls, attempted fifth call, both bool values,
+  both predicate values/polarities, and call-to-next followed by empty return.
+- MSVC /TC/W4/WX fixture and runtime builds: PASS, same16 hardware executions.
+- Native MSVC ASan of fixture/typed bridge/runtime: PASS, same16 exact outputs
+  and guards. Supporting core libraries are Release; not whole-core ASan.
+- Existing packed VS/PS forward-flow and orphan-builder fixtures: PASS after
+  sharing the packed generator and refactoring typed test wrappers.
+- Shared Vulkan setup extraction: original2048 downscale Vulkan GPU differential
+  cases PASS on5090; corresponding2048 D3D12 WARP differential cases PASS. All
+  4113608 bounded borrowed-view planning cases also PASS.
+- CI post-build runners generate fixtures by default. GPU_TESTS=1 explicitly
+  requests physical execution; no assumption of CI GPU/TF-extension support.
+
+Negative control
+----------------
+Shader call/return GPU negative control, 2026-11-08
+
+Reference commit: 748450e6c48cd63aea2e3fc1905130661b689b1e (before patch188).
+Private outputs: SOURCE/build/tests/shader-call-parent.
+No tracked source files, production binaries, commits or build archives modified.
+One GNU compiler was used at a time; no full core build was run.
+
+Construction
+Targeted git archive supplied parent spirv_shader_translator.h and ALL FIVE
+spirv_shader_translator*.cc translation units. All five old units were compiled
+with parent overlay/src as first include path. Current forward_flow_bridge.cc
+was also compiled with that first include path, so translator sizeof, fields,
+virtual methods and all translator implementation parts agree with the parent.
+All parent translator objects precede current objects.rsp/core.a on the link line.
+The current C89 fixture driver, C89 expected values, guest interpreter, SPIR-V
+builder and core link dependencies were retained. Only the translator was old.
+The six archived files match parent blobs after Git text normalization; archive
+extraction uses native text line endings, so raw hashes differ for CRLF files.
+
+Generation and validation
+Private fixture.exe generated all16 real guest VS fixtures using explicit shader
+constants; Xfb annotations leave guest control flow untouched. Expected results
+were generated independently by interpreter and checked against explicit goldens.
+All16 raw modules AND all16 annotation-only Xfb modules passed installed
+spirv-val --target-env vulkan1.1 (32 modules total).
+
+GPU negative control
+Executed the existing shader-call-gpu-fixture/runtime.exe against parent modules.
+Actual result: runner exit1, immediately on call0 numerical comparison:
+  actual:   3f800000 00000000 00000000 00000000  (1.0,0,0,0)
+  expected: 40a00000 00000000 00000000 00000000  (5.0,0,0,0)
+This is an executed shader-output mismatch, not malformed SPIR-V, a link/ABI
+failure, unsupported Vulkan feature, pipeline creation failure or resource fault.
+The runner stops at the first mismatch; this does not claim all16 old outputs
+were measured individually.
+
+Matched positive control
+Immediately executed the SAME existing runtime.exe against current fixtures:
+  PASS: sixteen actual guest vertex call/return shaders, exact4-word output and
+  feedback guards (NVIDIA GeForce RTX5090).
+Runner exit0. Thus the corrected translator passes all16 cases on the same GPU
+where the parent translator fails the first nested-call fixture.
+
+Reproduction/evidence
+- build/tests/shader-call-parent/run-parent-control.sh: exact build/link/validation
+  and negative-runtime commands, only private output paths.
+- build/tests/shader-call-parent/build-and-run.log: complete output, exit1 expected.
+- build/tests/shader-call-parent/negative-control-gpu.log: raw mismatch.
+- build/tests/shader-call-parent/positive-control-gpu.log: matched current pass.
+- build/tests/shader-call-parent/overlay, objects, fixture.exe, modules: retained.
+
+Limits
+This isolates actual guest vertex call/return lowering for the supplied fixtures.
+It does not establish DS2's performance bottleneck, measure game performance,
+execute pixel subroutine variants, or validate unrelated shader semantics.
+
+
+Limits
+------
+This executes actual guest vertex lowering, not pixel subroutines, tessellation,
+all float corner cases, a full game frame or DS2's render graph. There is no FPS,
+frame-time or shader-compilation-speed claim. All changes are test-only; no
+production binary rebuild, installed core replacement or game launch is needed.
