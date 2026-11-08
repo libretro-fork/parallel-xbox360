@@ -22,6 +22,26 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(ci.source_wait_alarms(calls.replace("pipeline);", ");"), "")
                          ["queue_drain_references"], 2)
 
+    def test_device_identity_counts_all_timed_profiles(self):
+        identity="BENCH_DEVICE Vulkan vendor=4318 device=11141 driver=1 name=test"
+        for count in [1,2,3]:
+            self.assertEqual(ci.vulkan_device_identity((identity+"\n")*count,count),identity)
+
+    def test_device_identity_rejects_missing_or_duplicate_profile(self):
+        identity="BENCH_DEVICE Vulkan vendor=4318 device=11141 driver=1 name=test\n"
+        for actual in [0,1,2,4]:
+            with self.assertRaises(ValueError):ci.vulkan_device_identity(identity*actual,3)
+        with self.assertRaises(ValueError):ci.vulkan_device_identity("",0)
+
+    def test_device_identity_rejects_mixed_drivers(self):
+        identity="BENCH_DEVICE Vulkan vendor=4318 device=11141 driver=1 name=test\n"
+        with self.assertRaises(ValueError):
+            ci.vulkan_device_identity(identity*2+identity.replace("driver=1","driver=2"),3)
+
+    def test_device_identity_does_not_accept_command_text(self):
+        with self.assertRaises(ValueError):
+            ci.vulkan_device_identity("COMMAND ['BENCH_DEVICE Vulkan fake']\n",1)
+
     def test_equal_and_faster(self):
         for values in [[.01]*7,[.005]*7]:
             self.assertFalse(ci.compare(self.sample([.01]*7),self.sample(values),7)[0]["failures"])

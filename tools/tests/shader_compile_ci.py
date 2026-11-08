@@ -200,6 +200,16 @@ def source_wait_alarms(command_processor, pipeline_cache):
         r"\bEnsurePipelineCreatedWith(?:Interpreter)?Placeholder\s*\(", pipeline_cache)))
 
 
+def vulkan_device_identity(log, expected_reports):
+    """One report per timed profile; every invocation must use the same device."""
+    identities=re.findall(r"^BENCH_DEVICE Vulkan .+$",log,re.MULTILINE)
+    if expected_reports < 1 or len(identities)!=expected_reports:
+        raise ValueError("device identity missing or duplicated")
+    if len(set(identities))!=1:
+        raise ValueError("different benchmark device/driver within sample")
+    return identities[0]
+
+
 def read_samples(path):
     samples = {}
     with Path(path).open(newline="", encoding="utf-8") as source:
@@ -296,7 +306,7 @@ def run_comparison(args):
         cache="null explicit VkPipelineCache; software Mesa disk cache disabled" if args.backend=="vulkan-software" else
               "no application cache; driver internal/disk cache NOT certified cold",
         coverage="procedural translation and PSO tests; not full gameplay cold/warm signoff",
-        anchor=os.environ.get("SHADER_PERF_ANCHOR", "UNSET: no last-known-good ratchet certified"))
+        anchor=os.environ.get("SHADER_PERF_ANCHOR") or "UNSET: no last-known-good ratchet certified")
     manifest["toolchain"]={}
     manifest["harness_revision"]=git("rev-parse","HEAD")
     manifest["harness_sha256"]={name:hashlib.sha256((HERE/name).read_bytes()).hexdigest() for name in
@@ -383,9 +393,8 @@ def run_comparison(args):
         for version in builds:
             for sample in range(args.samples):
                 log=(results/(version+"-sample%d.log"%sample)).read_text(encoding="utf-8",errors="replace")
-                identity=re.findall(r"BENCH_DEVICE .*",log)
-                if len(identity)!=1:raise ValueError("device identity missing")
-                identities.append(identity[0])
+                expected_reports=1+sum(profile in builds[version] for profile in ["rtz","dot"])
+                identities.append(vulkan_device_identity(log,expected_reports))
         if len(set(identities))!=1:raise ValueError("different benchmark device/driver")
         software=any(x in identities[0].lower() for x in ["llvmpipe","lavapipe"])
         if software != (args.backend=="vulkan-software"):raise ValueError("wrong software/hardware device")

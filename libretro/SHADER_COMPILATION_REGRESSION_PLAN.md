@@ -367,3 +367,20 @@ byte-identical, as do eight DXIL cases. Driver disk/internal cache coldness and
 sustained cross-game cold play remain unverified. Native hardware-FTZ dot
 execution is not supported by the tested GPU; it is not claimed as physical
 coverage. See tools/tests/shader_native_dot_results.txt for full scope.
+
+## Multi-profile harness validation and outstanding hosted alert
+
+Every timed Vulkan PSO process emits one device/driver report. Require exactly
+one report for software Vulkan and three for the current hardware original,
+RTZ and dot profiles, with identical device/driver identity both within and
+across samples. Do not mistake additional valid profiles for a device change.
+Missing or duplicate reports and mixed identities remain hard failures.
+
+The hosted software-Vulkan comparison for e3bc8472e flagged case12 p95
+102.5708 ->131.7618 ms (maximum103.4080 ->133.7248 ms). All64 generated modules
+are byte-identical. This timed PSO harness does not call the changed core worker
+queue. The alert's cause remains unproven; retain the failed samples and repeat
+under the same thresholds, rather than dismissing it or loosening the gate.
+The first failure is evidence even if a later run passes. Current local
+hardware/WARP self-checks validate orchestration only, not this hosted alert
+or a cold-play acceptance baseline.

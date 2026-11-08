@@ -1,0 +1,40 @@
+Shader CI timed-profile identity validation
+2026-11-08
+Parent3c4f2cd147d0c92c32a9a5c6ae0229325a1a9f5f
+
+Fix
+---
+The expanded hardware corpus times three PSO processes per sample. The old
+final validator still expected one report and would reject a valid hardware
+comparison after timing. Derive the expected number from actual prepared
+profiles (original plus RTZ/dot), require exactly that number and reject any
+within-sample or across-sample device/driver mismatch. Anchor diagnostics now
+explicitly identify unset/empty SHADER_PERF_ANCHOR. No production code, fixture
+shader payload, metric identity, noise threshold or pass/fail budget changes.
+
+Verification
+------------
+-17 comparator tests PASS, including1/2/3-profile success, missing/duplicate
+ reports, mixed drivers, command text masquerading as a report and all existing
+ deliberately injected median/tail/missing-data regressions.
+-End-to-end current CLI self-check on RTX5090:288 metrics,7 alternating paired
+ samples,384 actual-guest GPU correctness cases, PASS. This is the complete
+ orchestration path including final device verification, not a private
+ measurement script bypassing that validator.
+-End-to-end current CLI WARP self-check:80 metrics,7 paired samples.
+ No source revision acceptance or cross-game cold/warm signoff is claimed by
+ a self-check; unchanged production sources and fixture binaries are exercised.
+
+Outstanding hosted comparison alert
+-----------------------------------
+Original workflow42523201621, e3bc8472e versus d811f86fc, software Vulkan,
+7 samples. PSO case12 p95 rose102.5708 ->131.7618ms and tripped the unchanged
+25%/5ms gate. Maximum103.4080 ->133.7248ms. Median96.8158 ->104.8847ms.
+All64 SPIR-V payload hashes are identical. The timed driver-PSO executable does
+not link/call the changed core worker queue; its input shaders are identical.
+This does not prove the host-noise explanation. Preserve failed artifacts,
+repeat the hosted job and keep the cause/status visible. No automatic retry
+acceptance, discarded samples, threshold adjustment or production reversion.
+Raw failed report and samples retained privately alongside current results.
+Hardware driver-cache coldness and sustained cross-game smoothness remain
+unverified.

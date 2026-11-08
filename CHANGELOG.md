@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fix shader hardware-CI device validation for the expanded three-profile corpus. Require one matching device/driver report from every timed profile, rejecting missing, duplicate or mixed reports; keep performance thresholds unchanged.
+
 - Reduce Vulkan vertex dot-product compilation work by sharing independent product lanes while retaining ordered guest sums and zero/NaN behavior. Add dot-heavy per-commit comparisons and GPU checks that reject incorrect reassociation; visible first-use stalls remain unresolved.
 
 - Reduce large Vulkan vertex shaders on devices with hardware round-toward-zero but no hardware denormal flush mode, including the tested RTX 5090. Flush signed inputs/outputs explicitly instead of expanding each operation into integer arithmetic. Retain software fallback and add real-GPU arithmetic checks and per-commit compile comparisons for this capability combination. Cold-play stutter is not yet eliminated.
