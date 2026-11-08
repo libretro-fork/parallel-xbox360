@@ -1,0 +1,62 @@
+Shader resource-name storage checks (0192)
+===================================================
+Production change
+-----------------
+Texture, sampler, memexport and the five indexed-name call sites now construct
+names directly in 64-byte C89 stack storage. The unsigned decimal writer handles
+all uint32 values without reverse-digit scratch storage or locale formatting.
+Sampler clamping, filter suffixes, 1D-to-2D normalization, descriptor IDs and
+binding order remain unchanged. The SPIR-V builder synchronously copies the
+final string into its owned operand packet before the stack span expires.
+Temporary fmt strings and ostringstream/str temporaries at these sites are gone.
+This is not zero-copy module assembly: owned packets and final serialization
+remain, as do other translation allocations. No shader cache version bump is
+needed for byte-identical output. No shader math or renderer synchronization
+changes are part of this patch.
+
+Bounds and compatibility
+------------------------
+Longest indexed prefix is 31 bytes; with any uint32 index the result takes at
+most 42 bytes including NUL. Longest sampler name with any uint32 ratio takes 37.
+The fixed 64-byte capacity covers both. Writers touch only the final string and
+terminator; they do not clear unused storage. Dimensions and filter/aniso enum
+handling remain in the typed translator, with char/uint32 inputs borrowed by C.
+
+GNU strict C89, MSVC /TC /W4 /WX and GCC ASan/UBSan with leak detection each
+pass 11,817 cases. Cases cover all five indexed kinds, four dimension selectors
+(including the 2D default), both signs, all 64 filter triples, anisotropy presence
+and seven ratios, including UINT32_MAX. Thirteen fetch/index boundaries include
+zero, 31/32, decimal transitions, 1e9 and UINT32_MAX. Prefix/suffix bytes are checked
+against independent sprintf reference strings in bounded test storage; leading,
+trailing and unused-capacity guards must stay untouched. The independent legacy
+reference formatter exists only in tests; no stdio formatting is added to core.
+
+Isolated allocation control
+---------------------------
+A private single-thread C++ interop control recreates the old fmt/ostringstream
+expressions and compares checksums against the C89 writers for 35,000 names per
+variant: 5,000 indices modulo 32 across texture, anisotropic sampler and five
+indexed kinds. Global operator-new hooks count calls only around generation.
+MinGW GNU 16.2: old 30,000 allocation calls, new 0, checksum 960924908.
+MSVC 19.44: old 40,000 allocation calls, new 0, checksum 960924908.
+These counts exclude builder-owned name operands and are not whole-translator
+allocation counts, CPU timings, driver pipeline timings or gameplay speedups.
+
+Production output and GPU regressions
+------------------------------------
+All 1,863 extracted DS2 material pixel programs in each of two controlled profiles
+(native image-view swizzle and portable shader swizzle, 4x4, SPIR-V 1.3) produce
+byte-identical modules to parent e43f4cb6d: 3,726 exact comparisons. The unchanged
+parent modules passed Vulkan 1.1 validation in 0191. Native MSVC also generates
+all 1,863 native-profile modules byte-identically to the GNU/parent output. Asset aliases are included;
+this is not a unique shader or executed-frame count. No game bytes ship here.
+Sixteen translated guest vertex call/return shaders also pass Vulkan 1.1
+validation and exact independent numerical/guard tests on an RTX 5090.
+Full MSVC CMake and MinGW Make core builds pass, parallel 5.
+
+Run the pure C89 checks using:
+ sh tools/tests/run_shader_names_tests.sh
+ tools\tests\run_shader_names_tests.cmd (MSVC developer prompt)
+Post-build CI runs both compiler variants. These checks do not establish full
+material rendering accuracy, complete zero-allocation shader generation or a
+measured gameplay gain. The full optimization goal remains incomplete.

@@ -166,6 +166,8 @@ Shader CFG output calls a function pointer with borrowed context, removing `std:
 
 Memory-export shader generation now uses 34 direct loops over a C89 scalar mask iterator, removing its two nested `std::function` helpers and their callable copies. Scaled pixel memory-export shaders declare fragment coordinates even when they write no color target, fixing an invalid-input/null-record translation path. The actual microcode matrix and allocation/timing results are documented in `tools/tests/spv_memexport_bench_results.txt`; callback conversion elsewhere in the core remains unfinished.
 
+Vulkan texture, sampler, interpolator and memexport resource names construct directly in bounded C89 stack storage. The builder copies the final name into its owned SPIR-V operand; temporary formatted strings and string streams are removed. This is a translation-path allocation reduction, not a claim of copy-free shader assembly or measured gameplay gains. See [resource-name checks](tools/tests/shader_names_results.txt).
+
 ## Savestate work in progress
 
 Audio/XMA pause requests use acknowledged common gates with bounded waits. Content teardown releases the decoder contexts and their retained packet buffers after joining the decoder worker.

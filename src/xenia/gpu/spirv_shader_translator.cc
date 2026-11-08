@@ -15,7 +15,7 @@
 #include <cstdlib>
 #include "libretro/core_spv_probe.h"
 
-#include "third_party/fmt/include/fmt/format.h"
+#include "libretro/core_shader_names.h"
 #include "xenia/gpu/spirv/GLSL.std.450.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
@@ -917,9 +917,11 @@ void SpirvShaderTranslator::StartTranslation() {
       while (
           xe::bit_scan_forward(memexport_eM_remaining, &memexport_eM_index)) {
         memexport_eM_remaining &= ~(uint8_t(1) << memexport_eM_index);
+        char name[XE_SHADER_NAME_CAPACITY];
+        xe_shader_indexed_name(name,memexport_eM_index,XE_SHADER_NAME_MEMEXPORT);
         var_main_memexport_data_[memexport_eM_index] = builder_->createVariable(
             spv::NoPrecision, spv::StorageClassFunction, type_float4_,
-            fmt::format("xe_var_memexport_data_{}", memexport_eM_index).c_str(),
+            name,
             const_float4_0_);
       }
       var_main_memexport_data_written_ = builder_->createVariable(
@@ -1955,9 +1957,11 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
     uint32_t interpolator_index;
     while (xe::bit_scan_forward(interpolators_remaining, &interpolator_index)) {
       interpolators_remaining &= ~(UINT32_C(1) << interpolator_index);
+      char name[XE_SHADER_NAME_CAPACITY];
+      xe_shader_indexed_name(name,interpolator_index,XE_SHADER_NAME_OUTPUT);
       spv::Id interpolator = builder_->createVariable(
           spv::NoPrecision, spv::StorageClassOutput, type_float4_,
-          fmt::format("xe_out_interpolator_{}", interpolator_index).c_str());
+          name);
       input_output_interpolators_[interpolator_index] = interpolator;
       builder_->addDecoration(interpolator, spv::DecorationLocation,
                               int(output_location));
@@ -2165,12 +2169,12 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderInMain() {
     uint32_t interpolator_index;
     while (xe::bit_scan_forward(interpolators_remaining, &interpolator_index)) {
       interpolators_remaining &= ~(UINT32_C(1) << interpolator_index);
+      char name[XE_SHADER_NAME_CAPACITY];
+      xe_shader_indexed_name(name,interpolator_index,XE_SHADER_NAME_RECT_INPUT);
       var_main_rect_list_guest_interpolators_[interpolator_index] =
           builder_->createVariable(
               spv::NoPrecision, spv::StorageClassFunction, type_float4_array_3,
-              fmt::format("xe_var_rect_guest_interpolators_{}",
-                          interpolator_index)
-                  .c_str());
+              name);
     }
 
     // Load the 3 guest rectangle vertex indices. For DMA draws, indices are
@@ -3400,10 +3404,11 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
       while (
           xe::bit_scan_forward(interpolators_remaining, &interpolator_index)) {
         interpolators_remaining &= ~(UINT32_C(1) << interpolator_index);
+        char name[XE_SHADER_NAME_CAPACITY];
+        xe_shader_indexed_name(name,interpolator_index,XE_SHADER_NAME_INPUT_PER_VERTEX);
         spv::Id interpolator_per_vertex = builder_->createVariable(
             spv::NoPrecision, spv::StorageClassInput, type_float4_array_3,
-            fmt::format("xe_in_interpolator_{}_per_vertex", interpolator_index)
-                .c_str());
+            name);
         input_interpolators_per_vertex_[interpolator_index] =
             interpolator_per_vertex;
         builder_->addDecoration(interpolator_per_vertex,
@@ -3422,9 +3427,11 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
       while (
           xe::bit_scan_forward(interpolators_remaining, &interpolator_index)) {
         interpolators_remaining &= ~(UINT32_C(1) << interpolator_index);
+        char name[XE_SHADER_NAME_CAPACITY];
+        xe_shader_indexed_name(name,interpolator_index,XE_SHADER_NAME_INPUT);
         spv::Id interpolator = builder_->createVariable(
             spv::NoPrecision, spv::StorageClassInput, type_float4_,
-            fmt::format("xe_in_interpolator_{}", interpolator_index).c_str());
+            name);
         input_output_interpolators_[interpolator_index] = interpolator;
         builder_->addDecoration(interpolator, spv::DecorationLocation,
                                 int(input_location));

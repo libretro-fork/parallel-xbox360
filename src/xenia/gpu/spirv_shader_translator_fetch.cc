@@ -12,7 +12,7 @@
 #include <climits>
 #include <cmath>
 
-#include "third_party/fmt/include/fmt/format.h"
+#include "libretro/core_shader_names.h"
 #include "xenia/gpu/spirv/GLSL.std.450.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/math.h"
@@ -2837,30 +2837,30 @@ size_t SpirvShaderTranslator::FindOrAddTextureBinding(
   new_texture_binding.is_signed = is_signed;
   spv::Dim type_dimension;
   bool is_array;
-  const char* dimension_name;
+  unsigned name_dimension;
   switch (dimension) {
     case xenos::FetchOpDimension::k3DOrStacked:
       type_dimension = spv::Dim3D;
       is_array = false;
-      dimension_name = "3d";
+      name_dimension = 1;
       break;
     case xenos::FetchOpDimension::kCube:
       type_dimension = spv::DimCube;
       is_array = false;
-      dimension_name = "cube";
+      name_dimension = 2;
       break;
     default:
       type_dimension = spv::Dim2D;
       is_array = true;
-      dimension_name = "2d";
+      name_dimension = 0;
   }
+  char name[XE_SHADER_NAME_CAPACITY];
+  xe_shader_texture_name(name,fetch_constant,name_dimension,is_signed);
   new_texture_binding.variable = builder_->createVariable(
       spv::NoPrecision, spv::StorageClassUniformConstant,
       builder_->makeImageType(type_float_, type_dimension, false, is_array,
                               false, 1, spv::ImageFormatUnknown),
-      fmt::format("xe_texture{}_{}_{}", fetch_constant, dimension_name,
-                  is_signed ? 's' : 'u')
-          .c_str());
+      name);
   builder_->addDecoration(
       new_texture_binding.variable, spv::DecorationDescriptorSet,
       int(is_vertex_shader() ? kDescriptorSetTexturesVertex
@@ -2900,22 +2900,19 @@ size_t SpirvShaderTranslator::FindOrAddSamplerBinding(
   new_sampler_binding.min_filter = min_filter;
   new_sampler_binding.mip_filter = mip_filter;
   new_sampler_binding.aniso_filter = aniso_filter;
-  std::ostringstream name;
+  char name[XE_SHADER_NAME_CAPACITY];
   static constexpr char kFilterSuffixes[] = {'p', 'l', 'b', 'f'};
-  name << "xe_sampler" << fetch_constant << '_'
-       << kFilterSuffixes[uint32_t(mag_filter)]
-       << kFilterSuffixes[uint32_t(min_filter)]
-       << kFilterSuffixes[uint32_t(mip_filter)];
-  if (aniso_filter != xenos::AnisoFilter::kUseFetchConst) {
-    if (aniso_filter == xenos::AnisoFilter::kDisabled) {
-      name << "_a0";
-    } else {
-      name << "_a" << (UINT32_C(1) << (uint32_t(aniso_filter) - 1));
-    }
-  }
+  bool use_aniso=aniso_filter != xenos::AnisoFilter::kUseFetchConst;
+  uint32_t ratio=0;
+  if(use_aniso && aniso_filter != xenos::AnisoFilter::kDisabled)
+    ratio=UINT32_C(1) << (uint32_t(aniso_filter)-1);
+  xe_shader_sampler_name(name,fetch_constant,
+      kFilterSuffixes[uint32_t(mag_filter)],
+      kFilterSuffixes[uint32_t(min_filter)],
+      kFilterSuffixes[uint32_t(mip_filter)],use_aniso,ratio);
   new_sampler_binding.variable = builder_->createVariable(
       spv::NoPrecision, spv::StorageClassUniformConstant,
-      builder_->makeSamplerType(), name.str().c_str());
+      builder_->makeSamplerType(), name);
   builder_->addDecoration(
       new_sampler_binding.variable, spv::DecorationDescriptorSet,
       int(is_vertex_shader() ? kDescriptorSetTexturesVertex
