@@ -2274,6 +2274,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
             SampleTexture(texture_parameters, image_operands_mask,
                           image_3d_unsigned, image_3d_signed, sampler,
                           is_any_unsigned, is_any_signed,
+                          is_all_signed == is_any_signed,
                           sample_result_unsigned_3d, sample_result_signed_3d);
           }
           if_data_is_3d.makeBeginElse();
@@ -2407,6 +2408,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                 texture_parameters, image_operands_mask,
                 image_2d_array_or_cube_unsigned, image_2d_array_or_cube_signed,
                 sampler, is_any_unsigned, is_any_signed,
+                is_all_signed == is_any_signed,
                 sample_result_unsigned_stacked, sample_result_signed_stacked);
             // Sample the second layer if linear filtering is potentially needed
             // (conditionally or unconditionally, depending on whether the
@@ -2447,7 +2449,8 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                   texture_parameters, image_operands_mask,
                   image_2d_array_or_cube_unsigned,
                   image_2d_array_or_cube_signed, sampler, is_any_unsigned,
-                  is_any_signed, sample_result_unsigned_stacked_filtered,
+                  is_any_signed, is_all_signed == is_any_signed,
+                  sample_result_unsigned_stacked_filtered,
                   sample_result_signed_stacked_filtered, layer_lerp_factor,
                   sample_result_unsigned_stacked, sample_result_signed_stacked);
               if (vol_filter_is_linear != spv::NoResult) {
@@ -2510,7 +2513,8 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
           SampleTexture(texture_parameters, image_operands_mask,
                         image_2d_array_or_cube_unsigned,
                         image_2d_array_or_cube_signed, sampler, is_any_unsigned,
-                        is_any_signed, sample_result_unsigned,
+                        is_any_signed, is_all_signed == is_any_signed,
+                        sample_result_unsigned,
                         sample_result_signed);
         }
 
@@ -3183,44 +3187,68 @@ size_t SpirvShaderTranslator::FindOrAddSamplerBinding(
   return new_sampler_binding_index;
 }
 
+spv::Id SpirvShaderTranslator::SampleTextureValue(
+    spv::Builder::TextureParameters& texture_parameters,
+    spv::ImageOperandsMask image_operands_mask, spv::Id image,
+    spv::Id sampler, spv::Id lerp_factor, spv::Id lerp_first) {
+  spv::Id sign_result;
+  // OpSampledImage must be in the same block as where its result is used.
+  texture_parameters.sampler = builder_->createBinOp(
+      spv::OpSampledImage,
+      builder_->makeSampledImageType(builder_->getTypeId(image)), image,
+      sampler);
+  sign_result = builder_->createTextureCall(
+      spv::NoPrecision, type_float4_, false, false, false, false, false,
+      texture_parameters, image_operands_mask);
+  if (lerp_factor != spv::NoResult) {
+    if (lerp_first != spv::NoResult) {
+      spv::Id lerp_difference = builder_->createNoContractionBinOp(
+          spv::OpVectorTimesScalar, type_float4_,
+          builder_->createNoContractionBinOp(spv::OpFSub, type_float4_,
+                                             sign_result, lerp_first),
+          lerp_factor);
+      sign_result = builder_->createNoContractionBinOp(
+          spv::OpFAdd, type_float4_, lerp_first, lerp_difference);
+    }
+  }
+  return sign_result;
+}
+
 void SpirvShaderTranslator::SampleTexture(
     spv::Builder::TextureParameters& texture_parameters,
     spv::ImageOperandsMask image_operands_mask, spv::Id image_unsigned,
     spv::Id image_signed, spv::Id sampler, spv::Id is_any_unsigned,
-    spv::Id is_any_signed, spv::Id& result_unsigned_out,
+    spv::Id is_any_signed, bool signs_exclusive,
+    spv::Id& result_unsigned_out,
     spv::Id& result_signed_out, spv::Id lerp_factor,
     spv::Id lerp_first_unsigned, spv::Id lerp_first_signed) {
+  // Equal SSA predicates prove that all needed components share one sign.
+  // With one component, is_any_unsigned is exactly !is_any_signed. Mixed
+  // components still need the independent branches, since both may be used.
+  if (signs_exclusive) {
+    SpirvBuilder::IfBuilder sign_if(is_any_unsigned,
+        spv::SelectionControlDontFlattenMask, *builder_);
+    spv::Id unsigned_value = SampleTextureValue(texture_parameters,
+        image_operands_mask, image_unsigned, sampler, lerp_factor,
+        lerp_first_unsigned);
+    sign_if.makeBeginElse();
+    spv::Id signed_value = SampleTextureValue(texture_parameters,
+        image_operands_mask, image_signed, sampler, lerp_factor,
+        lerp_first_signed);
+    sign_if.makeEndIf();
+    result_unsigned_out = sign_if.createMergePhi(unsigned_value, const_float4_0_);
+    result_signed_out = sign_if.createMergePhi(const_float4_0_, signed_value);
+    return;
+  }
   for (uint32_t i = 0; i < 2; ++i) {
     SpirvBuilder::IfBuilder sign_if(i ? is_any_signed : is_any_unsigned,
                                     spv::SelectionControlDontFlattenMask,
                                     *builder_);
-    spv::Id sign_result;
-    {
-      spv::Id image = i ? image_signed : image_unsigned;
-      // OpSampledImage must be in the same block as where its result is used.
-      texture_parameters.sampler = builder_->createBinOp(
-          spv::OpSampledImage,
-          builder_->makeSampledImageType(builder_->getTypeId(image)), image,
-          sampler);
-      sign_result = builder_->createTextureCall(
-          spv::NoPrecision, type_float4_, false, false, false, false, false,
-          texture_parameters, image_operands_mask);
-      if (lerp_factor != spv::NoResult) {
-        spv::Id lerp_first = i ? lerp_first_signed : lerp_first_unsigned;
-        if (lerp_first != spv::NoResult) {
-          spv::Id lerp_difference = builder_->createNoContractionBinOp(
-              spv::OpVectorTimesScalar, type_float4_,
-              builder_->createNoContractionBinOp(spv::OpFSub, type_float4_,
-                                                 sign_result, lerp_first),
-              lerp_factor);
-          sign_result = builder_->createNoContractionBinOp(
-              spv::OpFAdd, type_float4_, lerp_first, lerp_difference);
-        }
-      }
-    }
+    spv::Id sign_result = SampleTextureValue(texture_parameters,
+        image_operands_mask, i ? image_signed : image_unsigned, sampler,
+        lerp_factor, i ? lerp_first_signed : lerp_first_unsigned);
     sign_if.makeEndIf();
-    // This may overwrite the first lerp endpoint for the sign (such usage of
-    // this function is allowed).
+    // Endpoints are passed by value, including when outputs alias them.
     (i ? result_signed_out : result_unsigned_out) =
         sign_if.createMergePhi(sign_result, const_float4_0_);
   }

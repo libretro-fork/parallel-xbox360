@@ -1,0 +1,75 @@
+Complementary texture-sampling branches (0190,2026-11-08)
+Parent749873fd9
+
+Mechanism
+---------
+The caller constructs is_any_unsigned as !is_all_signed. Equal SSA IDs for
+is_all_signed and is_any_signed therefore prove mutually exclusive predicates.
+This includes single-component fetches. Emit one if/else rather than two ifs;
+retain separate zero-preserving phi outputs and keep OpSampledImage in its
+sampling block. Other cases retain independent branches so both images may be
+sampled. Sample/interpolation construction is shared typed builder glue, with
+borrowed value IDs, no runtime buffers or new allocation storage.
+Cache modification25 rebuilds old shader/pipeline binaries once.
+
+Focused coverage
+----------------
+Eight modules invoke the actual production SampleTexture emitter, not a copied
+sampling algorithm: independent and complementary branches,2D/3D images, with
+and without linear interpolation. Each output reference aliases its own first
+interpolation endpoint when filtering. Structural checks require exactly two
+static image samples and two phis in every module, and two/one conditional
+branches for independent/complementary variants. All eight pass spirv-val for
+Vulkan1.1.
+
+The C89 Vulkan runner initializes distinct float textures by GPU clear, with
+no staging upload, and checks384 cases against independent CPU goldens.
+Cases include unsigned only, signed only, both and neither on the independent
+path, complementary conditions on the optimized path,16 noncanonical true-bit
+patterns,2D/3D sampling, interpolation and endpoint aliases. Every result is
+checked bit-for-bit;4064 bytes after the32-byte output remain untouched.
+These test view selection and interpolation, not all guest coordinate/format
+decoding. The interpolation fixtures call the production sampling boundary
+used by stacked layers; they do not reproduce the complete stacked-volume
+coordinate translator. Both MSVC C89 and strict GNU C89 runners pass all384
+cases on NVIDIA GeForce RTX5090. GPU execution is opt-in; ordinary post-build
+CI generates structural fixtures without assuming a GPU.
+
+Offline game shader evidence (not shipped)
+-----------------------------------------
+All1863 local DS2 material pixel programs translate and pass spirv-val with
+and without image-view swizzle support. Both portable/native-swizzle baseline
+and candidate native-swizzle use4x4 and SPIR-V1.3, with other optional features
+disabled; these are controlled translation profiles, not complete physical
+device/per-draw pipeline configuration replicas.
+1098 programs have fewer conditional branches. Native-swizzle totals decrease
+from68682 to66259 branches and139185396 to139098168 bytes. No program increases
+instruction/branch count, and every static image-sample count is unchanged.
+Cascaded PCF9:78->67 branches,4602->4569 SPIR-V instructions,87100->86704 bytes.
+Single PCF9:69->60 branches. Static signed/unsigned sample alternatives are NOT
+both necessarily executed. SPIR-V counts are not GPU machine instruction counts
+or pass durations. No gameplay/FPS, universal shader-speed or RSS gain is claimed.
+Raw game executables/shaders remain outside the repository and patch.
+
+Commands
+--------
+After a full core build:
+  sh tools/tests/run_texture_sampling_tests.sh
+  GPU_TESTS=1 sh tools/tests/run_texture_sampling_tests.sh
+MSVC developer prompt:
+  tools\tests\run_texture_sampling_tests.cmd
+  set GPU_TESTS=1
+  tools\tests\run_texture_sampling_tests.cmd
+FORWARD_FLOW_BUILD selects the native build directory (default build/windows-native).
+SPIRV_VALIDATOR on the shell runner enables explicit module validation.
+
+Additional verification
+-----------------------
+Full MinGW Make and MSVC CMake core builds: PASS, each limited to5 jobs.
+All8 fixture modules are byte-identical between the MSVC and GNU bridges.
+Negative control: replace the optimized fixture's two inactive zero phi
+values with the dominating0.75 endpoint. Modified SPIR-V remains valid,
+but the GPU runner rejects module1/flags1 immediately, as required.
+Existing16 translated guest vertex call/return GPU regressions: PASS.
+No live game was required. Focused tests do not establish completion of
+the entire optimization goal.

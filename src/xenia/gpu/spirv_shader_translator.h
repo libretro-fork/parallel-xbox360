@@ -48,7 +48,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     // version number! Backends add it to their dated
     // PipelineDescription::kVersion, so bumping either one is enough. Only
     // ever raise it, a reverted layout change needs another bump.
-    static constexpr uint32_t kVersion = 24;
+    static constexpr uint32_t kVersion = 25;
 
     enum class DepthStencilMode : uint32_t {
       kNoModifiers,
@@ -697,6 +697,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
       uint8_t memexport_eM_potentially_written_before) override;
 
  private:
+  friend struct SpirvTextureSamplingTestAccess;
   struct TextureBinding {
     uint32_t fetch_constant;
     // Stacked and 3D are separate TextureBindings.
@@ -964,15 +965,20 @@ class SpirvShaderTranslator : public ShaderTranslator {
                                  xenos::TextureFilter min_filter,
                                  xenos::TextureFilter mip_filter,
                                  xenos::AnisoFilter aniso_filter);
+  spv::Id SampleTextureValue(
+      spv::Builder::TextureParameters& texture_parameters,
+      spv::ImageOperandsMask image_operands_mask, spv::Id image,
+      spv::Id sampler, spv::Id lerp_factor, spv::Id lerp_first);
   // `texture_parameters` need to be set up except for `sampler`, which will be
-  // set internally, optionally doing linear interpolation between the an
-  // existing value and the new one (the result location may be the same as for
-  // the first lerp endpoint, but not across signedness).
+  // set internally. Optionally interpolate an existing value and the new one.
+  // Each output may alias its first lerp endpoint, but not across signedness.
+  // signs_exclusive requires complementary signed/unsigned predicates.
   void SampleTexture(spv::Builder::TextureParameters& texture_parameters,
                      spv::ImageOperandsMask image_operands_mask,
                      spv::Id image_unsigned, spv::Id image_signed,
                      spv::Id sampler, spv::Id is_any_unsigned,
-                     spv::Id is_any_signed, spv::Id& result_unsigned_out,
+                     spv::Id is_any_signed, bool signs_exclusive,
+                     spv::Id& result_unsigned_out,
                      spv::Id& result_signed_out,
                      spv::Id lerp_factor = spv::NoResult,
                      spv::Id lerp_first_unsigned = spv::NoResult,
