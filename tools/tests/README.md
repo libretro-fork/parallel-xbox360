@@ -111,6 +111,25 @@ recorded in `optimization_measurements.md`.
 These tests do not establish that the core's remaining C++ threading has been
 migrated, or measure gameplay performance.
 
+## Native media streams
+
+`run_media_audio_tests.sh` compiles a C89 harness without FFmpeg; the `.cmd`
+version links the default native production libraries. Pass generated MP3/WMA
+fixture paths. The Linux workflow generates stereo 44.1 kHz MP3, mono 48 kHz
+MP3 and stereo 48 kHz WMA2 using FFmpeg only as a test fixture generator.
+The native helper is compared bit-for-bit with resident native float decoding,
+including borrowed input, strict callback-backed windows, a synthetic 4 MiB ID3
+tag skipped by extent, short-read rejection and partial decoder tails. Fixture
+slurps belong to the test oracle; production keeps borrowed views or windows.
+
+`SubmitInterleavedFrames` tests preserve tiny float values, overshoot and exact
+partial block lengths. The XMA decoder fixture also exercises mono/stereo PCM
+writes through both native legacy transport styles; fake style remains fake.
+Native checkpoint tests no longer need FFmpeg libraries. Raw-decoder reference
+benchmarks still require the optional FFmpeg build and its sources.
+These are offline component checks, not sustained loaded-game/XMP teardown or
+cadence measurements, and do not claim every codec is faster than FFmpeg.
+
 ## Frame and audio cadence
 
 `core_audio_cadence_test.c` checks 800,000 consecutive fractional-clock steps at

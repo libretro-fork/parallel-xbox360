@@ -18,6 +18,7 @@ void *xe_xma_decoder_test_gate(void *);
 int xe_xma_decoder_test_rebuild(void *);
 int xe_xma_decoder_test_duplicate_setup(void *);
 int xe_xma_decoder_test_stream(void *,const void *,unsigned);
+unsigned xe_xma_decoder_test_legacy(void *,const void *,unsigned,const void **);
 void *xe_xma_decoder_test_raw(void *);
 const void *xe_xma_decoder_test_drain(void *,unsigned);
 static unsigned char packet[2048];
@@ -292,6 +293,19 @@ int main(void) {
  for(mode=0;mode<XE_XMA_MODE_RAW;++mode) {
   f=xe_xma_decoder_test_new(mode);CHECK(f);
   view.state.version=1;CHECK(!capture(f) && !view.state.version);
+  if(mode!=XE_XMA_MODE_FAKE) {
+  CHECK(xe_xma_decoder_test_allocate(f));
+  for(c=1;c<=2;++c) {
+   const void *pcm=NULL;
+   unsigned bytes;
+   if(c>1) {xe_xma_decoder_test_free(f);f=xe_xma_decoder_test_new(mode);CHECK(f);CHECK(xe_xma_decoder_test_allocate(f));}
+   make_packet(c);bytes=xe_xma_decoder_test_legacy(f,packet,c,&pcm);
+   if (!pcm || bytes!=c*1024) fprintf(stderr,"legacy mode %u channels %u wrote %u bytes\n",mode,c,bytes);
+   CHECK(pcm && bytes==c*1024);
+   for(n=0;n<bytes;++n) CHECK(((const unsigned char*)pcm)[n]==0);
+   CHECK(((const unsigned char*)pcm)[bytes]==0xa5);
+  }
+  }
   xe_xma_decoder_test_free(f);
  }
 #ifdef XE_DECODER_CLOCK_TEST
@@ -300,6 +314,6 @@ int main(void) {
 #ifdef XE_XMA_OPEN_FAIL_TEST
  puts("PASS: native context allocation-failure cleanup and allocation-free profile changes");
 #endif
- puts("PASS: native profiles, rejected imports, 320-owner transactional restore/reuse, late failure without prefix mutation, aliases, clock-free quiescence, PCM byte oracles and unsupported styles");
+ puts("PASS: native profiles, rejected imports, 320-owner transactional restore/reuse, late failure without prefix mutation, aliases, clock-free quiescence, PCM byte oracles, native legacy mono/stereo writes and unsupported checkpoint styles");
  return 0;
 }

@@ -106,14 +106,14 @@ class AudioMediaPlayer {
 
   XmpApp::Song* GetCurrentSong() const { return active_song_; }
 
-  void ProcessAudioBuffer(std::vector<float>* buffer);
+  bool ProcessAudioBuffer(const float* samples, size_t frames);
 
  private:
   void OnStateChanged();
 
   void Play();
   void WorkerThreadMain();
-  std::span<uint8_t> LoadSongToMemory();
+  vfs::File* OpenSong();
 
   XmpApp::State state_ = XmpApp::State::kIdle;
   bool xmp_override_ = false;

@@ -125,7 +125,6 @@ class XmaContextNew : public XmaContext {
                           const XMA_CONTEXT_DATA& initial_data,
                           uint8_t* context_ptr);
 
-  xe_xma_native_owner native_ = {};
   uint8_t raw_frame_[kBytesPerFrameChannel * 2];
 
   int32_t remaining_subframe_blocks_in_output_buffer_ = 0;

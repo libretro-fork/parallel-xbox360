@@ -17,13 +17,6 @@
 #include "xenia/memory.h"
 #include "xenia/xbox.h"
 
-// Forward declarations
-struct AVCodec;
-struct AVCodecParserContext;
-struct AVCodecContext;
-struct AVFrame;
-struct AVPacket;
-
 namespace xe {
 namespace apu {
 

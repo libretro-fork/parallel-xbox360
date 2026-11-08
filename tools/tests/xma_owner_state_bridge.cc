@@ -1,4 +1,4 @@
-/* Native object/bitfield/FFmpeg lifetime bridge; fixture algorithms are C89. */
+/* Native object/bitfield/decoder lifetime bridge; fixture algorithms are C89. */
 #include "xenia/memory.h"
 #include "xenia/apu/xma_context_new.h"
 #include "xenia/apu/xma_helpers.h"

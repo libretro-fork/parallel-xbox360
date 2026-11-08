@@ -163,6 +163,11 @@ target_compile_definitions(snappy PRIVATE HAVE_CONFIG_H)
 # Selected owned RetroArch libretro-common primitives
 # ==============================================================================
 add_library(retro-common STATIC
+  libretro-common/formats/audio_transfer.c
+  libretro-common/formats/data_transfer.c
+  libretro-common/formats/mp3/rmp3.c
+  libretro-common/formats/wma/rwma_stream.c
+  libretro-common/memmap/memmap.c
   libretro-common/formats/wma/rwma_pro.c
   libretro-common/formats/wma/rwma_standard.c
   libretro-common/formats/xml/rxml.c
@@ -197,6 +202,7 @@ add_library(retro-common STATIC
 )
 target_include_directories(retro-common PUBLIC libretro-common/include)
 target_compile_definitions(retro-common PUBLIC HAVE_THREADS HAVE_THREAD_STORAGE)
+target_compile_definitions(retro-common PRIVATE HAVE_RMP3 HAVE_RWMA)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(retro-common PRIVATE _GNU_SOURCE)
 endif()
@@ -262,6 +268,7 @@ endif()
 # FFmpeg — upstream source lives in the FFmpeg submodule; xenia's static
 # config.h / asm configuration overlay lives in ffmpeg-xenia alongside it.
 # ==============================================================================
+if(XENIA_BUILD_FFMPEG_REFERENCE)
 set(XE_HAS_GAS_ASM FALSE)
 if(XE_TARGET_AARCH64)
   if(MSVC)
@@ -631,3 +638,5 @@ if(WIN32)
 endif()
 target_link_libraries(libavformat PRIVATE libavutil libavcodec)
 ffmpeg_common(libavformat)
+
+endif() # XENIA_BUILD_FFMPEG_REFERENCE

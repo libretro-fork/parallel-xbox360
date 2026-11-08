@@ -127,3 +127,19 @@ Initial stack-pointer/FP-control stores use memcpy to avoid typed-record aliasin
 f3ee26ce3acdc0dccc7a2711846a79c14d80bdf333235b60ad091fcef336c4f1  libco/aarch64.c (local source)
 
 2026-11-04: Existing include/queues/mpsc_stack.h revalidated against RetroArch f13b1459b166dcf89cfedf33f020f2e5345af040. Local change: move its unchanged intrusive-node declaration to include/queues/mpsc_node.h so C++ adapters can embed nodes without importing atomic implementation/platform macros. Stack operations remain unchanged. Used by the C89 serial guest I/O mailbox.
+
+Native media streaming import: RetroArch 0b20d68d69559412deb849f6e2db49498921ed38.
+Selected callback-backed data-transfer windows, MP3/WMA streams and audio facade;
+only HAVE_RMP3/HAVE_RWMA arms are enabled. No mixer, resampler or player is imported.
+SHA256 below uses LF-normalized source bytes.
+f128579414573c43fa0c68dcd10f3c3f542a7e101b60e42765e7ca204832ccac  formats/audio_transfer.c
+f756f5169eca005cec7bc2e0f69c2a2dc2bd1be0b2212bd05b548fbc6dc75a1b  include/formats/audio.h
+5170c42dbc7505cef7e8fa976df9b04fa94b7f3a1976dd7ef85a272d0cacd3fb  formats/data_transfer.c
+2a2885863e1e41ec1c9d83ce74335412804798fbd71096cb8a5a7edb6079d85b  include/formats/data_transfer.h
+29cd28919b7a0cbd8aa372fde6c2f6bba4dd362ea519bded8c668e801915c0d0  formats/mp3/rmp3.c
+88fc51a387a1eb9bd6a73f943abfd83bf7c1f370ee5ab3fa2c553e9410506a52  include/formats/rmp3.h
+3ad07798d478a9f8db9705556ed36713a6939b715632737827d0004bafff20dc  formats/wma/rwma_stream.c
+c12f6ca7224af631b7941e297bc6f180178402b442adf7c3e19dd6322848cd63  formats/wma/rwma_xma_stream.h
+c1bc0a87403e14d15f5f3cb6bce8555089811c67ab5e93626d02838a6ac78608  include/formats/rwma_stream.h
+3a617003a1edea8267055e8e5071f323dfd33fd417ea5ee145e53c166fc09e06  memmap/memmap.c
+e674870093cf59adef3e077b59e1b5e91979eb2d9b6dd10a608eaf35f36f6b92  include/memmap.h

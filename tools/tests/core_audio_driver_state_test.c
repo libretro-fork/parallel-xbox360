@@ -7,6 +7,7 @@
 void *xe_driver_state_new(unsigned,unsigned,unsigned,unsigned);
 void xe_driver_state_free(void *);
 void xe_driver_state_submit(void *,float *);
+int xe_driver_state_submit_media(void *,const float *,unsigned);
 int xe_driver_state_capture(void *,xe_audio_driver_view *);
 int xe_driver_state_ready(void *,const xe_audio_driver_view *);
 int xe_driver_state_restore(void *,const xe_audio_driver_view *);
@@ -71,6 +72,21 @@ static void real_credit_driver(void) {
   CHECK(xe_apu_clients_retire(clients,index,&token)==XE_APU_RETIRE_OWN);
   CHECK(xe_apu_clients_finish(clients,index,token));xe_apu_clients_free(clients);
 }
+static void partial_media_test(void) {
+ static const float values[12] = {1.000003f,-1.000003f,0.000000013f,-0.000000013f,
+   0.1234567f,-0.7654321f,2.0f,-2.0f,0.5f,-0.5f,0.0f,-0.0f};
+ void *driver=xe_driver_state_new(48000,2,2,0);
+ CHECK(driver && xe_driver_state_submit_media(driver,values,6));
+ CHECK(xe_driver_state_capture(driver,&actual));
+ CHECK(actual.queue.bytes[0]+actual.queue.bytes[1]==sizeof(values));
+ copy_pcm(&actual,expected_pcm);CHECK(!memcmp(expected_pcm,values,sizeof(values)));
+ CHECK(!xe_driver_state_submit_media(driver,values,0));
+ CHECK(!xe_driver_state_submit_media(driver,values,769));
+ CHECK(xe_driver_state_capture(driver,&actual));
+ CHECK(actual.queue.bytes[0]+actual.queue.bytes[1]==sizeof(values));
+ xe_driver_state_free(driver);
+ puts("PASS: partial float media preserves tiny values, overshoot and exact tail length");
+}
 int main(void) {
   static const unsigned rates[]={48000,44100,32000};
   unsigned r,channels,output,planar,count=0;void *driver;uint64_t bits;
@@ -111,9 +127,10 @@ int main(void) {
 #endif
     xe_driver_state_free(driver);++count;
   }
+  partial_media_test();
   printf("PASS: %u native audio driver continuations, exact PCM/carry, format/phase/alias rejection and stopped-state safety\n",count);
 #ifdef XE_AUDIO_CHECKPOINT_ALLOC_TEST
-  puts("PASS: zero linked malloc/calloc/realloc/free calls after initialization through checkpoint, continuation and stop");
+ puts("PASS: zero linked malloc/calloc/realloc/free calls after initialization through checkpoint, continuation and stop");
 #endif
   return 0;
 }

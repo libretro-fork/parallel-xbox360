@@ -86,6 +86,11 @@ jobs:
           CXX: g++-14
         run: |
           PLATFORM=linux-$(uname -m) sh tools/tests/run_xma_checkpoint_tests.sh
+          mkdir -p build/tests/media-fixtures
+          ffmpeg -nostdin -v error -y -f lavfi -i 'sine=frequency=997:sample_rate=44100:duration=8' -ac 2 -c:a libmp3lame -b:a 128k build/tests/media-fixtures/stereo.mp3
+          ffmpeg -nostdin -v error -y -f lavfi -i 'sine=frequency=701:sample_rate=48000:duration=3' -ac 1 -c:a libmp3lame -b:a 64k build/tests/media-fixtures/mono.mp3
+          ffmpeg -nostdin -v error -y -f lavfi -i 'sine=frequency=997:sample_rate=48000:duration=8' -ac 2 -c:a wmav2 -b:a 128k build/tests/media-fixtures/stereo.wma
+          sh tools/tests/run_media_audio_tests.sh build/tests/media-fixtures/stereo.mp3 build/tests/media-fixtures/mono.mp3 build/tests/media-fixtures/stereo.wma
           PLATFORM=linux-$(uname -m) sh tools/tests/run_file_probe_tests.sh
           sh tools/tests/run_package_header_unit_tests.sh
           sh tools/tests/run_svod_tests.sh

@@ -14,7 +14,7 @@ case $(uname -m) in x86_64|amd64) arch_flags=-mavx ;; esac
 for name in xma_context_new xma_decoder; do
  ${CXX:-c++} -O2 $arch_flags -std=c++20 -Wno-attributes -DNDEBUG -DXENIA_LIBRETRO -DRETRO_ATOMIC_FORCE_GCC_NEW \
   -I. -Isrc -Ithird_party/libretro-common/include -Ithird_party/fmt/include \
-  -Ithird_party/FFmpeg -Ithird_party/ffmpeg-xenia \
+  \
   -c "src/xenia/apu/$name.cc" -o "$out/$name.o"
 done
 ${CC:-cc} -std=c89 -pedantic -Wno-long-long -O2 -Wall -Wextra -Werror \

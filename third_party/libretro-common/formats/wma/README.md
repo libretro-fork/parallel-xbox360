@@ -1,11 +1,12 @@
 # Core source selection
 
-This directory imports the raw/packet decoder sources from RetroArch
-libretro-common commit `89800f3e1f922df8e9b2dcf00bd721108766a9de`. Stream/container
-wrappers and frontend playback files are not part of this selection. The modern
-XMA context uses the raw decoder; legacy modes and media playback retain FFmpeg.
-The upstream decoder description follows; references to its other files describe
-the complete RetroArch implementation, not files shipped in this core subset.
+Raw/packet decoding is imported from RetroArch libretro-common commit
+`89800f3e1f922df8e9b2dcf00bd721108766a9de`. Selected MP3, WMA stream,
+audio-transfer and callback-window sources additionally support XMP music.
+Stream facade revision: `0b20d68d69559412deb849f6e2db49498921ed38`; see SOURCE.txt
+in the selected libretro-common root for file hashes.
+All XMA decoder styles use native raw decoding; media playback uses native
+float output. FFmpeg is optional offline reference code, disabled by default.
 
 # rwma
 

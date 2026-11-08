@@ -26,9 +26,6 @@
 #include "xenia/cpu/thread_state.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xthread.h"
-extern "C" {
-#include "third_party/FFmpeg/libavutil/log.h"
-}  // extern "C"
 
 // As with normal Microsoft, there are like twelve different ways to access
 // the audio APIs. Early games use XMA*() methods almost exclusively to touch
@@ -54,9 +51,6 @@ extern "C" {
 // do this, it's likely they are either passing the context to XAudio or
 // using the XMA* functions.
 
-DEFINE_bool(ffmpeg_verbose, false, "Verbose FFmpeg output (debug and above)",
-            "APU");
-
 DEFINE_bool(use_dedicated_xma_thread, false,
             "Decode XMA on a separate thread.\n"
             "Off decodes on the guest thread that kicked the context, costing "
@@ -73,8 +67,8 @@ DEFINE_string(
     "Decoder version used to process XMA audio.\n"
     "Use: [fake, master, old, new]\n"
     " fake: \n  No audio will be decoded.\n"
-    " master: \n  Version of decoder exactly like on base version of Xenia.\n"
-    " old: \n  Decoder based on master version of decoder with few "
+    " master: \n  Original packet scheduling with native XMA decoding.\n"
+    " old: \n  Legacy packet scheduling with native XMA decoding and "
     "improvements.\n"
     " new: \n  New version of decoder. Provides highest stability, but isn't "
     "yet finished.\n",
@@ -93,59 +87,10 @@ XmaDecoder::XmaDecoder(cpu::Processor* processor)
 
 XmaDecoder::~XmaDecoder() { Shutdown(); }
 
-void av_log_callback(void* avcl, int level, const char* fmt, va_list va) {
-  if (!cvars::ffmpeg_verbose && level > AV_LOG_WARNING) {
-    return;
-  }
-
-  char level_char = '?';
-  LogLevel log_level;
-  switch (level) {
-    case AV_LOG_ERROR: {
-      level_char = '!';
-      log_level = xe::LogLevel::Error;
-      break;
-    }
-    case AV_LOG_WARNING: {
-      level_char = 'w';
-      log_level = xe::LogLevel::Warning;
-      break;
-    }
-    case AV_LOG_INFO: {
-      level_char = 'i';
-      log_level = xe::LogLevel::Info;
-      break;
-    }
-    case AV_LOG_VERBOSE: {
-      level_char = 'v';
-      log_level = xe::LogLevel::Debug;
-      break;
-    }
-    case AV_LOG_DEBUG: {
-      level_char = 'd';
-      log_level = xe::LogLevel::Debug;
-      break;
-    }
-    default: {
-      level_char = '?';
-      log_level = xe::LogLevel::Debug;
-      break;
-    }
-  }
-
-  StringBuffer buff;
-  buff.AppendVarargs(fmt, va);
-  xe::logging::AppendLogLineFormat(LogSrc::Apu, log_level, level_char,
-                                   "ffmpeg: {}", buff.to_string_view());
-}
-
 X_STATUS XmaDecoder::Setup(kernel::KernelState* kernel_state) {
   uint32_t mode;
   // Reject duplicate setup before replacing an owned context table.
   if (context_data_first_ptr_ || worker_thread_) return X_STATUS_UNSUCCESSFUL;
-  // Setup ffmpeg logging callback
-  av_log_set_callback(av_log_callback);
-
   // Let the processor know we want register access callbacks.
   memory_->AddVirtualMappedRange(
       0x7FEA0000, 0xFFFF0000, 0x0000FFFF, this,

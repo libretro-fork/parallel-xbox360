@@ -20,9 +20,7 @@ namespace apu {
 
 XmaContextNew::XmaContextNew() = default;
 
-XmaContextNew::~XmaContextNew() {
-  xe_xma_native_dispose(&native_);
-}
+XmaContextNew::~XmaContextNew() = default;
 
 int XmaContextNew::Setup(uint32_t id, Memory* memory, uint32_t guest_ptr) {
   id_ = id;

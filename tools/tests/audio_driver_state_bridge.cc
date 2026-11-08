@@ -21,3 +21,5 @@ extern "C" void *xe_driver_state_new_credit(const xe_apu_credit_sink *credits) {
   if(driver && !driver->Initialize()) {delete driver;return nullptr;}
   return driver;
 }
+
+extern "C" int xe_driver_state_submit_media(void *p,const float *s,unsigned n) {return static_cast<LibretroAudioDriver*>(p)->SubmitInterleavedFrames(s,n);}

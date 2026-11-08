@@ -108,8 +108,6 @@ set(_xe_libretro_libs
   capstone
   fmt
   xenia-spirv-writer
-  libavcodec
-  libavutil
   mspack
   snappy
   retro-common

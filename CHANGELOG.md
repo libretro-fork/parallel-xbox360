@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Remove FFmpeg from default core builds without disabling legacy XMA or XMP music. Decode MP3/WMA through native float spans backed by borrowed mappings or bounded guest-file windows; skip large ID3 tags without slurping them. Preserve exact partial media blocks and mono stride, guest PCM conversion and APU scheduling. Keep FFmpeg available only for optional offline comparisons.
+
 - Preserve full float precision in the media-player surround downmix instead of rounding its gain to four decimal places. Keep guest planar audio conversion and frontend pacing unchanged; add exact coefficient and span-boundary regressions.
 
 - Build the SVOD regression fixture with strict C89 path construction on Linux and Windows. Production file I/O is unchanged.

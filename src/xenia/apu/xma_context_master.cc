@@ -20,18 +20,7 @@
 #include "xenia/base/profiling.h"
 #include "xenia/base/ring_buffer.h"
 
-extern "C" {
-#if XE_COMPILER_MSVC
-#pragma warning(push)
-#pragma warning(disable : 4101 4244 5033)
-#endif
-#include "third_party/FFmpeg/libavcodec/avcodec.h"
-#include "third_party/FFmpeg/libavutil/channel_layout.h"
-#include "third_party/FFmpeg/libavutil/error.h"
-#if XE_COMPILER_MSVC
-#pragma warning(pop)
-#endif
-}  // extern "C"
+
 
 // Credits for most of this code goes to:
 // https://github.com/koolkdev/libertyv/blob/master/libav_wrapper/xma2dec.c
@@ -41,50 +30,13 @@ namespace apu {
 
 XmaContextMaster::XmaContextMaster() = default;
 
-XmaContextMaster::~XmaContextMaster() {
-  if (av_context_) {
-    avcodec_free_context(&av_context_);
-  }
-  if (av_frame_) {
-    av_frame_free(&av_frame_);
-  }
-  // if (current_frame_) {
-  //   delete[] current_frame_;
-  //  }
-}
+XmaContextMaster::~XmaContextMaster() = default;
 
 int XmaContextMaster::Setup(uint32_t id, Memory* memory, uint32_t guest_ptr) {
   id_ = id;
   memory_ = memory;
   guest_ptr_ = guest_ptr;
-
-  // Allocate ffmpeg stuff:
-  if (!AllocateFramePacket()) return 1;
-  // find the XMA2 audio decoder
-  av_codec_ = avcodec_find_decoder(AV_CODEC_ID_XMAFRAMES);
-  if (!av_codec_) {
-    XELOGE("XmaContext {}: Codec not found", id);
-    return 1;
-  }
-
-  av_context_ = avcodec_alloc_context3(av_codec_);
-  if (!av_context_) {
-    XELOGE("XmaContext {}: Couldn't allocate context", id);
-    return 1;
-  }
-
-  // Initialize these to 0. They'll actually be set later.
-  av_context_->ch_layout = AVChannelLayout{};
-  av_context_->sample_rate = 0;
-
-  av_frame_ = av_frame_alloc();
-  if (!av_frame_) {
-    XELOGE("XmaContext {}: Couldn't allocate frame", id);
-    return 1;
-  }
-
-  // FYI: We're purposely not opening the codec here. That is done later.
-  return 0;
+  return AllocateFramePacket() ? 0 : 1;
 }
 
 bool XmaContextMaster::Work() {
@@ -567,39 +519,16 @@ void XmaContextMaster::Decode(XMA_CONTEXT_DATA* data) {
     split_frame_len_partial_ = 0;
     split_frame_padding_start_ = 0;
 
-    auto ret = avcodec_send_packet(av_context_, av_packet_);
-    if (ret < 0) {
-      XELOGE("XmaContext {}: Error sending packet for decoding", id());
-      // TODO bail out
-      assert_always();
-    }
-    ret = avcodec_receive_frame(av_context_, av_frame_);
-    if (ret == AVERROR(EAGAIN)) {
+    rwma_frame decoded;
+    const uint8_t* samples[2];
+    if (!DecodeFramePacket(packet_span.size, &decoded)) {
       return;
     }
-    if (ret < 0) {
-      char errbuf[AV_ERROR_MAX_STRING_SIZE];
-      av_strerror(ret, errbuf, sizeof(errbuf));
-      XELOGE("XmaContext {}: Error during decoding: {} ({})", id(), errbuf,
-             ret);
-      return;
-    }
-    assert_true(ret == 0);
-
+    samples[0] = reinterpret_cast<const uint8_t*>(decoded.planes[0]);
+    samples[1] = decoded.channels == 2
+        ? reinterpret_cast<const uint8_t*>(decoded.planes[1]) : nullptr;
     {
-      // copy over 1 frame
-      // update input buffer read offset
-
-      // assert(decoded_consumed_samples_ + kSamplesPerFrame <=
-      //       current_frame_.size());
-      assert_true(av_context_->sample_fmt == AV_SAMPLE_FMT_FLTP);
-      // assert_true(frame_is_split == (frame_idx == -1));
-
-      //			dump_raw(av_frame_, id());
-      ConvertFrame((const uint8_t**)av_frame_->data, bool(data->is_stereo),
-                   raw_frame_.data());
-      // decoded_consumed_samples_ += kSamplesPerFrame;
-
+      ConvertFrame(samples, decoded.channels == 2, raw_frame_.data());
       auto byte_count = kBytesPerFrameChannel << data->is_stereo;
       assert_true(output_remaining_bytes >= byte_count);
       output_rb.Write(raw_frame_.data(), byte_count);
@@ -811,31 +740,9 @@ std::tuple<int, bool> XmaContextMaster::GetPacketFrameCount(uint8_t* packet) {
 
 int XmaContextMaster::PrepareDecoder(uint8_t* packet, int sample_rate,
                                      bool is_two_channel) {
-  // Sanity check: Packet metadata is always 1 for XMA2/0 for XMA
   assert_true((packet[2] & 0x7) == 1 || (packet[2] & 0x7) == 0);
-
-  sample_rate = GetSampleRate(sample_rate);
-
-  // Re-initialize the context with new sample rate and channels.
-  uint32_t channels = is_two_channel ? 2 : 1;
-  if (av_context_->sample_rate != sample_rate ||
-      av_context_->ch_layout.nb_channels != (int)channels) {
-    // We have to recreate the codec context so it'll realloc whatever data it
-    // needs.
-    avcodec_free_context(&av_context_);
-    av_context_ = avcodec_alloc_context3(av_codec_);
-
-    av_context_->sample_rate = sample_rate;
-    av_channel_layout_default(&av_context_->ch_layout, channels);
-    av_context_->flags2 |= AV_CODEC_FLAG2_SKIP_MANUAL;
-
-    if (avcodec_open2(av_context_, av_codec_, NULL) < 0) {
-      XELOGE("XmaContext: Failed to reopen FFmpeg context");
-      return -1;
-    }
-    return 1;
-  }
-  return 0;
+  return xe_xma_native_configure(&native_, GetSampleRate(sample_rate),
+                                 is_two_channel ? 2 : 1);
 }
 
 }  // namespace apu

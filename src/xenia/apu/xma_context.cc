@@ -22,16 +22,7 @@
 #include <arm_neon.h>
 #endif
 
-extern "C" {
-#if XE_COMPILER_MSVC
-#pragma warning(push)
-#pragma warning(disable : 4101 4244 5033)
-#endif
-#include "third_party/FFmpeg/libavcodec/avcodec.h"
-#if XE_COMPILER_MSVC
-#pragma warning(pop)
-#endif
-}  // extern "C"
+
 
 // Credits for most of this code goes to:
 // https://github.com/koolkdev/libertyv/blob/master/libav_wrapper/xma2dec.c
@@ -41,51 +32,27 @@ namespace apu {
 
 XmaContext::XmaContext() = default;
 
-XmaContext::~XmaContext() {
-  // All codec implementations borrow packet data from this shared owner.
-  // av_packet_free releases the retained preallocated AVBufferRef as well.
-  av_packet_free(&av_packet_);
-}
+XmaContext::~XmaContext() { xe_xma_native_dispose(&native_); }
 
 bool XmaContext::AllocateFramePacket() {
-  AVPacket* packet;
-  if (av_packet_) return true;
-  packet = av_packet_alloc();
-  if (!packet) return false;
-  if (av_new_packet(packet, kFrameCapacity) < 0) {
-    av_packet_free(&packet);
-    return false;
-  }
-  av_packet_ = packet;
-  xma_frame_ = packet->data;
-  std::memset(xma_frame_, 0, kFrameCapacity);
-  packet->size = 0;
+  if (xma_frame_) return true;
+  if (!xe_xma_native_init(&native_)) return false;
+  xma_frame_ = native_.scratch;
   return true;
 }
 
 bool XmaContext::SetFramePacketSize(uint32_t size) {
-  if (!av_packet_ || !size || size > kFrameCapacity) return false;
-  // Clear immediately after the actual payload, including after a large frame
-  // is followed by a smaller one. FFmpeg bit readers may read this padding.
-  std::memset(xma_frame_ + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
-  av_packet_->data = xma_frame_;
-  av_packet_->size = static_cast<int>(size);
-  return true;
+  return xma_frame_ && size && size <= kFrameCapacity;
 }
 
-void XmaContext::DumpRaw(AVFrame* frame, int id) {
-  FILE* outfile =
-      xe::filesystem::OpenFile(fmt::format("out{}.raw", id).c_str(), "ab");
-  if (!outfile) {
-    return;
-  }
-  size_t data_size = sizeof(float);
-  for (int i = 0; i < frame->nb_samples; i++) {
-    for (int ch = 0; ch < frame->ch_layout.nb_channels; ch++) {
-      fwrite(frame->data[ch] + data_size * i, 1, data_size, outfile);
-    }
-  }
-  fclose(outfile);
+bool XmaContext::DecodeFramePacket(uint32_t size, rwma_frame* frame) {
+  xe_xma_raw_span span;
+  if (!SetFramePacketSize(size) || size < 2) return false;
+  span.data = xma_frame_ + 1;
+  span.size = size - 1;
+  span.bit_offset = xma_frame_[0] >> 5;
+  span.bit_count = (size - 1) * 8 - span.bit_offset - ((xma_frame_[0] >> 2) & 7);
+  return xe_xma_native_decode(&native_, &span, frame) != 0;
 }
 
 #if XE_ARCH_ARM64
@@ -104,7 +71,7 @@ void XmaContext::ConvertFrame(const uint8_t** samples, bool is_two_channel,
                               uint8_t* output_buffer) {
   // Loop through every sample, convert and drop it into the output array.
   // If more than one channel, we need to interleave the samples from each
-  // channel next to each other. Always saturate because FFmpeg output is
+  // channel next to each other. Always saturate because decoded output is
   // not limited to [-1, 1] (for example 1.095 as seen in 5454082B).
   constexpr float scale = (1 << 15) - 1;
   auto out = reinterpret_cast<int16_t*>(output_buffer);

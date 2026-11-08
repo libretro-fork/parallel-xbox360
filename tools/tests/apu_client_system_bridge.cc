@@ -14,6 +14,7 @@ class ObservedDriver:public xe::apu::AudioDriver {
   ~ObservedDriver() override {++observations_->destroyed;}
   bool Initialize() override {return true;}
   void Shutdown() override {}
+  bool SubmitInterleavedFrames(const float *,uint32_t) override {return false;}
   void SubmitFrame(float *) override {++observations_->submitted;xe_apu_clients_return_credit(&credits_);}
   void Pause() override {}
   void Resume() override {}

@@ -11,4 +11,4 @@ actual=$(gpg --batch --show-keys --with-colons "$key_file" | awk -F: '$1 == "fpr
 [ "$actual" = "$key" ] || { echo 'Unexpected toolchain signing key' >&2; exit 1; }
 printf '%s\n' "deb [signed-by=$key_file] https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu jammy main" > /etc/apt/sources.list.d/parallel-xbox360-toolchain.list
 apt-get update -qq
-apt-get install -y --no-install-recommends gcc-14 g++-14 libfontconfig1-dev
+apt-get install -y --no-install-recommends gcc-14 g++-14 libfontconfig1-dev ffmpeg

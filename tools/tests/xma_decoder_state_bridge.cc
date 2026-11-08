@@ -67,6 +67,17 @@ class ColdDecoder : public xe::apu::XmaDecoder {
     if(!execute) return 1;
     contexts_[0]->Enable();return contexts_[0]->Work();
   }
+  unsigned legacy(const void *packet,unsigned channels,const void **pcm) {
+    if(!stream(packet,channels,false)) return 0;
+    void *context=memory()->TranslateVirtual(context_data_first_ptr_);
+    xe::apu::XMA_CONTEXT_DATA data(context);
+    data.output_buffer_block_count=16;data.Store(context);
+    *pcm=memory()->TranslatePhysical(data.output_buffer_ptr);
+    memset(const_cast<void*>(*pcm),0xa5,4096);
+    contexts_[0]->Enable();if(!contexts_[0]->Work()) return 0;
+    xe::apu::XMA_CONTEXT_DATA after(context);
+    return after.output_buffer_write_offset*256;
+  }
   void *raw() {return xe::apu::XmaContextStreamTest::raw(static_cast<xe::apu::XmaContextNew*>(contexts_[0]));}
   const void *drain(unsigned stereo) {
     void *context=memory()->TranslateVirtual(context_data_first_ptr_);
@@ -174,3 +185,7 @@ extern "C" const void *xe_xma_decoder_test_guest(void *p) {return static_cast<De
 extern "C" int xe_xma_decoder_test_work(void *p) {return static_cast<DecoderFixture*>(p)->decoder.work();}
 extern "C" void xe_xma_decoder_test_cursor(void *p,unsigned o,unsigned l) {static_cast<DecoderFixture*>(p)->decoder.cursor(o,l);}
 extern "C" void xe_xma_decoder_test_current(void *p,unsigned b) {static_cast<DecoderFixture*>(p)->decoder.current(b);}
+
+extern "C" unsigned xe_xma_decoder_test_legacy(void *p,const void *packet,unsigned channels,const void **pcm) {
+ return static_cast<DecoderFixture*>(p)->decoder.legacy(packet,channels,pcm);
+}

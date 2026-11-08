@@ -14,133 +14,32 @@
 #include "xenia/base/logging.h"
 #include "xenia/kernel/guest_scheduler.h"
 
-extern "C" {
-#if XE_COMPILER_MSVC
-#pragma warning(push)
-#pragma warning(disable : 4101 4244 5033)
-#endif
-#include "third_party/FFmpeg/libavcodec/avcodec.h"
-#include "third_party/FFmpeg/libavformat/avformat.h"
-#include "third_party/FFmpeg/libavformat/avio.h"
-#if XE_COMPILER_MSVC
-#pragma warning(pop)
-#endif
-}  // extern "C"
+#include "libretro/core_media_audio.h"
 
 DEFINE_bool(enable_xmp, true, "Enables Music Player playback.", "APU");
 
 namespace xe {
 namespace apu {
 
-int32_t InitializeAndOpenAvCodec(std::span<uint8_t> song_data,
-                                 AVFormatContext*& format_context,
-                                 AVCodecContext*& av_context) {
-  AVIOContext* io_ctx =
-      avio_alloc_context(song_data.data(), (int)song_data.size(), 0, nullptr,
-                         nullptr, nullptr, nullptr);
-
-  format_context = avformat_alloc_context();
-  format_context->pb = io_ctx;
-
-  int ret = avformat_open_input(&format_context, nullptr, nullptr, nullptr);
-  if (ret < 0) {
-    return ret;
-  }
-  // Processing data
-  ret = avformat_find_stream_info(format_context, nullptr);
-  if (ret < 0) {
-    return ret;
-  }
-  AVStream* stream = format_context->streams[0];
-
-  // find & open codec
-  AVCodecParameters* codec = stream->codecpar;
-  auto decoder = avcodec_find_decoder(codec->codec_id);
-  av_context = avcodec_alloc_context3(decoder);
-
-  // Fill codec context with codec parameters
-  ret = avcodec_parameters_to_context(av_context, codec);
-  if (ret < 0) {
-    return ret;
-  }
-
-  ret = avcodec_open2(av_context, decoder, NULL);
-  return ret;
+static int64_t ReadSong(void* owner, uint64_t offset, uint8_t* dst, size_t bytes) {
+  vfs::File* file = static_cast<vfs::File*>(owner);
+  size_t read = 0;
+  if (offset > SIZE_MAX) return -1;
+  X_STATUS status = file->ReadSync({dst,bytes}, static_cast<size_t>(offset), &read);
+  return (status == X_STATUS_SUCCESS || status == X_STATUS_END_OF_FILE) && read <= bytes
+      ? static_cast<int64_t>(read) : -1;
 }
 
-void ConvertAudioFrame(AVFrame* frame, int channel_count,
-                       std::vector<float>* framebuffer) {
-  framebuffer->reserve(frame->nb_samples * channel_count);
-
-  switch (frame->format) {
-    case AV_SAMPLE_FMT_FLTP: {
-      for (int sample = 0; sample < frame->nb_samples; sample++) {
-        for (int ch = 0; ch < channel_count; ch++) {
-          float sampleValue = reinterpret_cast<float*>(frame->data[ch])[sample];
-          framebuffer->push_back(sampleValue);
-        }
-      }
-      break;
-    }
-
-    case AV_SAMPLE_FMT_FLT: {
-      float* frameData = reinterpret_cast<float*>(frame->data[0]);
-      framebuffer->insert(framebuffer->end(), frameData,
-                          frameData + frame->nb_samples * channel_count);
-
-      break;
-    }
-
-    default:
-      break;
+static ProcessAudioResult ProcessAudioLoop(AudioMediaPlayer* player, xe_media_audio* audio) {
+  const float* pcm;
+  size_t frames;
+  while (player->IsSongLoaded()) {
+    int result = xe_media_audio_read(audio,&pcm,&frames);
+    if (result < 0) return ProcessAudioResult::Failure;
+    if (!result) return ProcessAudioResult::Successful;
+    if (!player->ProcessAudioBuffer(pcm,frames)) return ProcessAudioResult::ForcedFinish;
   }
-}
-
-ProcessAudioResult ProcessAudioLoop(AudioMediaPlayer* player,
-                                    AudioDriver* driver, AVFormatContext* s,
-                                    AVCodecContext* avctx, int streamIndex) {
-  AVPacket* packet = av_packet_alloc();
-  AVFrame* frame = av_frame_alloc();
-  std::vector<float> frameBuffer;
-
-  while (av_read_frame(s, packet) >= 0) {
-    if (!player->IsSongLoaded()) {
-      av_frame_free(&frame);
-      av_packet_free(&packet);
-      return ProcessAudioResult::ForcedFinish;
-    }
-
-    if (packet->stream_index == streamIndex) {
-      int ret = avcodec_send_packet(avctx, packet);
-      if (ret < 0) {
-        XELOGE("Error sending packet for decoding: {:X}", ret);
-        break;
-      }
-
-      while (ret >= 0) {
-        if (!player->IsSongLoaded()) {
-          break;
-        }
-
-        ret = avcodec_receive_frame(avctx, frame);
-        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-          break;
-        }
-        if (ret < 0) {
-          XELOGW("Error during decoding: {:X}", ret);
-          break;
-        }
-
-        ConvertAudioFrame(frame, avctx->ch_layout.nb_channels, &frameBuffer);
-        player->ProcessAudioBuffer(&frameBuffer);
-      }
-    }
-    av_packet_unref(packet);
-  }
-
-  av_frame_free(&frame);
-  av_packet_free(&packet);
-  return ProcessAudioResult::Successful;
+  return ProcessAudioResult::ForcedFinish;
 }
 
 AudioMediaPlayer::AudioMediaPlayer(apu::AudioSystem* audio_system,
@@ -231,27 +130,28 @@ X_STATUS AudioMediaPlayer::Play(uint32_t playlist_handle, uint32_t song_handle,
 }
 
 void AudioMediaPlayer::Play() {
-  std::span<uint8_t> song_buffer = LoadSongToMemory();
-  if (song_buffer.empty()) {
-    return;
-  }
-
-  AVFormatContext* formatContext = nullptr;
-  AVCodecContext* codecContext = nullptr;
-  InitializeAndOpenAvCodec(song_buffer, formatContext, codecContext);
-
-  if (!SetupDriver(codecContext->sample_rate,
-                   codecContext->ch_layout.nb_channels)) {
-    XELOGE("Driver initialization failed!");
-    avcodec_free_context(&codecContext);
-    av_freep(&formatContext->pb->buffer);
-    avio_context_free(&formatContext->pb);
-    avformat_close_input(&formatContext);
+  uint32_t song_handle = active_song_ ? active_song_->handle : 0;
+  vfs::File* file = OpenSong();
+  std::unique_ptr<MappedMemory> mapping;
+  xe_media_audio* audio = nullptr;
+  unsigned rate = 0, channels = 0;
+  if (file && file->entry()->can_map())
+    mapping = file->entry()->OpenMapped(MappedMemory::Mode::kRead);
+  if (mapping && mapping->size() < file->entry()->size()) mapping.reset();
+  if (file)
+    audio = xe_media_audio_open(mapping ? mapping->data() : nullptr,
+        file->entry()->size(), ReadSong, file);
+  if (!audio || !xe_media_audio_info(audio,&rate,&channels) || !SetupDriver(rate,channels)) {
+    xe_media_audio_close(audio);
+    mapping.reset();
+    if (file) file->Destroy();
+    Stop(true,true);
+    processing_end_fence_.Signal();
     return;
   }
 
   state_ = XmpApp::State::kPlaying;
-  current_song_handle_ = active_song_->handle;
+  current_song_handle_ = song_handle;
   OnStateChanged();
 
   if (GetVolume() == 0.0f) {
@@ -263,7 +163,7 @@ void AudioMediaPlayer::Play() {
   driver_->SetVolume(GetVolume());
 
   auto result =
-      ProcessAudioLoop(this, driver_.get(), formatContext, codecContext, 0);
+      ProcessAudioLoop(this, audio);
 
   // We need to stop playback only if it wasn't
   if (result != ProcessAudioResult::ForcedFinish) {
@@ -276,11 +176,9 @@ void AudioMediaPlayer::Play() {
                         std::chrono::milliseconds(500));
   }
 
-  // Cleanup after work
-  avcodec_free_context(&codecContext);
-  av_freep(&formatContext->pb->buffer);
-  avio_context_free(&formatContext->pb);
-  avformat_close_input(&formatContext);
+  xe_media_audio_close(audio);
+  mapping.reset();
+  file->Destroy();
 
   processing_end_fence_.Signal();
 
@@ -410,40 +308,14 @@ X_STATUS AudioMediaPlayer::Previous() {
   return X_STATUS_SUCCESS;
 }
 
-std::span<uint8_t> AudioMediaPlayer::LoadSongToMemory() {
-  if (!active_song_) {
-    return {};
-  }
-
-  // Find file based on provided path?
-  vfs::File* vfs_file;
-  vfs::FileAction file_action;
+vfs::File* AudioMediaPlayer::OpenSong() {
+  vfs::File* file = nullptr;
+  vfs::FileAction action;
+  if (!active_song_) return nullptr;
   X_STATUS result = kernel_state_->file_system()->OpenFile(
-      nullptr, xe::to_utf8(active_song_->file_path),
-      vfs::FileDisposition::kOpen, vfs::FileAccess::kGenericRead, false, true,
-      &vfs_file, &file_action);
-
-  if (result) {
-    return {};
-  }
-
-  std::span<uint8_t> buffer = {
-      static_cast<uint8_t*>(av_malloc(vfs_file->entry()->size())),
-      vfs_file->entry()->size()};
-
-  if (buffer.empty()) {
-    return {};
-  }
-
-  size_t bytes_read = 0;
-  result = vfs_file->ReadSync(buffer, 0, &bytes_read);
-  if (result != X_ERROR_SUCCESS) {
-    // Read failed. We need to manually release resources from av_malloc.
-    av_freep(buffer.data());
-    return {};
-  }
-
-  return buffer;
+      nullptr, xe::to_utf8(active_song_->file_path), vfs::FileDisposition::kOpen,
+      vfs::FileAccess::kGenericRead, false, true, &file, &action);
+  return result == X_STATUS_SUCCESS ? file : nullptr;
 }
 
 void AudioMediaPlayer::AddPlaylist(uint32_t handle,
@@ -513,31 +385,10 @@ void AudioMediaPlayer::OnStateChanged() {
                                        static_cast<uint32_t>(state_));
 }
 
-void AudioMediaPlayer::ProcessAudioBuffer(std::vector<float>* buffer) {
-  while (buffer->size() >= xe::apu::AudioDriver::kFrameSamplesMax) {
-    xe::threading::Wait(driver_semaphore_.get(), true);
-
-    if (!IsSongLoaded()) {
-      buffer->clear();
-      break;
-    }
-
-    // XMP should be processed on Audio thread. Some games goes insane when they
-    // have additional unexpected guest thread (NG2 for example).
-    /*
-    if (callback_) {
-      std::memcpy(kernel_state_->memory()->TranslateVirtual(sample_buffer_ptr_),
-                  buffer->data(), xe::apu::AudioDriver::kFrameSamplesMax);
-
-      uint64_t args[] = {sample_buffer_ptr_, callback_context_, true};
-      audio_system_->processor()->Execute(worker_thread_->thread_state(),
-                                          callback_, args, xe::countof(args));
-    }*/
-
-    driver_->SubmitFrame(buffer->data());
-    buffer->erase(buffer->begin(),
-                  buffer->begin() + xe::apu::AudioDriver::kFrameSamplesMax);
-  }
+bool AudioMediaPlayer::ProcessAudioBuffer(const float* samples, size_t frames) {
+  xe::threading::Wait(driver_semaphore_.get(), true);
+  if (!IsSongLoaded()) return false;
+  return driver_->SubmitInterleavedFrames(samples, static_cast<uint32_t>(frames));
 }
 
 bool AudioMediaPlayer::SetupDriver(uint32_t sample_rate, uint32_t channels) {

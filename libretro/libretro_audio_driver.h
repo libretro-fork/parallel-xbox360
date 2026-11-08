@@ -45,6 +45,7 @@ class LibretroAudioDriver : public AudioDriver {
 
   bool CanSubmitFrame() const override;
   void SubmitFrame(float* samples) override;
+  bool SubmitInterleavedFrames(const float* samples, uint32_t frames) override;
   void Pause() override;
   void Resume() override;
   void SetVolume(float volume) override;
@@ -56,7 +57,7 @@ class LibretroAudioDriver : public AudioDriver {
 
  private:
   void Resample(const float* in, size_t frames);
-  XE_NOINLINE void SubmitFrameResampled(float* samples);
+  XE_NOINLINE void SubmitFrameResampled(const float* samples, size_t frames);
 
   xe_audio_group* group_ = nullptr;
   bool registry_required_ = false;

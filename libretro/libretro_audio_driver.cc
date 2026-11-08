@@ -83,7 +83,7 @@ bool LibretroAudioDriver::CanSubmitFrame() const {
 
 void LibretroAudioDriver::SubmitFrame(float* samples) {
   if (frequency_ != 48000) {
-    SubmitFrameResampled(samples);
+    SubmitFrameResampled(samples, channel_samples_);
     return;
   }
   if (!xe_audio_queue_paused(ring_.get())) {
@@ -94,11 +94,23 @@ void LibretroAudioDriver::SubmitFrame(float* samples) {
   else if (semaphore_) semaphore_->Release(1, nullptr);
 }
 
-void LibretroAudioDriver::SubmitFrameResampled(float* samples) {
+bool LibretroAudioDriver::SubmitInterleavedFrames(const float* samples, uint32_t frames) {
+  if (need_format_conversion_ || !samples || !frames || frames > channel_samples_) return false;
+  if (frequency_ != 48000) {
+    SubmitFrameResampled(samples, frames);
+    return true;
+  }
+  if (!xe_audio_queue_paused(ring_.get()))
+    xe_audio_queue_write_converted(ring_.get(), samples, frames, channels_, 0,
+                                   xe_audio_queue_get_volume(ring_.get()));
+  if (semaphore_) semaphore_->Release(1, nullptr);
+  return true;
+}
+
+void LibretroAudioDriver::SubmitFrameResampled(const float* samples, size_t frames) {
   if (!xe_audio_queue_paused(ring_.get())) {
     // Up to 768 frames (the media player's stereo) in up to 6 channels.
     float out[768 * 6];
-    const size_t frames = channel_samples_;
     const size_t out_ch = out_channels_;
     float* stereo = out;
     const float* prepared = out;

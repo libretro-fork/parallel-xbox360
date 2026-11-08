@@ -53,12 +53,12 @@ SOURCES_C += third_party/libusb/libusb/core.c third_party/libusb/libusb/descript
  third_party/libusb/libusb/os/windows_winusb.c
 endif
 
-INCLUDE_DIRS := $(GEN) $(GEN)/generated third_party/ffmpeg-xenia \
+INCLUDE_DIRS := $(GEN) $(GEN)/generated \
  . src libretro third_party third_party/capstone/include third_party/fmt/include \
  third_party/stb third_party/snappy \
  third_party/libretro-common/include third_party/mspack \
  third_party/asio/include third_party/tomlplusplus/include third_party/llvm/include \
- third_party/Vulkan-Headers/include third_party/ffmpeg-xenia third_party/FFmpeg third_party/aes_128 \
+ third_party/Vulkan-Headers/include third_party/aes_128 \
  third_party/zarchive/include
 
 SOURCES_C += third_party/aes_128/unroll/aes.c \
@@ -93,6 +93,10 @@ shader-output = $(GEN)/generated/$(patsubst src/%,%,$(basename $(1))).h
 SHADER_HEADERS := $(foreach s,$(SHADER_SOURCES),$(call shader-output,$(s)))
 SOURCES_CXX += $(GEN)/embedded_bundle_patches.cc $(GEN)/libretro_gamedb_data.cc
 
+# Optional offline comparison archive; production uses native codecs.
+FFMPEG_REFERENCE ?= 0
+ifeq ($(FFMPEG_REFERENCE),1)
+INCLUDE_DIRS += third_party/ffmpeg-xenia third_party/FFmpeg
 # FFmpeg: the same fixed codec/container subset as the existing core.
 FFMPEG_SOURCES := \
  third_party/FFmpeg/libavutil/adler32.c \
@@ -305,6 +309,8 @@ SOURCES_ASM += third_party/FFmpeg/libavutil/aarch64/float_dsp_neon.S \
  third_party/FFmpeg/libavcodec/aarch64/simple_idct_neon.S
 endif
 SOURCES_C += $(FFMPEG_SOURCES)
+endif
+
 
 SOURCES_C += $(addprefix third_party/libretro-common/,formats/xml/rxml.c hash/lrc_hash.c crypto/crypto.c crypto/kdf.c utils/md5.c encodings/encoding_xxh3.c \
  encodings/encoding_xxh64.c encodings/encoding_rzstd.c encodings/encoding_crc32.c encodings/encoding_deflate.c \
@@ -333,3 +339,8 @@ SOURCES_C += libretro/core_io_mailbox.c libretro/core_gpu_tasks.c
 SOURCES_C += libretro/core_input_mailbox.c
 
 SOURCES_C += libretro/core_xma_native.c third_party/libretro-common/formats/wma/rwma_pro.c third_party/libretro-common/formats/wma/rwma_standard.c
+
+SOURCES_C += libretro/core_media_audio.c third_party/libretro-common/formats/audio_transfer.c \
+ third_party/libretro-common/formats/data_transfer.c third_party/libretro-common/formats/mp3/rmp3.c \
+ third_party/libretro-common/formats/wma/rwma_stream.c third_party/libretro-common/memmap/memmap.c
+$(BUILD_DIR)/obj/third_party/libretro-common/formats/audio_transfer.c.o: CPPFLAGS += -DHAVE_RMP3 -DHAVE_RWMA

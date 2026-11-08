@@ -13,6 +13,7 @@
 #include <retro_atomic.h>
 #include <mutex>
 #include "libretro/core_xma_packet.h"
+#include "libretro/core_xma_native.h"
 
 #include "xenia/memory.h"
 #include "xenia/xbox.h"
@@ -26,13 +27,6 @@
 // https://github.com/koolkdev/libertyv/blob/master/libav_wrapper/xma2dec.c
 // https://hcs64.com/mboard/forum.php?showthread=14818
 // https://github.com/hrydgard/minidx9/blob/master/Include/xma2defs.h
-
-// Forward declarations
-struct AVCodec;
-struct AVCodecParserContext;
-struct AVCodecContext;
-struct AVFrame;
-struct AVPacket;
 
 namespace xe {
 namespace apu {
@@ -234,10 +228,8 @@ class XmaContext {
   static constexpr uint32_t kFrameCapacity = XE_XMA_PACKET_CAPACITY;
   bool AllocateFramePacket();
   bool SetFramePacketSize(uint32_t size);
-  // Borrowed from av_packet_->buf; byte0 holds bit offsets. The packet owns
-  // both the assembly storage and the codec's required read padding.
   uint8_t* xma_frame_ = nullptr;
-  static void DumpRaw(AVFrame* frame, int id);
+  bool DecodeFramePacket(uint32_t size, rwma_frame* frame);
   // Convert sample format and swap bytes
   static void ConvertFrame(const uint8_t** samples, bool is_two_channel,
                            uint8_t* output_buffer);
@@ -250,11 +242,7 @@ class XmaContext {
   retro_atomic_int_t is_allocated_{0};
   retro_atomic_int_t is_enabled_{0};
 
-  // ffmpeg structures
-  AVPacket* av_packet_ = nullptr;
-  const AVCodec* av_codec_ = nullptr;
-  AVCodecContext* av_context_ = nullptr;
-  AVFrame* av_frame_ = nullptr;
+  xe_xma_native_owner native_ = {};
 };
 
 }  // namespace apu
