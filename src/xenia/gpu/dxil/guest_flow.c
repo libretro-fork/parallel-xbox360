@@ -232,8 +232,11 @@ static int emit_call_or_jump(Flow *f, const Control *c, unsigned index) {
   depth = load(f, f->call_depth);
   increased = binary(f, DXIL_BINOP_ADD, depth, integer(f, 1));
   below_limit = compare(f, DXIL_ICMP_ULT, depth, integer(f, 4));
-  if (!depth || !increased || !below_limit) return 0;
-  increased = dxil_emit_select(f->module, below_limit, increased, integer(f, 4));
+  if (!depth || !increased || !below_limit || !new_block(f, &taken) ||
+      !dxil_emit_branch(f->module, below_limit, taken, target(f, index + 1)) ||
+      !begin(f, taken)) return 0;
+  /* Like the interpreter: an exhausted four-entry stack skips the call,
+   * without shifting away a live return address. */
   return store(f, f->call_depth, increased) &&
     push(f, f->return_address, integer(f, index + 1)) && jump(f, c->low & 8191);
 }

@@ -12,7 +12,7 @@ for /L %%I in (0,1,4) do (
  "%OUT%\generator.exe" "%OUT%\case%%I.dxil" flow %%I
  if errorlevel 1 goto fail
 )
-for /L %%I in (11,1,43) do (
+for /L %%I in (11,1,44) do (
  "%OUT%\generator.exe" "%OUT%\case%%I.dxil" flow %%I
  if errorlevel 1 goto fail
 )
@@ -20,7 +20,7 @@ for /L %%I in (5,1,10) do (
  "%OUT%\generator.exe" "%OUT%\case%%I.dxil" flow %%I
  if not errorlevel 1 goto fail
 )
-echo PASS: MSVC C89 writer, 38 flow fixtures, state-slot counts and six invalid programs
+echo PASS: MSVC C89 writer, 39 flow fixtures, state-slot counts and six invalid programs
 popd
 exit /b 0
 :fail

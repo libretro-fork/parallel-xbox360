@@ -48,7 +48,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     // version number! Backends add it to their dated
     // PipelineDescription::kVersion, so bumping either one is enough. Only
     // ever raise it, a reverted layout change needs another bump.
-    static constexpr uint32_t kVersion = 23;
+    static constexpr uint32_t kVersion = 24;
 
     enum class DepthStencilMode : uint32_t {
       kNoModifiers,
@@ -682,6 +682,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
       const ParsedLoopStartInstruction& instr) override;
   void ProcessLoopEndInstruction(
       const ParsedLoopEndInstruction& instr) override;
+  void ProcessCallInstruction(const ParsedCallInstruction& instr) override;
+  void ProcessReturnInstruction(const ParsedReturnInstruction& instr) override;
   void ProcessJumpInstruction(const ParsedJumpInstruction& instr) override;
   void ProcessAllocInstruction(const ParsedAllocInstruction& instr,
                                uint8_t export_eM) override;
@@ -1365,6 +1367,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
   spv::Id main_system_constant_flags_;
   // bool.
   spv::Id var_main_predicate_;
+  // Only shaders with calls: uint4 return addresses (top at x), uint depth.
+  spv::Id var_main_call_stack_ = spv::NoResult;
+  spv::Id var_main_call_depth_ = spv::NoResult;
   // uint4.
   spv::Id var_main_loop_count_;
   // int4.

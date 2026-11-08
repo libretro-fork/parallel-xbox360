@@ -55,8 +55,8 @@ Evidence
 Limits
 ------
 Vulkan fixture output is validated but not physically GPU-executed here.
-Vulkan's missing ProcessCallInstruction/ProcessReturnInstruction overrides are
-an existing limitation; call-to-next tests assert Vulkan label retention and
+At0186, Vulkan's missing ProcessCallInstruction/ProcessReturnInstruction overrides
+were an existing limitation (implemented later in0188); call-to-next tests assert Vulkan label retention and
 CPU semantics, NOT correct SPIR-V subroutine execution. Native DXIL subroutine
 execution is tested. Shader-arena orphan records survive until owner reset;
 this does not eliminate every shader allocation. Prewalking and liveness scans

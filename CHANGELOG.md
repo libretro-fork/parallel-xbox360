@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Implement Vulkan guest shader calls and returns, which previously reached empty handlers. Calls honor bool/predicate conditions, retain a fixed four-entry return stack only in shaders that use subroutines, and return through the existing PC loop. Empty-stack returns fall through; full-stack calls skip without corrupting live return addresses. Apply that overflow behavior to native DXIL too. New stack-lowering algorithms are MSVC C89 with typed builder callbacks. Raise the shared shader/pipeline cache version so stale compiled output is rebuilt once. No game-specific accuracy or performance improvement is claimed without gameplay coverage.
+
 - Compile Vulkan host GPU timing queries and render-pass profiler counters only when profiling is enabled. Default builds no longer create the otherwise-unused timestamp pool, collect its results or bracket submissions with diagnostic timestamps. Guest occlusion queries and GPU completion behavior remain intact. This removes discarded profiling work; its effect on Dark Souls II performance has not been measured.
 
 - Fix invalid SPIR-V references when a forward jump skips an unreachable block: emitted phi inputs, names and decorations now follow the same live block plan. Filtering borrows original operand spans and retains reusable storage. Remove redundant Vulkan jump-to-next control flow and unused DXIL loop/call/dispatcher state; native DXIL forward jumps branch directly, retaining the dominating dispatcher for backward edges and subroutines. Actual shader tests cover forward branches, calls, loops and orphan blocks. No gameplay speedup is claimed; Vulkan subroutine lowering remains separate work.

@@ -9,7 +9,7 @@ ${MAKE:-make} -j1 build/make/host/dxil-alu-test${EXEEXT:-} HOST_CFLAGS="-O2 -Wno
 generator=build/make/host/dxil-alu-test${EXEEXT:-}
 : > "$out/list.txt"
 i=0
-while test "$i" -le 43; do
+while test "$i" -le 44; do
  if test "$i" -ge 5 && test "$i" -le 10; then
   if "$generator" "$out/case$i.dxil" flow "$i"; then echo "accepted invalid flow $i"; exit 1; fi
  else
@@ -20,4 +20,4 @@ while test "$i" -le 43; do
  fi
  i=$((i+1))
 done
-echo 'PASS: 38 generated DXIL flow fixtures, state-slot counts and six invalid programs'
+echo 'PASS: 39 generated DXIL flow fixtures, state-slot counts and six invalid programs'

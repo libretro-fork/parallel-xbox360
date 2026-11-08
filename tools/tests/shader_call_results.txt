@@ -1,0 +1,63 @@
+Guest shader subroutines (0188, 2026-11-08)
+Parent748450e6c
+
+Implementation
+--------------
+Vulkan previously inherited empty ProcessCallInstruction/ProcessReturnInstruction
+handlers. Calls now use the existing conditional-exec machinery and PC loop.
+The call guard is emitted before OpSelectionMerge, preserving SPIR-V's immediate
+merge/branch adjacency rule. Taken calls push CFindex+1; returns pop a dynamic PC
+and reenter the same main-loop continuation. Real switch cases still reenter the
+loop rather than falling through directly, preserving the NVIDIA workaround.
+
+Only shaders marked uses_subroutine_calls allocate a uint4 return stack plus
+uint depth. Four entries match the existing interpreter. Empty RET falls through;
+call with full stack skips unchanged. DXIL previously saturated the depth but
+shifted away a valid return address; it now skips without mutation too.
+The fixed C89 SSA lowering borrows four local component IDs directly through the
+existing builder callback adapter. There is no heap operand vector, host call
+stack, new mutex, frontend handoff or audio scheduling change. Shader building
+still uses the existing owned instruction arena; this is not zero-allocation
+translation. Repeated rectangle-list invocations clear both stack and depth.
+Reset clears the translator's state IDs before freeing its prior builder.
+
+SpirvShaderTranslator::Modification::kVersion23 ->24 invalidates both Vulkan and
+D3D12 persisted pipeline configuration keys. Existing shader cache data must
+rebuild once so old silently incorrect subroutine output is not reused.
+
+Verification
+------------
+- Full static GNU Make/MinGW core, make-j5: PASS.
+- Full native Release MSVC/Ninja xenia-libretro, --parallel5: PASS.
+  Full core builds ran serially.
+- C89 SSA lowering:10000 four-level push/pop sequences with exact LIFO addresses,
+  empty/full guard values, plus seven push and eight pop SSA-failure positions:
+  PASS under GNU pedantic C89, MSVC /TC/W4/WX, Linux ASan+UBSan halt_on_error.
+- Actual packed microcode tests use ShaderInterpreter and SpirvShaderTranslator.
+  Existing16 VS/PS flow cases +10 nested VS/PS cases cover four-level nesting,
+  attempted fifth call, true/false bool and predicate expectations, unconditional
+  calls, call-to-next, empty return and genuine shared labels. CPU export values
+  match independent constants; emitted modules contain the return stack rather
+  than silently ignoring calls. All26 +3 builder orphan modules pass spirv-val
+  --target-env vulkan1.1 for GNU and native MSVC fixture outputs.
+-39 native DXIL fixtures, including new overflow case44: Microsoft SDK10.0.26100
+  dxil.dll validation PASS; all88 output words match on WARP and NVIDIA
+  vendor10de/device2b85. Full existing loop/call/forward fixture matrix reexecuted.
+  GNU/native MSVC runners also reject the six malformed programs.
+- Scoped native MSVC AddressSanitizer build of actual ShaderTranslator,
+  SpirvShaderTranslator, SpvBuilder and the real C89/typed fixtures: PASS,
+  including the nested call cases. Supporting libraries remain Release.
+- Independent read-only review covered conditional/return CFGs, continuation
+  labels, vector/scalar types, owner-reset/invocation lifetimes and both backend
+  persisted-cache version composition. No additional actionable issue found.
+
+Limits
+------
+Vulkan modules were validated, not numerically executed on a physical Vulkan GPU.
+The packed interpreter's golden results do not prove emitted Vulkan numerical
+execution; they establish the intended guest semantics. C89 SSA execution tests
+exercise stack lowering, not the whole renderer. No game/installed-DLL test,
+visual graphics-accuracy claim, GPU timing, FPS or compilation-speed measurement
+is made. Undefined/unbounded guest recursion beyond the four-entry stack is not
+accepted as a reason to corrupt host or shader return storage. The broader
+optimization and savestate goals remain incomplete.

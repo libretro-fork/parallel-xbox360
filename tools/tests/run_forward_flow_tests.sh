@@ -10,7 +10,7 @@ CXX="${CXX:-c++} $out/driver.o" TEST_SOURCE=tools/tests/forward_flow_bridge.cc \
  TEST_ARGUMENT="$out" TEST_BUILD_DIR="$out" sh tools/tests/run_shader_publication_tests.sh
 
 if test -n "${SPIRV_VALIDATOR:-}"; then
- for file in "$out"/stage*.spv "$out"/orphan-phase*.spv; do
+ for file in "$out"/stage*.spv "$out"/nested-stage*.spv "$out"/orphan-phase*.spv; do
   "$SPIRV_VALIDATOR" --target-env vulkan1.1 "$file"
  done
 fi

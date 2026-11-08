@@ -93,6 +93,26 @@ static const uint32_t call_next[] = {
   0xc8018000,0,0xe2000000
 };
 
+/* Fifth nested call skips without corrupting four live return addresses. */
+static const uint32_t call_overflow[] = {
+ CF_PAIR(0x2004,0x9000,0x100f,0x1000),
+ CF_PAIR(0x201c,0xb000,0,0),
+ CF_PAIR(0x100f,0x1000,0x2008,0x9000),
+ CF_PAIR(0,0xa000,0x201c,0xb000),
+ CF_PAIR(0x100f,0x1000,0x200c,0x9000),
+ CF_PAIR(0,0xa000,0x201c,0xb000),
+ CF_PAIR(0x100f,0x1000,0x2010,0x9000),
+ CF_PAIR(0,0xa000,0x201c,0xb000),
+ CF_PAIR(0x100f,0x1000,0x2014,0x9000),
+ CF_PAIR(0,0xa000,0x201c,0xb000),
+ CF_PAIR(0x100f,0x1000,0,0),
+ CF_PAIR(0,0xa000,0x201c,0xb000),
+ CF_PAIR(0,0,0,0),CF_PAIR(0,0,0,0),
+ CF_PAIR(0x1010,0x2000,0,0),
+ 0xc8010000,0x00000100,0xa0000000,
+ 0xc8018000,0,0xe2000000
+};
+
 static const uint32_t bad_jump[] = {CF_PAIR(0x3fff,0xb000,0,0x2000)};
 static const uint32_t bad_exec[] = {CF_PAIR(0x1fff,0x2000,0,0)};
 
@@ -113,7 +133,8 @@ static const Program programs[] = {
   {repeat_break,ARRAY_SIZE(repeat_break),12,{0xff0503,0x026302},{48,48,0,0,0,0,0,0},48,0,1},
   {zero_fetch,ARRAY_SIZE(zero_fetch),8,{0x010700,0},{0,0,0,0,50,2,0,0},2,7,0},
   {predicate_calls,ARRAY_SIZE(predicate_calls),16,{0x010003,0},{3,2,0,0,0,0,0,0},3,0,1},
-  {call_next,ARRAY_SIZE(call_next),6,{0,0},{2,0,0,0,0,0,0,0},2,0,0}
+  {call_next,ARRAY_SIZE(call_next),6,{0,0},{2,0,0,0,0,0,0,0},2,0,0},
+  {call_overflow,ARRAY_SIZE(call_overflow),30,{0,0},{5,0,0,0,0,0,0,0},5,0,0}
 };
 
 /* Acyclic packed CFGs with forward conditional/unconditional/next edges,
@@ -235,14 +256,14 @@ int xe_dxil_flow_test(struct dxil_module *m, const char *path, unsigned index) {
   int result = 0;
   size_t old_blocks = m->cur_emitting_func->num_basic_block_ids;
   size_t length = strlen(path);
-  if (index > 43 || length > (size_t)-1 - 10) return 0;
+  if (index > 44 || length > (size_t)-1 - 10) return 0;
   if (dxil_function_reserve_blocks(m, 0, &first) || first != 123 ||
       dxil_function_reserve_blocks(m, UINT_MAX, &first) || first != 123 ||
       m->cur_emitting_func->num_basic_block_ids != old_blocks) return 0;
   memset(&fixture, 0, sizeof(fixture));
   fixture.storage.module = m;
   fixture.storage.current_block = &fixture.current_block;
-  fixture.program = &programs[index < 5 ? index : (index==43?5:3)];
+  fixture.program = &programs[index < 5 ? index : (index==44?6:(index==43?5:3))];
   if(index>=11 && index<=42) {forward_program(&generated,generated_words,index-11);fixture.program=&generated;}
   array = dxil_module_get_array_type(m, dxil_module_get_float_type(m, 32), 256);
   fixture.storage.registers = dxil_emit_alloca(m, array, dxil_module_get_int32_const(m, 1), 4);
@@ -274,7 +295,7 @@ int xe_dxil_flow_test(struct dxil_module *m, const char *path, unsigned index) {
   if (index == 10) flow.allocation = NULL;
   old_allocas=count_allocas(m);
   if (!xe_dxil_emit_guest_flow(&flow)) return 0;
-  expected_allocas=index>=11 && index<=42?5u:(index==1 || index==43?11u:((index==2 || index==3)?14u:19u));
+  expected_allocas=index>=11 && index<=42?5u:(index==1 || index>=43?11u:((index==2 || index==3)?14u:19u));
   printf("flow %u: %u state alloca nodes (expected %u)\n",index,count_allocas(m)-old_allocas,expected_allocas);
 #ifndef XE_FLOW_REFERENCE
   if(count_allocas(m)-old_allocas!=expected_allocas)return 0;

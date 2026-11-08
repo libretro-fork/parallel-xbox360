@@ -8,6 +8,7 @@
  */
 
 #include "xenia/gpu/spirv_shader_translator.h"
+#include "xenia/gpu/spirv_shader_call.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -290,6 +291,7 @@ ShaderBinary SpirvShaderTranslator::CreateDepthOnlyFragmentShader(
 void SpirvShaderTranslator::Reset() {
   resource_bindings_lock_ = {};
   preloaded_resource_bindings_ = false;
+  var_main_call_stack_ = var_main_call_depth_ = spv::NoResult;
   ShaderTranslator::Reset();
 
   // A partial switch may still be owned outside the builder's IR graph.
@@ -855,6 +857,14 @@ void SpirvShaderTranslator::StartTranslation() {
     var_main_predicate_ = builder_->createVariable(
         spv::NoPrecision, spv::StorageClassFunction, type_bool_,
         "xe_var_predicate", builder_->makeBoolConstant(false));
+    if (current_shader().uses_subroutine_calls()) {
+      var_main_call_stack_ = builder_->createVariable(
+          spv::NoPrecision, spv::StorageClassFunction, type_uint4_,
+          "xe_var_call_stack", const_uint4_0_);
+      var_main_call_depth_ = builder_->createVariable(
+          spv::NoPrecision, spv::StorageClassFunction, type_uint_,
+          "xe_var_call_depth", const_uint_0_);
+    }
     var_main_loop_count_ = builder_->createVariable(
         spv::NoPrecision, spv::StorageClassFunction, type_uint4_,
         "xe_var_loop_count", const_uint4_0_);
@@ -1091,10 +1101,7 @@ ShaderBinary SpirvShaderTranslator::CompleteTranslation() {
     builder_->setBuildPoint(main_loop_continue_);
     if (has_main_switch) {
       // OpPhi, if added, must be the first in the block.
-      // If labels were added, but not jumps (for example, due to the call
-      // instruction not being implemented as of October 18, 2020), send an
-      // impossible program counter value (-1) to the OpPhi at the next
-      // iteration.
+      // If the continuation has no incoming jump, send an impossible PC (-1).
       if (!main_loop_pc_next_op_) {
         main_loop_pc_next_op_ = builder_->makeInstruction(
             main_loop_pc_next_, type_int_, spv::OpCopyObject);
@@ -1662,6 +1669,52 @@ void SpirvShaderTranslator::ProcessLoopEndInstruction(
   // Now going to fall through to the next control flow instruction.
 }
 
+void SpirvShaderTranslator::ProcessCallInstruction(
+    const ParsedCallInstruction& instr) {
+  ParsedExecInstruction::Type type = ParsedExecInstruction::Type::kUnconditional;
+  if (instr.type == ParsedCallInstruction::Type::kConditional)
+    type = ParsedExecInstruction::Type::kConditional;
+  else if (instr.type == ParsedCallInstruction::Type::kPredicated)
+    type = ParsedExecInstruction::Type::kPredicated;
+  UpdateExecConditionals(type, instr.bool_constant_index, instr.condition);
+  CloseInstructionPredication();
+  if (builder_->getBuildPoint()->isTerminated()) return;
+
+  SpirvCallAdapter adapter{builder_.get(),type_uint_,type_uint4_,type_bool_};
+  const xe_shader_call_ops ops = adapter.ops();
+  spv::Block& taken = builder_->makeNewBlock();
+  spv::Block& after = builder_->makeNewBlock();
+  const spv::Id can_push = xe_shader_call_guard(&ops,var_main_call_depth_,1);
+  builder_->createSelectionMerge(&after,spv::SelectionControlMaskNone);
+  builder_->createConditionalBranch(can_push,&taken,&after);
+  builder_->setBuildPoint(&taken);
+  if (!xe_shader_call_push(&ops,var_main_call_stack_,var_main_call_depth_,
+                          instr.dword_index+1)) throw std::bad_alloc();
+  AppendMainLoopIncoming(builder_->makeIntConstant(int(instr.target_address)));
+  builder_->createBranch(main_loop_continue_);
+  builder_->setBuildPoint(&after);
+}
+
+void SpirvShaderTranslator::ProcessReturnInstruction(
+    const ParsedReturnInstruction&) {
+  CloseExecConditionals();
+  if (!current_shader().uses_subroutine_calls()) return;
+  EnsureBuildPointAvailable();
+  SpirvCallAdapter adapter{builder_.get(),type_uint_,type_uint4_,type_bool_};
+  const xe_shader_call_ops ops = adapter.ops();
+  spv::Block& taken = builder_->makeNewBlock();
+  spv::Block& after = builder_->makeNewBlock();
+  const spv::Id can_pop = xe_shader_call_guard(&ops,var_main_call_depth_,0);
+  builder_->createSelectionMerge(&after,spv::SelectionControlMaskNone);
+  builder_->createConditionalBranch(can_pop,&taken,&after);
+  builder_->setBuildPoint(&taken);
+  const spv::Id target = xe_shader_call_pop(&ops,var_main_call_stack_,var_main_call_depth_);
+  if (!target) throw std::bad_alloc();
+  AppendMainLoopIncoming(builder_->createUnaryOp(spv::OpBitcast,type_int_,target));
+  builder_->createBranch(main_loop_continue_);
+  builder_->setBuildPoint(&after);
+}
+
 void SpirvShaderTranslator::ProcessJumpInstruction(
     const ParsedJumpInstruction& instr) {
   if (instr.target_address == instr.dword_index + 1) {
@@ -1771,6 +1824,10 @@ void SpirvShaderTranslator::ResetUcodeInvocationStateInMain() {
   }
 
   builder_->createStore(builder_->makeBoolConstant(false), var_main_predicate_);
+  if (var_main_call_stack_ != spv::NoResult) {
+    builder_->createStore(const_uint4_0_,var_main_call_stack_);
+    builder_->createStore(const_uint_0_,var_main_call_depth_);
+  }
   builder_->createStore(const_uint4_0_, var_main_loop_count_);
   builder_->createStore(const_int_0_, var_main_address_register_);
   builder_->createStore(const_int4_0_, var_main_loop_address_);
