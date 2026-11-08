@@ -27,6 +27,7 @@
 #include "libretro/core_spv_plan.h"
 #include "libretro/core_float_rtz_emit.h"
 #include "libretro/core_texture_lanes.h"
+#include "libretro/core_spv_bindings.h"
 #include "xenia/gpu/spirv_builder.h"
 #include "xenia/gpu/xenos.h"
 
@@ -573,6 +574,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
         draw_resolution_scale_y_(draw_resolution_scale_y) {}
 
   ~SpirvShaderTranslator() override {
+    xe_spv_bindings_close(&texture_bindings_);
+    xe_spv_bindings_close(&sampler_bindings_);
     xe_spv_scratch_close(&id_scratch_);
     xe_spv_scratch_close(&id_scratch_util_);
     xe_spv_scratch_close(&literal_scratch_);
@@ -699,24 +702,14 @@ class SpirvShaderTranslator : public ShaderTranslator {
 
  private:
   friend struct SpirvTextureSamplingTestAccess;
-  struct TextureBinding {
-    uint32_t fetch_constant;
-    // Stacked and 3D are separate TextureBindings.
-    xenos::FetchOpDimension dimension;
-    bool is_signed;
-
-    spv::Id variable;
-  };
-
-  struct SamplerBinding {
-    uint32_t fetch_constant;
-    xenos::TextureFilter mag_filter;
-    xenos::TextureFilter min_filter;
-    xenos::TextureFilter mip_filter;
-    xenos::AnisoFilter aniso_filter;
-
-    spv::Id variable;
-  };
+  using TextureBinding = xe_spv_binding_record;
+  using SamplerBinding = xe_spv_binding_record;
+  TextureBinding& TextureBindingAt(size_t index) {
+    return xe_spv_bindings_data(&texture_bindings_)[index];
+  }
+  SamplerBinding& SamplerBindingAt(size_t index) {
+    return xe_spv_bindings_data(&sampler_bindings_)[index];
+  }
 
   // Builder helpers.
   spv::Id SpirvSmearScalarResultOrConstant(spv::Id scalar, spv::Id vector_type);
@@ -1276,8 +1269,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // maxPerStageDescriptorSamplers is often lower than
   // maxPerStageDescriptorSampledImages, and for every fetch constant, there
   // are, for regular fetches, two bindings (unsigned and signed).
-  std::vector<TextureBinding> texture_bindings_;
-  std::vector<SamplerBinding> sampler_bindings_;
+  xe_spv_bindings texture_bindings_ = {};
+  xe_spv_bindings sampler_bindings_ = {};
 
   // VS as VS only - int.
   spv::Id input_vertex_index_;

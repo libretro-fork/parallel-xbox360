@@ -166,6 +166,8 @@ Shader CFG output calls a function pointer with borrowed context, removing `std:
 
 Memory-export shader generation now uses 34 direct loops over a C89 scalar mask iterator, removing its two nested `std::function` helpers and their callable copies. Scaled pixel memory-export shaders declare fragment coordinates even when they write no color target, fixing an invalid-input/null-record translation path. The actual microcode matrix and allocation/timing results are documented in `tools/tests/spv_memexport_bench_results.txt`; callback conversion elsewhere in the core remains unfinished.
 
+Vulkan translation binding scratch uses eight-byte C89 key/variable records with sixteen inline entries per table and retained checked growth. Exact-key lookup preserves first-use descriptor order. Immutable published bindings still own separate packed records; temporary builder IDs stay local to the translator. Larger high-water binding sets can still allocate and copy live scratch records. See [binding scratch checks and measurements](tools/tests/spv_bindings_results.txt).
+
 Vulkan texture, sampler, interpolator and memexport resource names construct directly in bounded C89 stack storage. The builder copies the final name into its owned SPIR-V operand; temporary formatted strings and string streams are removed. This is a translation-path allocation reduction, not a claim of copy-free shader assembly or measured gameplay gains. See [resource-name checks](tools/tests/shader_names_results.txt).
 
 ## Savestate work in progress

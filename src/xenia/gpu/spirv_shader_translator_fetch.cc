@@ -764,25 +764,25 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                     const_float_vectors_0_[used_result_component_count - 1]);
         return;
       }
-      sampler = builder_->createLoad(sampler_bindings_[sampler_index].variable,
+      sampler = builder_->createLoad(SamplerBindingAt(sampler_index).variable,
                                      spv::NoPrecision);
       const TextureBinding& image_2d_array_or_cube_unsigned_binding =
-          texture_bindings_[image_2d_array_or_cube_unsigned_index];
+          TextureBindingAt(image_2d_array_or_cube_unsigned_index);
       image_2d_array_or_cube_unsigned = builder_->createLoad(
           image_2d_array_or_cube_unsigned_binding.variable, spv::NoPrecision);
       const TextureBinding& image_2d_array_or_cube_signed_binding =
-          texture_bindings_[image_2d_array_or_cube_signed_index];
+          TextureBindingAt(image_2d_array_or_cube_signed_index);
       image_2d_array_or_cube_signed = builder_->createLoad(
           image_2d_array_or_cube_signed_binding.variable, spv::NoPrecision);
       if (image_3d_unsigned_index != SIZE_MAX) {
         const TextureBinding& image_3d_unsigned_binding =
-            texture_bindings_[image_3d_unsigned_index];
+            TextureBindingAt(image_3d_unsigned_index);
         image_3d_unsigned = builder_->createLoad(
             image_3d_unsigned_binding.variable, spv::NoPrecision);
       }
       if (image_3d_signed_index != SIZE_MAX) {
         const TextureBinding& image_3d_signed_binding =
-            texture_bindings_[image_3d_signed_index];
+            TextureBindingAt(image_3d_signed_index);
         image_3d_signed = builder_->createLoad(image_3d_signed_binding.variable,
                                                spv::NoPrecision);
       }
@@ -2820,21 +2820,15 @@ size_t SpirvShaderTranslator::FindOrAddTextureBinding(
   if (dimension == xenos::FetchOpDimension::k1D) {
     dimension = xenos::FetchOpDimension::k2D;
   }
-  for (size_t i = 0; i < texture_bindings_.size(); ++i) {
-    const TextureBinding& texture_binding = texture_bindings_[i];
-    if (texture_binding.fetch_constant == fetch_constant &&
-        texture_binding.dimension == dimension &&
-        texture_binding.is_signed == is_signed) {
-      return i;
-    }
-  }
-  // TODO(Triang3l): Limit the total count to that actually supported by the
-  // implementation.
-  size_t new_texture_binding_index = texture_bindings_.size();
-  TextureBinding& new_texture_binding = texture_bindings_.emplace_back();
-  new_texture_binding.fetch_constant = fetch_constant;
-  new_texture_binding.dimension = dimension;
-  new_texture_binding.is_signed = is_signed;
+  uint32_t key;
+  if(!xe_spv_texture_binding_key(&key,fetch_constant,uint32_t(dimension),is_signed))
+    throw std::bad_alloc();
+  size_t existing=xe_spv_bindings_find(&texture_bindings_,key);
+  if(existing!=SIZE_MAX)return existing;
+  size_t new_texture_binding_index=texture_bindings_.count;
+  TextureBinding* record=xe_spv_bindings_append(&texture_bindings_,key);
+  if(!record)throw std::bad_alloc();
+  TextureBinding& new_texture_binding=*record;
   spv::Dim type_dimension;
   bool is_array;
   unsigned name_dimension;
@@ -2881,25 +2875,16 @@ size_t SpirvShaderTranslator::FindOrAddSamplerBinding(
     // TODO(Triang3l): Limit to what's actually supported by the implementation.
     aniso_filter = std::min(aniso_filter, xenos::AnisoFilter::kMax_16_1);
   }
-  for (size_t i = 0; i < sampler_bindings_.size(); ++i) {
-    const SamplerBinding& sampler_binding = sampler_bindings_[i];
-    if (sampler_binding.fetch_constant == fetch_constant &&
-        sampler_binding.mag_filter == mag_filter &&
-        sampler_binding.min_filter == min_filter &&
-        sampler_binding.mip_filter == mip_filter &&
-        sampler_binding.aniso_filter == aniso_filter) {
-      return i;
-    }
-  }
-  // TODO(Triang3l): Limit the total count to that actually supported by the
-  // implementation.
-  size_t new_sampler_binding_index = sampler_bindings_.size();
-  SamplerBinding& new_sampler_binding = sampler_bindings_.emplace_back();
-  new_sampler_binding.fetch_constant = fetch_constant;
-  new_sampler_binding.mag_filter = mag_filter;
-  new_sampler_binding.min_filter = min_filter;
-  new_sampler_binding.mip_filter = mip_filter;
-  new_sampler_binding.aniso_filter = aniso_filter;
+  uint32_t key;
+  if(!xe_spv_sampler_binding_key(&key,fetch_constant,uint32_t(mag_filter),
+      uint32_t(min_filter),uint32_t(mip_filter),uint32_t(aniso_filter)))
+    throw std::bad_alloc();
+  size_t existing=xe_spv_bindings_find(&sampler_bindings_,key);
+  if(existing!=SIZE_MAX)return existing;
+  size_t new_sampler_binding_index=sampler_bindings_.count;
+  SamplerBinding* record=xe_spv_bindings_append(&sampler_bindings_,key);
+  if(!record)throw std::bad_alloc();
+  SamplerBinding& new_sampler_binding=*record;
   char name[XE_SHADER_NAME_CAPACITY];
   static constexpr char kFilterSuffixes[] = {'p', 'l', 'b', 'f'};
   bool use_aniso=aniso_filter != xenos::AnisoFilter::kUseFetchConst;

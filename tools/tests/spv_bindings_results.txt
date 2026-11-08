@@ -1,0 +1,92 @@
+Vulkan translation binding scratch (0193)
+==================================================
+Change and ownership
+--------------------
+Replace the translator's texture and sampler vectors with single-owner C89
+scratch tables. Each record is an eight-byte logical key and SPIR-V variable ID,
+versus the previous 16-byte texture and 24-byte sampler records on both tested
+x64 compilers. Key equality replaces repeated field comparisons; first-use order
+and duplicate binding reuse are preserved. Texture dimension normalization and
+sampler anisotropy clamping still happen before constructing exact keys.
+
+Each table has sixteen inline records. Checked growth retains capacity; clear
+only resets count. Growth copies live CPU metadata into the new larger owner,
+so this is not an entirely copy-free table. There is no arbitrary binding cap.
+Append initializes its final key/variable record directly, with no temporary
+record or bulk clearing. Failure preserves old storage, count and records.
+Borrowed record views expire on growth; the production fetch path takes its
+references only after adding all required bindings. The builder owns its own
+instructions and never borrows a table record. Translator destruction closes
+both tables after translation work has ended.
+
+These logical keys do not replace persistent-format bytes. Successful generation
+still fills the existing separately owned native bitfields, zeroes texture
+padding, derives the used-texture mask and publishes with the existing release
+atomics. The resource-binding generation mutex and immutable published ownership
+remain. This patch does not remove synchronization needed by shared publishers.
+
+C89 checks
+-----------
+GNU strict C89, MSVC /TC /W4 /WX and GCC ASan/UBSan with leak detection pass:
+- all 256 texture field combinations and 16,384 sampler field combinations,
+  injective exact keys and field recovery, plus invalid inputs without mutation;
+- inline append without allocation, grown record preservation and exact lookup;
+- injected failure at inline-to-heap growth and later heap growth;
+- overflow rejection, retained address/capacity through 1,024 warmed appends,
+  fresh variable initialization, idempotent close and reuse after close.
+
+Commands:
+ sh tools/tests/run_spv_bindings_tests.sh
+ tools\tests\run_spv_bindings_tests.cmd (MSVC developer prompt)
+Both compiler runners are wired into post-build CI.
+
+Actual shader/publication comparison
+------------------------------------
+Before rebuilding, an independent baseline executable was linked to the previous
+GNU core archive and its exact e7f3fb454 translator header. It translated all
+1,863 extracted DS2 material pixel shaders and wrote actual published binding
+bytes. The candidate produces byte-identical count/texture/sampler records for
+all 1,863. Its used-texture masks independently match the baseline texture fields;
+flipped-mask negative controls are rejected. The baseline and candidate use the
+same native-swizzle, 4x4, SPIR-V1.3 profile. Asset aliases are included.
+
+The candidate's native and portable-swizzle profiles produce all 3,726 SPIR-V
+modules byte-identically to e7f3fb454. Those unchanged parent modules were already
+validated for Vulkan1.1. No game bytes are shipped in tests or this report. A second translation of
+each same shader exercises preloaded immutable bindings and retained scratch:
+published pointers/counts/masks stay stable and all 1,863 second modules pass
+Vulkan1.1 validation. First and preloaded translations can use different IDs;
+byte equality between those two phases is not asserted.
+Sixteen actual vertex CALL/RET translations additionally pass SPIR-V validation
+and exact independent GPU output/guard checks on the RTX5090.
+
+Full MinGW Make and native MSVC CMake core builds pass, parallel5. A native
+MSVC metadata executable independently reproduces all 1,863 binding sets and
+used masks byte-identically to GNU; the old published binding bytes are preserved.
+
+Isolated storage/allocation replay
+----------------------------------
+The extracted binding counts reach at most 26 textures and 13 samplers. A private
+single-thread control replays all 1,863 count pairs through one retained pair of
+legacy vectors and one pair of C89 tables. Legacy record definitions match their
+original types/sizes; allocation hooks count requested calls/bytes. This is not
+a whole translator, real-frame or driver benchmark.
+
+                         GNU16.2        MSVC19.44       C89 tables (both)
+Allocation calls         11             16              1
+Total requested bytes    1,752          2,272           256
+Final retained bytes     944            808             560
+
+Retained bytes include the two vector/table owners (including C89 inline data)
+and final heap payload capacity, but exclude allocator bookkeeping, full object
+layout and all builder/published shader allocations. Both controls begin empty;
+warmed reuse below their high-water capacity already allocates nothing in the
+old and new implementations. Smaller record size reduces growth-copy volume;
+no CPU timing, GPU timing or gameplay gain is claimed.
+
+Limitations
+------------
+Builder instructions, temporary structure members and function parameter vectors
+remain. Larger unseen binding sets can still grow scratch storage mid-game.
+Final packed publication still copies metadata into immutable shader ownership.
+The full optimization goal, including all locks and vectors, remains incomplete.

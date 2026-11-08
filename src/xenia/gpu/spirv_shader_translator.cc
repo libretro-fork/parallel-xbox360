@@ -320,8 +320,8 @@ void SpirvShaderTranslator::Reset() {
   output_point_coordinates_ = spv::NoResult;
   output_point_size_ = spv::NoResult;
 
-  sampler_bindings_.clear();
-  texture_bindings_.clear();
+  sampler_bindings_.count=0;
+  texture_bindings_.count=0;
 
   main_interface_.count = 0;
   bisect_instruction_index_ = 0;
@@ -1067,8 +1067,8 @@ void SpirvShaderTranslator::StartTranslation() {
 ShaderBinary SpirvShaderTranslator::CompleteTranslation() {
   if (preloaded_resource_bindings_) {
     auto* shader = dynamic_cast<SpirvShader*>(&current_shader());
-    if (!shader || texture_bindings_.size() != shader->GetTextureBindingsAfterTranslation().size() ||
-        sampler_bindings_.size() != shader->GetSamplerBindingsAfterTranslation().size()) {
+    if (!shader || texture_bindings_.count != shader->GetTextureBindingsAfterTranslation().size() ||
+        sampler_bindings_.count != shader->GetSamplerBindingsAfterTranslation().size()) {
       EmitTranslationError("Guest resource bindings changed after publication",true);
       return {};
     }
@@ -1328,10 +1328,10 @@ ShaderBinary SpirvShaderTranslator::CompleteTranslation() {
     // Specify the binding indices for samplers when the number of textures is
     // known, as samplers are located after images in the texture descriptor
     // set.
-    size_t texture_binding_count = texture_bindings_.size();
-    size_t sampler_binding_count = sampler_bindings_.size();
+    size_t texture_binding_count = texture_bindings_.count;
+    size_t sampler_binding_count = sampler_bindings_.count;
     for (size_t i = 0; i < sampler_binding_count; ++i) {
-      builder_->addDecoration(sampler_bindings_[i].variable,
+      builder_->addDecoration(SamplerBindingAt(i).variable,
                               spv::DecorationBinding,
                               int(texture_binding_count + i));
     }
@@ -1350,31 +1350,33 @@ void SpirvShaderTranslator::PostTranslation() {
   }
   SpirvShader* spirv_shader = dynamic_cast<SpirvShader*>(&translation.shader());
   if (spirv_shader && !retro_atomic_load_acquire_int(&spirv_shader->bindings_setup_entered_)) {
-    if (!spirv_shader->AllocateBindings(texture_bindings_.size(), sampler_bindings_.size())) {
+    if (!spirv_shader->AllocateBindings(texture_bindings_.count, sampler_bindings_.count)) {
       translation.MakeInvalid();
       return;
     }
     size_t binding_index = 0;
-    for (const TextureBinding& translator_binding : texture_bindings_) {
+    for(size_t i=0;i<texture_bindings_.count;++i) {
+      uint32_t key=TextureBindingAt(i).key;
       SpirvShader::TextureBinding& shader_binding =
           spirv_shader->MutableTextureBindings()[binding_index++];
       // For a stable hash.
       std::memset(&shader_binding, 0, sizeof(shader_binding));
-      shader_binding.fetch_constant = translator_binding.fetch_constant;
-      shader_binding.dimension = translator_binding.dimension;
-      shader_binding.is_signed = translator_binding.is_signed;
+      shader_binding.fetch_constant = key&31;
+      shader_binding.dimension = xenos::FetchOpDimension((key>>5)&3);
+      shader_binding.is_signed = (key>>7)&1;
       spirv_shader->used_texture_mask_ |= UINT32_C(1)
-                                          << translator_binding.fetch_constant;
+                                          << (key&31);
     }
     binding_index = 0;
-    for (const SamplerBinding& translator_binding : sampler_bindings_) {
+    for(size_t i=0;i<sampler_bindings_.count;++i) {
+      uint32_t key=SamplerBindingAt(i).key;
       SpirvShader::SamplerBinding& shader_binding =
           spirv_shader->MutableSamplerBindings()[binding_index++];
-      shader_binding.fetch_constant = translator_binding.fetch_constant;
-      shader_binding.mag_filter = translator_binding.mag_filter;
-      shader_binding.min_filter = translator_binding.min_filter;
-      shader_binding.mip_filter = translator_binding.mip_filter;
-      shader_binding.aniso_filter = translator_binding.aniso_filter;
+      shader_binding.fetch_constant = key&31;
+      shader_binding.mag_filter = xenos::TextureFilter((key>>5)&3);
+      shader_binding.min_filter = xenos::TextureFilter((key>>7)&3);
+      shader_binding.mip_filter = xenos::TextureFilter((key>>9)&3);
+      shader_binding.aniso_filter = xenos::AnisoFilter((key>>11)&7);
     }
     // Publish the bindings to draw-thread readers (GetGuestShader)
     // after they are fully written, so a PS translated on a creation thread is

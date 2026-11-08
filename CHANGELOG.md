@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Replace Vulkan translator texture/sampler vectors with reusable C89 binding scratch: eight-byte exact-key/variable records, sixteen inline records per table and checked retained growth. Reduce metadata, comparisons and cold allocations while preserving descriptor ordering, published binding bytes and texture-use masks. Larger binding sets can still allocate; builder and final immutable shader storage remain. Offline DS2 and failure/reuse checks pass; gameplay gains are unmeasured.
+
 - Construct Vulkan texture, sampler, interpolator and memexport resource names directly in fixed C89 stack storage instead of temporary formatted strings and string streams. The builder retains its owned SPIR-V name operands; compiled output and cache semantics are unchanged. This removes intermediate name allocations/copies during translation, not texture payload transfers.
 
 - Emit texture format conversion only for components the guest fetch actually consumes, using a bounded C89 lane plan and borrowed SSA values. Preserve component indices, packed format fields and arithmetic order; scalar results avoid unused four-lane math. Numerical GPU differentials cover all nonempty masks and encoded width/sign fields, including the original conversion block. Compiled shaders/pipelines rebuild once for the new version. This reduces generated shader work; gameplay performance has not been measured.
