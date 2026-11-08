@@ -168,7 +168,7 @@ def prepare(source, out, results, backend, reuse_build=None):
                      source / "tools/tests/run_forward_flow_tests.cmd"],source,log,float_env)
                 float_exe=out / "float-numeric.exe"
                 run(["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/D_CRT_SECURE_NO_WARNINGS",
-                     "/DXE_VERTEX_TEST_CASES=384","/DXE_FLOAT_RTZ_GPU_TEST",
+                     "/DXE_VERTEX_TEST_CASES=576","/DXE_FLOAT_RTZ_GPU_TEST",
                      "/I"+str(source / "third_party/Vulkan-Headers/include"),HERE / "core_shader_call_vulkan_test.c",
                      "/Fo"+str(out / "float-numeric.obj"),"/Fe"+str(float_exe)],source,log,env)
             else:
@@ -176,7 +176,7 @@ def prepare(source, out, results, backend, reuse_build=None):
                 run(["sh",source / "tools/tests/run_forward_flow_tests.sh"],source,log,float_env)
                 float_exe=out / "float-numeric"
                 run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
-                     "-DXE_VERTEX_TEST_CASES=384","-DXE_FLOAT_RTZ_GPU_TEST","-isystem",source / "third_party/Vulkan-Headers/include",
+                     "-DXE_VERTEX_TEST_CASES=576","-DXE_FLOAT_RTZ_GPU_TEST","-isystem",source / "third_party/Vulkan-Headers/include",
                      HERE / "core_shader_call_vulkan_test.c","-ldl","-o",float_exe],source,log,env)
             run([float_exe,out / "float-correctness"],source,log,env,120)
         result={"cpu": cpu, "pso": exe, "source": source, "out": out}
@@ -383,7 +383,8 @@ def run_comparison(args):
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c"]}
     manifest["corpus_contract"]=dict(version=3,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
-                                    hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,alu_additions=[32,96,256],
+                                    hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
+                                    hardware_alu_cases=576 if args.backend=="vulkan-hardware" else 0,alu_additions=[32,96,256],
                                     profiles="VS/PS, native/portable swizzle,1x/4x",batch=4)
     for name,command in [("compiler",["cl","/Bv"] if WIN else [env.get("CC","cc"),"--version"]),
                          ("cmake",["cmake","--version"])]:

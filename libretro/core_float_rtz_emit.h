@@ -31,6 +31,21 @@ static INLINE xe_rtz_id xe_rtz_emit_flush(xe_rtz_emitter *e,xe_rtz_id bits) {
    xe_rtz_id exponent=RB(AND,bits,RC(UINT32_C(0x7f800000)));
    return RS(RB(EQ,exponent,RC(0)),RB(AND,bits,RC(UINT32_C(0x80000000))),bits);
 }
+/* Lend the already-required zero-exponent predicate to native SM3 multiply.
+ * The original flush recipe remains unchanged for all other callers. */
+static INLINE xe_rtz_id xe_rtz_emit_flush_classified(xe_rtz_emitter *e,
+      xe_rtz_id bits,xe_rtz_id *zero_exponent) {
+   xe_rtz_id exponent,zero,result;
+   if(!zero_exponent){if(e)e->failed=1;return 0;}
+   *zero_exponent=0;
+   if(!e || !e->emit || e->failed || !bits){if(e)e->failed=1;return 0;}
+   exponent=RB(AND,bits,RC(UINT32_C(0x7f800000)));
+   zero=RB(EQ,exponent,RC(0));
+   result=RS(zero,RB(AND,bits,RC(UINT32_C(0x80000000))),bits);
+   if(e->failed || !result)return 0;
+   *zero_exponent=zero;
+   return result;
+}
 static INLINE xe_rtz_id xe_rtz_emit_add(xe_rtz_emitter *e,xe_rtz_id a,xe_rtz_id b,xe_rtz_id native_result) {
    xe_rtz_id z=RC(0),one=RC(1),c23=RC(23),mask=RC(UINT32_C(0x7fffffff));
    xe_rtz_id frac=RC(UINT32_C(0x7fffff)),hidden=RC(UINT32_C(0x800000)),signmask=RC(UINT32_C(0x80000000));

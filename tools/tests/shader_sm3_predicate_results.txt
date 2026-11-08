@@ -1,0 +1,97 @@
+Shared FTZ predicates for native Vulkan SM3 dot products
+2026-11-09
+Parent5811146270c9b3817a3049eaa23039b4aea475ff
+
+Production and ownership
+------------------------
+Add a C89 classified-flush helper returning the sanitized value and its existing
+zero-exponent predicate. It clears the borrowed output on failure; no owned
+buffer, array or tracking table. Preserve the original flush function unchanged
+for unrelated callers. A narrow typed SPIR-V adapter reuses the input predicate
+IDs in one vector OR/select, masked by the original per-lane identity bits.
+Operands/IDs remain borrowed from the exclusive compiler arena. A partial-mask
+constant uses at most four stack IDs, consumed immediately by the existing
+constant interner. Other compiler and driver allocations remain.
+
+Apply only to vertex dot products with native RTZ but no native FTZ and at least
+one differing lane. Keep NoContraction, explicit output FTZ, ordered scalar
+addition and DP2ADD third-operand flushing. No OpDot, FMA, approximation, text
+shader parsing, new worker/queue/lock, payload copy, diagnostic logging or GPU
+roundtrip. Pixel, native-FTZ and software-integer paths retain their prior logic.
+
+Correctness and build coverage
+------------------------------
+-576 actual packed-guest GPU cases PASS for exact parent and candidate on RTX
+ 5090(vendor4318/device11141,driver2604679168). Original384 cases retained; add
+192 same-register yxzw dot cases, including partial lane identity. Finite words
+are bit-exact; only NaN payload canonicalization permitted.
+-Private production negative control changes the shared zero predicate OR to
+AND. Case219 returns7fffffff(NaN) rather than00000000 and fails. Restored
+production passes576 again. No fault-injection branch remains in the patch.
+-Classified C89 helper:65536 bit patterns plus explicit edge, exponent/sign
+coverage and injected per-node callback failures PASS. Missing/null inputs and
+failure outputs checked. Existing4M-operation SSE RTZ/FTZ+DAZ and SSA checks PASS.
+-MSVC /TC /W4 /WX /fp:strict numerical tests and49 real interpreter/feature-mode
+modules PASS. Full MSVC Release core --parallel3 PASS.
+-MinGW C++20 syntax check of actual ALU adapter; strict C89 numeric/fixture and
+576-case Vulkan execution PASS.
+-Linux GCC strict C89 fixture/runtime compile and4M ASan+UBSan numerical/SSA
+plus classified-predicate checks PASS. No full GNU core build claimed here.
+-spirv-val native49,current576 arithmetic modules,candidate64 dot modules and
+parent/candidate128 companion modules PASS. Physical native FTZ, tessellation
+execution and console-reference output are not established by this suite.
+-27 CI guardrail tests PASS. Timed corpus remains288 hardware/80 WARP metrics.
+Numerical hardware coverage is explicitly576 in the manifest.
+
+Byte identity
+-------------
+Original64 and RTZ64 performance modules unchanged. All32 pixel dot modules
+unchanged. Original192 arithmetic and192 software-dot GPU modules unchanged.
+Eight DXIL modules unchanged. Driver module words change only on the targeted
+native-RTZ/manual-FTZ vertex lowering. Guest microcode caches remain usable; no
+cache default/schema change. Driver-internal binary compatibility follows the
+actual new module words, not an assumed warm cache.
+
+Measurements and preserved alarms
+---------------------------------
+Same Release/MSVC toolchain,device/driver and current ABI harness; exact parent
+and candidate sealed at identical build paths. Seven alternating/reverse-order
+samples per condition, no competing local builds during timing. CPU timing is
+supplementary; all elapsed thresholds unchanged. Driver disk/internal cache
+coldness NOT certified.
+
+1.Novel first-use companion measured first. Same procedural fixture except
+34/98/258 dot instructions instead of32/96/256. Parent module hashes differ
+from the standard corpus; no application pipeline cache.96 metrics,zero alarms.
+Heavy first PSOs cases0/2/4 wall(ms):84.6054/148.8621/303.4499 parent,
+48.2757/87.9663/194.3020 candidate. Paired process CPU(ms):78.125/156.250/
+296.875 parent,46.875/93.750/187.500 candidate.
+Translation median across case medians(batch4):0.56065 ->0.56500ms, a small
+increase within declared thresholds; maximum3.5994 ->2.6872ms. Do not claim
+universal translation acceleration from reduced byte counts. Graphics PSO
+median across case medians0.19770 ->0.18090ms; worst303.4499 ->194.3020ms.
+
+2.Initial standard corpus:WARP80 metrics no alarms; hardware288 has THREE
+PSO-tail alarms at cases0/2/4 against previously compiled parent modules.
+Retain this mixed-cache failure; do not discard first samples or label it a
+matched cold pass. Standard64-dot aggregate bytes8,510,048 ->7,213,152(-15.24%).
+
+3.Separate already-seen-module condition:hardware288 and WARP80 metrics,
+seven new pairs,zero alarms. Warm evidence is separate from first-use costs.
+
+Private authorized NG2 replay
+----------------------------
+Current855-word shader emits238,412bytes. This is a current size observation,
+not an isolated parent/candidate speed claim: older1,087,256/366,156/308,856byte
+observations predate multiple distinct changes. Read bounded borrowed VFS cache
+ranges, never slurp the ISO/cache. No raw guest program, generated game module
+or disassembly is published. No installed DLL replaced or game/frontend run.
+
+Limits
+------
+A194ms compile still interrupts gameplay if encountered on the draw path. No
+first-correct-draw,cross-game cold/warm signoff,GPU execution-time,register/RSS
+or allocation-count improvement claim. Native hardware FTZ is unsupported on
+this tested GPU. The broader optimization goal remains incomplete.
+Hosted3c4 software tail repeat remains pending at the last check; the earlier
+e3 repeat passed unchanged thresholds,with its original failure still retained.

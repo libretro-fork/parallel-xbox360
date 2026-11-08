@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Reduce Vulkan vertex dot-product compilation work by reusing input-flush predicates for zero/NaN correction. Keep ordered sums, signed output flushing and lane-alias rules; expand actual-GPU checks to576 cases. First-use stalls remain unresolved.
+
 - Add process-CPU diagnostics and exact timed-executable identities to shader CI alongside the existing elapsed-time gates. Validate timers with controlled blocking/busy fixtures and preserve each retry's artifacts so performance failures remain available for investigation.
 
 - Remove repeated Vulkan denormal checks on dot-product terms and accumulated sums already flushed by the prior operation. Keep result flushing, ordered arithmetic and DP2ADD third-operand validation. Add a finite minimum-normal regression; first-use compilation stalls remain unresolved.

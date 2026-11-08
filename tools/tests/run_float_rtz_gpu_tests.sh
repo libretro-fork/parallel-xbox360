@@ -10,7 +10,7 @@ libs=-ldl
 suffix=
 case $(uname -s) in MINGW*|MSYS*|CYGWIN*) libs=; suffix=.exe ;; esac
 ${CC:-cc} -std=c89 -pedantic -Wno-long-long -Wall -Wextra -Werror -O2 \
- -DXE_VERTEX_TEST_CASES=384 -DXE_FLOAT_RTZ_GPU_TEST -Itools/tests \
+ -DXE_VERTEX_TEST_CASES=576 -DXE_FLOAT_RTZ_GPU_TEST -Itools/tests \
  -isystem third_party/Vulkan-Headers/include tools/tests/core_shader_call_vulkan_test.c \
  $libs -o "$out/runtime$suffix"
 "$out/runtime$suffix" "$out"

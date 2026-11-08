@@ -93,6 +93,36 @@ spv::Id SpirvShaderTranslator::FlushAluDenormals(spv::Id type, spv::Id value) {
   if (!clean || emitter.failed) throw std::bad_alloc();
   return builder_->createUnaryOp(spv::OpBitcast, type, spv::Id(clean));
 }
+spv::Id SpirvShaderTranslator::Sm3DotProducts(spv::Id type, spv::Id a,
+                                            spv::Id b, uint32_t different) {
+  const unsigned count = builder_->getNumComponents(a);
+  if (count < 2 || count > 4) throw std::bad_alloc();
+  RtzEmitContext context = RtzContext(count);
+  xe_rtz_emitter emitter = {&context, &EmitRtzNode, 0};
+  unsigned i;
+  xe_rtz_id zero_a, zero_b;
+  xe_rtz_id clean_a = xe_rtz_emit_flush_classified(&emitter,
+      builder_->createUnaryOp(spv::OpBitcast, context.uint_type, a), &zero_a);
+  xe_rtz_id clean_b = xe_rtz_emit_flush_classified(&emitter,
+      builder_->createUnaryOp(spv::OpBitcast, context.uint_type, b), &zero_b);
+  if (!clean_a || !clean_b || emitter.failed) throw std::bad_alloc();
+  a = builder_->createUnaryOp(spv::OpBitcast, type, spv::Id(clean_a));
+  b = builder_->createUnaryOp(spv::OpBitcast, type, spv::Id(clean_b));
+  spv::Id product = FlushAluDenormals(type,
+      builder_->createNoContractionBinOp(spv::OpFMul, type, a, b));
+  spv::Id zero = builder_->createBinOp(spv::OpLogicalOr, context.bool_type,
+                                     spv::Id(zero_a), spv::Id(zero_b));
+  if (different != (1u << count) - 1) {
+    spv::Id lanes[4];
+    for (i = 0; i < count; ++i)
+      lanes[i] = builder_->makeBoolConstant((different & (1u << i)) != 0);
+    xe_spv_word_view view = {lanes, count};
+    zero = builder_->createBinOp(spv::OpLogicalAnd, context.bool_type, zero,
+        builder_->makeCompositeConstantView(context.bool_type, view));
+  }
+  return builder_->createTriOp(spv::OpSelect, type, zero,
+                              const_float_vectors_0_[count - 1], product);
+}
 spv::Id SpirvShaderTranslator::AluBinaryOperation(spv::Op opcode,
     spv::Id type, spv::Id a, spv::Id b, unsigned flushed_operands) {
   if (is_vertex_shader() && features_.rounding_mode_rtz_float32 &&
@@ -698,13 +728,15 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
                                instr.vector_operands[1]);
       // Only independent products are vectorized; preserve ordered scalar sums.
       const bool native_rtz = is_vertex_shader() && features_.rounding_mode_rtz_float32;
-      spv::Id products = native_rtz ? AluBinaryOperation(
-          spv::OpFMul, type_float_vectors_[component_count - 1],
-          operands[0], operands[1]) : spv::NoResult;
+      const bool fused_zero = native_rtz && !features_.denorm_flush_to_zero_float32 && different;
+      spv::Id products = fused_zero ? Sm3DotProducts(
+          type_float_vectors_[component_count - 1], operands[0], operands[1], different)
+          : native_rtz ? AluBinaryOperation(spv::OpFMul,
+              type_float_vectors_[component_count - 1], operands[0], operands[1]) : spv::NoResult;
       spv::Id result = spv::NoResult;
       for (uint32_t i = 0; i < component_count; ++i) {
-        spv::Id operand_components[2];
-        for (unsigned int j = 0; j < 2; ++j) {
+        spv::Id operand_components[2] = {spv::NoResult, spv::NoResult};
+        for (unsigned int j = 0; !fused_zero && j < 2; ++j) {
           operand_components[j] =
               builder_->createCompositeExtract(operands[j], type_float_, i);
         }
@@ -712,7 +744,7 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
             ? builder_->createCompositeExtract(products, type_float_, i)
             : AluBinaryOperation(spv::OpFMul, type_float_,
                                  operand_components[0], operand_components[1]);
-        if (different & (1 << i)) {
+        if (!fused_zero && (different & (1 << i))) {
           // Shader Model 3: +0 or denormal * anything = +-0.
           product = ZeroIfAnyOperandIsZero(
               product,

@@ -50,6 +50,34 @@ static void faults(void) {
 
 static uint32_t rng=UINT32_C(0x4935967b);
 static uint32_t random_bits(void){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return rng;}
+static void classified_flush_tests(const uint32_t *edges,unsigned edge_count) {
+   Eval v;xe_rtz_emitter emitter;xe_rtz_id result,predicate;
+   uint32_t bits;unsigned i;
+   for(i=0;i<65536;++i) {
+      bits=random_bits();
+      if(i<edge_count)bits=edges[i];
+      else if(i<edge_count+512)bits=(((i-edge_count)&255)<<23) |
+         ((i-edge_count)&256?UINT32_C(0x80000000):0);
+      memset(&v,0,sizeof(v));v.count=1;v.values[1]=bits;
+      emitter.context=&v;emitter.emit=evaluate;emitter.failed=0;
+      result=xe_rtz_emit_flush_classified(&emitter,1,&predicate);
+      CHECK(result && predicate && !emitter.failed);
+      CHECK(v.values[predicate]==(uint32_t)!(bits&UINT32_C(0x7f800000)));
+      CHECK(v.values[result]==((bits&UINT32_C(0x7f800000))?bits:bits&UINT32_C(0x80000000)));
+   }
+   for(i=1;i<12;++i) {
+      memset(&v,0,sizeof(v));v.count=1;v.fail_at=i;
+      emitter.context=&v;emitter.emit=evaluate;emitter.failed=0;predicate=99;
+      result=xe_rtz_emit_flush_classified(&emitter,1,&predicate);
+      if(v.failures)CHECK(!result && !predicate && emitter.failed && v.failures==1);
+      else CHECK(result && predicate && !emitter.failed);
+   }
+   emitter.failed=0;CHECK(!xe_rtz_emit_flush_classified(&emitter,1,NULL) && emitter.failed);
+   predicate=99;CHECK(!xe_rtz_emit_flush_classified(NULL,1,&predicate) && !predicate);
+   emitter.failed=0;predicate=99;
+   CHECK(!xe_rtz_emit_flush_classified(&emitter,0,&predicate) && !predicate && emitter.failed);
+   puts("PASS: classified FTZ bits/predicate,65536 patterns, exponent/sign coverage and injected emission failures");
+}
 #ifdef XE_RTZ_SSE
 #if defined(_MSC_VER)
 #define NOINLINE __declspec(noinline)
@@ -113,6 +141,7 @@ int main(void) {
       CHECK(v.values[result]==((edges[i]&UINT32_C(0x7f800000))?edges[i]:(edges[i]&UINT32_C(0x80000000))));
    }
    faults();
+   classified_flush_tests(edges,(unsigned)(sizeof(edges)/sizeof(edges[0])));
    CHECK(xe_float_add_rtz_bits(UINT32_C(0x3f800000),UINT32_C(0x33c00000),0)==UINT32_C(0x3f800000));
    CHECK(xe_float_add_rtz_bits(UINT32_C(0x3f800000),UINT32_C(0x80800000),0)==UINT32_C(0x3f7fffff));
    CHECK(xe_float_mul_rtz_bits(UINT32_C(0x7f7fffff),UINT32_C(0x40000000),0)==UINT32_C(0x7f7fffff));

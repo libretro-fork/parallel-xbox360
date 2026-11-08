@@ -434,3 +434,30 @@ maximum19.7005 ->33.4587ms; median18.9081 ->18.8463ms. All64 modules are identic
 This is a different case from the earlier e3bc8472e case12 alert. Both original
 failed reports remain evidence; neither local self-checks nor the new diagnostics
 retroactively resolve them. See tools/tests/shader_cpu_diagnostics_results.txt.
+
+## Share native dot-product flush predicates (2026-11-09)
+
+The C89 emitter may lend the already-required zero-exponent predicate alongside
+a flushed value. Native-RTZ/manual-FTZ dot products reuse those IDs to select
+positive zero when either required operand is zero/subnormal, replacing repeated
+scalar absolute-value/minimum/classification operations. Preserve lane-identity
+masks, ordered scalar sums, output FTZ and the raw DP2ADD third operand check.
+Do not turn the existing flush API into a different recipe for unrelated paths.
+
+Keep timing corpus3 and timing contract2 unchanged. Increase hardware numeric
+coverage to576 real packed-guest cases, preserving the original384 and adding
+192 same-register yxzw cases with differing xy and identical zw lanes. Classified
+C89 flush tests cover65536 patterns, signs/exponents and callback failures. A
+private negative control using AND instead of OR for zero predicates must fail
+zero-times-NaN/Inf output; the restored path must pass.
+
+Keep three conditions visible. The first standard comparison again has three
+PSO tail alarms when previously compiled parent modules meet new candidate
+modules. Retain those raw samples. A separate already-seen comparison passes
+hardware288 and WARP80 metrics. A novel companion using34/98/258 dot operations
+instead of32/96/256 gives96 metrics without alarms: worst observed PSO
+303.4499 ->194.3020ms, with paired process CPU296.875 ->187.500ms. This supports
+reduced compiler work, without certifying empty driver disk/internal caches or
+gameplay smoothness. The standard dot corpus shrinks8,510,048 ->7,213,152 bytes.
+Do not describe the194ms remaining stall as invisible. Full details, including
+unchanged outputs and unsupported coverage: tools/tests/shader_sm3_predicate_results.txt.
