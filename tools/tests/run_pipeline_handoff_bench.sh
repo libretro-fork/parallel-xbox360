@@ -3,10 +3,12 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 out=${TEST_BUILD_DIR:-"$root/build/tests/pipeline-handoff-$(uname -s)"}
 mkdir -p "$out/base"
-baseline=$(git -C "$root" rev-parse --verify "${BASELINE_COMMIT:-8ce2f22a}^{commit}")
+baseline=$(git -C "$root" rev-parse --verify "${BASELINE_COMMIT:-ceff30100bb57080dbb73523137aca8772869c85}^{commit}")
 for f in libretro/core_job_pool.c libretro/core_job_pool.h libretro/core_pipeline_order.c libretro/core_pipeline_order.h src/xenia/gpu/pipeline_creation_queue.h src/xenia/gpu/pipeline_publish_order.h; do
  mkdir -p "$out/base/$(dirname "$f")"
- git -C "$root" show "$baseline:$f" > "$out/base/$f"
+ if git -C "$root" cat-file -e "$baseline:$f" 2>/dev/null; then
+  git -C "$root" show "$baseline:$f" > "$out/base/$f"
+ fi
 done
 if git -C "$root" cat-file -e "$baseline:libretro/core_completion.h" 2>/dev/null; then
  git -C "$root" show "$baseline:libretro/core_completion.h" > "$out/base/libretro/core_completion.h"
@@ -20,13 +22,15 @@ ${CC:-cc} $flags -Wall -Wextra -Werror -c "$root/tools/tests/core_pipeline_bench
 for mode in baseline current; do
  src=$root
  if test "$mode" = baseline; then src="$out/base"; fi
+ objects=
  for f in core_job_pool core_pipeline_order; do
+  test -f "$src/libretro/$f.c" || continue
+  objects="$objects $out/$mode-$f.o"
   ${CC:-cc} $flags -DXE_CAPTURE_ALLOCATIONS -include "$root/tools/tests/core_pipeline_bench_profile.h" \
    -I"$common/include" -c "$src/libretro/$f.c" -o "$out/$mode-$f.o"
  done
  ${CXX:-c++} -std=c++20 -O3 -I"$src" -I"$src/src" -I"$root/tools/tests" -I"$common/include" \
-  "$root/tools/tests/core_pipeline_handoff_bench.cc" "$out/$mode-core_job_pool.o" \
-  "$out/$mode-core_pipeline_order.o" "$out/profile.o" "$out/rthreads.o" "$out/retro_eventcount.o" \
+  "$root/tools/tests/core_pipeline_handoff_bench.cc" $objects "$out/profile.o" "$out/rthreads.o" "$out/retro_eventcount.o" \
   -pthread -o "$out/$mode.exe"
 done
 if test "${BUILD_ONLY:-0}" != 1; then

@@ -180,12 +180,9 @@ bool PipelineCache::Initialize() {
 }
 
 void PipelineCache::Shutdown() {
-  // Shut down all threads, before destroying the pipelines since they may be
-  // creating them. Nothing can be parked for publishing once they are joined,
-  // so release whatever was still held back.
-  creation_queue_.Shutdown([](Pipeline*, ID3D12PipelineState* state) {
-    if (state) state->Release();
-  });
+  // Join creators before releasing entry-owned handles and retirement storage.
+  // Completed results have already published; cancel only unstarted requests.
+  creation_queue_.Shutdown();
 
   xe_dxil_depth_only_set_free(native_depth_only_pixel_shaders_);
   xe_dxil_rov_depth_set_free(native_rov_depth_pixel_shaders_);
@@ -379,7 +376,7 @@ void PipelineCache::InitializeShaderStorage(
         // deferred block in EnsurePipelineShadersTranslated), then the PSO.
         // Nothing is drawing these yet, so they publish as they are built.
         xe_pipeline_flag_store(&new_pipeline->publication, XE_PIPELINE_PENDING, true);
-        creation_queue_.PushUnordered(new_pipeline);
+        creation_queue_.Push(new_pipeline);
       } else {
         // No creation threads: build the DXIL + create the PSO here.
         if (BuildNativePipelineDxil(

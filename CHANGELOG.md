@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Let completed Vulkan/D3D12 draw pipelines become usable without waiting for older unrelated compilations to publish. Remove the ordered result window while retaining borrowed request storage and joined shutdown; make the worker-visible GPU submission counter atomic. A draw still waits for its own required pipeline, so first-use stutter remains unresolved.
+
 - Reduce Vulkan vertex dot-product compilation work by reusing input-flush predicates for zero/NaN correction. Keep ordered sums, signed output flushing and lane-alias rules; expand actual-GPU checks to576 cases. First-use stalls remain unresolved.
 
 - Add process-CPU diagnostics and exact timed-executable identities to shader CI alongside the existing elapsed-time gates. Validate timers with controlled blocking/busy fixtures and preserve each retry's artifacts so performance failures remain available for investigation.

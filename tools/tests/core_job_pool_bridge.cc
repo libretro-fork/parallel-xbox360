@@ -1,12 +1,18 @@
 /* Object/callback interoperability test for the production C89 worker pool. */
 #include "xenia/gpu/pipeline_creation_queue.h"
 #include "libretro/core_pipeline_publication.h"
+#include "core_pipeline_ready_test.h"
+#include <memory>
 #include <cstdio>
 #include <cstdlib>
+static retro_atomic_int_t owned_created, owned_freed;
 struct Input {
   size_t id;
   std::unique_ptr<size_t> owned;
-  explicit Input(size_t value) : id(value), owned(new size_t(value)) {}
+  explicit Input(size_t value) : id(value), owned(new size_t(value)) {
+    retro_atomic_fetch_add_int(&owned_created, 1);
+  }
+  ~Input() { if (owned) retro_atomic_fetch_add_int(&owned_freed, 1); }
   Input(Input&&) noexcept = default;
   Input(const Input&) = delete;
 };
@@ -21,16 +27,24 @@ struct CopyInput {
       : id(value.id), copies(value.copies), moves(value.moves + 1), identity(this) {}
 };
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL adapter line %u\n", unsigned(__LINE__)); std::abort(); } } while (0)
+template <typename Q, typename F> static void shutdown(Q& queue, F&& discard) {
+  if constexpr (requires { queue.Shutdown(); }) queue.Shutdown();
+  else queue.Shutdown(std::forward<F>(discard));
+}
 int main() {
-  size_t expected = 0, discarded = 0;
+  retro_atomic_int_init(&owned_created, 0);
+  retro_atomic_int_init(&owned_freed, 0);
+  retro_atomic_int_t expected;
+  retro_atomic_int_init(&expected, 0);
+  size_t discarded = 0;
   {
     xe::gpu::PipelineCreationQueue<Input, size_t, unsigned> uninitialized;
-    uninitialized.Shutdown([&](const Input&, size_t) { ++discarded; });
+    shutdown(uninitialized, [&](const Input&, size_t) { ++discarded; });
     CHECK(discarded == 0);
   }
   {
     xe::gpu::PipelineCreationQueue<Input, size_t, unsigned> queue;
-    struct Owner { size_t* expected; unsigned magic; } owner = { &expected, 1234 };
+    struct Owner { retro_atomic_int_t* expected; unsigned magic; } owner = { &expected, 1234 };
     queue.Initialize("Pipeline test", &owner,
         [](void* opaque, const Input& input, unsigned* context) {
           CHECK(static_cast<Owner*>(opaque)->magic == 1234);
@@ -41,8 +55,7 @@ int main() {
         [](void* opaque, const Input& input, size_t handle) {
           auto* owner = static_cast<Owner*>(opaque);
           CHECK(owner->magic == 1234);
-          size_t& expected = *owner->expected;
-          CHECK(input.id == expected++);
+          retro_atomic_fetch_add_int(owner->expected, 1);
           CHECK(handle == (input.id == 17 ? size_t(0) : input.id + 1));
           CHECK(input.owned && *input.owned == input.id);
         }, [](void* opaque) {
@@ -59,20 +72,20 @@ int main() {
     queue.DrainOnCallingThread(nullptr);
     queue.AwaitCompletion();
     queue.SetThreadCount(0);
-    CHECK(expected == 12000 && !queue.CompletionPending(completion) && !queue.IsBusy());
-    queue.Shutdown([&](const Input&, size_t) { ++discarded; });
+    CHECK(retro_atomic_load_acquire_int(&expected) == 12000 && !queue.CompletionPending(completion) && !queue.IsBusy());
+    shutdown(queue, [&](const Input&, size_t) { ++discarded; });
     CHECK(discarded == 0);
     /* Cancel queued move-only requests and invalidate the token, then reuse. */
-    for (size_t i = 0; i < 10; ++i) queue.PushUnordered(Input(i));
+    for (size_t i = 0; i < 10; ++i) queue.Push(Input(i));
     completion = queue.WatchCompletion();
     CHECK(queue.CompletionPending(completion));
-    queue.Shutdown([&](const Input&, size_t) { ++discarded; });
+    shutdown(queue, [&](const Input&, size_t) { ++discarded; });
     CHECK(!queue.CompletionPending(completion) && discarded == 0);
     queue.SetThreadCount(3);
     for (size_t i = 12000; i < 12100; ++i) queue.Push(Input(i));
     queue.AwaitCompletion();
-    queue.Shutdown([&](const Input&, size_t) { ++discarded; });
-    CHECK(expected == 12100 && discarded == 0);
+    shutdown(queue, [&](const Input&, size_t) { ++discarded; });
+    CHECK(retro_atomic_load_acquire_int(&expected) == 12100 && discarded == 0);
     for (size_t round = 0; round < 32; ++round) {
       queue.SetThreadCount(3);
       size_t first = 12100 + round * 64;
@@ -82,12 +95,12 @@ int main() {
       queue.AwaitCompletion();
       size_t completion_spins=0;
       while(queue.CompletionPending(completion)) CHECK(++completion_spins<100000000);
-      queue.Shutdown([&](const Input&, size_t) { ++discarded; });
-      CHECK(expected == first + 64 && !queue.CompletionPending(completion) && discarded == 0);
+      shutdown(queue, [&](const Input&, size_t) { ++discarded; });
+      CHECK(retro_atomic_load_acquire_int(&expected) == first + 64 && !queue.CompletionPending(completion) && discarded == 0);
     }
     for (size_t round=0;round<20000;++round) {
       queue.SetThreadCount(3);
-      queue.Push(Input(expected));
+      queue.Push(Input(retro_atomic_load_acquire_int(&expected)));
       uint64_t stale=queue.WatchCompletion();
       completion=queue.WatchCompletion();
       CHECK(!queue.CompletionPending(stale));
@@ -95,39 +108,35 @@ int main() {
       while(queue.CompletionPending(completion)) CHECK(++spins<100000000);
       queue.AwaitCompletion();
     }
-    size_t first = expected;
-    queue.Initialize("Reinitialized pool", &expected,
+    size_t first = size_t(retro_atomic_load_acquire_int(&expected));
+    queue.Initialize("Reinitialized pool", &owner,
         [](void*, const Input& input, unsigned*) { return input.id + 1; },
         [](void* opaque, const Input& input, size_t handle) {
-          size_t& expected = *static_cast<size_t*>(opaque);
-          CHECK(input.id == expected++ && handle == input.id + 1);
+          retro_atomic_fetch_add_int(static_cast<Owner*>(opaque)->expected, 1);
+          CHECK(handle == input.id + 1);
         }, {});
     queue.SetThreadCount(2);
     for (size_t i = first; i < first + 100; ++i) queue.Push(Input(i));
     queue.AwaitCompletion();
-    queue.Shutdown([&](const Input&, size_t) { ++discarded; });
-    CHECK(expected == first + 100 && discarded == 0);
+    shutdown(queue, [&](const Input&, size_t) { ++discarded; });
+    CHECK(retro_atomic_load_acquire_int(&expected) == first + 100 && discarded == 0);
   }
   {
-    size_t next = 0, unexpected = 0;
-    unsigned seen[1000] = {};
+    size_t unexpected = 0;
+    unsigned seen[2000] = {};
     xe::gpu::PipelineCreationQueue<CopyInput, size_t, unsigned> queue;
-    struct CopyState { size_t* next; unsigned* seen; } state = { &next, seen };
+    struct CopyState { unsigned* seen; } state = { seen };
     queue.Initialize("Copy budget", &state,
         [](void*, const CopyInput& input, unsigned*) {
           CHECK(input.copies == 1 && input.moves == 0 && input.identity == &input);
           return input.id + 1;
         }, [](void* opaque, const CopyInput& input, size_t handle) {
           auto* state = static_cast<CopyState*>(opaque);
-          size_t& next = *state->next;
           unsigned* seen = state->seen;
           CHECK(handle == input.id + 1 && input.copies == 1 && input.identity == &input);
-          if (input.id < 1000) {
-            CHECK(input.id == next++ && input.moves == 0);
-          } else {
-            CHECK(input.id < 2000 && input.moves == 0);
-            seen[input.id - 1000] = 1;
-          }
+          CHECK(input.id < 2000 && input.moves == 0);
+          CHECK(seen[input.id] == 0);
+          seen[input.id] = 1;
         }, {});
     queue.SetThreadCount(4);
     for (size_t i = 0; i < 1000; ++i) {
@@ -137,58 +146,15 @@ int main() {
     queue.AwaitCompletion();
     for (size_t i = 1000; i < 2000; ++i) {
       CopyInput input(i);
-      queue.PushUnordered(input);
+      queue.Push(input);
     }
     queue.AwaitCompletion();
-    queue.Shutdown([&](const CopyInput&, size_t) { ++unexpected; });
-    CHECK(next == 1000 && unexpected == 0);
-    for (size_t i = 0; i < 1000; ++i) CHECK(seen[i] == 1);
+    shutdown(queue, [&](const CopyInput&, size_t) { ++unexpected; });
+    CHECK(unexpected == 0);
+    for (size_t i = 0; i < 2000; ++i) CHECK(seen[i] == 1);
   }
-  {
-    slock_t* blocked = slock_new();
-    slock_t* state_lock = slock_new();
-    scond_t* changed = scond_new();
-    unsigned ordered_stored = 0, warm_stored = 0, unexpected = 0;
-    xe_pipeline_publication target;
-    xe_pipeline_publication_init(&target);
-    xe_pipeline_flag_store(&target, XE_PIPELINE_PENDING, 1);
-    CHECK(blocked && state_lock && changed);
-    slock_lock(blocked);
-    xe::gpu::PipelineCreationQueue<Input, size_t, unsigned> queue;
-    struct State { slock_t *blocked, *lock; scond_t* changed; unsigned *ordered, *warm; xe_pipeline_publication* target; };
-    State state = { blocked, state_lock, changed, &ordered_stored, &warm_stored, &target };
-    queue.Initialize("Independent warmup", &state, [](void* opaque, const Input& input, unsigned*) {
-      auto* state = static_cast<State*>(opaque);
-      if (!input.id) { slock_lock(state->blocked); slock_unlock(state->blocked); }
-      return input.id + 1;
-    }, [](void* opaque, const Input& input, size_t handle) {
-      auto* state = static_cast<State*>(opaque);
-      CHECK(handle == input.id + 1 && input.owned);
-      slock_lock(state->lock);
-      if (input.id) {
-        *state->ordered = 1;
-        xe_pipeline_handle_store(state->target, handle);
-        xe_pipeline_flag_store(state->target, XE_PIPELINE_PENDING, 0);
-      }
-      else { CHECK(*state->ordered); *state->warm = 1; }
-      scond_signal(state->changed);
-      slock_unlock(state->lock);
-    }, {});
-    queue.SetThreadCount(2);
-    queue.PushUnordered(Input(0));
-    queue.Push(Input(1));
-    slock_lock(state_lock);
-    while (!ordered_stored)
-      CHECK(scond_wait_timeout(changed, state_lock, 5000000));
-    CHECK(!warm_stored);
-    slock_unlock(state_lock);
-    queue.AwaitPending(&xe_pipeline_is_pending, &target);
-    CHECK(queue.IsBusy() && xe_pipeline_handle_load(&target) == 2);
-    slock_unlock(blocked);
-    queue.AwaitCompletion();
-    queue.Shutdown([&](const Input&, size_t) { ++unexpected; });
-    CHECK(warm_stored && !unexpected);
-    scond_free(changed); slock_free(state_lock); slock_free(blocked);
-  }
-  std::puts("PASS: production creation queue ordered moves, failed creation, caller drain, context ownership, completion tokens, cancellation and reuse");
+  CHECK(retro_atomic_load_acquire_int(&owned_created) ==
+        retro_atomic_load_acquire_int(&owned_freed));
+  CHECK(xe_ready_test());
+  std::puts("PASS: production creation queue borrowed moves, failed creation, caller drain, context ownership, completion tokens, cancellation and reuse");
 }

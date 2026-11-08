@@ -65,6 +65,10 @@ static int compare_sample(const void *a, const void *b) {
 }
 void xe_bench_report(const char *label, size_t size, unsigned workers,
       size_t live, uint64_t *samples, unsigned count, size_t jobs) {
+   unsigned i;
+   printf("%s raw_us bytes=%u workers=%u", label, (unsigned)size, workers);
+   for (i = 0; i < count; ++i) printf(" %llu", (unsigned long long)samples[i]);
+   putchar('\n');
    qsort(samples, count, sizeof(*samples), compare_sample);
    printf("%s bytes=%u workers=%u live=%llu median_us=%llu ns/job=%.1f range_us=%llu..%llu\n",
          label, (unsigned)size, workers, (unsigned long long)live,

@@ -26,7 +26,7 @@ void *xe_job_pool_begin(xe_job_pool *pool);
 void xe_job_pool_commit(xe_job_pool *pool);
 int xe_job_pool_run_one(xe_job_pool *pool, void *context);
 /* A claimed payload remains owned until finish, which may run on another
- * worker after ordered publication. Destroy the payload before this call and
+ * worker after deferred processing. Destroy the payload before this call and
  * never access it afterward. Exactly one owner finishes each lease. */
 int xe_job_pool_finish(xe_job_pool *pool, uint64_t lease);
 int xe_job_pool_busy(xe_job_pool *pool);

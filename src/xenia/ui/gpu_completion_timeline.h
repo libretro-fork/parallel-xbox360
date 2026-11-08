@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <retro_atomic.h>
 
 #include "xenia/base/assert.h"
 
@@ -34,7 +35,9 @@ class GPUCompletionTimeline {
 
   // Always >= 1, so objects never used yet may be associated with the
   // submission index 0.
-  uint64_t GetUpcomingSubmission() const { return upcoming_submission_; }
+  uint64_t GetUpcomingSubmission() const {
+    return (uint64_t)retro_atomic_load_acquire_64(&upcoming_submission_);
+  }
 
   // Awaiting completion or updating the completed submission may mark the
   // device as lost.
@@ -53,7 +56,7 @@ class GPUCompletionTimeline {
   }
 
   bool AwaitSubmissionAndUpdateCompleted(const uint64_t awaited_submission) {
-    assert_true(awaited_submission < upcoming_submission_);
+    assert_true(awaited_submission < GetUpcomingSubmission());
     if (UpdateAndGetCompletedSubmission() < awaited_submission) {
       AwaitSubmissionImpl(awaited_submission);
     }
@@ -74,13 +77,20 @@ class GPUCompletionTimeline {
   }
 
  protected:
-  explicit GPUCompletionTimeline() = default;
+  explicit GPUCompletionTimeline() {
+    retro_atomic_64_init(&upcoming_submission_, 1);
+  }
 
   // Call only after a successful submission, so that it can be awaited later.
-  void IncrementUpcomingSubmission() { ++upcoming_submission_; }
+  void IncrementUpcomingSubmission() {
+    // The command thread is the sole writer. Compilation workers acquire this
+    // index when retiring replaced handles; a plain uint64_t read races here.
+    retro_atomic_store_release_64(&upcoming_submission_,
+        (int64_t)((uint64_t)retro_atomic_load_relaxed_64(&upcoming_submission_) + 1));
+  }
 
   void SetCompletedSubmission(const uint64_t new_completed_submission) {
-    assert_true(new_completed_submission < upcoming_submission_);
+    assert_true(new_completed_submission < GetUpcomingSubmission());
     assert_true(new_completed_submission >= completed_submission_);
     completed_submission_ = new_completed_submission;
   }
@@ -90,7 +100,7 @@ class GPUCompletionTimeline {
   virtual void AwaitSubmissionImpl(uint64_t awaited_submission) = 0;
 
  private:
-  uint64_t upcoming_submission_ = 1;
+  retro_atomic_64_t upcoming_submission_;
 
   uint64_t completed_submission_ = 0;
 };

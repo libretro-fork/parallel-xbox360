@@ -461,3 +461,25 @@ reduced compiler work, without certifying empty driver disk/internal caches or
 gameplay smoothness. The standard dot corpus shrinks8,510,048 ->7,213,152 bytes.
 Do not describe the194ms remaining stall as invisible. Full details, including
 unchanged outputs and unsupported coverage: tools/tests/shader_sm3_predicate_results.txt.
+
+## Independent result publication (2026-11-09)
+
+A request's compilation completion must make its own entry usable even when an
+older request remains in progress. Queue admission order is not a dependency
+between independent pipeline entries. Remove the ordered result window, lend the
+original bounded request slot through Store, then destroy and release that slot.
+Keep backend command order, GPU completion gates and placeholder retirement.
+Only the command owner advances submissions; workers acquire the shared atomic
+submission counter when transferring replaced handles to retirement.
+
+The C89 fault-injection driver must block the first creator while a later entry
+publishes success or either backend's failure policy. AwaitPending must return
+for that entry while the first job remains outstanding. Fill the 4096-slot
+capacity, release the held lease, reuse the entire ring, and verify exact-once
+stores. Shutdown must join a held creator before releasing entry owners.
+The same driver must reject the exact ordered parent within its bounded timeout,
+releasing its artificial block before teardown. Keep move-only/copy-budget,
+cancellation, stale token, resize, MPSC retirement and real backend publication
+coverage. No driver compilation, rendering or guest audio timing claim follows
+from this scheduling test. Shader corpus and elapsed regression gates remain
+unchanged. Results: tools/tests/pipeline_ready_results.txt.

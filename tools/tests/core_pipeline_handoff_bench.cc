@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+struct Counter { unsigned char* seen; };
 struct LargeRequest { uint64_t words[10]; };
 static uint64_t id(const uint64_t& request) { return request; }
 static uint64_t id(const LargeRequest& request) { return request.words[0]; }
@@ -19,7 +20,9 @@ static uint64_t create(const LargeRequest& request) {
   return sum;
 }
 template <typename T> static void measure(const char* label, unsigned workers) {
-  uint64_t expected = 0, next = 0, samples[5];
+  Counter expected = {static_cast<unsigned char*>(std::calloc(520000, 1))};
+  if (!expected.seen) std::abort();
+  uint64_t next = 0, samples[5];
   size_t active;
   {
     xe::gpu::PipelineCreationQueue<T, uint64_t, unsigned> queue;
@@ -29,14 +32,18 @@ template <typename T> static void measure(const char* label, unsigned workers) {
       queue.Initialize("Handoff bench", &expected,
           [](void*, const T& request, unsigned*) { return create(request); },
           [](void* opaque, const T& request, uint64_t handle) {
-            auto& expected = *static_cast<uint64_t*>(opaque);
-            if (id(request) != expected++ || handle != create(request)) std::abort();
+            auto* state = static_cast<Counter*>(opaque);
+            uint64_t index = id(request);
+            if (index >= 520000 || state->seen[index] || handle != create(request)) std::abort();
+            state->seen[index] = 1;
           }, nullptr);
     } else {
       queue.Initialize("Handoff bench", [](const T& request, unsigned*) {
         return create(request);
       }, [&](const T& request, uint64_t handle) {
-        if (id(request) != expected++ || handle != create(request)) std::abort();
+        uint64_t index = id(request);
+        if (index >= 520000 || expected.seen[index] || handle != create(request)) std::abort();
+        expected.seen[index] = 1;
       }, {});
     }
     queue.SetThreadCount(workers);
@@ -53,10 +60,14 @@ template <typename T> static void measure(const char* label, unsigned workers) {
       queue.AwaitCompletion();
       uint64_t elapsed = xe_bench_time() - start;
       if (round) samples[round - 1] = elapsed;
-      if (xe_bench_allocations() != before || expected != next) std::abort();
+      if (xe_bench_allocations() != before) std::abort();
+      for (uint64_t i = next - count; i < next; ++i)
+        if (expected.seen[i] != 1) std::abort();
     }
-    queue.Shutdown([](const T&, uint64_t) {});
+    if constexpr (requires { queue.Shutdown(); }) queue.Shutdown();
+    else queue.Shutdown([](const T&, uint64_t) {});
   }
+  std::free(expected.seen);
   if (xe_bench_live()) std::abort();
   xe_bench_report(label, sizeof(T), workers, active, samples, 5, 100000);
 }

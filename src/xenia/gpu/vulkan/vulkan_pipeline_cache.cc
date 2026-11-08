@@ -401,18 +401,14 @@ void VulkanPipelineCache::Shutdown() {
   ShutdownShaderStorage();
 
   // Shut down all threads, before destroying the pipelines since they may be
-  // creating them. Also drops the pending completion callback, which may
-  // capture 'this'.
+  // creating them. Completed results are entry-owned; cancel the completion
+  // token and unstarted requests before releasing backend storage.
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
 
-  creation_queue_.Shutdown([&dfn, device](const PipelineCreationArguments&,
-                                          VkPipeline pipeline) {
-    if (pipeline != VK_NULL_HANDLE)
-      dfn.vkDestroyPipeline(device, pipeline, nullptr);
-  });
+  creation_queue_.Shutdown();
 
   // Creators are joined and the GPU is idle in the upstream shutdown order.
   xe_pipeline_retire_free(retirement_pool_, &DestroyRetiredPipeline, this);
@@ -2591,7 +2587,7 @@ void VulkanPipelineCache::InitializeShaderStorage(
         // Nothing is drawing these yet, so they publish as they are built.
         xe_pipeline_flag_store(&creation_arguments.pipeline->second.publication,
             XE_PIPELINE_PENDING, true);
-        creation_queue_.PushUnordered(creation_arguments);
+        creation_queue_.Push(creation_arguments);
       } else {
         // No creation threads - create synchronously.
         EnsurePipelineCreated(creation_arguments);

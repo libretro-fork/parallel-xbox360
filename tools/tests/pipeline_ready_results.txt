@@ -1,0 +1,104 @@
+Independent pipeline publication -- 2026-11-09
+Parent: ceff30100bb57080dbb73523137aca8772869c85
+
+Runtime scope
+-------------
+Vulkan and D3D12 now store each compiled pipeline directly in its own entry.
+An older unfinished compilation cannot retain a later completed handle in an
+ordered result window. Remove that window, its serial publication owner, the
+sequence/lease field and unpublished-result shutdown callbacks. Workers borrow
+the original bounded request slot through creation and Store; destruction occurs
+before the lease is finished. No additional request move, result buffer, payload
+copy, allocation, release diagnostic, GPU readback or frame pacing is introduced.
+The 4096-slot SPMC admission ring still provides bounded backpressure. This is
+not a solution to waiting for the draw's own required compiler job.
+
+Both Store callbacks already use per-entry atomic publication and multi-producer
+placeholder retirement. Command submission and GPU completion order stay intact.
+A previously plain upcoming-submission counter was read by compilation workers
+while the command owner advanced it. Use common atomic initialization/acquire
+loads/release stores; keep one writer, with no locked read-modify-write increment.
+Completed-submission bookkeeping remains command-owner-only. This removes the
+identified non-atomic data race; it is not proof of all renderer race freedom.
+Stop/join creators before destroying entry-owned handles and retirement storage.
+
+Correctness
+-----------
+- Full MSVC Release core builds with --parallel 3.
+- Production pool/typed adapter tests pass with native MSVC, MinGW GCC and Linux
+  GCC13.3 ASan/UBSan. New test orchestration and fault injection are MSVC C89;
+  C++ bridges only forward callbacks and exercise native object lifetimes.
+- Hold the first creator while a later success, Vulkan failure or D3D12 retryable
+  failure publishes. AwaitPending returns while the first job is outstanding.
+  Fill 4096 request slots, release the held lease and reuse the entire ring.
+  Shutdown cannot return while a creator still borrows an entry.
+- The same C89 driver/typed bridge against the exact parent's queue and ordered
+  publisher fails the blocked-predecessor oracle within 5 seconds and exits 1.
+  It releases the injected block before teardown rather than hanging the test.
+- Retain move-only ownership/destructor counts, one admission-copy/no completion
+  move budget, cancellation, caller draining, resize, reinitialization, 20000
+  completion rearm rounds and 200000 concurrent stale-completion checks.
+- Real Vulkan/D3D12 publication layouts pass 20000 immediate failure/retry cases;
+  eight-producer retirement tests pass completion gates, recycle and shutdown.
+  Four concurrent readers observe 200000 native timeline increments monotonically.
+- C89 arithmetic/SSA, 4M SSE oracle operations, 65536 classified-flush patterns,
+  native capability matrix and all576 physical RTX5090 GPU goldens pass.
+  All27 comparator guardrail tests pass.
+- ThreadSanitizer coverage is NOT established: GCC's unsupported atomic-fence
+  instrumentation warning is rejected by the existing -Werror test build.
+  ASan/UBSan are not race detectors. No sanitizer threshold was weakened.
+
+Queue microbenchmark (not driver compilation or gameplay)
+-------------------------------------------------------
+Same versioned harness on parent/candidate, seven alternating process pairs,
+20k warm-up then five timed100k-job batches per payload/worker configuration.
+Report median of the seven within-process medians, ns/job:
+
+                MSVC parent/current     MinGW parent/current
+8-byte,1worker     151.9 / 68.1             153.1 / 27.1
+80-byte,1worker    158.9 / 30.4             155.5 / 41.2
+8-byte,6workers    503.0 /125.5             540.7 /122.3
+80-byte,6workers   498.9 /131.9             531.5 /126.6
+
+Use disjoint per-request result cells instead of a contended artificial global
+counter. Verify all results after the timed batch. The benchmark's520k-byte
+validation buffer is test-only, allocated before timing and not counted as pool
+storage. Pool allocation capture covers C pool/publisher storage and workers;
+it does not claim to count driver allocations or all process RSS. Every timed
+batch has zero pool allocations, and pool live bytes return to zero after free.
+Retain every timed batch's raw microseconds before sorting, plus outer process
+order, min/max and medians. An earlier exploratory MinGW run without full raw
+batch output is retained separately and is not the table above.
+
+Same captured live bytes for both compilers:
+8-byte/1worker:230344 ->99168; 6workers:230544 ->99368.
+80-byte/1worker:558024 ->361312; 6workers:558224 ->361512.
+Savings:131176 and196712 bytes respectively, from removing the publication
+window and reducing request stride where alignment permits. Typed adapter
+shrinks80 ->48 bytes. Borrowing was already supported by the parent; the new
+benefit is removing publication storage/serialization and unrelated result waits.
+
+Shader/PSO comparison
+---------------------
+Unchanged corpus3 and timing contract2, seven alternating parent/candidate pairs:
+80 WARP and288 hardware Vulkan stage/case metrics, zero threshold alarms.
+The original64 procedural modules,64 RTZ-profile modules and64 dot-profile
+modules are byte-identical across revisions. Retain raw elapsed/process-CPU CSVs,
+per-case median/p95/p99/max, device/driver logs and exact source/executable hashes.
+Fresh processes and no emulator caches do NOT certify an empty driver disk or
+internal cache; previously seen modules are explicitly identified. The scheduling
+microbenchmark is separate from these driver timings and ran without overlap.
+
+Hosted3c4f2cd14's previously reported software-Vulkan tail alarm now passes all96
+metrics on attempt2 without source or threshold changes. Keep the original alarm
+and raw samples alongside the successful repeat. This is not cold-play signoff.
+
+Limits
+------
+No installed DLL replaced; no RetroArch/game launched. No first-correct-draw,
+first-ever-play versus warm cross-game signoff, GPU execution-time, register-spill,
+RSS or game frame-time improvement is established. Required shader compilation
+can still cause visible stalls (the prior change measured194ms). A full request
+ring can still wait for storage. Placeholder behavior and compile-failure policy
+are unchanged; this patch does not claim new semantic fallback coverage.
+The wider shader/cold-play optimization goal remains incomplete.

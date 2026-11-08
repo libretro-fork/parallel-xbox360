@@ -23,16 +23,19 @@ ${CC:-cc} -std=c89 -Wall -Wextra -Werror -O2 -g \
 "$out/completion-$exe"
 "$out/$exe"
 
-for f in "$root/libretro/core_job_pool.c" "$root/libretro/core_pipeline_order.c" \
+for f in "$root/libretro/core_job_pool.c" \
   "$root/third_party/libretro-common/rthreads/rthreads.c" \
   "$root/third_party/libretro-common/rthreads/retro_eventcount.c"; do
  ${CC:-cc} -std=c89 -O1 -g $san -DHAVE_THREADS -DHAVE_THREAD_STORAGE \
    -I"$root/third_party/libretro-common/include" -I"$root/libretro" \
    -c "$f" -o "$out/$(basename "$f" .c).o"
 done
+${CC:-cc} -std=c89 -Wall -Wextra -Werror -O1 -g $san -DHAVE_THREADS -DHAVE_THREAD_STORAGE \
+  -I"$root" -I"$root/third_party/libretro-common/include" \
+  -c "$root/tools/tests/core_pipeline_ready_test.c" -o "$out/ready.o"
 ${CXX:-c++} -std=c++20 -O1 -g $san \
   -I"$root" -I"$root/src" -I"$root/third_party/libretro-common/include" \
-  "$root/tools/tests/core_job_pool_bridge.cc" "$out/core_job_pool.o" \
-  "$out/core_pipeline_order.o" "$out/rthreads.o" "$out/retro_eventcount.o" \
+  "$root/tools/tests/core_job_pool_bridge.cc" "$root/tools/tests/core_pipeline_ready_bridge.cc" "$out/ready.o" "$out/core_job_pool.o" \
+  "$out/rthreads.o" "$out/retro_eventcount.o" \
   -pthread -o "$out/bridge-$exe"
 "$out/bridge-$exe"

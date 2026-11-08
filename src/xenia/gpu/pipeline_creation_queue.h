@@ -11,14 +11,12 @@
 #define XENIA_GPU_PIPELINE_CREATION_QUEUE_H_
 
 #include <cstddef>
-#include <memory>
 #include <new>
 #include <type_traits>
 #include <utility>
 #include <rthreads/rthreads.h>
 #include "libretro/core_job_pool.h"
 #include "libretro/core_completion.h"
-#include "xenia/gpu/pipeline_publish_order.h"
 
 namespace xe {
 namespace gpu {
@@ -27,9 +25,7 @@ namespace gpu {
 // and completion accounting live in the C89 pool.
 template <typename TRequest, typename THandle, typename TThreadContext>
 class PipelineCreationQueue {
-  struct Request;
  public:
-  using Publication = std::pair<Request*, THandle>;
   using Creator = THandle (*)(void*, const TRequest&, TThreadContext*);
   using Store = void (*)(void*, const TRequest&, THandle);
   using ContextFactory = TThreadContext* (*)(void*);
@@ -54,28 +50,18 @@ class PipelineCreationQueue {
     creator_ = creator;
     store_ = store;
     context_factory_ = context_factory;
-    publish_order_.Initialize([](void* opaque, Publication& publication) {
-      auto* self = static_cast<PipelineCreationQueue*>(opaque);
-      self->store_(self->opaque_, publication.first->request, publication.second);
-      self->Release(publication.first);
-    }, this);
     pool_ = xe_job_pool_new(4096, sizeof(Request), thread_name, &Run, &Discard,
         &NewContext, &FreeContext, &Idle, this);
     if (!pool_) throw std::bad_alloc();
   }
 
-  // Preserve the backend's stop/join-before-destruction order. Queued requests
-  // are cancelled; completed but unpublished handles are destroyed in place.
-  template <typename F>
-  void Shutdown(F&& discard) {
+  // Join creators before the backend destroys entries. Every completed handle
+  // already belongs to its entry; only unstarted requests need cancellation.
+  void Shutdown() {
     if (!pool_) return;
     SetThreadCount(0);
     xe_completion_cancel(&completion_);
     xe_job_pool_arm_idle(pool_, 0);
-    publish_order_.Reset([&](Publication& publication) {
-      discard(publication.first->request, publication.second);
-      Release(publication.first);
-    });
     xe_job_pool_clear(pool_);
   }
   bool has_threads() const { return thread_count() != 0; }
@@ -84,10 +70,8 @@ class PipelineCreationQueue {
     if (!pool_ && !count) return;
     if (!xe_job_pool_set_threads(pool_, count)) throw std::bad_alloc();
   }
-  void Push(const TRequest& request) { PushRequest(request, true); }
-  void Push(TRequest&& request) { PushRequest(std::move(request), true); }
-  void PushUnordered(const TRequest& request) { PushRequest(request, false); }
-  void PushUnordered(TRequest&& request) { PushRequest(std::move(request), false); }
+  void Push(const TRequest& request) { PushRequest(request); }
+  void Push(TRequest&& request) { PushRequest(std::move(request)); }
   bool IsBusy() { return has_threads() && xe_job_pool_busy(pool_); }
   void Notify() { xe_job_pool_notify(pool_); }
   void AwaitCompletion() {
@@ -112,51 +96,38 @@ class PipelineCreationQueue {
 
  private:
   struct Request {
-    uint64_t sequence_or_lease;
     TRequest request;
     template <typename U>
-    Request(size_t value, U&& input) noexcept
-        : sequence_or_lease(value), request(std::forward<U>(input)) {
+    explicit Request(U&& input) noexcept
+        : request(std::forward<U>(input)) {
       static_assert(std::is_nothrow_constructible<TRequest, U&&>::value);
     }
   };
   template <typename U>
-  void PushRequest(U&& request, bool ordered) {
+  void PushRequest(U&& request) {
     // The GPU thread (or paused initialization) is the sole producer. Wait for
     // reusable storage without holding any lock a compilation worker needs.
-    size_t sequence = ordered ? publish_order_.NextSequence() : 0;
     void* slot = xe_job_pool_begin(pool_);
-    new (slot) Request(sequence, std::forward<U>(request));
+    new (slot) Request(std::forward<U>(request));
     xe_job_pool_commit(pool_);
-  }
-  void Release(Request* job) {
-    uint64_t lease = job->sequence_or_lease;
-    job->~Request();
-    xe_job_pool_finish(pool_, lease);
   }
   void ReleasePending() {
     if (!pool_) return;
     xe_job_pool_set_threads(pool_, 0);
     xe_completion_cancel(&completion_);
     xe_job_pool_arm_idle(pool_, 0);
-    publish_order_.Reset([this](Publication& publication) {
-      Release(publication.first);
-    });
   }
   static void Run(void* opaque, void* payload, void* context, uint64_t lease) {
     auto* self = static_cast<PipelineCreationQueue*>(opaque);
     auto* job = static_cast<Request*>(payload);
-    size_t sequence = size_t(job->sequence_or_lease);
-    job->sequence_or_lease = lease;
     THandle handle = self->creator_(self->opaque_, job->request,
                                   static_cast<TThreadContext*>(context));
-    // Publication owns the borrowed request until store/discard. No access to
-    // job is allowed after either path releases its lease.
-    if (sequence) self->publish_order_.Publish(sequence, job, handle);
-    else {
-      self->store_(self->opaque_, job->request, handle);
-      self->Release(job);
-    }
+    // Each entry publishes independently. Store borrows the original request;
+    // the slot is released only after store and destruction have both finished.
+    // No access to job is allowed after finish makes this slot reusable.
+    self->store_(self->opaque_, job->request, handle);
+    job->~Request();
+    xe_job_pool_finish(self->pool_, lease);
   }
   static void Discard(void*, void* payload) {
     static_cast<Request*>(payload)->~Request();
@@ -184,7 +155,6 @@ class PipelineCreationQueue {
   Creator creator_ = nullptr;
   Store store_ = nullptr;
   ContextFactory context_factory_ = nullptr;
-  PipelinePublishOrder<Publication> publish_order_;
   xe_completion completion_;
   xe_job_pool* pool_ = nullptr;
 };
