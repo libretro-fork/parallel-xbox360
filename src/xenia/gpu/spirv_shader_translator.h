@@ -26,6 +26,7 @@
 #include "libretro/core_spv_export_cases.h"
 #include "libretro/core_spv_plan.h"
 #include "libretro/core_float_rtz_emit.h"
+#include "libretro/core_texture_lanes.h"
 #include "xenia/gpu/spirv_builder.h"
 #include "xenia/gpu/xenos.h"
 
@@ -48,7 +49,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     // version number! Backends add it to their dated
     // PipelineDescription::kVersion, so bumping either one is enough. Only
     // ever raise it, a reverted layout change needs another bump.
-    static constexpr uint32_t kVersion = 25;
+    static constexpr uint32_t kVersion = 26;
 
     enum class DepthStencilMode : uint32_t {
       kNoModifiers,
@@ -965,6 +966,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
                                  xenos::TextureFilter min_filter,
                                  xenos::TextureFilter mip_filter,
                                  xenos::AnisoFilter aniso_filter);
+  spv::Id TextureLaneOffsets(const xe_texture_lanes& lanes,unsigned extra);
+  void ApplyTextureIntegerScale(spv::Id result[4],spv::Id packed,
+      uint32_t used_components,bool allows_point_sampling);
   spv::Id SampleTextureValue(
       spv::Builder::TextureParameters& texture_parameters,
       spv::ImageOperandsMask image_operands_mask, spv::Id image,

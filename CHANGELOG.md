@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Emit texture format conversion only for components the guest fetch actually consumes, using a bounded C89 lane plan and borrowed SSA values. Preserve component indices, packed format fields and arithmetic order; scalar results avoid unused four-lane math. Numerical GPU differentials cover all nonempty masks and encoded width/sign fields, including the original conversion block. Compiled shaders/pipelines rebuild once for the new version. This reduces generated shader work; gameplay performance has not been measured.
+
 - Reduce Vulkan texture-sampling control flow when the shader's signedness predicates prove that only one image view can be sampled. Single-component shadow fetches use one conditional instead of two; mixed-component fetches keep both paths. Preserve zero inactive results and filtered-volume interpolation, without adding buffers or changing texture samples. Offline material translation and focused C89 GPU fixtures pass; no gameplay speedup is claimed. Rebuild cached shader/pipeline output once for the new cache version.
 
 - Add numerical GPU regression coverage for translated vertex shader subroutines: sixteen real guest programs exercise nested calls, full-stack skips, bool/predicate polarity and call-to-next/empty returns through Vulkan transform feedback. The RTX 5090 produces exact expected output; the pre-fix translator produces 1.0 instead of 5.0 for the first nested case despite valid SPIR-V. Shared C89 test context avoids duplicating the existing downscale Vulkan setup. This is test coverage, with no production renderer or game-speed change.

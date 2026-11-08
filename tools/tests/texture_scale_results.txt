@@ -1,0 +1,117 @@
+Live-component texture format conversion (0191,2026-11-08)
+Parent3deb915fa
+
+Mechanism
+---------
+After signedness/swizzle handling, the old conversion always constructed and
+processed float4 even when the guest fetch consumed only one component.
+The C89 lane plan records ascending original component indices in four fixed
+slots. It does not copy sample payloads, clear unused slots, allocate storage
+or own the caller's values. Invalid/empty masks are rejected before indexing.
+
+Typed SPIR-V glue selects existing SSA IDs and the matching scalar/vector types.
+Packed width/sign fields retain ORIGINAL component offsets, including masks
+with gaps such as G/A. Componentwise math and uniform branch predicates retain
+their order. Scalar scaling uses FMul; vectors retain VectorTimesScalar.
+Only selected borrowed result IDs are updated. There are no new runtime payload
+buffers, texture samples, transfers or synchronization operations. Existing IR
+records/constants can still allocate through the builder's owned storage.
+Cache modification26 rebuilds old compiled shader/pipeline output once.
+
+Focused verification
+--------------------
+C89 planner: all masks0-255, a high-bit invalid mask, NULL output, ascending
+indices and exact recovery of the mask. MSVC/GNU pass; WSL GCC ASan/UBSan with
+leak detection passes.
+
+Thirty fixtures call the PRODUCTION conversion helper: masks1-15, both point
+conversion eligibility settings. The C89 structural scanner checks that EVERY
+floating arithmetic/extended result has exactly the live width. All thirty
+modules pass spirv-val targeting Vulkan1.1.
+
+The C89 Vulkan runner performs23040 GPU differential cases/92160 lane checks:
+all masks, all16 encoded width fields, all four sign fields, normalized/integer
+conversion, point-conversion policy/flags and three finite input patterns.
+Different channels have different fields/values to expose incorrect packing.
+Live outputs must match full-width conversion bit-for-bit; inactive outputs
+must preserve original input bits.4080 bytes after each16-byte output remain
+untouched. A separate scalar C89 model checks numeric results for all lanes,
+admitting either zero sign; the GPU differential still requires exact zero bits.
+Independent bypass and4-bit point-reconstruction goldens are also checked.
+These test decoded-value CONVERSION, not full texture sampling/coordinate decode
+or every guest format/float mode. No game or frontend process is started.
+
+Parent control: the original conversion block is extracted and compared exactly
+with Git3deb915fa, then emitted in the same typed fixture envelope. Its original
+four-lane math supplies the two full-width reference modules. The candidate
+also passes all23040 GPU differentials against these parent-block modules.
+This is a captured parent conversion block, not a complete parent core build.
+Those private controls/game data are not shipped in this patch.
+
+Negative control: change the G/A module's packed-field offset vector from[6,18]
+to[6,6]. SPIR-V remains valid, but the GPU check rejects mask10, proving that
+the tests detect selecting the wrong original component field.
+
+Offline DS2 evidence
+--------------------
+All1863 local material pixel programs translate and validate with native AND
+shader-side image-view swizzling at4x4/SPIR-V1.3, other optional features disabled.
+The counts below compare native image-view swizzling. Repeated code under
+different asset names is included; these totals are not live game/cache VRAM.
+1374 programs become smaller. Total bytes139098168->137627396; instruction
+count7217842->7172879.264 programs have MORE SPIR-V instructions because compact
+type/packing scaffolding can add instructions while processing fewer lanes.
+No shader adds image samples or conditional branches.
+
+Static floating-result-lane count2096929->1926386 sums the result width of
+FAdd/FSub/FMul/FDiv/VectorTimesScalar and float32 extended instructions across
+ALL emitted paths. It is not executed work, GPU assembly, cycles or pass time.
+Cascaded PCF9:86704->80560 bytes,4569->4346 instructions,1444->883 such lanes.
+PointLightShadowedShape:88164->84852 bytes,1324->1018 such lanes.
+No gameplay/FPS, universal compilation-speed or GPU-time gain is established.
+Raw executables/shaders remain outside the repository and mailbox patch.
+
+CPU translation measurement
+---------------------------
+Windows, Ryzen9 9950X3D, GNU16.2.0 Make O3 flags, logical CPU2 affinity.
+Each timed batch analyzes/translates500 fresh Shader objects using one retained
+translator, after64 warmups. File reads occur before timing; output is borrowed
+only to count bytes, with no dump/write/copy in the timed region. Seven ABBA
+cycles per shader produce14 samples per variant. QPC is host profiling only.
+Parent control compiles the unmodified3deb915fa fetch translation unit against
+the same current ABI/common objects; this change adds methods, not data/virtual
+layout. This isolates the conversion change, not an entire parent executable.
+
+Median ms per500 translations (parent -> candidate; observed min..max):
+Cascaded PCF9:71.558 ->68.083 (-4.86%);70.814..72.837 ->67.378..68.614.
+Shadowed point:71.923 ->70.188 (-2.41%);71.512..72.227 ->69.963..70.967.
+Water proxy:152.005 ->151.487 (-0.34%);150.954..153.351 ->150.484..153.563.
+Water ranges overlap; no clear improvement is established for that case.
+This measures warmed CPU analysis/code generation/serialization with actual
+guest shaders, not driver pipeline compilation, runtime GPU work or game FPS.
+Raw paired samples are retained outside the repo; no game data is shipped.
+
+Commands
+--------
+After a full core build:
+  sh tools/tests/run_texture_scale_tests.sh
+  GPU_TESTS=1 sh tools/tests/run_texture_scale_tests.sh
+MSVC developer prompt:
+  tools\tests\run_texture_scale_tests.cmd
+  set GPU_TESTS=1
+  tools\tests\run_texture_scale_tests.cmd
+FORWARD_FLOW_BUILD selects the native build directory; default build/windows-native.
+The shell runner accepts SPIRV_VALIDATOR for explicit module validation.
+Post-build CI generates fixtures without assuming GPU availability.
+
+Final verification
+------------------
+Full MSVC CMake and MinGW Make core builds: PASS, parallel5. GNU also forces
+a final fetch-unit rebuild and link after formatting. Strict GNU C89 and MSVC
+/TC runners each pass23040 cases with scalar goldens and guarded outputs.
+All30 conversion modules are byte-identical between GNU and MSVC and pass
+Vulkan1.1 validation. All1863 native AND1863 portable-swizzle material modules
+validate. The previous eight sampling modules remain byte-identical, and
+their384 numerical GPU cases pass after this change.
+Mailbox application/tree equality is verified separately before delivery.
+These focused checks do not complete the entire optimization goal.
