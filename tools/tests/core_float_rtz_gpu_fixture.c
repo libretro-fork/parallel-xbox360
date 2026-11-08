@@ -40,23 +40,36 @@ int main(int argc,char **argv) {
   {0x7f800000,0xff800000,0x7fc12345,0,0xff800000,0xff800000,0x3f800000,0},
   {0x00000001,0x80000001,0x00000000,0,0x7f800000,0xff800000,0x7fc12345,0}};
  uint32_t code[6],values[8],golden[4],seed=123456789;
- unsigned which,sample,op,c,hardware;size_t words;char path[512];
+ unsigned which,sample,op,c,hardware,index;uint32_t sum;size_t words;char path[512];
  CHECK(argc==2 && strlen(argv[1])<400);
- for(which=0;which<192;++which) {
-  op=which%3;sample=(which/3)%32;hardware=which<96;
+ for(which=0;which<384;++which) {
+  index=which%192;op=index%3+(which>=192?3:0);
+  sample=(index/3)%32;hardware=index<96;
   if(sample<10)memcpy(values,edges[sample],sizeof(values));
   else for(c=0;c<8;++c){seed=seed*1664525u+1013904223u;values[c]=seed&UINT32_C(0xff7fffff);}
-  values[3]=op==2?0x3fc00000:0x3f800000;values[7]=op==1?0x3f800000:0;
-  for(c=0;c<4;++c)golden[c]=oracle(op,values[c],values[c+4]);
+  if(op<3) {
+   values[3]=op==2?0x3fc00000:0x3f800000;values[7]=op==1?0x3f800000:0;
+   for(c=0;c<4;++c)golden[c]=oracle(op,values[c],values[c+4]);
+  } else {
+   if(!sample) {
+    /* Ordered RTZ loses each 0.75 ULP; reassociation incorrectly retains them. */
+    values[0]=0x3f800000;values[1]=values[2]=values[3]=0x33c00000;
+    for(c=4;c<8;++c)values[c]=0x3f800000;
+   }
+   sum=oracle(1,values[0],values[4]);
+   for(c=1;c<7-op;++c)sum=oracle(0,sum,oracle(1,values[c],values[c+4]));
+   if(op==5)sum=oracle(0,sum,values[0]);
+   for(c=0;c<4;++c)golden[c]=sum;
+  }
   for(c=0;c<3;++c)if(!(golden[c]&0x7fffffff))golden[c]=0;
   memset(code,0,sizeof(code));code[0]=0x1001;code[1]=0x2000;
   code[3]=62|(1u<<15)|(15u<<16)|(50u<<26);
-  code[5]=(1u<<8)|((op==2?8:op)<<24);
+  code[5]=(1u<<8)|((op<3?(op==2?8:op):op+12)<<24);
   words=xe_rtz_native_spirv(code,6,0,hardware,0,input,65536);CHECK(words>=5);
   words=shader_test_xfb(input,words,output,65560);
   sprintf(path,"%s/call%u.spv",argv[1],which);save(path,output,words*4);
   sprintf(path,"%s/call%u.input",argv[1],which);save(path,values,sizeof(values));
   sprintf(path,"%s/call%u.expected",argv[1],which);save(path,golden,sizeof(golden));
  }
- puts("PASS: 192 actual guest ALU fixtures, hardware/software RTZ with explicit mixed-lane inputs and integer oracle");return 0;
+ puts("PASS: 384 actual guest ALU/dot fixtures, hardware/software RTZ with explicit mixed-lane inputs and integer oracle");return 0;
 }

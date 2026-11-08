@@ -696,6 +696,11 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
       uint32_t different =
           component_mask & ~instr.vector_operands[0].GetIdenticalComponents(
                                instr.vector_operands[1]);
+      // Only independent products are vectorized; preserve ordered scalar sums.
+      const bool native_rtz = is_vertex_shader() && features_.rounding_mode_rtz_float32;
+      spv::Id products = native_rtz ? AluBinaryOperation(
+          spv::OpFMul, type_float_vectors_[component_count - 1],
+          operands[0], operands[1]) : spv::NoResult;
       spv::Id result = spv::NoResult;
       for (uint32_t i = 0; i < component_count; ++i) {
         spv::Id operand_components[2];
@@ -703,9 +708,10 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
           operand_components[j] =
               builder_->createCompositeExtract(operands[j], type_float_, i);
         }
-        spv::Id product = AluBinaryOperation(
-            spv::OpFMul, type_float_, operand_components[0],
-            operand_components[1]);
+        spv::Id product = native_rtz
+            ? builder_->createCompositeExtract(products, type_float_, i)
+            : AluBinaryOperation(spv::OpFMul, type_float_,
+                                 operand_components[0], operand_components[1]);
         if (different & (1 << i)) {
           // Shader Model 3: +0 or denormal * anything = +-0.
           product = ZeroIfAnyOperandIsZero(

@@ -9,7 +9,7 @@ set FORWARD_FLOW_BRIDGE=tools\tests\float_rtz_bridge.cc
 call tools\tests\run_forward_flow_tests.cmd
 if errorlevel 1 goto fail
 if not "%GPU_TESTS%"=="1" goto success
-cl /nologo /TC /MD /O2 /W4 /WX /DXE_VERTEX_TEST_CASES=192 /DXE_FLOAT_RTZ_GPU_TEST /Itools\tests /external:Ithird_party\Vulkan-Headers\include /external:W0 tools\tests\core_shader_call_vulkan_test.c /Fo"%FLOAT_RTZ_GPU_OUT%\runtime.obj" /Fe"%FLOAT_RTZ_GPU_OUT%\runtime.exe"
+cl /nologo /TC /MD /O2 /W4 /WX /DXE_VERTEX_TEST_CASES=384 /DXE_FLOAT_RTZ_GPU_TEST /Itools\tests /external:Ithird_party\Vulkan-Headers\include /external:W0 tools\tests\core_shader_call_vulkan_test.c /Fo"%FLOAT_RTZ_GPU_OUT%\runtime.obj" /Fe"%FLOAT_RTZ_GPU_OUT%\runtime.exe"
 if errorlevel 1 goto fail
 "%FLOAT_RTZ_GPU_OUT%\runtime.exe" "%FLOAT_RTZ_GPU_OUT%"
 if errorlevel 1 goto fail

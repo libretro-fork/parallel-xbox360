@@ -330,7 +330,7 @@ changed module words naturally select different driver programs.
 
 Keep the original 64 procedural translation cases unchanged. Hardware comparison
 adds a separate 64-case RTZ/manual-FTZ profile, 16 module and 16 graphics-PSO metrics
-(192 metrics total, versus software Vulkan 96 and WARP 80). Before timing, execute
+(contract 2: 192 metrics total, versus software Vulkan 96 and WARP 80). Before timing, execute
 192 real packed-guest ADD/MUL/FRC cases covering both lowering paths, mixed lanes,
 denormals, cancellation, finite overflow and nonfinite operands. Finite results
 are bit-exact; NaNs permit payload canonicalization only. Missing float-control
@@ -343,3 +343,27 @@ bytes. Its worst observed NVIDIA PSO drops from 364.8671 to 135.919 ms. This
 remains a visible-stall risk, not a smoothness signoff. Driver disk/internal cache
 coldness is unverified and no sustained multi-game cold-play anchor is certified.
 Detailed evidence and remaining limits: tools/tests/shader_hw_rtz_ftz_results.txt.
+
+## Ordered dot products (corpus contract 3)
+
+The independent per-lane products may share one native-RTZ vector instruction.
+Keep the scalar addition order, per-lane Shader Model 3 zero/NaN correction and
+NoContraction. Do not substitute OpDot or a reassociated reduction. Integer
+fallback and pixel policies remain unchanged. Operands stay borrowed compiler
+IDs; no new payload buffer, queue, lock or arena is introduced.
+
+Preserve both original 64-case profiles. Add a separate 64-case dot profile with
+DP4/DP3/DP2ADD, uniform inputs, differing constants and 32/96/256-op chains across
+the same VS/PS and swizzle/resolution profiles. Hardware comparison now requires
+288 metrics. Software Vulkan 96 and WARP 80 are unchanged. Expand actual-guest
+GPU correctness to 384 cases; the original 192 are retained, followed by 192
+dot cases. An explicit 1.0 + three 0.75-ULP case rejects reordered sums. A private
+production negative control which reverses lane order fails at the expected
+finite output; restored production and exact parent pass.
+
+Seven alternating pairs show no threshold alarms; worst observed dot PSO is
+380.8468 -> 293.7932 ms, not stutter-free. Existing two SPIR-V profiles remain
+byte-identical, as do eight DXIL cases. Driver disk/internal cache coldness and
+sustained cross-game cold play remain unverified. Native hardware-FTZ dot
+execution is not supported by the tested GPU; it is not claimed as physical
+coverage. See tools/tests/shader_native_dot_results.txt for full scope.

@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Reduce Vulkan vertex dot-product compilation work by sharing independent product lanes while retaining ordered guest sums and zero/NaN behavior. Add dot-heavy per-commit comparisons and GPU checks that reject incorrect reassociation; visible first-use stalls remain unresolved.
+
 - Reduce large Vulkan vertex shaders on devices with hardware round-toward-zero but no hardware denormal flush mode, including the tested RTX 5090. Flush signed inputs/outputs explicitly instead of expanding each operation into integer arithmetic. Retain software fallback and add real-GPU arithmetic checks and per-commit compile comparisons for this capability combination. Cold-play stutter is not yet eliminated.
 
 - Wait for the requested Vulkan or D3D12 draw pipeline instead of draining later unrelated compilation jobs. Reuse the worker pool's existing completion notifications and borrowed publication state; preserve ordered publication, failure handling and GPU retirement. Required pipeline compilation can still stall a draw; this does not establish stutter-free cold play.
