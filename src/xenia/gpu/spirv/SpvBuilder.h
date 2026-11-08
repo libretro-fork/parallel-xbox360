@@ -792,6 +792,8 @@ protected:
     void createAndSetNoPredecessorBlock(const char*);
     void createSelectionMerge(Block* mergeBlock, SelectionControlMask control);
     template <class Output> void dumpInternal(Output&, xe_spv_plan* = nullptr, bool record = false) const;
+    void prepareEmissionPlan(xe_spv_plan&) const;
+    bool isEmissionVisible(Id) const;
     template <class Output> void dumpSourceInstructions(Output&) const;
     template <class Output> void dumpSourceInstructions(const spv::Id fileId, const std::string& text, Output&) const;
     void dumpSourceInstructions(const spv::Id fileId, const std::string& text, xe_spv_count&) const;

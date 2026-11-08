@@ -74,7 +74,10 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
           uses_subroutine_calls_ = true;
           break;
         case ControlFlowOpcode::kCondJmp:
-          label_addresses_.insert(cf.cond_jmp.address());
+          // Both outcomes of a jump to the following instruction fall through.
+          // Other incoming branches/calls still add the label independently.
+          if (cf.cond_jmp.address() != i * 2 + j + 1)
+            label_addresses_.insert(cf.cond_jmp.address());
           if (cf.cond_jmp.address() <= i * 2 + j) {
             backward_jumps.emplace_back(i * 2 + j, cf.cond_jmp.address());
           }
@@ -172,7 +175,8 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
           ParsedJumpInstruction instr;
           ParseControlFlowCondJmp(cf.cond_jmp, cf_index, instr);
           instr.Disassemble(&ucode_disasm_buffer);
-          if (instr.type == ParsedJumpInstruction::Type::kConditional) {
+          if (instr.type == ParsedJumpInstruction::Type::kConditional &&
+              instr.target_address != instr.dword_index + 1) {
             bool_constant_index = instr.bool_constant_index;
           }
         } break;

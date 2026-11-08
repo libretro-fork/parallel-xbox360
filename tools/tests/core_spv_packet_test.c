@@ -192,6 +192,65 @@ static int module_queries(void) {
    xe_spv_index_close(&index);
    return 0;
 }
+typedef struct PhiFixture {
+   const uint32_t *source;
+   size_t source_count, count;
+   uint32_t words[16];
+   unsigned mask, fail_parent, emit_calls, fail_emit;
+} PhiFixture;
+static int phi_parent(void *opaque,uint32_t parent) {
+   PhiFixture *f=(PhiFixture *)opaque;
+   if(!parent || parent>4 || parent==f->fail_parent)return -1;
+   return (int)((f->mask>>(parent-1))&1);
+}
+static int phi_words(void *opaque,const uint32_t *words,size_t count) {
+   PhiFixture *f=(PhiFixture *)opaque;
+   uintptr_t address=(uintptr_t)words,base=(uintptr_t)f->source;
+   if(++f->emit_calls==f->fail_emit)return 0;
+   if(count!=1 && (address<base || address-base>f->source_count*4 ||
+      count>(f->source_count-(address-base)/4)))return 0;
+   if(count>16-f->count)return 0;
+   memcpy(f->words+f->count,words,count*4);f->count+=count;return 1;
+}
+static int phi_views(void) {
+   xe_spv_packet packet;PhiFixture f;uint32_t original[11],expected[11];
+   unsigned mask,i,n,before;
+   xe_spv_packet_init(&packet,245,7,9);
+   CHECK(xe_spv_packet_reserve_with(&packet,8,NULL,NULL));
+   for(i=1;i<=4;++i) {
+      xe_spv_packet_append_reserved(&packet,100+i,1);
+      xe_spv_packet_append_reserved(&packet,i,1);
+   }
+   memcpy(original,xe_spv_packet_const_words(&packet),sizeof(original));
+   before=allocations;
+   for(mask=0;mask<16;++mask) {
+      memset(&f,0,sizeof(f));f.mask=mask;f.source=xe_spv_packet_const_words(&packet);f.source_count=11;
+      n=3;expected[1]=7;expected[2]=9;
+      for(i=0;i<4;++i)if(mask&(1u<<i)){expected[n++]=101+i;expected[n++]=1+i;}
+      expected[0]=(n<<16)|245u;
+      CHECK(xe_spv_packet_phi_emit(&packet,phi_parent,&f,phi_words,&f)==(mask!=0));
+      CHECK(f.count==(mask?n:0));
+      if(mask)CHECK(!memcmp(f.words,expected,n*4));
+      CHECK(!memcmp(original,xe_spv_packet_const_words(&packet),sizeof(original)));
+      CHECK(packet.count==8 && allocations==before);
+   }
+   memset(&f,0,sizeof(f));f.mask=15;f.fail_parent=3;
+   CHECK(!xe_spv_packet_phi_emit(&packet,phi_parent,&f,phi_words,&f) && !f.count);
+   f.fail_parent=0;f.mask=5;f.source=xe_spv_packet_const_words(&packet);f.source_count=11;f.fail_emit=2;
+   CHECK(!xe_spv_packet_phi_emit(&packet,phi_parent,&f,phi_words,&f) && f.emit_calls==2);
+   CHECK(!xe_spv_packet_phi_emit(NULL,phi_parent,&f,phi_words,&f));
+   CHECK(!xe_spv_packet_phi_emit(&packet,NULL,&f,phi_words,&f));
+   packet.count=7;CHECK(!xe_spv_packet_phi_emit(&packet,phi_parent,&f,phi_words,&f));packet.count=8;
+   CHECK(xe_spv_packet_emitted(&packet));
+   xe_spv_packet_set_emitted(&packet,0);CHECK(!xe_spv_packet_emitted(&packet));
+   CHECK(xe_spv_packet_valid(&packet) && xe_spv_packet_prefix(&packet)==3 && xe_spv_packet_opcode(&packet)==245);
+   xe_spv_packet_set_emitted(&packet,1);CHECK(xe_spv_packet_emitted(&packet));
+   CHECK(!memcmp(original,xe_spv_packet_const_words(&packet),sizeof(original)));
+   xe_spv_packet_free(&packet);
+   puts("PASS: allocation-free borrowed phi-pair filtering, immutable source, liveness flags and callback failures");
+   return 0;
+}
+
 int main(void) {
    xe_spv_packet packet;
    unsigned i;
@@ -200,6 +259,7 @@ int main(void) {
    CHECK(!constant_keys());
    CHECK(!module_queries());
    CHECK(!repeated_sources());
+   CHECK(!phi_views());
    xe_spv_packet_init(&packet, 65536, 7, 9);
    CHECK(xe_spv_packet_opcode(&packet) == 65536 && !xe_spv_packet_valid(&packet));
    xe_spv_packet_init(&packet, 128, 7, 9);

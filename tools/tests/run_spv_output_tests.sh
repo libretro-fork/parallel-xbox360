@@ -97,6 +97,7 @@ for mode in baseline current; do
   source_root="$out/base"
   objects_root="$out/base-objects"
   legacy_views=-DXE_SPV_OUTPUT_LEGACY
+  if test "${BASELINE_BORROWED_VIEWS:-0}" = 1; then legacy_views=; fi
   arena_test=
   # Accept the older vector-output baseline as well as reusable-output commits.
   if test -z "$(sed -n '/^bool BuildEdramDumpShaderSpirv(/p' "$src/xenia/gpu/edram_dump_shader.h")"; then legacy=-DXE_SPV_OUTPUT_LEGACY; fi

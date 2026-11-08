@@ -3943,6 +3943,25 @@ static void appendEncodedWords(xe_spv_count& out, xe_spv_word_view words)
     xe_spv_count_words(&out, words.count);
 }
 
+void Builder::prepareEmissionPlan(xe_spv_plan& plan) const
+{
+    xe_spv_plan_reset(&plan);
+    auto* function = static_cast<Function*>(functions.head);
+    if (!function) return;
+    auto* last = static_cast<Function*>(functions.tail);
+    for (;;) {
+        function->planEmission(plan);
+        if (function == last) break;
+        function = function->getNextFunction();
+    }
+}
+
+bool Builder::isEmissionVisible(Id id) const
+{
+    const auto* instruction = module.getInstruction(id);
+    return !instruction || instruction->isEmissionVisible();
+}
+
 bool Builder::dumpSized(xe_spv_binary& out, xe_spv_plan* borrowedPlan) const
 {
     xe_spv_binary_reset(&out);
@@ -3950,12 +3969,15 @@ bool Builder::dumpSized(xe_spv_binary& out, xe_spv_plan* borrowedPlan) const
     xe_spv_plan* plan = borrowedPlan ? borrowedPlan : &emissionPlan;
     xe_spv_plan_reset(plan);
     try {
-        dumpInternal(size, plan, true);
+        prepareEmissionPlan(*plan);
+        dumpInternal(size, plan);
+        if (plan->cursor != plan->count) size.failed = 1;
         if (size.failed || !xe_spv_binary_reserve_exact(&out, size.count)) {
             out.failed = 1;
             xe_spv_plan_reset(plan);
             return false;
         }
+        plan->cursor = 0;
         dumpInternal(out, plan);
         if (plan->cursor != plan->count) out.failed = 1;
         xe_spv_plan_reset(plan);
@@ -3973,12 +3995,18 @@ bool Builder::dumpSized(xe_spv_binary& out, xe_spv_plan* borrowedPlan) const
 }
 void Builder::dump(std::vector<unsigned int>& out) const
 {
-    dumpInternal(out);
+    prepareEmissionPlan(emissionPlan);
+    try { dumpInternal(out, &emissionPlan); }
+    catch (...) { xe_spv_plan_reset(&emissionPlan); throw; }
+    xe_spv_plan_reset(&emissionPlan);
 }
 
 bool Builder::dump(xe_spv_binary& out) const
 {
-    dumpInternal(out);
+    prepareEmissionPlan(emissionPlan);
+    try { dumpInternal(out, &emissionPlan); }
+    catch (...) { xe_spv_plan_reset(&emissionPlan); throw; }
+    xe_spv_plan_reset(&emissionPlan);
     if (out.failed) { out.count = 0; return false; }
     return true;
 }
@@ -4038,14 +4066,19 @@ template <class Output> void Builder::dumpInternal(Output& out, xe_spv_plan* pla
     for (int e = 0; e < (int)sourceExtensions.size(); ++e) {
         appendStringInstruction(out, Op::OpSourceExtension, sourceExtensions[e]);
     }
-    dumpInstructions(out, names);
+    // Names and decorations of omitted blocks must not reference undefined IDs.
+    for (auto* name = static_cast<Instruction*>(names.head); name; name = name->getNextInstruction()) {
+        if (!name->getNumOperands() || isEmissionVisible(name->getIdOperand(0))) name->dump(out);
+    }
     dumpModuleProcesses(out);
 
     // Annotation instructions
     const xe_spv_record_view decorationRecords = module.decorationRecords();
     for (size_t d = 0; d < decorationRecords.count; ++d) {
         const auto* decoration = static_cast<const xe_spv_decoration*>(decorationRecords.records[d]);
-        appendEncodedWords(out, xe_spv_decoration_view(decoration));
+        const xe_spv_word_view words = xe_spv_decoration_view(decoration);
+        if (words.count < 2) throw std::bad_alloc();
+        if (isEmissionVisible(words.words[1])) appendEncodedWords(out, words);
     }
 
     dumpInstructions(out, constantsTypesGlobals);

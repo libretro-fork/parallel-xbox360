@@ -29,7 +29,17 @@ typedef struct xe_spv_packet {
  * aligned/padded; their owner outlives every packet that borrows them. */
 typedef void *(*xe_spv_packet_realloc_fn)(void *, void *, size_t, size_t);
 enum { XE_SPV_PACKET_TYPE = 256, XE_SPV_PACKET_RESULT = 512,
-       XE_SPV_PACKET_POOLED = 1024 };
+       XE_SPV_PACKET_POOLED = 1024,
+       XE_SPV_PACKET_EMISSION_LOCAL = 16384, XE_SPV_PACKET_EMISSION_LIVE = 32768 };
+static INLINE void xe_spv_packet_set_emitted(xe_spv_packet *packet, int live) {
+   packet->flags = (packet->flags | XE_SPV_PACKET_EMISSION_LOCAL) &
+      ~(uint32_t)XE_SPV_PACKET_EMISSION_LIVE;
+   if (live) packet->flags |= XE_SPV_PACKET_EMISSION_LIVE;
+}
+static INLINE int xe_spv_packet_emitted(const xe_spv_packet *packet) {
+   return !(packet->flags & XE_SPV_PACKET_EMISSION_LOCAL) ||
+      (packet->flags & XE_SPV_PACKET_EMISSION_LIVE) != 0;
+}
 static INLINE size_t xe_spv_packet_prefix(const xe_spv_packet *packet) {
    return (packet->flags >> 12) & 3u;
 }
@@ -94,6 +104,42 @@ static INLINE int xe_spv_packet_valid(const xe_spv_packet *packet) {
 static INLINE xe_spv_word_view xe_spv_packet_view(const xe_spv_packet *packet) {
    return xe_spv_words_view(xe_spv_packet_const_words(packet),
          xe_spv_packet_prefix(packet) + packet->count);
+}
+/* Emit live OpPhi pairs directly from the original operand span. Neither the
+ * packet nor its capacity changes, so subsequent dumps after CFG edits are safe.
+ * Callbacks return positive on success/live, zero on false, negative on error.
+ * Liveness must remain stable for the duration of this owner-thread call. */
+typedef int (*xe_spv_phi_live_fn)(void *, uint32_t);
+typedef int (*xe_spv_phi_emit_fn)(void *, const uint32_t *, size_t);
+static INLINE int xe_spv_packet_phi_emit(const xe_spv_packet *packet,
+      xe_spv_phi_live_fn live, void *context, xe_spv_phi_emit_fn emit, void *out) {
+   const uint32_t *operands, *words;
+   uint32_t at, kept = 0, header;
+   size_t prefix;
+   int visible;
+   if (!packet || !live || !emit || !xe_spv_packet_valid(packet) ||
+       xe_spv_packet_opcode(packet) != 245 || packet->count > packet->capacity ||
+       (packet->count & 1)) return 0;
+   prefix = xe_spv_packet_prefix(packet);
+   if (prefix != 3) return 0;
+   operands = xe_spv_packet_const_operands(packet);
+   for (at = 0; at < packet->count; at += 2) {
+      if (!operands[at] || !operands[at + 1]) return 0;
+      visible = live(context, operands[at + 1]);
+      if (visible < 0) return 0;
+      if (visible) kept += 2;
+   }
+   if (!kept) return 0;
+   words = xe_spv_packet_const_words(packet);
+   if (kept == packet->count) return emit(out, words, prefix + kept) > 0;
+   header = ((uint32_t)(prefix + kept) << 16) | 245u;
+   if (emit(out, &header, 1) <= 0 || emit(out, words + 1, prefix - 1) <= 0) return 0;
+   for (at = 0; at < packet->count; at += 2) {
+      visible = live(context, operands[at + 1]);
+      if (visible < 0) return 0;
+      if (visible && emit(out, operands + at, 2) <= 0) return 0;
+   }
+   return 1;
 }
 static INLINE void xe_spv_packet_init(xe_spv_packet *packet,
       uint32_t opcode, uint32_t type, uint32_t result) {

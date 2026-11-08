@@ -10,12 +10,15 @@ typedef struct Control {
   unsigned opcode;
 } Control;
 
+enum { FLOW_DISPATCH = 1, FLOW_LOOPS = 2, FLOW_CALLS = 4 };
+
 typedef struct Flow {
   const XeDxilGuestFlow *config;
   struct dxil_module *module;
   unsigned base;
   unsigned exit;
   unsigned dispatch;
+  unsigned features;
   uint32_t labels[256];
   XeDxilValue program_counter;
   XeDxilValue state[5];
@@ -76,8 +79,8 @@ static int branch(Flow *f, unsigned id) {
   return dxil_emit_branch(f->module, NULL, id, 0);
 }
 
-/* Nonlocal edges go through one dominating loop header. This keeps arbitrary
- * guest jumps and multiple subroutine return sites reducible for DXIL. */
+/* Backward edges, loops and calls go through one dominating loop header.
+ * Direct forward edges form a DAG between entries, preserving reducibility. */
 static int jump(Flow *f, unsigned address) {
   if (address == f->config->control_flow_count) return branch(f, f->exit);
   return store(f, f->program_counter, integer(f, address)) && branch(f, f->dispatch);
@@ -95,7 +98,8 @@ static int load_state(Flow *f) {
   s->previous_scalar = load(f, f->state[0]); s->predicate = load(f, f->state[1]);
   s->address = load(f, f->state[2]); s->killed = load(f, f->state[3]);
   s->operation_kill = load(f, f->state[4]);
-  f->config->io->loop_address = load(f, f->loop_address[0]);
+  f->config->io->loop_address = (f->features & FLOW_LOOPS) ?
+    load(f, f->loop_address[0]) : integer(f, 0);
   return s->previous_scalar && s->predicate && s->address && s->killed &&
     s->operation_kill && f->config->io->loop_address;
 }
@@ -208,6 +212,16 @@ static int emit_call_or_jump(Flow *f, const Control *c, unsigned index) {
   XeDxilValue below_limit;
   unsigned taken;
   if (!save_state(f)) return 0;
+  /* Forward edges cannot form a cycle between dispatcher entries. Keep the
+   * dispatcher for backward/self edges, loops and calls; commit ALU state
+   * before either successor reloads it. A next-instruction jump is a no-op. */
+  if (c->opcode == 11 && (c->low & 8191) > index) {
+    if ((c->low & 8191) == index + 1 || (c->low & 8192))
+      return branch(f, target(f, c->low & 8191));
+    test = condition(f, c, (c->low >> 14) & 1, (c->high >> 2) & 255);
+    return test && dxil_emit_branch(f->module, test,
+      target(f, c->low & 8191), target(f, index + 1));
+  }
   if (!(c->low & 8192)) {
     test = condition(f, c, (c->low >> 14) & 1, (c->high >> 2) & 255);
     if (!test) return 0;
@@ -225,10 +239,14 @@ static int emit_call_or_jump(Flow *f, const Control *c, unsigned index) {
 }
 
 static int emit_return(Flow *f, unsigned index) {
-  XeDxilValue depth = load(f, f->call_depth);
-  XeDxilValue has_call = compare(f, DXIL_ICMP_NE, depth, integer(f, 0));
+  XeDxilValue depth;
+  XeDxilValue has_call;
   XeDxilValue address;
   unsigned taken;
+  if (!(f->features & FLOW_CALLS))
+    return save_state(f) && branch(f, target(f, index + 1));
+  depth = load(f, f->call_depth);
+  has_call = compare(f, DXIL_ICMP_NE, depth, integer(f, 0));
   if (!has_call || !save_state(f) || !new_block(f, &taken) ||
       !dxil_emit_branch(f->module, has_call, taken, target(f, index + 1)) || !begin(f, taken)) return 0;
   address = load(f, f->return_address[0]);
@@ -268,7 +286,11 @@ static int validate(Flow *f) {
     } else if (c.opcode == 7 || c.opcode == 8 || c.opcode == 9 || c.opcode == 11) {
       if ((c.low & 8191) > f->config->control_flow_count) return 0;
       address = c.low & 8191;
-      if (address < f->config->control_flow_count) f->labels[address >> 5] |= 1u << (address & 31);
+      if (c.opcode == 7 || c.opcode == 8) f->features |= FLOW_DISPATCH | FLOW_LOOPS;
+      if (c.opcode == 9) f->features |= FLOW_DISPATCH | FLOW_CALLS;
+      if (c.opcode == 11 && address <= i) f->features |= FLOW_DISPATCH;
+      if (address < f->config->control_flow_count && (c.opcode != 11 || address <= i))
+        f->labels[address >> 5] |= 1u << (address & 31);
       if (c.opcode == 9 && i + 1 < f->config->control_flow_count)
         f->labels[(i + 1) >> 5] |= 1u << ((i + 1) & 31);
       if ((c.opcode == 7 || c.opcode == 8) && !f->config->loop_constant) return 0;
@@ -298,15 +320,25 @@ static int storage(Flow *f) {
   }
   type = dxil_module_get_int_type(f->module, 32);
   for (i = 0; i < 4; ++i) {
-    f->loop_count[i] = dxil_emit_alloca(f->module, type, one, 4);
-    f->loop_address[i] = dxil_emit_alloca(f->module, type, one, 4);
-    f->return_address[i] = dxil_emit_alloca(f->module, type, one, 4);
-    if (!store(f, f->loop_count[i], zero) || !store(f, f->loop_address[i], zero) ||
-        !store(f, f->return_address[i], zero)) return 0;
+    if (f->features & FLOW_LOOPS) {
+      f->loop_count[i] = dxil_emit_alloca(f->module, type, one, 4);
+      f->loop_address[i] = dxil_emit_alloca(f->module, type, one, 4);
+      if (!store(f, f->loop_count[i], zero) || !store(f, f->loop_address[i], zero)) return 0;
+    }
+    if (f->features & FLOW_CALLS) {
+      f->return_address[i] = dxil_emit_alloca(f->module, type, one, 4);
+      if (!store(f, f->return_address[i], zero)) return 0;
+    }
   }
-  f->call_depth = dxil_emit_alloca(f->module, type, one, 4);
-  f->program_counter = dxil_emit_alloca(f->module, type, one, 4);
-  return store(f, f->call_depth, zero) && store(f, f->program_counter, zero) && save_state(f);
+  if (f->features & FLOW_CALLS) {
+    f->call_depth = dxil_emit_alloca(f->module, type, one, 4);
+    if (!store(f, f->call_depth, zero)) return 0;
+  }
+  if (f->features & FLOW_DISPATCH) {
+    f->program_counter = dxil_emit_alloca(f->module, type, one, 4);
+    if (!store(f, f->program_counter, zero)) return 0;
+  }
+  return save_state(f);
 }
 
 int xe_dxil_emit_guest_flow(const XeDxilGuestFlow *config) {
@@ -328,17 +360,19 @@ int xe_dxil_emit_guest_flow(const XeDxilGuestFlow *config) {
       !validate(&flow) || !storage(&flow) ||
       !dxil_function_reserve_blocks(flow.module, config->control_flow_count + 1, &flow.base)) goto fail;
   flow.exit = flow.base + config->control_flow_count;
-  if (!new_block(&flow, &flow.dispatch) || !branch(&flow, flow.dispatch) ||
-      !begin(&flow, flow.dispatch)) goto fail;
-  pc = load(&flow, flow.program_counter);
-  if (!pc) goto fail;
-  for (i = 0; i < config->control_flow_count; ++i) {
-    if (!(flow.labels[i >> 5] & (1u << (i & 31)))) continue;
-    test = compare(&flow, DXIL_ICMP_EQ, pc, integer(&flow, i));
-    if (!test || !new_block(&flow, &next_test) ||
-        !dxil_emit_branch(flow.module, test, target(&flow, i), next_test) || !begin(&flow, next_test)) goto fail;
-  }
-  if (!branch(&flow, flow.exit)) goto fail;
+  if (flow.features & FLOW_DISPATCH) {
+    if (!new_block(&flow, &flow.dispatch) || !branch(&flow, flow.dispatch) ||
+        !begin(&flow, flow.dispatch)) goto fail;
+    pc = load(&flow, flow.program_counter);
+    if (!pc) goto fail;
+    for (i = 0; i < config->control_flow_count; ++i) {
+      if (!(flow.labels[i >> 5] & (1u << (i & 31)))) continue;
+      test = compare(&flow, DXIL_ICMP_EQ, pc, integer(&flow, i));
+      if (!test || !new_block(&flow, &next_test) ||
+          !dxil_emit_branch(flow.module, test, target(&flow, i), next_test) || !begin(&flow, next_test)) goto fail;
+    }
+    if (!branch(&flow, flow.exit)) goto fail;
+  } else if (!branch(&flow, target(&flow, 0))) goto fail;
   for (i = 0; i < config->control_flow_count; ++i) {
     if (!begin(&flow, flow.base + i) || !load_state(&flow)) goto fail;
     control(&flow, i, &c);

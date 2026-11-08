@@ -75,6 +75,7 @@ namespace spv {
 class Block;
 class Function;
 class Module;
+int emissionBlockLive(void*, uint32_t);
 
 const Id NoResult = 0;
 const Id NoType = 0;
@@ -285,6 +286,25 @@ public:
         xe_spv_count_words(&out, xe_spv_packet_prefix(&packet) + packet.count);
     }
 
+    void setEmissionLive(bool live) { xe_spv_packet_set_emitted(&packet, live); }
+    bool isEmissionVisible() const { return xe_spv_packet_emitted(&packet) != 0; }
+    template <class Output> void dumpPhi(Output& out, void* context) const {
+        if (!xe_spv_packet_phi_emit(&packet, emissionBlockLive, context,
+                appendPhi<Output>, &out)) throw std::bad_alloc();
+    }
+    static int appendPhiWords(xe_spv_binary& out, const uint32_t* words, size_t count) {
+        xe_spv_binary_append(&out, words, count); return !out.failed;
+    }
+    static int appendPhiWords(xe_spv_count& out, const uint32_t*, size_t count) {
+        xe_spv_count_words(&out, count); return !out.failed;
+    }
+    static int appendPhiWords(std::vector<unsigned int>& out, const uint32_t* words, size_t count) {
+        out.insert(out.end(), words, words + count); return 1;
+    }
+    template <class Output> static int appendPhi(void* out, const uint32_t* words, size_t count) {
+        return appendPhiWords(*static_cast<Output*>(out), words, count);
+    }
+
     const char *getNameString() const {
         if (getOpCode() == Op::OpString) {
             return (const char *)&xe_spv_packet_const_operands(&packet)[0];
@@ -399,13 +419,21 @@ public:
         }
     }
 
-    template <class Output> void dump(Output& out) const
+    void setEmissionLive(bool live) {
+        label->setEmissionLive(live);
+        for (Instruction* i = getFirstLocalVariable(); i; i = i->getNextInstruction())
+            i->setEmissionLive(live);
+        for (Instruction* i = getFirstBodyInstruction(); i; i = i->getNextInstruction())
+            i->setEmissionLive(live);
+    }
+    template <class Output> void dump(Output& out, void* context = nullptr) const
     {
         label->dump(out);
         for (Instruction* i = getFirstLocalVariable(); i; i = i->getNextInstruction())
             i->dump(out);
         for (Instruction* i = getFirstBodyInstruction(); i; i = i->getNextInstruction())
-            i->dump(out);
+            if (context && i->getOpCode() == Op::OpPhi) i->dumpPhi(out, context);
+            else i->dump(out);
     }
 
 protected:
@@ -512,6 +540,16 @@ public:
     }
     bool hasDebugLineInfo() const { return lineInstruction != nullptr; }
 
+    void planEmission(xe_spv_plan& plan) const {
+        for (Block* b = getEntryBlock(); b; b = b->getNextBlock()) b->setEmissionLive(false);
+        if (!xe_spv_plan_function(&plan, blocks.count)) throw std::bad_alloc();
+        inReadableOrder(getEntryBlock(), &plan, [](void* opaque, Block* block, ReachReason, Block*) {
+            block->setEmissionLive(true);
+            if (!xe_spv_plan_push(static_cast<xe_spv_plan*>(opaque), block)) throw std::bad_alloc();
+        }, &plan);
+        if (!xe_spv_plan_push(&plan, nullptr)) throw std::bad_alloc();
+    }
+
     void setImplicitThis() { implicitThis = true; }
     bool hasImplicitThis() const { return implicitThis; }
 
@@ -538,7 +576,7 @@ public:
             for (;;) {
                 if (!xe_spv_plan_next(plan, &node)) throw std::bad_alloc();
                 if (!node) break;
-                static_cast<const Block*>(node)->dump(out);
+                static_cast<const Block*>(node)->dump(out, &parent);
             }
         } else {
             if (plan && !xe_spv_plan_function(plan, blocks.count)) throw std::bad_alloc();
@@ -715,6 +753,13 @@ protected:
 //
 // Implementation (it's here due to circular type definitions).
 //
+
+__inline int emissionBlockLive(void* context, uint32_t id)
+{
+    const auto* instruction = static_cast<const Module*>(context)->getInstruction(id);
+    if (!instruction || !instruction->getBlock()) return -1;
+    return instruction->isEmissionVisible() ? 1 : 0;
+}
 
 __inline Instruction* Block::createInstruction(Id result, Id type, Op code)
 { return parent.getParent().createInstruction(result, type, code); }

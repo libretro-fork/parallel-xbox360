@@ -1664,6 +1664,12 @@ void SpirvShaderTranslator::ProcessLoopEndInstruction(
 
 void SpirvShaderTranslator::ProcessJumpInstruction(
     const ParsedJumpInstruction& instr) {
+  if (instr.target_address == instr.dword_index + 1) {
+    // No PC update or condition read is needed. ProcessLabel still handles a
+    // next block with genuine incoming edges, preserving NVIDIA's workaround.
+    CloseInstructionPredication();
+    return;
+  }
   // Treat like exec, merge with execs if possible, since it's an if too.
   ParsedExecInstruction::Type type;
   if (instr.type == ParsedJumpInstruction::Type::kConditional) {

@@ -1,0 +1,65 @@
+Shader control-flow lowering / unreachable SPIR-V references (0186, 2026-11-08)
+Parent: 0998905aeb66456048027ce9f79e7a0ddbdf712f
+
+Changes
+-------
+- Native DXIL forward jumps directly target reserved CF blocks after committing
+  ALU state. Next-instruction jumps skip their irrelevant condition read. Only
+  backward/self jumps, loops and calls require the dominating PC dispatcher.
+  Between dispatcher entries the direct edges strictly increase CF index.
+- Allocate loop slots only with loops, call slots/depth only with calls and PC
+  only with a dispatcher. Return without any call falls through. Calls to the
+  next instruction retain two executions (subroutine then return continuation).
+- Vulkan next-instruction jumps do not create labels/read unused bool constants;
+  genuine shared/backward labels retain the existing NVIDIA switch workaround.
+- Prewalk the existing borrowed block-emission plan before both size/output
+  passes. Two unused packet flag bits mark local/emitted records without new
+  instruction storage. Omitted blocks' phi inputs, names and decorations are
+  filtered consistently. C89 phi emission borrows immutable original words;
+  no temporary operand buffer, payload mutation or new lock is introduced.
+
+Evidence
+--------
+- Full static Make MinGW core, -j5: PASS. Full Release MSVC/Ninja core,
+  --parallel 5: PASS. Later edits add fixtures/runners/docs only.
+- GNU and native MSVC real ShaderInterpreter + SpirvShaderTranslator fixtures:
+  PASS, eight VS and eight PS packed programs. All sixteen generated modules
+  pass spirv-val --target-env vulkan1.1. CPU results check independent constants.
+- Actual builder fixtures: omitted and live orphan blocks, phi pair counts,
+  names/NoContraction/label retention, identical exact/legacy dump output, and
+  borrowed plan reused across distinct owner lifetimes: PASS, three modules
+  also pass spirv-val on GNU and MSVC.
+- Pushed parent actual translator negative control: same forward-jump fixture
+  fails spirv-val with undefined IDs140 and145 (phi parent and decoration).
+- Thirty-eight native DXIL fixtures (five existing loop/call cases,32 independent
+  scalar forward-CFG oracles, one call-to-next case): Microsoft SDK10.0.26100
+  dxil.dll validation PASS; all88 output words per case match on both WARP
+  and NVIDIA vendor10de/device2b85. Six invalid programs reject as expected.
+- GNU C89 pedantic full DXIL syntax check and MSVC /TC /W4 /WX writer/flow tests:
+  PASS (existing bytecode headers require /wd4201).
+- Acyclic fixtures emit5 control-flow IR alloca nodes versus parent's19;
+  call-only11, loop-only14, loop+call19. Parent generator statically linked
+  before rebuilding. Across the32 forward fixtures, raw bytecode totals
+  302512 ->275996 bytes (8.8% smaller). This is not measured driver spilling.
+- Linux ASan+UBSan broad SPIR-V output/ownership suite with halt_on_error:
+  PASS, parent185 archive borrowed-view mode, 2624 standard and2624 wide-scale
+  helper modules per revision, existing output byte comparisons and lifetime/
+  fault injection coverage. Expected poisoned-view subprocess failures checked.
+- Scoped MSVC AddressSanitizer build of actual ShaderTranslator,
+  SpirvShaderTranslator, SpvBuilder and real C89/typed fixtures: PASS.
+  Supporting core libraries remain Release; not a whole-core ASan claim.
+- C89 phi unit tests: all16 parent masks, immutable bytes/capacity, borrowed
+  chunk bounds, callback failures and malformed operands; MSVC and Linux
+  ASan+UBSan PASS. No warm phi allocation.
+
+Limits
+------
+Vulkan fixture output is validated but not physically GPU-executed here.
+Vulkan's missing ProcessCallInstruction/ProcessReturnInstruction overrides are
+an existing limitation; call-to-next tests assert Vulkan label retention and
+CPU semantics, NOT correct SPIR-V subroutine execution. Native DXIL subroutine
+execution is tested. Shader-arena orphan records survive until owner reset;
+this does not eliminate every shader allocation. Prewalking and liveness scans
+have CPU cost; shader compilation throughput/FPS/spills are not measured.
+No game launch, installed DLL replacement, audio scheduling, guest query,
+queue synchronization or frontend pacing change is part of this patch.
