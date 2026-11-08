@@ -35,9 +35,9 @@ static int check(unsigned channels, unsigned out_channels, int be, float volume)
          expected[i * 2] = value(i, 0) + (center + (left + low));
          expected[i * 2 + 1] = value(i, 1) + (center + (right + low));
       } else {
-         center = value(i, 2) * 0.7071f;
-         expected[i * 2] = value(i, 0) + center + value(i, 4) * 0.7071f;
-         expected[i * 2 + 1] = value(i, 1) + center + value(i, 5) * 0.7071f;
+         center = value(i, 2) * 0.7071067811865475244f;
+         expected[i * 2] = value(i, 0) + center + value(i, 4) * 0.7071067811865475244f;
+         expected[i * 2 + 1] = value(i, 1) + center + value(i, 5) * 0.7071067811865475244f;
       }
    }
    if (volume != 1.0f)
@@ -78,10 +78,28 @@ static int payload_test(void) {
    return !memcmp(actual, payloads, sizeof(actual));
 }
 
+static int media_gain_test(void) {
+   float raw[18], result[6];
+   uint32_t actual[6];
+   static const uint32_t expected_bits[6] = {
+      UINT32_C(0x3f3504f3), UINT32_C(0x3f3504f3),
+      UINT32_C(0x3f3504f3), 0, 0, UINT32_C(0x3f3504f3)
+   };
+   memset(raw, 0, sizeof(raw));
+   raw[2] = raw[10] = raw[17] = 1.0f;
+   xe_audio_convert(result, raw, 3, 0, 3, 6, 2, 0, 1.0f);
+   memcpy(actual, result, sizeof(actual));
+   if (memcmp(actual, expected_bits, sizeof(actual))) {
+      fputs("media downmix gain loses float precision\n", stderr);
+      return 0;
+   }
+   return 1;
+}
+
 int main(void) {
    static const float volumes[] = {1.0f, 0.375f, 0.0f};
    unsigned v, in, out;
-   if (!payload_test()) return 2;
+   if (!payload_test() || !media_gain_test()) return 2;
    for (v = 0; v < 3; ++v)
       for (in = 2; in <= 6; in += 4)
          for (out = 2; out <= 6; out += 4)

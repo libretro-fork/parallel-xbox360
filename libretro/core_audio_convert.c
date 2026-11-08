@@ -116,12 +116,12 @@ void xe_audio_convert(float *out, const float *in, size_t total_frames,
          }
       }
    } else {
-      /* Preserve the media-player matrix and operation order. */
+      /* Media downmix; keep full float precision until final output. */
       for (; i < count; ++i) {
          frame = in + (offset + i) * 6;
-         value = frame[2] * 0.7071f;
-         out[i * 2] = frame[0] + value + frame[4] * 0.7071f;
-         out[i * 2 + 1] = frame[1] + value + frame[5] * 0.7071f;
+         value = frame[2] * 0.7071067811865475244f;
+         out[i * 2] = frame[0] + value + frame[4] * 0.7071067811865475244f;
+         out[i * 2 + 1] = frame[1] + value + frame[5] * 0.7071067811865475244f;
          if (volume != 1.0f) {
             out[i * 2] *= volume; out[i * 2 + 1] *= volume;
          }

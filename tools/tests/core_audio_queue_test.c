@@ -167,7 +167,7 @@ static int matrix_test(unsigned output_channels, int be) {
         if (output_channels == 6) expected = channel == c ? amplitude : 0.0f;
         else if (be) expected = amplitude * (c ? right[channel] : left[channel]);
         else if (channel == c) expected = amplitude;
-        else if (channel == 2 || channel == (c ? 5u : 4u)) expected = amplitude * 0.7071f;
+        else if (channel == 2 || channel == (c ? 5u : 4u)) expected = amplitude * 0.7071067811865475244f;
         else expected = 0.0f;
         expected *= 0.375f;
         if (mix[i * output_channels + c] != expected) return 0;

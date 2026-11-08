@@ -126,9 +126,9 @@ void LibretroAudioDriver::SubmitFrameResampled(float* samples) {
       // Interleaved little-endian 5.1 (FL FR C LFE SL SR), folded to stereo.
       for (size_t i = 0; i < frames; ++i) {
         const float* f = &samples[i * 6];
-        const float c = f[2] * 0.7071f;
-        stereo[i * 2] = f[0] + c + f[4] * 0.7071f;
-        stereo[i * 2 + 1] = f[1] + c + f[5] * 0.7071f;
+        const float c = f[2] * 0.7071067811865475244f;
+        stereo[i * 2] = f[0] + c + f[4] * 0.7071067811865475244f;
+        stereo[i * 2 + 1] = f[1] + c + f[5] * 0.7071067811865475244f;
       }
     } else {
       prepared = samples;
