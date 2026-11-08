@@ -56,6 +56,11 @@ int main(int argc,char **argv) {
     values[0]=0x3f800000;values[1]=values[2]=values[3]=0x33c00000;
     for(c=4;c<8;++c)values[c]=0x3f800000;
    }
+   if(sample==1) {
+    /* DP2ADD must still flush its raw third operand before min-normal + -tiny. */
+    values[0]=0x80000001;values[1]=0x00800000;values[2]=values[3]=0;
+    values[4]=values[5]=0x3f800000;values[6]=values[7]=0;
+   }
    sum=oracle(1,values[0],values[4]);
    for(c=1;c<7-op;++c)sum=oracle(0,sum,oracle(1,values[c],values[c+4]));
    if(op==5)sum=oracle(0,sum,values[0]);

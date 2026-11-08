@@ -384,3 +384,24 @@ under the same thresholds, rather than dismissing it or loosening the gate.
 The first failure is evidence even if a later run passes. Current local
 hardware/WARP self-checks validate orchestration only, not this hosted alert
 or a cold-play acceptance baseline.
+
+## Reusing established denormal state without tracking storage
+
+Inside a dot reduction, both the corrected product and the preceding sum have
+already passed output FTZ. A narrow two-bit operand mask permits the typed ALU
+adapter to reuse that fact; no global value-state map or IR-copy pass is needed.
+Retain output flushing and reduction order. DP2ADD's third guest operand is raw
+and must still be flushed. A negative control which falsely marks it clean
+returns zero instead of minimum-normal at real-GPU case197 and is rejected.
+
+Keep cache states separate in reports. The first standard-corpus comparison
+produced three PSO tail alarms against previously compiled parent modules;
+retain that failed comparison. A separate already-seen-module comparison passes
+288 hardware and80 WARP metrics. An independent first-use companion, using the
+same procedural source with33/97/257 dot operations instead of32/96/256, gives
+96 metrics with no alarms and377.0181 ->211.2981ms worst observed PSO. All companion
+parent hashes differ from the previously used corpus. This supports a cache-state
+explanation; it does not certify driver disk/internal cache coldness.
+Do not replace the standard corpus, delete its first samples or loosen thresholds
+to obtain a pass. The remaining211ms stall is still a cold-play defect.
+Evidence and exact scope: tools/tests/shader_clean_dot_results.txt.

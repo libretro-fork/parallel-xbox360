@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Remove repeated Vulkan denormal checks on dot-product terms and accumulated sums already flushed by the prior operation. Keep result flushing, ordered arithmetic and DP2ADD third-operand validation. Add a finite minimum-normal regression; first-use compilation stalls remain unresolved.
+
 - Fix shader hardware-CI device validation for the expanded three-profile corpus. Require one matching device/driver report from every timed profile, rejecting missing, duplicate or mixed reports; keep performance thresholds unchanged.
 
 - Reduce Vulkan vertex dot-product compilation work by sharing independent product lanes while retaining ordered guest sums and zero/NaN behavior. Add dot-heavy per-commit comparisons and GPU checks that reject incorrect reassociation; visible first-use stalls remain unresolved.

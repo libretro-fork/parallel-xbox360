@@ -94,12 +94,12 @@ spv::Id SpirvShaderTranslator::FlushAluDenormals(spv::Id type, spv::Id value) {
   return builder_->createUnaryOp(spv::OpBitcast, type, spv::Id(clean));
 }
 spv::Id SpirvShaderTranslator::AluBinaryOperation(spv::Op opcode,
-    spv::Id type, spv::Id a, spv::Id b) {
+    spv::Id type, spv::Id a, spv::Id b, unsigned flushed_operands) {
   if (is_vertex_shader() && features_.rounding_mode_rtz_float32 &&
       !features_.denorm_flush_to_zero_float32 &&
       (opcode == spv::OpFAdd || opcode == spv::OpFSub || opcode == spv::OpFMul)) {
-    a = FlushAluDenormals(type, a);
-    b = FlushAluDenormals(type, b);
+    if (!(flushed_operands & 1)) a = FlushAluDenormals(type, a);
+    if (!(flushed_operands & 2)) b = FlushAluDenormals(type, b);
     return FlushAluDenormals(type, builder_->createNoContractionBinOp(opcode, type, a, b));
   }
   spv::Id native = builder_->createNoContractionBinOp(opcode,type,a,b);
@@ -725,14 +725,14 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
           result = product;
           continue;
         }
-        result = AluBinaryOperation(spv::OpFAdd, type_float_,
-                                                    result, product);
+        // Both the prior sum and corrected product have already been flushed.
+        result = AluBinaryOperation(spv::OpFAdd, type_float_, result, product, 3);
       }
       if (instr.vector_opcode == ucode::AluVectorOpcode::kDp2Add) {
         result = AluBinaryOperation(
             spv::OpFAdd, type_float_, result,
             GetOperandComponents(operand_storage[2], instr.vector_operands[2],
-                                 0b0001));
+                                 0b0001), 1);
       }
       return result;
     }

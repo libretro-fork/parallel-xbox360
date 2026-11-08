@@ -1,0 +1,73 @@
+Reuse established FTZ state in ordered Vulkan dot reductions
+2026-11-08
+Parent76149629b432adf86c9af7d393cda60437a33a79
+
+Production
+----------
+A two-bit operand mask tells the existing typed ALU adapter that an operand
+cannot be subnormal. Default0 retains ordinary input checks. Dot sums use3:
+corrected products and prior sums already passed output FTZ. DP2ADD final
+addition uses1: only its first operand is known clean; the raw guest third
+operand must still be flushed. Output flushing remains unconditional in the
+manual-FTZ path. Native-FTZ, pixel and full-integer fallbacks ignore the mask.
+No FMA, OpDot, reassociation, new arena, container, allocation owner, payload
+copy, lock, tracking map, logging or GPU roundtrip. Existing C89 flush emitter
+is unchanged; the new mask is narrow typed interoperability.
+
+Correctness
+-----------
+384 actual packed-guest GPU cases PASS on RTX5090, finite bit-exact with NaN
+payload canonicalization only. The original192 non-dot modules and96 software
+dot modules are byte-identical. Add a focused DP2ADD min-normal + negative-tiny
+third-operand case. Private production negative control marking that third
+operand clean fails at case197:00000000 versus00800000. Restored production
+and parent both pass384. The earlier ordered-sum trap remains covered.
+
+Full MSVC Release core --parallel3 PASS. MSVC strict C89 4M numeric/SSA,49 native
+capability/interpreter modules and384 GPU fixture/runtime PASS. MinGW translator
+ALU C++20 syntax check and strict C89 fixture compile,384 Vulkan execution PASS.
+Linux GCC strict C89 fixture/runtime compile,4M ASan+UBSan numeric/SSA and
+spirv-val current fixtures PASS. No whole-core GNU build or physical Linux GPU
+claim.17 CI comparator tests PASS.
+
+Measurements and retained failures
+----------------------------------
+Same MSVC Release toolchain, device/driver and ABI harness. RTX5090 vendor4318/
+device11141, driver2604679168. Seven alternating/reverse-order pairs for each
+condition. No competing build during timing. Thresholds unchanged. Parent
+production for the standard comparison is statically sealed3c4f2cd14; a Git
+source comparison proves it is identical to76149629b (CI/docs-only commit).
+The independent companion rebuilds the exact76149629b production sources.
+
+1. Initial standard corpus:WARP80 metrics no alarms; hardware288 has THREE
+PSO tail alarms at cases0/2/4. Parent maxima0.4868/0.4291/0.6153ms, candidate
+first observations51.5194/98.3874/214.4648ms. Parent shaders had already been
+compiled by earlier runs; candidate changed modules were first used here.
+Do not label this condition matched cold or discard its first samples.
+Normal64 and RTZ64 modules are byte-identical. Dot64 bytes10,024,544 ->8,510,048
+(-15.11%). Translation median across case medians(batch4)0.59005 ->0.5491ms.
+
+2. Separate already-seen-module standard comparison:seven new pairs, unchanged
+corpus and gate. Hardware288 and WARP80 metrics, zero alarms. This is warmed
+component evidence, excluding first-use compilation by declaration; it does
+not replace condition1 or certify the cold-play outcome.
+
+3. Independent first-use companion:same procedural fixture except chain lengths
+33/97/257 instead of32/96/256. Original corpus is unchanged. All64 parent hashes
+differ from the prior dot corpus. Both versions generate before any companion
+PSO timing; seven alternating pairs,96 exact expected metrics, zero alarms.
+First heavy PSOs cases0/2/4:parent95.5238/183.7164/377.0181ms, candidate
+51.9323/97.8833/211.2981ms. Dot translation median across case medians(batch4)
+0.5983 ->0.5552ms, maximum3.7118 ->3.0697ms. Graphics-PSO median across case
+medians0.2095 ->0.1911ms. This supports the condition1 cache-state explanation
+without erasing its alarms. Driver disk/internal cache coldness remains
+uncertified; novel module hashes alone cannot certify it.
+
+Limits
+------
+A211ms first-use PSO is still visibly too slow. No gameplay smoothness, first
+correct draw, actual shader GPU-time, cross-game cold/warm anchor, console
+reference, allocation-count or RSS claim. Native hardware FTZ is unsupported
+on this test GPU. Hosted e3 software-Vulkan case12 tail alert remains separately
+under investigation; its original artifacts and rerun status are retained.
+No installed DLL overwritten, live cache deleted or game/frontend launched.

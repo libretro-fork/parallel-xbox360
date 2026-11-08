@@ -900,7 +900,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // instead of full IEEE-754 precision (equivalent to 21 vs 23 mantissa bits).
   spv::Id ReduceFloatPrecision(spv::Id value, uint32_t mantissa_bits);
   spv::Id AluFract(spv::Id type, spv::Id operand);
-  spv::Id AluBinaryOperation(spv::Op opcode, spv::Id type, spv::Id a, spv::Id b);
+  // Bits 0/1 assert that the corresponding operand cannot be subnormal.
+  spv::Id AluBinaryOperation(spv::Op opcode, spv::Id type, spv::Id a, spv::Id b,
+                            unsigned flushed_operands = 0);
   struct RtzEmitContext {
     SpirvShaderTranslator* translator;
     spv::Id uint_type, bool_type;
