@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "shader_compile_bench.h"
 static int observed_export(void *context, XeDxilGuestProgram *program, unsigned index, unsigned mask) {
   unsigned *count = (unsigned *)context;
   (void)program; (void)index; (void)mask;
@@ -57,7 +58,9 @@ int main(int argc, char **argv) {
   }
   if (config == 16) { words[9] = (words[9]&~31u)|17u; words[10] |= 1u<<28; }
   if (config == 17) words[9] = (words[9]&~31u)|16u;
+  XE_COMPILE_BEGIN();
   binary = xe_dxil_build_guest_vertex_owned(&options,words,sizeof(words)/4,2);
+  XE_COMPILE_END("dxil.translate",config);
   if (config == 8) { if (!binary) return 0; xe_dxil_shader_binary_delete(binary); return 1; }
   if (!binary) return 1;
   if (observed != (config == 4 || config >= 6 ? 2u : config == 5 ? 5u : 3u)) { xe_dxil_shader_binary_delete(binary); return 1; }

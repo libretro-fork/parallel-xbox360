@@ -170,6 +170,8 @@ Vulkan translation binding scratch uses eight-byte C89 key/variable records with
 
 Vulkan texture, sampler, interpolator and memexport resource names construct directly in bounded C89 stack storage. The builder copies the final name into its owned SPIR-V operand; temporary formatted strings and string streams are removed. This is a translation-path allocation reduction, not a claim of copy-free shader assembly or measured gameplay gains. See [resource-name checks](tools/tests/shader_names_results.txt).
 
+Shader compilation has a dedicated per-commit comparison workflow: procedural guest VS/PS translation, actual Vulkan graphics PSOs and D3D12 WARP numerical fixtures, raw per-case tail timings, parent comparisons and an optional pinned reference. Hosted software-driver success does not certify cold-play smoothness. The existing NG2 compilation stalls remain a priority regression; hardware replay and a user-accepted last-known-good reference remain outstanding. See [the cold-play development and CI plan](libretro/SHADER_COMPILATION_REGRESSION_PLAN.md).
+
 ## Savestate work in progress
 
 Audio/XMA pause requests use acknowledged common gates with bounded waits. Content teardown releases the decoder contexts and their retained packet buffers after joining the decoder worker.

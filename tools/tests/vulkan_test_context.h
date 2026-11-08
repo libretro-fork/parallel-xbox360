@@ -1,10 +1,13 @@
 #ifndef XE_TEST_VULKAN_CONTEXT_H
 #define XE_TEST_VULKAN_CONTEXT_H
 /* Shared C89 Vulkan test context; no production dependency. */
+#ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "shader_compile_bench.h"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -47,6 +50,7 @@ static struct {
 #define LOAD(n) do { PFN_vkVoidFunction p=g.get(g.instance,#n); memcpy(&g.n,&p,sizeof(p)); if (!g.n) { fprintf(stderr,"Missing %s\n",#n); goto done; } } while (0)
 #define OK(x) do { VkResult r=(x); if (r!=VK_SUCCESS) { fprintf(stderr,"Vulkan %d at line %u\n",(int)r,(unsigned)__LINE__); goto done; } } while (0)
 struct buffer { VkBuffer buffer; VkDeviceMemory memory; void *mapped; int coherent; };
+#ifndef XE_VK_TEST_NO_BUFFERS
 static int make_buffer(struct buffer *b, size_t bytes)
 {
    VkBufferCreateInfo info = {0};
@@ -88,6 +92,10 @@ static int cache_buffer(struct buffer *b, int invalidate)
    return (invalidate ? g.vkInvalidateMappedMemoryRanges(g.device,1,&range)
                       : g.vkFlushMappedMemoryRanges(g.device,1,&range))==VK_SUCCESS;
 }
+#endif
+#ifndef XE_VK_TEST_SHADER_MAX_BYTES
+#define XE_VK_TEST_SHADER_MAX_BYTES 1048576
+#endif
 static int shader(const char *path, VkShaderModule *module)
 {
    FILE *file=fopen(path,"rb");
@@ -96,13 +104,15 @@ static int shader(const char *path, VkShaderModule *module)
    VkShaderModuleCreateInfo info = {0};
    VkResult result;
    if (!file) return 0;
-   if (fseek(file,0,SEEK_END) || (size=ftell(file))<=0 || size>1048576 || (size&3) || fseek(file,0,SEEK_SET)) { fclose(file); return 0; }
+   if (fseek(file,0,SEEK_END) || (size=ftell(file))<=0 || size>XE_VK_TEST_SHADER_MAX_BYTES || (size&3) || fseek(file,0,SEEK_SET)) { fclose(file); return 0; }
    words=(uint32_t *)malloc((size_t)size);
    if (!words) { fclose(file); return 0; }
    if (fread(words,1,(size_t)size,file)!=(size_t)size) { fclose(file); free(words); return 0; }
    fclose(file);
    info.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO; info.codeSize=(size_t)size; info.pCode=words;
+   XE_COMPILE_BEGIN();
    result=g.vkCreateShaderModule(g.device,&info,NULL,module);
+   XE_COMPILE_END("vulkan.module",xe_compile_case);
    free(words); return result==VK_SUCCESS;
 }
 #endif

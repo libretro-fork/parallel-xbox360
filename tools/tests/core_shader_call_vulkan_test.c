@@ -1,6 +1,10 @@
 /* Real translated guest VS execution via Vulkan transform feedback. C89. */
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#endif
 #define XE_VK_TEST_GRAPHICS
 #include "vulkan_test_context.h"
+#include "shader_compile_bench.h"
 int main(int argc,char **argv) {
 #ifdef _WIN32
  HMODULE loader=LoadLibraryA("vulkan-1.dll");FARPROC entry;
@@ -50,6 +54,7 @@ int main(int argc,char **argv) {
  LOAD(vkGetPhysicalDeviceFeatures2);LOAD(vkCreateDevice);
  count=8;OK(g.vkEnumeratePhysicalDevices(g.instance,&count,physical));if(!count)goto done;
  g.vkGetPhysicalDeviceProperties(physical[0],&properties);
+ fprintf(stderr,"BENCH_DEVICE Vulkan vendor=%u device=%u driver=%u name=%s\n",properties.vendorID,properties.deviceID,properties.driverVersion,properties.deviceName);
  g.vkGetPhysicalDeviceMemoryProperties(physical[0],&g.memory);
  tf.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
  features.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;features.pNext=&tf;
@@ -140,11 +145,13 @@ int main(int argc,char **argv) {
  for(which=0;which<16;++which){
   ((uint32_t*)((unsigned char*)buffers[0].mapped+2048))[0]=(which>=5 && which<10)?1u:0u;
   if(!cache_buffer(&buffers[0],0))goto done;
-  sprintf(path,"%s/call%u.spv",argv[1],which);if(!shader(path,&module))goto done;
+  XE_COMPILE_CASE(which);sprintf(path,"%s/call%u.spv",argv[1],which);if(!shader(path,&module))goto done;
   sprintf(path,"%s/call%u.expected",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
   i=(uint32_t)fread(golden,1,sizeof(golden),file);j=(uint32_t)fgetc(file);fclose(file);
   if(i!=sizeof(golden) || j!=(uint32_t)EOF)goto done;
-  stage.module=module;OK(g.vkCreateGraphicsPipelines(g.device,VK_NULL_HANDLE,1,&pipeline_info,NULL,&pipeline));
+  stage.module=module;XE_COMPILE_BEGIN();
+  OK(g.vkCreateGraphicsPipelines(g.device,VK_NULL_HANDLE,1,&pipeline_info,NULL,&pipeline));
+  XE_COMPILE_END("vulkan.graphics_pso",which);
   memset(buffers[1].mapped,0xA5,4096);if(!cache_buffer(&buffers[1],0))goto done;
   OK(g.vkResetCommandPool(g.device,commands,0));OK(g.vkBeginCommandBuffer(command,&begin));
   barrier.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_UNIFORM_READ_BIT|VK_ACCESS_TRANSFORM_FEEDBACK_WRITE_BIT_EXT;

@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "shader_compile_bench.h"
 
 static void *read_binary(const char *path, size_t *size) {
   FILE *file = fopen(path, "rb");
@@ -161,7 +162,9 @@ int main(int argc, char **argv) {
   desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
   desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID; desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
   desc.SampleMask = UINT_MAX; desc.SampleDesc.Count = 1;
+  XE_COMPILE_BEGIN();
   CHECK(ID3D12Device_CreateGraphicsPipelineState(device,&desc,&IID_ID3D12PipelineState,(void **)&pipeline));
+  XE_COMPILE_END("d3d12.graphics_pso",config);
   CHECK(buffer(device,D3D12_HEAP_TYPE_UPLOAD,2304,D3D12_RESOURCE_STATE_GENERIC_READ,&upload));
   CHECK(buffer(device,D3D12_HEAP_TYPE_DEFAULT,1024,D3D12_RESOURCE_STATE_STREAM_OUT,&output));
   CHECK(buffer(device,D3D12_HEAP_TYPE_READBACK,1024,D3D12_RESOURCE_STATE_COPY_DEST,&readback));

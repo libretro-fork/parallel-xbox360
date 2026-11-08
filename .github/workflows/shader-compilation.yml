@@ -1,0 +1,134 @@
+name: Shader compilation regression comparisons
+
+# Every commit in a push gets a first-parent comparison; no paths-ignore.
+# No PR-target execution or write token. Hardware runners are explicitly opt-in.
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  revisions:
+    if: github.event.deleted != true
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      commits: ${{ steps.select.outputs.commits }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check comparator and enumerate every pushed commit
+        id: select
+        run: |
+          python3 -m unittest discover -s tools/tests -p test_shader_compile_ci.py -v
+          python3 tools/tests/shader_compile_ci.py matrix
+
+  software-comparison:
+    needs: revisions
+    if: needs.revisions.result == 'success'
+    name: ${{ matrix.backend }} / ${{ matrix.sha }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.revisions.outputs.matrix) }}
+    env:
+      SHADER_PERF_ANCHOR: ${{ vars.SHADER_PERF_ANCHOR }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Linux toolchain and software Vulkan driver
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-14 g++-14 make ninja-build libfontconfig1-dev libvulkan1 mesa-vulkan-drivers spirv-tools vulkan-tools
+          echo 'CC=gcc-14' >> "$GITHUB_ENV"
+          echo 'CXX=g++-14' >> "$GITHUB_ENV"
+      - name: Native MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Compare actual translation and driver PSO calls
+        env:
+          PERF_BASE: ${{ matrix.base }}
+          PERF_HEAD: ${{ matrix.sha }}
+          PERF_BACKEND: ${{ matrix.backend }}
+          PERF_OUT: ${{ runner.temp }}/shader-perf-${{ matrix.sha }}-${{ matrix.backend }}
+        shell: pwsh
+        run: |
+          python tools/tests/shader_compile_ci.py run --base "$env:PERF_BASE" --head "$env:PERF_HEAD" --backend "$env:PERF_BACKEND" --out "$env:PERF_OUT" --samples 7
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shader-comparison-${{ matrix.sha }}-${{ matrix.backend }}
+          path: ${{ runner.temp }}/shader-perf-${{ matrix.sha }}-${{ matrix.backend }}/results/
+          if-no-files-found: error
+          retention-days: 30
+
+  hardware-comparison:
+    needs: revisions
+    if: needs.revisions.result == 'success' && vars.SHADER_GPU_RUNNER_ENABLED == 'true'
+    runs-on: [self-hosted, linux, x64, shader-perf]
+    timeout-minutes: 120
+    concurrency:
+      group: shader-perf-hardware
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.revisions.outputs.commits) }}
+    env:
+      SHADER_PERF_ANCHOR: ${{ vars.SHADER_PERF_ANCHOR }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Paired hardware driver comparison
+        env:
+          PERF_BASE: ${{ matrix.base }}
+          PERF_HEAD: ${{ matrix.sha }}
+          PERF_OUT: ${{ runner.temp }}/shader-perf-${{ matrix.sha }}-hardware
+        run: |
+          python3 tools/tests/shader_compile_ci.py run --base "$PERF_BASE" --head "$PERF_HEAD" --backend vulkan-hardware --out "$PERF_OUT" --samples 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shader-comparison-${{ matrix.sha }}-hardware
+          path: ${{ runner.temp }}/shader-perf-${{ matrix.sha }}-hardware/results/
+          if-no-files-found: error
+          retention-days: 30
+
+  coverage:
+    needs: [software-comparison, hardware-comparison]
+    if: always() && github.event.deleted != true
+    runs-on: ubuntu-24.04
+    steps:
+      - name: State what these jobs do and do not establish
+        env:
+          SOFTWARE_RESULT: ${{ needs.software-comparison.result }}
+          HARDWARE_RESULT: ${{ needs.hardware-comparison.result }}
+          HARDWARE_ENABLED: ${{ vars.SHADER_GPU_RUNNER_ENABLED }}
+        run: |
+          {
+            echo '# Shader regression coverage'
+            echo "Software comparisons: $SOFTWARE_RESULT"
+            echo "Hardware comparisons: $HARDWARE_RESULT"
+            echo ''
+            echo 'Procedural PSO/translation tests are not cross-game cold-play signoff.'
+            echo 'A missing hardware runner or private replay corpus remains unverified coverage.'
+            echo 'Configure SHADER_GPU_RUNNER_ENABLED only after the labelled runner is available.'
+            echo 'Pin SHADER_PERF_ANCHOR after a last-known-good cross-game baseline is established.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "$SOFTWARE_RESULT" = success
+          if test "$HARDWARE_ENABLED" = true; then test "$HARDWARE_RESULT" = success; fi

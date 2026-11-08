@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Add per-commit shader compilation comparisons on software Vulkan and D3D12 WARP, with opt-in hardware jobs, retained per-case timings and failure checks. Document cold-play smoothness as a development requirement and a phased plan for fixing the existing stalls. These component tests do not certify gameplay smoothness; hardware replay coverage and a last-known-good anchor still need to be established. Cache defaults and production rendering behavior are unchanged.
+
 - Replace Vulkan translator texture/sampler vectors with reusable C89 binding scratch: eight-byte exact-key/variable records, sixteen inline records per table and checked retained growth. Reduce metadata, comparisons and cold allocations while preserving descriptor ordering, published binding bytes and texture-use masks. Larger binding sets can still allocate; builder and final immutable shader storage remain. Offline DS2 and failure/reuse checks pass; gameplay gains are unmeasured.
 
 - Construct Vulkan texture, sampler, interpolator and memexport resource names directly in fixed C89 stack storage instead of temporary formatted strings and string streams. The builder retains its owned SPIR-V name operands; compiled output and cache semantics are unchanged. This removes intermediate name allocations/copies during translation, not texture payload transfers.
