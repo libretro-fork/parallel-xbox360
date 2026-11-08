@@ -1,0 +1,65 @@
+Shader CI elapsed/process-CPU diagnostics
+2026-11-08
+Parentc8ecf5662971bb08e13d425245ee25ab22119370
+
+Scope
+-----
+Test/CI-only instrumentation. No production renderer, shader emitter, worker
+queue, core timing, audio, cache policy or runtime file I/O change.
+The original compare() thresholds and percentile functions are unchanged.
+Elapsed time stays authoritative, including tails. A CPU-only view cannot pass
+a stalled wall-time result. Process CPU samples are separate raw CSV files and
+paired indexed report entries, including anchor coverage. Missing/substituted
+CPU roles/cases or sample counts fail rather than silently dropping diagnostics.
+
+Timed binaries use QPC/CLOCK_MONOTONIC for wall and process user+kernel time on
+Windows or CLOCK_PROCESS_CPUTIME_ID on POSIX for CPU. Capture CPU endpoints
+before file writes and outside the primary elapsed interval. No release hooks
+are added; the timing header is only used by test executables. Read executable
+hashes in bounded1MiB chunks. Store executable sizes/hashes, exact module
+identity, clock-control traces and timing-contract2 in artifacts. Workflow
+artifact names include run_attempt; old attempts remain available.
+
+Mandatory timer control
+-----------------------
+A strict C89 child prints readiness and blocks reading its owned stdin. Test
+orchestration holds it for120ms, then releases it; a separate phase consumes
+60ms process CPU. Seven repeats must retain >=100ms blocked wall time and
+<50ms blocked CPU, and >=40ms busy CPU. The same control verifies that the
+injected elapsed stall fails the unmodified comparison gate. MSVC, MinGW and
+POSIX GCC controls PASS. The controlled wait is offline fault injection, not
+core/frontend frame pacing.
+
+Verification
+------------
+-27 Python guardrail tests PASS. Includes flat CPU plus a large elapsed tail,
+ pinned-anchor elapsed failure, missing CPU roles/cases/samples, parallel CPU
+ above elapsed, Windows zero-accounting ticks, stream hashing past1MiB and
+ early rejection of invalid clocks before core builds and full synthetic report
+ processing. The latter injects a200ms elapsed tail
+ with flat1ms CPU and requires a failed report plus the correct outlier index.
+-MSVC /TC /W4 /WX complete current CLI hardware self-check:288 metrics,7 paired
+ samples and384 actual-guest GPU correctness cases PASS.
+-Complete CLI WARP self-check:80 metrics,7 paired samples PASS.
+-192 SPIR-V outputs and8 DXIL outputs match the pre-instrumentation parent.
+-Clock-control CSV/JSON files are inside the uploaded results hierarchy.
+-The final report-processing helper reproduces the collected primary wall
+ decisions; indexed CPU postprocessing is derived from the same raw samples
+ without resampling. Original timing manifests remain preserved.
+-Local POSIX software-driver A/A control:32 driver stage/case metrics,7 paired
+ fresh-process repeats, same executable and same procedural modules, PASS.
+ Lavapipe disk cache explicitly disabled; CPU affinity limited to two cores.
+ GCC13.3.0 on WSL. This is a driver-only control, not a full Linux core build or
+ a hosted-revision acceptance result. Strict C89 compile/run PASS.
+
+Outstanding hosted alerts
+-------------------------
+e3bc8472e case12: p95 102.5708 ->131.7618ms, maximum103.4080 ->133.7248ms.
+3c4f2cd14 case10: p95 19.6986 ->29.2567ms, maximum19.7005 ->33.4587ms;
+median18.9081 ->18.8463ms. Both software-Vulkan comparisons have byte-identical
+64-module payloads. The timed PSO harness does not link/call the changed core
+queue. This is insufficient to identify the cause; preserve failures rather
+than dismiss them, loosen thresholds or substitute CPU durations.
+The earlier e3 repeat workflow42523201621 attempt2 is still running at the last
+check. Hosted CI is not certified green. No cross-game cold-play signoff or
+shader-performance improvement is claimed by this instrumentation change.

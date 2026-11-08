@@ -2,6 +2,7 @@ name: Shader compilation regression comparisons
 
 # Every commit in a push gets a first-parent comparison; no paths-ignore.
 # No PR-target execution or write token. Hardware runners are explicitly opt-in.
+# Attempt-scoped artifacts preserve failed samples when a job is rerun.
 on:
   push:
     branches: ['**']
@@ -70,7 +71,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: shader-comparison-${{ matrix.sha }}-${{ matrix.backend }}
+          name: shader-comparison-${{ matrix.sha }}-${{ matrix.backend }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/shader-perf-${{ matrix.sha }}-${{ matrix.backend }}/results/
           if-no-files-found: error
           retention-days: 30
@@ -104,7 +105,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: shader-comparison-${{ matrix.sha }}-hardware
+          name: shader-comparison-${{ matrix.sha }}-hardware-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/shader-perf-${{ matrix.sha }}-hardware/results/
           if-no-files-found: error
           retention-days: 30

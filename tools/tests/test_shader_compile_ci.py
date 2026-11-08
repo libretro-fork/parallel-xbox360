@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 spec=importlib.util.spec_from_file_location("shader_compile_ci",Path(__file__).with_name("shader_compile_ci.py"))
 ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
@@ -41,6 +42,101 @@ class ComparisonTests(unittest.TestCase):
     def test_device_identity_does_not_accept_command_text(self):
         with self.assertRaises(ValueError):
             ci.vulkan_device_identity("COMMAND ['BENCH_DEVICE Vulkan fake']\n",1)
+
+    def test_cpu_diagnostics_preserve_paired_sample_order(self):
+        key=("vulkan.vs_ps_pso",0)
+        data=ci.cpu_diagnostics({key:[.3,.1,.2]},{key:[.02,.01,.03]},3)
+        self.assertEqual(data[0]["paired_samples"][0],dict(sample=0,wall_seconds=.3,process_cpu_seconds=.02))
+        self.assertEqual(data[0]["process_cpu"]["median"],.02)
+
+    def test_cpu_diagnostics_allow_parallel_cpu_above_wall_and_zero_ticks(self):
+        key=("vulkan.vs_ps_pso",0)
+        data=ci.cpu_diagnostics({key:[.1,.1]},{key:[.3,0]},2)
+        self.assertEqual(data[0]["paired_samples"][0]["process_cpu_seconds"],.3)
+        self.assertEqual(data[0]["paired_samples"][1]["process_cpu_seconds"],0)
+
+    def test_cpu_diagnostics_reject_missing_or_substituted_data(self):
+        key=("vulkan.vs_ps_pso",0)
+        for cpu in [{},{("vulkan.module",0):[.01]*7},{key:[.01]*6}]:
+            with self.assertRaises(ValueError):ci.cpu_diagnostics({key:[.02]*7},cpu,7)
+
+    def test_flat_cpu_does_not_hide_elapsed_tail_failure(self):
+        wall=self.sample([.01]*6+[.2]);cpu=self.sample([.01]*7)
+        rows,anchor,diagnostics=ci.compare_timing_channels(
+            dict(base=self.sample([.01]*7),candidate=wall),dict(base=cpu,candidate=cpu),7)
+        self.assertTrue(rows[0]["failures"])
+        self.assertFalse(anchor)
+        self.assertIn("candidate",diagnostics)
+
+    def test_timing_channels_reject_missing_cpu_role(self):
+        with self.assertRaises(ValueError):
+            ci.compare_timing_channels(dict(base=self.sample([.01]*7),candidate=self.sample([.01]*7)),
+                                       dict(base=self.sample([.01]*7)),7)
+
+    def test_timing_channels_keep_anchor_elapsed_gate(self):
+        sample=self.sample([.01]*7)
+        rows,anchor,diagnostics=ci.compare_timing_channels(
+            dict(base=sample,candidate=self.sample([.02]*7),anchor=sample),
+            dict(base=sample,candidate=sample,anchor=sample),7)
+        self.assertTrue(rows[0]["failures"])
+        self.assertTrue(anchor[0]["failures"])
+
+    def test_complete_report_keeps_wall_failure_with_flat_cpu(self):
+        # Synthetic report integration only: no compiler, driver or child executable.
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);source=root/"source";compiled=source/"compiled";compiled.mkdir(parents=True)
+            gpu=source/"src/xenia/gpu/vulkan";gpu.mkdir(parents=True)
+            for name in ["vulkan_command_processor.cc","vulkan_pipeline_cache.cc"]:(gpu/name).write_text("")
+            for name in ["cpu","dxil","warp"]:(compiled/(name+".bin")).write_bytes(b"identity")
+            for i in range(64):
+                (compiled/("shader%03u.spv"%i)).write_bytes(ci.struct.pack("<5I",0x07230203,0x10000,0,1,0))
+            def prepare(source_arg,out,results,backend,reuse):
+                for role in ["base","candidate"]:
+                    wall=[];cpu=[]
+                    for sample in range(7):
+                        for stage,case in sorted(ci.expected_keys("d3d12-warp")):
+                            elapsed=.2 if role=="candidate" and stage=="d3d12.graphics_pso" and case==0 and sample==6 else .001
+                            wall.append("%s,%d,%.9f\n"%(stage,case,elapsed))
+                            cpu.append("%s,%d,0.001000000\n"%(stage,case))
+                    (results/(role+".csv")).write_text("".join(wall))
+                    (results/(role+"-cpu.csv")).write_text("".join(cpu))
+                return dict(source=source,out=compiled,**{name:compiled/(name+".bin") for name in ["cpu","dxil","warp"]})
+            args=SimpleNamespace(out=str(root/"work"),base="test",head="test",backend="d3d12-warp",
+                                 samples=7,self_check=str(source),reuse_build=None)
+            with patch.dict(ci.os.environ,{"GITHUB_STEP_SUMMARY":""}), \
+                 patch.object(ci,"prepare",side_effect=prepare),patch.object(ci,"run"), \
+                 patch.object(ci,"git",return_value="test"), \
+                 patch.object(ci.subprocess,"run",return_value=SimpleNamespace(stdout="{}",stderr="",returncode=0)), \
+                 patch("builtins.print"):
+                self.assertEqual(ci.run_comparison(args),1)
+            report=json.loads((root/"work/results/comparison.json").read_text())
+            self.assertFalse(report["success"])
+            tail=[x for x in report["cases"] if x["stage"]=="d3d12.graphics_pso" and x["case"]==0][0]
+            self.assertTrue(tail["failures"])
+            self.assertIn("|d3d12.graphics_pso|0|6|",(root/"work/results/summary.md").read_text())
+
+    def test_bad_clock_stops_before_building_core(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);results=root/"results";results.mkdir()
+            commands=[]
+            with patch.object(ci,"run",side_effect=lambda command,*args,**kwargs:commands.append(command)), \
+                 patch.object(ci,"validate_clock_fixture",side_effect=ValueError("bad clock")):
+                with self.assertRaisesRegex(ValueError,"bad clock"):
+                    ci.prepare(root,root/"out",results,"d3d12-warp")
+            self.assertEqual(len(commands),1)
+            self.assertTrue(any(str(x).endswith("core_shader_clock_test.c") for x in commands[0]))
+
+    def test_binary_hash_known_vector(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p=Path(folder)/"binary";p.write_bytes(b"abc")
+            self.assertEqual(ci.file_sha256(p),"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+
+    def test_binary_hash_includes_suffix_after_stream_chunk(self):
+        with tempfile.TemporaryDirectory() as folder:
+            a,b=Path(folder)/"a",Path(folder)/"b"
+            prefix=b"x"*(1024*1024)
+            a.write_bytes(prefix+b"a");b.write_bytes(prefix+b"b")
+            self.assertNotEqual(ci.file_sha256(a),ci.file_sha256(b))
 
     def test_equal_and_faster(self):
         for values in [[.01]*7,[.005]*7]:

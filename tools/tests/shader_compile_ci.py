@@ -93,9 +93,19 @@ def cpu_build(source, build, out, logs, env):
 
 
 def prepare(source, out, results, backend, reuse_build=None):
+    out.mkdir(parents=True,exist_ok=True)
     env = os.environ.copy()
     build = Path(reuse_build).resolve() if reuse_build else source / "build/shader-perf-core"
     log = results / (source.name + "-build.log")
+    env.pop("XE_SHADER_BENCH_CPU_CSV",None)
+    clock=out/("clock.exe" if WIN else "clock")
+    if WIN:
+        run(["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/D_CRT_SECURE_NO_WARNINGS",
+             HERE/"core_shader_clock_test.c","/Fo"+str(out/"clock.obj"),"/Fe"+str(clock)],source,log,env)
+    else:
+        run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+             HERE/"core_shader_clock_test.c","-o",clock],source,log,env)
+    validate_clock_fixture(clock,results/"clock-checks"/(out.parent.name+"-"+out.name))
     if not reuse_build:
         if WIN:
             run(["cmake", "-S", source, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
@@ -210,6 +220,64 @@ def vulkan_device_identity(log, expected_reports):
     return identities[0]
 
 
+def cpu_diagnostics(wall, cpu, expected_samples):
+    """Supplementary process CPU only; never substitutes for elapsed-time gates."""
+    if set(wall)!=set(cpu) or not wall:
+        raise ValueError("missing or substituted process CPU cases")
+    rows=[]
+    for stage,which in sorted(wall):
+        w,c=wall[(stage,which)],cpu[(stage,which)]
+        if len(w)!=expected_samples or len(c)!=expected_samples:
+            raise ValueError("missing process CPU samples")
+        rows.append(dict(stage=stage,case=which,process_cpu=dict(median=statistics.median(c),
+            p95=percentile(c,.95),p99=percentile(c,.99),maximum=max(c)),
+            paired_samples=[dict(sample=i,wall_seconds=a,process_cpu_seconds=b) for i,(a,b) in enumerate(zip(w,c))]))
+    return rows
+
+
+def compare_timing_channels(wall, cpu, expected_samples):
+    if set(wall)!=set(cpu) or not {"base","candidate"}<=set(wall):
+        raise ValueError("missing or substituted timing roles")
+    diagnostics={version:cpu_diagnostics(wall[version],cpu[version],expected_samples) for version in wall}
+    rows=compare(wall["base"],wall["candidate"],expected_samples)
+    anchor=compare(wall["anchor"],wall["candidate"],expected_samples) if "anchor" in wall else []
+    return rows,anchor,diagnostics
+
+
+def file_sha256(path):
+    digest=hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda:stream.read(1024*1024),b""):digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_clock_fixture(exe, out):
+    out.mkdir(parents=True,exist_ok=True)
+    wall=out/"wall.csv";cpu=out/"cpu.csv"
+    if wall.exists() or cpu.exists():raise ValueError("stale clock-fixture samples")
+    env=os.environ.copy();env.update(XE_SHADER_BENCH_CSV=str(wall),XE_SHADER_BENCH_CPU_CSV=str(cpu))
+    for _ in range(7):
+        process=subprocess.Popen([str(exe)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE,text=True,env=env)
+        try:
+            if process.stdout.readline().strip()!="ready":raise ValueError("clock fixture not ready")
+            time.sleep(.12)  # Controlled test stall; never a core/runtime pacing path.
+            stdout,stderr=process.communicate(input="\n",timeout=10)
+            if process.returncode:raise ValueError("clock fixture failed: "+stderr)
+        finally:
+            if process.poll() is None:process.kill();process.wait()
+    w,c=read_samples(wall),read_samples(cpu)
+    if set(w)!={("clock.blocked",0),("clock.busy",0)}:raise ValueError("clock fixture coverage missing")
+    diagnostics=cpu_diagnostics(w,c,7)
+    if min(w[("clock.blocked",0)])<.10 or max(c[("clock.blocked",0)])>.05:
+        raise ValueError("blocked wall/process CPU separation failed")
+    if min(c[("clock.busy",0)])<.04:raise ValueError("busy process CPU clock did not advance")
+    # CPU diagnostics must not turn a real wall stall into a passing comparison.
+    if not compare({("clock.blocked",0):[.001]*7},{("clock.blocked",0):w[("clock.blocked",0)]},7)[0]["failures"]:
+        raise ValueError("wall stall was hidden")
+    (out/"diagnostics.json").write_text(json.dumps(diagnostics,indent=2))
+
+
 def read_samples(path):
     samples = {}
     with Path(path).open(newline="", encoding="utf-8") as source:
@@ -290,7 +358,7 @@ def spirv_manifest(directory):
 
 def run_comparison(args):
     work=Path(args.out).resolve();results=work/"results";results.mkdir(parents=True,exist_ok=True)
-    if (results/"base.csv").exists() or (results/"candidate.csv").exists():
+    if any(results.glob("*.csv")):
         raise ValueError("use a fresh output directory; stale samples are not reusable")
     if args.self_check and args.base!=args.head:
         raise ValueError("self-check must use equal reference labels")
@@ -313,7 +381,7 @@ def run_comparison(args):
         ["core_shader_compile_fixture.c","shader_call_fixture.h","shader_compile_bridge.cc",
          "shader_compile_vulkan_test.c","shader_compile_bench.h","shader_compile_ci.py",
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
-         "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h"]}
+         "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c"]}
     manifest["corpus_contract"]=dict(version=3,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,alu_additions=[32,96,256],
                                     profiles="VS/PS, native/portable swizzle,1x/4x",batch=4)
@@ -353,6 +421,14 @@ def run_comparison(args):
             if source.resolve().parent!=work or target.parent!=source.resolve() or source.resolve()==ROOT:
                 raise ValueError("unsafe private build cleanup target")
             if target.exists():shutil.rmtree(target)
+    manifest["timing_contract"]=dict(version=2,gating="elapsed wall time only",
+        process_cpu="supplementary per-process user+kernel time; may exceed wall time with parallel workers",
+        limits="CPU/wall separation alone does not identify preemption, waits or GPU/service work",
+        precision="Windows process CPU accounting may quantize short intervals; zero is not zero work")
+    manifest["clock_controls"]={version:"clock-checks/"+b["out"].parent.name+"-"+b["out"].name for version,b in builds.items()}
+    manifest["prepared_binaries"]={version:{name:dict(sha256=file_sha256(b[name]),bytes=b[name].stat().st_size)
+        for name in ["cpu","pso","dxil","warp"] if name in b} for version,b in builds.items()}
+    (results/"environment.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     ir={version:spirv_manifest(b["out"]) for version,b in builds.items()}
     for version,b in builds.items():
         for profile in ["rtz","dot"]:
@@ -368,6 +444,7 @@ def run_comparison(args):
         for version in order:
             b=builds[version];e=env.copy();e["XE_SHADER_BENCH_CSV"]=str(results/(version+".csv"))
             e["XE_SHADER_BENCH_NO_DUMP"]="1"
+            e["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-cpu.csv"))
             log=results/(version+"-sample%d.log"%sample)
             run([b["cpu"],b["out"]],b["source"],log,e,240)
             if "pso" in b:
@@ -386,8 +463,8 @@ def run_comparison(args):
     for version,measurements in raw.items():
         if set(measurements)!=expected_keys(args.backend):
             raise ValueError("missing or substituted expected stage cases: "+version)
-    rows=compare(raw["base"],raw["candidate"],args.samples)
-    anchor_rows=compare(raw["anchor"],raw["candidate"],args.samples) if "anchor" in builds else []
+    cpu={version:read_samples(results/(version+"-cpu.csv")) for version in builds}
+    rows,anchor_rows,cpu_rows=compare_timing_channels(raw,cpu,args.samples)
     identities=[]
     if args.backend.startswith("vulkan"):
         for version in builds:
@@ -404,7 +481,15 @@ def run_comparison(args):
         pc=(b["source"]/"src/xenia/gpu/vulkan/vulkan_pipeline_cache.cc").read_text(encoding="utf-8")
         source_alarms[version]=source_wait_alarms(cp,pc)
     alarm_failures=[name for name,n in source_alarms["base"].items() if source_alarms["candidate"][name]>n]
+    driver_identity={}
+    if args.backend.startswith("vulkan"):
+        driver_identity={version:dict(
+            executable_identical_to_candidate=manifest["prepared_binaries"][version]["pso"]["sha256"]==
+                manifest["prepared_binaries"]["candidate"]["pso"]["sha256"],
+            module_manifest_identical_to_candidate=ir[version]==ir["candidate"]) for version in builds}
     report=dict(environment=manifest,device=identities,cases=rows,anchor_cases=anchor_rows,
+                driver_workload_identity=driver_identity,
+                process_cpu_diagnostics=cpu_rows,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
                 success=not ir_failures and not alarm_failures and not any(x["failures"] for x in rows+anchor_rows),
@@ -413,10 +498,25 @@ def run_comparison(args):
     summary="# Shader compilation comparison\n\n%s -> %s (%s)\n\n"%(args.base,args.head,args.backend)
     summary+="**%s** across %d procedural stage/case metrics.\n\n"%("PASS" if report["success"] else "FAIL / investigate",len(rows))
     summary+="This is NOT cold-play gameplay signoff. Driver-cache status and missing anchor are recorded in environment.json.\n\n"
-    summary+="|Stage|Case|Parent median ms|Candidate median ms|Result|\n|---|---:|---:|---:|---|\n"
+    summary+="Process CPU samples are supplementary diagnostics; elapsed-time thresholds remain authoritative.\n\n"
+    summary+="Parallel workers can consume more process CPU than elapsed time; short Windows CPU intervals may quantize to zero.\n\n"
+    summary+="|Stage|Case|Parent wall ms|Candidate wall ms|Parent CPU ms|Candidate CPU ms|Result|\n|---|---:|---:|---:|---:|---:|---|\n"
+    cpu_lookup={version:{(x["stage"],x["case"]):x["process_cpu"]["median"] for x in data} for version,data in cpu_rows.items()}
     for row in rows:
-        summary+="|%s|%d|%.3f|%.3f|%s|\n"%(row["stage"],row["case"],row["base"]["median"]*1000,
-            row["candidate"]["median"]*1000,"; ".join(row["failures"]) or "within thresholds")
+        key=(row["stage"],row["case"])
+        summary+="|%s|%d|%.3f|%.3f|%.3f|%.3f|%s|\n"%(row["stage"],row["case"],row["base"]["median"]*1000,
+            row["candidate"]["median"]*1000,cpu_lookup["base"][key]*1000,cpu_lookup["candidate"][key]*1000,
+            "; ".join(row["failures"]) or "within thresholds")
+    failed_rows=[row for row in rows if row["failures"]]
+    if failed_rows:
+        summary+="\nCandidate worst-wall samples (paired CPU is diagnostic; failures remain):\n\n"
+        summary+="|Stage|Case|Sample|Parent wall ms|Candidate wall ms|Parent CPU ms|Candidate CPU ms|\n|---|---:|---:|---:|---:|---:|---:|\n"
+        for row in failed_rows:
+            key=(row["stage"],row["case"])
+            which=max(range(args.samples),key=lambda i:raw["candidate"][key][i])
+            summary+="|%s|%d|%d|%.3f|%.3f|%.3f|%.3f|\n"%(key[0],key[1],which,
+                raw["base"][key][which]*1000,raw["candidate"][key][which]*1000,
+                cpu["base"][key][which]*1000,cpu["candidate"][key][which]*1000)
     if ir_failures:summary+="\nIR growth failures: "+", ".join(ir_failures)+"\n"
     if alarm_failures:summary+="\nSource alarm increases: "+", ".join(alarm_failures)+"\n"
     if anchor_rows:

@@ -405,3 +405,32 @@ explanation; it does not certify driver disk/internal cache coldness.
 Do not replace the standard corpus, delete its first samples or loosen thresholds
 to obtain a pass. The remaining211ms stall is still a cold-play defect.
 Evidence and exact scope: tools/tests/shader_clean_dot_results.txt.
+
+## Timing contract 2: elapsed gates with supplementary process CPU
+
+Retain monotonic elapsed timings as the authoritative median/p95/p99/max gates.
+Add a separate per-process user+kernel CPU channel with the same stage/case and
+paired sample indices. It is diagnostic, never a replacement duration or an
+automatic reason to pass an elapsed failure. Require complete matching roles,
+cases and sample counts; missing CPU coverage also fails. Preserve raw channels.
+
+Before building or timing, compile/run an MSVC C89-shaped clock fixture. Seven controlled
+blocking reads must retain >=100ms elapsed while consuming <50ms process CPU;
+a separate busy phase must charge >=40ms CPU. The controlled120ms wait belongs
+only to offline test orchestration. Check that an injected elapsed stall still
+fails. Linux uses CLOCK_PROCESS_CPUTIME_ID; Windows uses process user+kernel
+accounting. Parallel workers may exceed wall time and short Windows intervals
+may quantize to zero. CPU/wall separation alone does not prove preemption
+rather than API waits, driver services or other work.
+
+Record bounded-read hashes/sizes of timed executables and exact module manifests.
+Report whether the Vulkan driver executable and module manifest are identical
+across revisions; identity does not erase a timing alarm. Store timer controls
+inside uploaded results. Attempt-scoped artifact names preserve failed samples
+when a workflow is rerun, instead of overwriting or colliding with them.
+
+Hosted3c4f2cd14 software-Vulkan case10 flagged p95 19.6986 ->29.2567ms and
+maximum19.7005 ->33.4587ms; median18.9081 ->18.8463ms. All64 modules are identical.
+This is a different case from the earlier e3bc8472e case12 alert. Both original
+failed reports remain evidence; neither local self-checks nor the new diagnostics
+retroactively resolve them. See tools/tests/shader_cpu_diagnostics_results.txt.
