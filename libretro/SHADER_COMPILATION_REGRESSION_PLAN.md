@@ -575,3 +575,27 @@ CPU593.750 ->437.500ms. Existing four profiles and all non-targeted numeric
 modules remain unchanged. Driver disk/internal coldness is not certified;
 a437ms required compile is still a visible defect. Detailed coverage and limits:
 tools/tests/shader_mad_results.txt.
+
+
+## Software-RTZ fraction vectors, corpus6 (2026-11-09)
+
+Lend the complete flushed input vector to Floor and the existing software-RTZ
+subtract recipe. Every operation is lane-wise. Preserve raw input/output FTZ,
+nonfinite behavior and unsigned integer shift semantics; do not enable FMA,
+lower precision or change the hardware-RTZ and pixel paths.
+
+Keep every corpus5 case and threshold. Add64 software-fraction-heavy modules
+(native/portable swizzle,1x/4x,32/96/256 chains),96 metrics on the physical Vulkan
+runner. Require576 hardware-runner metrics and six device reports per sample;
+software Vulkan96 and WARP80 remain unchanged. The physical runner executes the
+software RTZ shader path for this profile even though its device supports RTZ.
+Keep all704 numerical fixtures and goldens; test widths1..4 and reject the old
+scalar implementation with the structural guard.
+
+Seven alternating process pairs trigger no existing timing gate. Generated32
+software fraction VS modules shrink27,146,624 ->7,074,432 bytes and translation
+median0.98360 ->0.43970ms. First heavy PSO689.4333 ->726.7886ms is worse within
+the unchanged tolerance; report it, never substitute byte savings for driver
+stutter improvement. All320 previous profile modules,32 new pixel modules and
+8 DXIL modules are identical. Driver disk/internal coldness and gameplay remain
+unverified. Full evidence/limits: tools/tests/shader_software_frac_results.txt.

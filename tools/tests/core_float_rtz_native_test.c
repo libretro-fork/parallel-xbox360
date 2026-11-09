@@ -93,7 +93,7 @@ int main(int argc,char** argv) {
       for(ftz=0;ftz<2;++ftz)for(hardware=0;hardware<4;++hardware) {
          size=xe_rtz_native_spirv(code,6,pixel,hardware,ftz,binary,65536);CHECK(size);
          integers=scan(size,&rtz,&rte,!pixel);
-         if(!pixel && mul==2 && (hardware&1))
+         if(!pixel && mul==2)
             CHECK(floor_shape(size,&width)==1 && width==4);
          CHECK(rtz==(unsigned)(!pixel && (hardware&1)) && rte==(unsigned)!rtz);
          if(!pixel && ftz) {if(hardware&1)fast=integers;else soft=integers;}
@@ -108,17 +108,24 @@ int main(int argc,char** argv) {
       }
       if(!pixel)CHECK(soft>fast);
    }
-   for(components=1;components<=4;++components) {
-      packed(code,0,2);
-      code[3]=(code[3]&~(15u<<16))|(((1u<<components)-1)<<16);
-      size=xe_rtz_native_spirv(code,6,0,1,0,binary,65536);CHECK(size);
-      CHECK(floor_shape(size,&width)==1 && width==components);
-      if(argc>1) {
-         sprintf(path,"%s/frac-width%u.spv",argv[1],components);file=fopen(path,"wb");
-         CHECK(file && fwrite(binary,4,size,file)==size && !fclose(file));
+   for(hardware=0;hardware<2;++hardware) {
+      scalar_integers=0;
+      for(components=1;components<=4;++components) {
+         packed(code,0,2);
+         code[3]=(code[3]&~(15u<<16))|(((1u<<components)-1)<<16);
+         size=xe_rtz_native_spirv(code,6,0,hardware,0,binary,65536);CHECK(size);
+         CHECK(floor_shape(size,&width)==1 && width==components);
+         integers=scan(size,&rtz,&rte,1);
+         if(components==1)scalar_integers=integers;
+         CHECK(integers==scalar_integers);
+         if(argc>1) {
+            sprintf(path,"%s/frac-hw%u-width%u.spv",argv[1],hardware,components);
+            file=fopen(path,"wb");
+            CHECK(file && fwrite(binary,4,size,file)==size && !fclose(file));
+         }
       }
    }
-   puts("PASS: native RTZ fraction uses one lane-wise Floor for widths1..4");
+   puts("PASS: native/software RTZ fraction uses one lane-wise Floor and recipe for widths1..4");
    for(pixel=0;pixel<2;++pixel) {
       packed(code,pixel,0);
       size=xe_rtz_native_spirv(code,6,pixel,1,0,binary,65536);CHECK(size);

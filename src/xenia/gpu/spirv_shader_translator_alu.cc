@@ -178,31 +178,15 @@ spv::Id SpirvShaderTranslator::AluBinaryOperation(spv::Op opcode,
 spv::Id SpirvShaderTranslator::AluFract(spv::Id type, spv::Id operand) {
   if (!is_vertex_shader()) return builder_->createUnaryBuiltinCall(
       type,ext_inst_glsl_std_450_,GLSLstd450Fract,operand);
-  if (features_.rounding_mode_rtz_float32) {
-    // Floor produces zero, integral normal values or non-finite values: it
-    // cannot introduce a subnormal. Both subtraction inputs are already clean.
-    // SPIR-V vector Floor and uncontracted subtract remain lane-independent.
-    spv::Id clean = FlushAluDenormals(type, operand);
-    spv::Id floor = builder_->createUnaryBuiltinCall(
-        type, ext_inst_glsl_std_450_, GLSLstd450Floor, clean);
-    return AluBinaryOperation(spv::OpFSub, type, clean, floor, 3);
-  }
-  const unsigned count=builder_->getNumComponents(operand);
-  if (!count || count>4) throw std::bad_alloc();
-  spv::Id components[4];
-  RtzEmitContext context = RtzContext(1);
-  xe_rtz_emitter emitter={&context,&EmitRtzNode,0};
-  for (unsigned i=0;i<count;++i) {
-    spv::Id a=count==1?operand:builder_->createCompositeExtract(operand,type_float_,i);
-    xe_rtz_id clean=xe_rtz_emit_flush(&emitter,builder_->createUnaryOp(spv::OpBitcast,type_uint_,a));
-    if (!clean || emitter.failed) throw std::bad_alloc();
-    a=builder_->createUnaryOp(spv::OpBitcast,type_float_,spv::Id(clean));
-    spv::Id floor=builder_->createUnaryBuiltinCall(type_float_,ext_inst_glsl_std_450_,GLSLstd450Floor,a);
-    components[i]=AluBinaryOperation(spv::OpFSub,type_float_,a,floor);
-  }
-  if (count==1)return components[0];
-  xe_spv_word_view view={components,count};
-  return builder_->createCompositeConstructView(type,view);
+  // Floor produces zero, integral normal values or non-finite values: it
+  // cannot introduce a subnormal. Both subtraction inputs are already clean.
+  // The software RTZ integer recipe, like native Floor, is lane-independent.
+  // Lend the vector to both operations instead of extracting and rebuilding
+  // every lane; the add helper retains software RTZ and output FTZ semantics.
+  spv::Id clean = FlushAluDenormals(type, operand);
+  spv::Id floor = builder_->createUnaryBuiltinCall(
+      type, ext_inst_glsl_std_450_, GLSLstd450Floor, clean);
+  return AluBinaryOperation(spv::OpFSub, type, clean, floor, 3);
 }
 
 spv::Id SpirvShaderTranslator::ZeroIfAnyOperandIsZero(spv::Id value,

@@ -1,0 +1,88 @@
+Software-RTZ fraction vector lowering -- 2026-11-09
+Parent1d96813f5a29939458a5d0a7e63b3b7d331bf63c
+
+Production change
+-----------------
+AluFract previously extracted each software-RTZ lane, flushed it, emitted Floor
+and a scalar integer subtract recipe, then constructed a vector. The existing
+integer recipe is lane-wise and now accepts vectors. Lend the original vector
+to FTZ/Floor/subtract once. Remove the per-component reconstruction and four-ID
+scratch array. Preserve input/output signed FTZ, exact finite RTZ arithmetic,
+native nonfinite forwarding and uncontracted subtract. Native RTZ and pixel
+module bytes remain unchanged. The integer recipe itself is unchanged C89;
+production edits are narrow typed SPIR-V builder glue. No new allocation,
+copy, value cache, lock, thread, diagnostic or CPU/GPU roundtrip. Existing arena
+ownership and lifetimes remain. Shader generation still allocates elsewhere;
+this is not an end-to-end zero-copy or allocation-free claim.
+
+Correctness
+-----------
+Full MSVC Release --parallel3 passes. All704 actual GPU guest vertex numerical
+cases pass with exactly the parent's input and expected words. Exactly32
+software-fraction numerical modules change (cases98..191 step3). All other
+672 numerical modules, all320 existing compile-profile modules,32 new profile
+pixel modules and8 DXIL binaries are byte-identical. The numerical model retains
+exact finite results and signed-zero rules; NaN payload canonicalization is
+permitted. No new pixel/tessellation or console-reference execution claim.
+
+New C89 structural guards require one Floor with matching lane width and one
+integer recipe for widths1..4 under native and software RTZ. The unchanged
+parent fails the new guard at line97; candidate passes, along with existing
+mode/FTZ/contraction/load/product-type and SPIR-V1.0 guards. Test output files
+retain the legacy native width snapshots and add explicitly named mode cases.
+903 modules pass spirv-val vulkan1.1. Strict C89 compilation of the changed test
+and both compile fixtures passes. The integer model passes Linux ASan+UBSan,
+4M SSE RTZ/FTZ comparisons,65536 flush classifications and emission failure
+checks. Existing65536 operand-lend checks pass. These sanitizers cover the
+integer test, not the full linked core. All27 comparator tests pass.
+
+Timing methodology and retained failures
+---------------------------------------
+Same current C89 harness against sealed parent/candidate libraries, identical
+MSVC Release build paths. Seven alternating/reverse-order fresh-process pairs,
+RTX5090 vendor4318/device11141 driver2604679168. Empty application caches;
+driver disk/internal cache coldness NOT certified. No gameplay/RSS/register
+pressure/GPU-throughput claim. Original reports, every raw sample, tail and
+source/executable hashes are preserved with the delivery evidence.
+
+The first private orchestration attempt omitted the newly added profile from
+its timing loop and failed exact-case coverage. Keep those logs/CSVs as
+incomplete; no gate pass was claimed. Correct only the private profile list;
+repeat the full comparison using complete-* output files, preserving the same
+sealed executables. The delivered CI profile loop already included softfrac.
+No tolerance was loosened and the incomplete run is not used for the results.
+The first complete comparison passes576 physical Vulkan and80 WARP metrics,
+with zero gate alarms and84 matching Vulkan device identity reports. The later
+coordinated quiet window begins only after this timing run finishes.
+
+Measured results
+----------------
+32 software-fraction VS modules:27,146,624 ->7,074,432 bytes (-73.94%);
+1,320,544 ->346,144 instructions. Scalar lane extraction/reconstruction is gone;
+this does not imply the driver's optimized GPU program is four times smaller.
+Translation batch4 median across64 case medians0.98360 ->0.43970ms;
+maximum12.2368 ->3.8695ms. Pixel translations are included and unchanged.
+PSO median across16 case medians0.29085 ->0.21655ms. First-heavy PSO cases0/2/4
+wall98.6347/253.0378/689.4333 ->88.4079/253.1203/726.7886ms;
+paired process CPU109.375/250.000/687.500 ->78.125/265.625/703.125ms.
+The heaviest wall compile is5.42% slower, within the predeclared gate; retain
+that result explicitly. Windows process CPU quantizes and can exceed elapsed.
+The CPU translation improvement does NOT establish better first-use PSO stalls.
+
+CI corpus6
+----------
+Add64 software-fraction VS/PS heavy cases to the physical Vulkan runner, force
+software RTZ even on devices with native RTZ support, and identify each stage.
+Hardware-runner metrics480 ->576 with six matching device reports per sample.
+Numerical704/software Vulkan96/WARP80 remain unchanged. Missing metrics and
+missing/duplicate device reports fail. Hosted workflows consume this corpus
+on every commit with their existing conditions; hardware runners unavailable
+remain unverified, never treated as a timing pass. No cache-default change.
+
+Delivery and limits
+-------------------
+The git format-patch mailbox is applied at the exact parent with git am and its
+resulting tree compared with the committed tree before pushing to libretro.
+No installed core replacement, RetroArch launch, live cache deletion or game
+asset extraction. A727ms required PSO is a visible defect. Cross-game cold-play
+fluidity, first correct draw and the overall shader-stutter goal remain open.

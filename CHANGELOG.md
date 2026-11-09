@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Reduce software-RTZ fraction shader expansion by lending complete vectors to the existing integer recipe. Keep exact numerical behavior and the native-RTZ/pixel paths; add a dedicated compile profile. Translation is faster in the fixture, but large first-use driver PSO stalls remain.
+
 - Avoid repeating the native-RTZ MAD product's denormal check before addition; retain independent third-operand flushing and exact arithmetic. Expand GPU numeric coverage to704 cases and hardware compile comparisons to480 metrics. Required first-use shader stalls remain unresolved.
 
 - Reduce Vulkan software-RTZ vertex shader expansion by emitting one lane-wise integer recipe per vector and sharing matching product-result types. Preserve exact arithmetic, pixel behavior and the hardware-RTZ path. Required first-use compilation stalls remain unresolved.

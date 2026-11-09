@@ -45,14 +45,17 @@ int main(int argc,char **argv)
    unsigned frac_profile=frac && !strcmp(frac,"1");
    const char *mad=getenv("XE_SHADER_BENCH_MAD_PROFILE");
    unsigned mad_profile=mad && !strcmp(mad,"1");
-   const char *stage=mad_profile?"spirv.mad_translate_batch4":frac_profile?"spirv.frac_translate_batch4":dot_profile?"spirv.dot_translate_batch4":
+   const char *softfrac=getenv("XE_SHADER_BENCH_SOFTFRAC_PROFILE");
+   unsigned softfrac_profile=softfrac && !strcmp(softfrac,"1");
+   const char *stage=softfrac_profile?"spirv.softfrac_translate_batch4":mad_profile?"spirv.mad_translate_batch4":frac_profile?"spirv.frac_translate_batch4":dot_profile?"spirv.dot_translate_batch4":
        hardware_rtz?"spirv.rtz_translate_batch4":"spirv.translate_batch4";
    char path[512];FILE *file;
    if(argc!=2 || strlen(argv[1])>400)return 2;
    for(profile=0;profile<4;++profile) {
-      context=xe_compile_open(profile|((hardware_rtz || dot_profile || frac_profile || mad_profile)?8u:0u));if(!context)return 1;
+      context=xe_compile_open(profile|((!softfrac_profile && (hardware_rtz || dot_profile || frac_profile || mad_profile))?8u:0u));if(!context)return 1;
       for(pixel=0;pixel<2;++pixel)for(scenario=0;scenario<8;++scenario,++id) {
-         count=mad_profile?stress(pixel,additions[scenario%3],3,scenario):
+         count=softfrac_profile?stress(pixel,additions[scenario%3],2,scenario):
+               mad_profile?stress(pixel,additions[scenario%3],3,scenario):
                frac_profile?stress(pixel,additions[scenario%3],2,scenario):
                dot_profile?stress(pixel,additions[scenario%3],1,scenario):
                scenario<5?nested_scenario(code,pixel,scenario):
