@@ -10,3 +10,8 @@ ${CC:-cc} -std=c89 -pedantic -Wno-long-long -Wall -Wextra -Werror -O2 -fno-fast-
  ${SANITIZER--fsanitize=address,undefined} -I. -Ithird_party/libretro-common/include \
  tools/tests/core_float_rtz_test.c -o "$out/test$ext"
 "$out/test$ext"
+
+${CC:-cc} -std=c89 -pedantic -Wno-long-long -Wall -Wextra -Werror -O2 \
+ ${SANITIZER--fsanitize=address,undefined} -I. -Ithird_party/libretro-common/include \
+ tools/tests/core_shader_operand_lend_test.c -o "$out/operand$ext"
+"$out/operand$ext"

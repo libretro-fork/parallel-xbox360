@@ -8,6 +8,7 @@
  */
 
 #include "xenia/gpu/spirv_shader_translator.h"
+#include "libretro/core_shader_operand_lend.h"
 
 #include <cfloat>
 #include <cmath>
@@ -21,6 +22,26 @@
 
 namespace xe {
 namespace gpu {
+
+/* Typed metadata projection only. The C89 matcher borrows the operand array;
+ * swizzle, absolute value and negation are applied after the shared raw load. */
+static int ReadAluStorageKey(const void* opaque, unsigned index,
+                             xe_shader_operand_key* key) {
+  const InstructionOperand& operand =
+      static_cast<const InstructionOperand*>(opaque)[index];
+  if (operand.storage_source != InstructionStorageSource::kRegister &&
+      operand.storage_source != InstructionStorageSource::kConstantFloat) return 0;
+  switch (operand.storage_addressing_mode) {
+    case InstructionStorageAddressingMode::kAbsolute:
+    case InstructionStorageAddressingMode::kAddressRegisterRelative:
+    case InstructionStorageAddressingMode::kLoopRelative: break;
+    default: return 0;
+  }
+  key->source = static_cast<uint32_t>(operand.storage_source);
+  key->index = operand.storage_index;
+  key->addressing = static_cast<uint32_t>(operand.storage_addressing_mode);
+  return 1;
+}
 
 /* Typed vector adapter; the lane-independent arithmetic recipe is C89. */
 SpirvShaderTranslator::RtzEmitContext SpirvShaderTranslator::RtzContext(unsigned count) {
@@ -382,7 +403,10 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
   }
   spv::Id operand_storage[3] = {};
   for (uint32_t i = 0; i < operand_count; ++i) {
-    operand_storage[i] = LoadOperandStorage(instr.vector_operands[i]);
+    unsigned previous = xe_shader_operand_lend_index(
+        instr.vector_operands, i, &ReadAluStorageKey);
+    operand_storage[i] = previous < i ? operand_storage[previous]
+        : LoadOperandStorage(instr.vector_operands[i]);
   }
   spv::Id result_type =
       used_result_component_count
@@ -1137,7 +1161,10 @@ spv::Id SpirvShaderTranslator::ProcessScalarAluOperation(
 
   spv::Id operand_storage[2] = {};
   for (uint32_t i = 0; i < instr.scalar_operand_count; ++i) {
-    operand_storage[i] = LoadOperandStorage(instr.scalar_operands[i]);
+    unsigned previous = xe_shader_operand_lend_index(
+        instr.scalar_operands, i, &ReadAluStorageKey);
+    operand_storage[i] = previous < i ? operand_storage[previous]
+        : LoadOperandStorage(instr.scalar_operands[i]);
   }
 
   // In case the paired vector instruction (if processed first) terminates the

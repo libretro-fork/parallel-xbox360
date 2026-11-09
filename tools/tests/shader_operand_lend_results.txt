@@ -1,0 +1,107 @@
+Instruction-local shader operand lends -- 2026-11-09
+Parent08dc227967308e464f286c254f1e1732edfe9f16
+
+Change and ownership
+--------------------
+ALU setup loaded a raw register/float constant separately for every operand,
+even when the operands only differed in swizzle or modifiers. Reuse a prior
+raw ID within the same scalar/vector ALU setup, matching source kind, the full
+32-bit index and addressing mode. Guest data is unchanged between these loads;
+LoadOperandStorage emits addressing and loads, not guest writes. Constants are
+immutable during the draw. Modifiers/swizzles still execute independently.
+
+The C89 matcher borrows existing operand metadata through a typed field callback.
+It scans at most two predecessors, using two12-byte projected keys, no new array,
+container, payload buffer, allocation, lock or retained cache. It returns an ID
+index into the existing instruction-local operand array. Lookup of operand0,
+invalid indices, missing readers and failed projections retains the original
+load. The typed bridge only accepts known register/constant sources and the
+three known address modes; unsupported inputs still reach original validation.
+No reuse crosses instruction boundaries, paired scalar/vector evaluation or
+state writes. Dynamic a0/aL addressing must match exactly; it is never treated as
+absolute. Fetch operations and resource bindings are untouched.
+
+This removes generated IR loads/access-chain construction and associated
+compiler bookkeeping. It does NOT prove fewer actual GPU memory transactions:
+the driver may already eliminate those duplicates. No video/audio buffer copies,
+GPU uploads or guest-memory ownership are changed. No release logging/readback.
+
+Correctness
+-----------
+- Full MSVC Release core --parallel3 PASS; MinGW actual ALU C++20 syntax PASS.
+- Same production C89 matcher passes native MSVC, MinGW and Linux ASan/UBSan:
+  exact source/index/address identity, high index bits, separate modifiers,
+  failed/missing readers, earliest matching predecessor, bounds and65536
+  randomized plans against an independent reference.
+- Private fault ignoring address-mode identity fails the C89 oracle at line44.
+  Production remains unmodified and passes. No fault-injection code lands.
+- Actual native VS/PS repeated-versus-distinct input cases remove exactly one
+  OpLoad. Existing53 written mode/fraction-width modules and their interpreter,
+  uncontracted arithmetic, capability and pixel-mode checks pass; four extra
+  duplicate/distinct translations run in that same native fixture.
+-576 real packed-guest vertex GPU goldens PASS on RTX5090, including192 mixed
+  same-register yxzw dot cases. These exercise constant storage reuse without
+  erasing independent per-operand swizzles. Finite values are bit-exact; only
+  NaN payload canonicalization allowed. Existing4M SSE/SSA and65536 classified
+  FTZ checks pass. New dynamic-a0/aL GPU coverage is NOT claimed; key rejection
+  is checked offline. No new physical pixel golden coverage is claimed.
+-spirv-val accepts53 written native modules plus512 parent/candidate companion
+  modules (565 total).27 comparator guardrail tests PASS. No full GNU core or
+  gameplay/savestate validation is claimed for this patch.
+
+IR counts, unchanged corpus4
+---------------------------
+All64 modules in each hardware profile lose one raw OpLoad and OpAccessChain:
+normal8720/10912 ->8656/10848;
+RTZ8720/10912 ->8656/10848;
+dot19296/26496 ->19232/26432;
+fraction8032/15232 ->7968/15168.
+Each64-module profile saves2304 bytes. Additional same-source cases can reuse
+more loads, but no extrapolated game benefit is asserted. Eight DXIL modules
+are byte-identical. Arithmetic recipes, corpus inputs, cache schema/defaults
+and thresholds are unchanged. New helper tests run in existing float-RTZ CI
+scripts; the native fixture enforces actual load-count behavior.
+
+Timing: retain all cache conditions
+----------------------------------
+Same MSVC Release parent/candidate, exact timed-executable hashes, RTX5090
+vendor4318/device11141 driver2604679168. Seven alternating/reverse-order process
+pairs per condition. Timings run without competing local compilation. Elapsed
+regression gates remain authoritative; raw process CPU is supplementary.
+Fresh processes/no emulator cache do NOT certify empty driver disk/internal
+caches. No user cache was deleted or flushed.
+
+1.First standard comparison: WARP80 metrics pass; hardware384 metrics have44
+PSO tail alarms, with no translation alarms. Previously seen parent modules
+mostly reuse driver work while new candidate hashes compile. Retain every raw
+sample and the failed comparison. Examples, parent/candidate maximum ms:
+normal PSO14:0.7473/354.9813;
+dot PSO4:0.5323/307.9627;
+fraction PSO4:0.3146/208.0453.
+These first observations are not replaced with warm measurements.
+
+2.Independent first-use companion: same current fixture for both cores, with
+RGB exports and33/97/257 stress lengths. Every generated module hash is absent
+from the prior standard corpus. Link the exact parent's ALU object, compiled
+with its native Ninja definitions/options, before otherwise unchanged core
+archives; the candidate uses the normal native archive. Verify parent source
+against its Git blob. Do not alter the working-tree core or installed DLL.
+All384 companion metrics pass; first PSO maximum ms parent/candidate:
+normal14:316.6567/316.3585;
+dot4:220.3615/223.5110;
+fraction4:168.6434/168.0747.
+These essentially unchanged costs do NOT demonstrate driver acceleration.
+Translation median across case medians ms:normal0.30730/0.30855,
+dot0.54935/0.54755,fraction0.19755/0.19910. Do not claim universal host speedup.
+
+3.Separate already-seen standard modules:384 hardware/80 WARP metrics pass,
+seven new pairs. Preserve it separately from first-use results. Driver-cache
+state inference is supported by these conditions, not certified coldness.
+
+Limits
+------
+This is a borrowed-value/IR simplification, not a stutter fix. Required driver
+compilation remains hundreds of milliseconds. No first-correct-draw, cross-game
+cold/warm gameplay, GPU execution/register-pressure or process RSS benefit is
+established. No installed DLL replacement, RetroArch/game launch or extracted
+assets. The broader cold-play and optimization goal remains incomplete.

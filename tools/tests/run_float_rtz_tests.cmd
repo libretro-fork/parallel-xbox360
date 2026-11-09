@@ -8,6 +8,10 @@ cl %FLOAT_RTZ_FLAGS% /nologo /TC /MD /O2 /fp:strict /W4 /WX /I. tools\tests\core
 if errorlevel 1 goto fail
 "%FLOAT_RTZ_OUT%\test.exe"
 if errorlevel 1 goto fail
+cl %FLOAT_RTZ_FLAGS% /nologo /TC /MD /O2 /W4 /WX /I. tools\tests\core_shader_operand_lend_test.c /Fo"%FLOAT_RTZ_OUT%\operand.obj" /Fd"%FLOAT_RTZ_OUT%\operand.pdb" /Fe"%FLOAT_RTZ_OUT%\operand.exe"
+if errorlevel 1 goto fail
+"%FLOAT_RTZ_OUT%\operand.exe"
+if errorlevel 1 goto fail
 popd
 exit /b 0
 :fail

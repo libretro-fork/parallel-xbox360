@@ -40,6 +40,15 @@ static unsigned floor_shape(size_t size,unsigned *width) {
    }
    return count;
 }
+static unsigned loads(size_t size) {
+   size_t at;
+   unsigned count=0,n;
+   for(at=5;at<size;at+=n) {
+      n=binary[at]>>16;CHECK(n && n<=size-at);
+      count+=(binary[at]&65535)==61;
+   }
+   return count;
+}
 static void packed(uint32_t code[6],unsigned pixel,unsigned mul) {
    code[0]=0x1001;code[1]=0x2000;code[2]=0;
    code[3]=(pixel?0:62)|(1u<<15)|(15u<<16)|(50u<<26);
@@ -54,7 +63,7 @@ int main(int argc,char** argv) {
       {{0x3f800000,0xbf800000,0x3f7fffff,0x7f7fffff},{0x3f801002,0xbf801002,0x7f7fffff,0x3f800000},{0x3f7fffff,0x00800000,0,0}},
       {{0x3f800001,0xbf800001,0x3f800000,0x7f800000},{0x3f801003,0xbf801003,0x7f800000,0x3f800000},{0x3f800000,0x00800000,0,0}}};
    uint32_t code[6],out[4];size_t size,pixel_size=0;
-   unsigned pixel,mul,hardware,ftz,rtz,rte,integers,width,components,soft=0,fast=0;
+   unsigned pixel,mul,hardware,ftz,rtz,rte,integers,width,components,distinct_loads,soft=0,fast=0;
    char path[256];FILE* file;
    if(argc>1)CHECK(strlen(argv[1])<180);
    for(pixel=0;pixel<2;++pixel)for(mul=0;mul<3;++mul) {
@@ -95,6 +104,15 @@ int main(int argc,char** argv) {
       }
    }
    puts("PASS: native RTZ fraction uses one lane-wise Floor for widths1..4");
+   for(pixel=0;pixel<2;++pixel) {
+      packed(code,pixel,0);
+      size=xe_rtz_native_spirv(code,6,pixel,1,0,binary,65536);CHECK(size);
+      distinct_loads=loads(size);
+      code[5]&=~(1u<<8);
+      size=xe_rtz_native_spirv(code,6,pixel,1,0,binary,65536);CHECK(size);
+      CHECK(loads(size)+1==distinct_loads);
+   }
+   puts("PASS: repeated VS/PS ALU storage removes exactly one load");
    packed(code,0,1);
    size=xe_rtz_native_spirv(code,6,0,4,0,binary,65536);CHECK(size);
    scan(size,&rtz,&rte,2);CHECK(binary[1]==0x10000);

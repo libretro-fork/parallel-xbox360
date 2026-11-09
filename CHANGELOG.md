@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Remove duplicate raw storage loads within shader ALU instructions using a bounded C89 matcher. Keep addressing identity and per-operand swizzle/sign behavior; add adversarial matching and native load-count checks. Matched driver compilation timings remain essentially unchanged, so this is not a shader-stutter fix.
+
 - Reduce native-RTZ vertex fraction shader expansion by using lane-wise vector floor/subtract and avoiding repeated input-denormal checks. Retain exact rounding/output flushing and add a separate fraction-heavy hardware compilation profile; first-use driver stalls remain unresolved.
 
 - Let completed Vulkan/D3D12 draw pipelines become usable without waiting for older unrelated compilations to publish. Remove the ordered result window while retaining borrowed request storage and joined shutdown; make the worker-visible GPU submission counter atomic. A draw still waits for its own required pipeline, so first-use stutter remains unresolved.

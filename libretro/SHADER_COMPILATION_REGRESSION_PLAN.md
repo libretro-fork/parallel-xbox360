@@ -508,3 +508,24 @@ with paired process CPU468.750 ->265.625ms. Disk/internal driver caches are not
 certified empty. This remaining277ms stall is visible and not a cold-play pass.
 Do not infer GPU execution speed or gameplay fluidity from shader size alone.
 Detailed evidence and limits: tools/tests/shader_fraction_results.txt.
+
+## Instruction-local operand lends (2026-11-09)
+
+Borrow an already-loaded raw register/float-constant ID only inside the same
+scalar/vector ALU operation, before guest state writes. Match source kind, full
+index and addressing mode exactly. Apply swizzles and sign/absolute modifiers
+independently afterward. Do not add a cross-instruction value cache, mutable
+alias map or assumed scalar/vector pairing order. Unknown sources/modes retain
+the original load/validation path. Use the bounded C89 matcher with typed field
+projection, two fixed keys and no payload-copy/ownership transfer.
+
+Require adversarial/randomized key checks, native VS/PS duplicate-versus-distinct
+load counts and the existing576 GPU goldens (including mixed same-register
+swizzles). Changing the matcher to ignore addressing mode must fail. Keep corpus4
+and elapsed thresholds unchanged. Retain all three conditions: the first standard
+comparison flags44 PSO tails against previously seen parent modules; a novel
+RGB-export/33,97,257 companion passes384 metrics, and separate already-seen
+standard comparison passes384 hardware/80 WARP metrics. Do not overwrite the
+first failure or describe this as faster first-use driver compilation. Matched
+first-use costs remain essentially unchanged, including316ms required PSOs.
+Details and unsupported coverage: tools/tests/shader_operand_lend_results.txt.
