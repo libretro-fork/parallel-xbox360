@@ -1,0 +1,92 @@
+Vulkan vector software RTZ -- 2026-11-09
+Parent907213bfb30affe1cf9a2818df1efe1fac49fb19
+
+Production and ownership
+------------------------
+Software-RTZ vertex add/subtract/multiply previously emitted the same exact C89
+integer recipe once per component, extracted three operand/native-result words
+per lane and rebuilt the float vector. Emit one lane-wise recipe with the whole
+scalar/vector IDs instead. The same 32-bit integer math, finite/non-finite
+selection, signed FTZ, ordered arithmetic and uncontracted native exceptional
+fallback remain. No cross-lane arithmetic, new FMA, precision relaxation or
+shader Int64/Float64. Pixel and hardware-RTZ paths are unchanged.
+
+The typed SPIR-V adapter already supports scalar/vector constants, booleans,
+bitwise/select/CLZ and 32x32 extended product operations. Product result structs
+now use the existing simple-result type interner, matched by both member type
+IDs in the current module, instead of a fresh named struct per multiply. No
+new interner, cache, state table, buffer, lock, allocation policy or diagnostic.
+Vector/scalar member types remain distinct; IDs do not survive module reset.
+Borrow original IR IDs and fixed constant views; remove the four-ID component
+reconstruction array and redundant extract/construct instructions. Other IR and
+driver allocations remain. No whole shader buffer or cache-file copy is added.
+
+Correctness and build coverage
+------------------------------
+Full MSVC Release --parallel3, actual MinGW C++20 ALU syntax, Linux strict C89
+native fixture compilation and C89 ASan/UBSan math/matcher tests pass.
+Native regression checks require equal integer recipe instruction counts for
+widths1..4; repeated software dot products share a result type; vector4 MUL then
+scalar DP4 use two distinct types, with all scalar products sharing the second.
+Existing mode/interpreter/fraction/load guards remain.63 written native modules
+and576 actual GPU fixture modules pass spirv-val (639 total). Existing4M SSE/SSA,
+65536 classified FTZ,65536 operand-lend plans and576 physical RTX5090 GPU goldens
+pass. New widths2/3 checks are structural/validator coverage, not new physical GPU
+execution cases. New mixed-width type reuse has static coverage; the recipe's
+scalar and vector4 arithmetic retain actual-GPU coverage.
+
+Private negative control changes call97's vector OpUMulExtended high-word extract
+to its low-word member. The module remains valid in spirv-val, but the GPU
+returns33800000 where the oracle expects33c00000 in two lanes. The normal576-case
+candidate passes; no fault path or modified production fixture is delivered.
+
+Matched first-use companion (complete)
+-------------------------------------
+Same current procedural fixture for both revisions: XYW exports,34/98/258 stress
+lengths. Every module hash is absent from the standard timing corpus. Exact
+parent ALU source verified against Git and compiled using native Ninja options,
+linked as an explicit object before otherwise unchanged archives; candidate uses
+the normal native core archive. No working-tree core switching or installed DLL
+replacement. Seven alternating/reverse-order process pairs,384 metrics, no
+threshold alarms. Raw process CPU and wall channels retained separately.
+
+Software profile32 vertex modules:11,883,632 ->3,284,080 bytes (-72.36%). Pixel32
+bytes remain598,352. Vertex instructions sum574908 ->161324. Hardware-RTZ64/dot64/fraction64 module dictionaries are
+byte-identical. Software translation median across64 case medians(batch4):
+0.31845 ->0.17505ms; worst11.8447 ->3.7628ms. This includes unchanged pixel cases;
+it is not a universal per-case speedup claim. Graphics PSO median across16 case
+medians0.12040 ->0.10905ms; worst341.4789 ->269.3778ms. First PSO cases0/12/14:
+52.5014/133.2561/341.4789 ->32.4037/101.7050/269.3778ms.
+
+First standard comparison (complete and retained)
+-------------------------------------------------
+80 WARP metrics pass.384 hardware metrics have EIGHT PSO tail alarms, all even
+cases of vulkan.vs_ps_pso. Previously seen parent modules mostly reuse cached
+driver work; changed candidate software modules compile again. No translation
+alarms. Example PSO14 maximum:about0.820 ->283.429ms. Retain this failed result,
+all seven paired samples and CPU/wall CSVs; do not substitute warmed timings.
+
+Separate already-seen comparison and final checks
+------------------------------------------------
+Seven new pairs with the standard modules already seen by both revisions pass
+384 hardware and80 WARP metrics without alarms. Preserve this separately from
+the initial eight-alarm run and matched first-use companion.27 comparator
+regression tests pass. Exact source and timed-executable identities, per-case
+median/p95/p99/max, raw elapsed/process-CPU CSVs and device/driver logs are retained.
+No thresholds or default cache behavior changed; corpus4 remains unchanged.
+
+Paired process CPU for companion first PSO cases0/12/14(ms):
+62.500/140.625/328.125 ->46.875/93.750/265.625. Windows CPU accounting quantizes,
+and parallel work can exceed elapsed time; CPU does not replace wall gates.
+32 pixel modules,192 native-RTZ/dot/fraction modules and8 DXIL modules are all
+byte-identical across revisions.
+
+Limits
+------
+New module identities, fresh processes and no emulator cache do NOT certify an
+empty driver disk/internal cache. This targets the software integer fallback;
+no acceleration of the unchanged native hardware-RTZ path on RTX5090 is claimed.
+A269ms required PSO remains a visible interruption. No cold/warm cross-game,
+first-correct-draw, GPU execution/register-pressure, process RSS or actual frame
+pacing benefit is established. No RetroArch/game launch or extracted game assets.
+The broader cold-play goal remains incomplete.

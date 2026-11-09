@@ -49,6 +49,21 @@ static unsigned loads(size_t size) {
    }
    return count;
 }
+static void product_shape(size_t size,unsigned expected,unsigned mixed) {
+   size_t at;
+   unsigned n,count=0,first=0,second=0,type;
+   for(at=5;at<size;at+=n) {
+      n=binary[at]>>16;CHECK(n && n<=size-at);
+      if((binary[at]&65535)==151) {
+         CHECK(n==5);type=binary[at+1];
+         if(!count)first=type;
+         else if(mixed && count==1){second=type;CHECK(second!=first);}
+         else CHECK(type==(mixed?second:first));
+         ++count;
+      }
+   }
+   CHECK(count==expected);
+}
 static void packed(uint32_t code[6],unsigned pixel,unsigned mul) {
    code[0]=0x1001;code[1]=0x2000;code[2]=0;
    code[3]=(pixel?0:62)|(1u<<15)|(15u<<16)|(50u<<26);
@@ -62,8 +77,8 @@ int main(int argc,char** argv) {
    static const uint32_t expected[2][3][4]={
       {{0x3f800000,0xbf800000,0x3f7fffff,0x7f7fffff},{0x3f801002,0xbf801002,0x7f7fffff,0x3f800000},{0x3f7fffff,0x00800000,0,0}},
       {{0x3f800001,0xbf800001,0x3f800000,0x7f800000},{0x3f801003,0xbf801003,0x7f800000,0x3f800000},{0x3f800000,0x00800000,0,0}}};
-   uint32_t code[6],out[4];size_t size,pixel_size=0;
-   unsigned pixel,mul,hardware,ftz,rtz,rte,integers,width,components,distinct_loads,soft=0,fast=0;
+   uint32_t code[9],out[4];size_t size,pixel_size=0;
+   unsigned pixel,mul,hardware,ftz,rtz,rte,integers,width,components,distinct_loads,scalar_integers,soft=0,fast=0;
    char path[256];FILE* file;
    if(argc>1)CHECK(strlen(argv[1])<180);
    for(pixel=0;pixel<2;++pixel)for(mul=0;mul<3;++mul) {
@@ -113,6 +128,41 @@ int main(int argc,char** argv) {
       CHECK(loads(size)+1==distinct_loads);
    }
    puts("PASS: repeated VS/PS ALU storage removes exactly one load");
+   for(mul=0;mul<2;++mul) {
+      scalar_integers=0;
+      for(components=1;components<=4;++components) {
+         packed(code,0,mul);
+         code[3]=(code[3]&~(15u<<16))|(((1u<<components)-1)<<16);
+         size=xe_rtz_native_spirv(code,6,0,0,0,binary,65536);CHECK(size);
+         integers=scan(size,&rtz,&rte,1);
+         if(components==1)scalar_integers=integers;
+         CHECK(integers==scalar_integers);
+         if(argc>1) {
+            sprintf(path,"%s/software-op%u-width%u.spv",argv[1],mul,components);
+            file=fopen(path,"wb");
+            CHECK(file && fwrite(binary,4,size,file)==size && !fclose(file));
+         }
+      }
+   }
+   puts("PASS: software RTZ emits one integer recipe for widths1..4");
+   packed(code,0,1);
+   code[5]=(code[5]&~(31u<<24))|(15u<<24);
+   size=xe_rtz_native_spirv(code,6,0,0,0,binary,65536);CHECK(size);
+   product_shape(size,4,0);
+   if(argc>1) {
+      sprintf(path,"%s/software-dot-product-types.spv",argv[1]);file=fopen(path,"wb");
+      CHECK(file && fwrite(binary,4,size,file)==size && !fclose(file));
+   }
+   packed(code,0,1);
+   code[6]=code[3];code[7]=code[4];code[8]=(code[5]&~(31u<<24))|(15u<<24);
+   code[0]=0x2001;code[3]=0xc80f0000;
+   size=xe_rtz_native_spirv(code,9,0,0,0,binary,65536);CHECK(size);
+   product_shape(size,5,1);
+   if(argc>1) {
+      sprintf(path,"%s/software-mixed-product-types.spv",argv[1]);file=fopen(path,"wb");
+      CHECK(file && fwrite(binary,4,size,file)==size && !fclose(file));
+   }
+   puts("PASS: integer product result types are shared by exact member types");
    packed(code,0,1);
    size=xe_rtz_native_spirv(code,6,0,4,0,binary,65536);CHECK(size);
    scan(size,&rtz,&rte,2);CHECK(binary[1]==0x10000);

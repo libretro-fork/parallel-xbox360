@@ -72,9 +72,9 @@ xe_rtz_id SpirvShaderTranslator::EmitRtzNode(void* opaque, unsigned op,
     case XE_RTZ_CONST: return EmitRtzConstant(context, literal);
     case XE_RTZ_SELECT: return builder->createTriOp(spv::OpSelect,type,x,y,spv::Id(c));
     case XE_RTZ_MUL_TRUNC16: {
-      spv::Id members[2]={type,type};
-      xe_spv_word_view view={members,2};
-      spv::Id product_type=builder->makeStructTypeView(view,"xe.rtz.product");
+      // This undecorated instruction-result type can be shared by matching
+      // member types within the current module (including vector widths).
+      spv::Id product_type = builder->makeStructResultType(type, type);
       // OpUMulExtended (151) returns low/high 32-bit words, with no Int64 capability.
       spv::Id product=builder->createBinOp(static_cast<spv::Op>(151),product_type,x,y);
       spv::Id low=builder->createCompositeExtract(product,type,0);
@@ -158,24 +158,21 @@ spv::Id SpirvShaderTranslator::AluBinaryOperation(spv::Op opcode,
       (opcode!=spv::OpFAdd && opcode!=spv::OpFSub && opcode!=spv::OpFMul)) return native;
   const unsigned count=builder_->getNumComponents(native);
   if (!count || count>4) throw std::bad_alloc();
-  spv::Id components[4];
-  RtzEmitContext context = RtzContext(1);
-  xe_rtz_emitter emitter={&context,&EmitRtzNode,0};
-  for (unsigned i=0;i<count;++i) {
-    spv::Id x=count==1?a:builder_->createCompositeExtract(a,type_float_,i);
-    spv::Id y=count==1?b:builder_->createCompositeExtract(b,type_float_,i);
-    spv::Id n=count==1?native:builder_->createCompositeExtract(native,type_float_,i);
-    if (opcode==spv::OpFSub)y=builder_->createUnaryOp(spv::OpFNegate,type_float_,y);
-    const xe_rtz_id xb=builder_->createUnaryOp(spv::OpBitcast,type_uint_,x);
-    const xe_rtz_id yb=builder_->createUnaryOp(spv::OpBitcast,type_uint_,y);
-    const xe_rtz_id nb=builder_->createUnaryOp(spv::OpBitcast,type_uint_,n);
-    xe_rtz_id result=opcode==spv::OpFMul?xe_rtz_emit_mul(&emitter,xb,yb,nb):xe_rtz_emit_add(&emitter,xb,yb,nb);
-    if (!result || emitter.failed) throw std::bad_alloc();
-    components[i]=builder_->createUnaryOp(spv::OpBitcast,type_float_,spv::Id(result));
-  }
-  if (count==1)return components[0];
-  xe_spv_word_view view={components,count};
-  return builder_->createCompositeConstructView(type,view);
+  // Every integer recipe operation is lane-wise. Lend the whole vector to
+  // the existing C89 emitter instead of rebuilding the recipe for each lane.
+  RtzEmitContext context = RtzContext(count);
+  xe_rtz_emitter emitter = {&context, &EmitRtzNode, 0};
+  xe_rtz_id xb, yb, nb, result;
+  if (opcode == spv::OpFSub)
+    b = builder_->createUnaryOp(spv::OpFNegate, type, b);
+  xb = builder_->createUnaryOp(spv::OpBitcast, context.uint_type, a);
+  yb = builder_->createUnaryOp(spv::OpBitcast, context.uint_type, b);
+  nb = builder_->createUnaryOp(spv::OpBitcast, context.uint_type, native);
+  result = opcode == spv::OpFMul
+      ? xe_rtz_emit_mul(&emitter, xb, yb, nb)
+      : xe_rtz_emit_add(&emitter, xb, yb, nb);
+  if (!result || emitter.failed) throw std::bad_alloc();
+  return builder_->createUnaryOp(spv::OpBitcast, type, spv::Id(result));
 }
 
 spv::Id SpirvShaderTranslator::AluFract(spv::Id type, spv::Id operand) {

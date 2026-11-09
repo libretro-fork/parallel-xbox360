@@ -529,3 +529,24 @@ standard comparison passes384 hardware/80 WARP metrics. Do not overwrite the
 first failure or describe this as faster first-use driver compilation. Matched
 first-use costs remain essentially unchanged, including316ms required PSOs.
 Details and unsupported coverage: tools/tests/shader_operand_lend_results.txt.
+
+## Vector software RTZ and shared result types (2026-11-09)
+
+The exact integer add/subtract/multiply recipe is lane-independent. For Vulkan
+without native RTZ, lend whole vector IDs through the existing C89 recipe rather
+than emitting it per component and reconstructing the result. Preserve integer
+wrap/shift/CLZ behavior, finite/non-finite selection and signed FTZ. Use native
+32x32 extended multiply without shader Int64/Float64. Reuse simple undecorated
+product result types by exact member types in the current module; never key only
+by a name or reuse IDs across modules/widths. Pixel and hardware-RTZ paths stay
+unchanged. No new buffer, tracking map, copy, thread, lock or readback is needed.
+
+Require one recipe for widths1..4, repeated scalar products sharing a result
+type, distinct scalar/vector member types and mixed-width use in one module.
+Keep all576 real GPU goldens and make a valid high/low product-word fault fail.
+Keep corpus4 and elapsed gates unchanged. Preserve the initial standard run's
+eight PSO tail alarms against already-seen parent modules. A novel matched
+XYW-export/34,98,258 companion passes384 metrics and lowers worst observed
+PSO341.4789 ->269.3778ms. This remains a visible stall, not cold-play signoff.
+This fallback improvement is not a claim about the unchanged hardware-RTZ path.
+Complete cache-condition details: tools/tests/shader_vector_rtz_results.txt.

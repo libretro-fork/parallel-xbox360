@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Reduce Vulkan software-RTZ vertex shader expansion by emitting one lane-wise integer recipe per vector and sharing matching product-result types. Preserve exact arithmetic, pixel behavior and the hardware-RTZ path. Required first-use compilation stalls remain unresolved.
+
 - Remove duplicate raw storage loads within shader ALU instructions using a bounded C89 matcher. Keep addressing identity and per-operand swizzle/sign behavior; add adversarial matching and native load-count checks. Matched driver compilation timings remain essentially unchanged, so this is not a shader-stutter fix.
 
 - Reduce native-RTZ vertex fraction shader expansion by using lane-wise vector floor/subtract and avoiding repeated input-denormal checks. Retain exact rounding/output flushing and add a separate fraction-heavy hardware compilation profile; first-use driver stalls remain unresolved.
