@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/gpu/spirv_shader_translator.h"
 #include "xenia/gpu/spirv_shader_call.h"
 
@@ -139,8 +140,8 @@ bool TestSpirvVersionSupport(const ui::vulkan::VulkanDevice* vulkan_device,
   create_info.pCode = spirv_code;
 
   VkShaderModule test_module = VK_NULL_HANDLE;
-  VkResult result = vulkan_device->functions().vkCreateShaderModule(
-      vulkan_device->device(), &create_info, nullptr, &test_module);
+  VkResult result = XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_MODULE, vulkan_device->functions().vkCreateShaderModule(
+      vulkan_device->device(), &create_info, nullptr, &test_module));
 
   if (result == VK_SUCCESS) {
     vulkan_device->functions().vkDestroyShaderModule(vulkan_device->device(),

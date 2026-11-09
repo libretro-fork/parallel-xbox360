@@ -1,0 +1,78 @@
+Draw-path compilation contract foundation -- 2026-11-09
+Parent a0b4fb8e28e9a4964f1cf1abf6e3b48a1426e2a9
+
+Implementation
+--------------
+Opt-in C89 fixed atomic counters with compiler TLS thread roles; no allocation,
+logging or clocks in accounting. Six roles, three pipeline kinds, ten events.
+Default release macros discard all accounting arguments; only the original API
+call executes. Snapshot ABI1 requires exact buffer size; reset requires quiescent
+producers. Per-word atomic snapshots are not transactionally consistent. Wait
+counts are observed waiting predicates, not elapsed time or exact parked waits.
+Unknown roles and incompatible snapshot metadata fail closed.
+
+Instrument19 current direct Vulkan/D3D12 module/graphics/compute creation calls,
+shared guest translation, native DXIL emitters, pool waits/caller jobs and current
+incorrect stand-in/missing-draw branches. Lexical API-site checks reject omitted,
+wrong-event and partial-getter wrappers; aliases and future creation APIs need
+explicit review. The LINK bin is available; this core has no separate current
+program-link API site. Initialization scopes are limited to backend setup;
+unclassified threads are conservatively UNKNOWN, not silently initialization.
+
+Nonblocking try_begin checks one reusable slot without moving the cursor on
+failure. Typed TryPush refuses missing workers/full storage before constructing
+or moving requests. It borrows existing slots and changes no payload storage,
+capacity, worker count, completion lifetime or publication ordering. Existing
+renderer Push/admission remains blocking until an accurate ready path exists.
+Remove two host-tick reads used solely by an already-disabled await diagnostic.
+
+Validation
+----------
+- Full MSVC Release and stats-profile cores build, three local jobs.
+- MSVC /TC /W4 /WX C89 tests and Linux GCC C89 ASan/UBSan pass.
+- Disabled macro side effects and original call exactly-once checks pass.
+- Every role/kind/event bin, metadata/buffer bounds, invalid tags, scope unwind,
+  four-thread80000-event accounting and deliberate gate failures pass.
+- Real typed4096-slot pool: no-worker/full refusal preserves moves/ownership;
+  wrapped retry consumes4097 records once. Actual blocked legacy admission is
+  observed as a critical event. Negative tests require exit1, not any failure.
+- Real instrumented translator emits identical SPIR-V across initialization,
+  compiler, GPU, frontend and guest roles. Critical-role emission fails gate.
+- Full DLL loader tests: release has no stats API; stats has all seven exports,
+  bounded snapshot canaries and injected critical events. Minimal hidden-ELF DSO
+  also exports the API correctly through its version script and exclude-libs.
+- Existing queue lifetime/ready/publication tests,20000 native warm-up retries,
+  four independent publication-flag writers and three actual failed-content
+  load/close/deinit/DLL-unload cycles pass.
+-704 actual GPU numerical shaders and384 sampler cases pass on RTX5090;
+  resolve snapshot/owner checks and6.4M concurrent key stores pass.
+- Seven alternating/reverse parent-equivalent/candidate release pairs:80 WARP
+  and768 physical Vulkan per-case stage metrics, no threshold alarms. Every
+  generated module profile is identical. Existing corpus8 thresholds unchanged.
+  Frozen baseline binaries were prepared with9ebb source before its commit;
+  parent a0b adds only policy/docs. Original manifest is preserved, not relabeled.
+- Disabled release COFF .text section hashes: shader_translator1004 sections and
+  vulkan_pipeline_cache2357 sections are identical to sealed parent objects.
+  This is a two-object check, not proof for every binary byte.
+- Workflow YAML parses; normal DLL collection uses its exact build path so the
+  separate stats DLL cannot accidentally become the release artifact.
+
+Limits and remaining work
+-------------------------
+No claim of faster compilation or fixed gameplay stutter. These component,
+lexical, instrumented-translator and no-content DLL tests do not establish a
+whole-renderer runtime zero-event pass. No loaded-game run, first-correct-frame
+measurement, equal-image/progress replay, complete shader-stage fallback,
+renderer worker-loss/retirement-exhaustion test or savestate restore acceptance.
+No certified empty driver disk/internal cache, no macOS/Android full build.
+Counter snapshots contain no durations. Stats-profile timings are not compared
+to normal release timings. CI infrastructure can land while these debts remain.
+
+Inline placeholder/real PSO creation, draw-side translation/awaits, blocking
+renderer admission, lazy utility pipelines, no-op pixel shaders and skipped
+draws remain architectural failures. A ready accurate fallback is the next
+required implementation; replacing blocking Push with draw loss is prohibited.
+
+Raw local logs/manifests/CSV samples and sealed object evidence are retained in
+C:/git/draw-event-contract and delivered with the mailbox artifact. Hosted CI
+also runs the source, unit, instrumented translator and full-profile API checks.

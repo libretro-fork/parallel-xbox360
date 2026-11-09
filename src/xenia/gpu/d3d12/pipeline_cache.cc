@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/gpu/d3d12/pipeline_cache.h"
 
 #include <chrono>
@@ -696,6 +697,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
   options.w_not_reciprocal_mask = SpirvShaderTranslator::kSysFlag_WNotReciprocal;
   options.xy_divided_mask = SpirvShaderTranslator::kSysFlag_XYDividedByW;
   options.z_divided_mask = SpirvShaderTranslator::kSysFlag_ZDividedByW;
+  XE_DRAW_EVENT(XE_DRAW_GUEST_PIPELINE, XE_DRAW_TRANSLATE);
   OwnedNativeDxil binary(xe_dxil_build_guest_vertex_owned(
       &options, shader.ucode_dwords(), shader.ucode_dword_count(),
       shader.cf_pair_index_bound() * 2), &xe_dxil_shader_binary_delete);
@@ -798,6 +800,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
     rop_options.depth.stencil_mask = SpirvShaderTranslator::kSysFlag_FSIStencilTest;
     rop_options.depth.depth_function_shift = SpirvShaderTranslator::kSysFlag_FSIDepthPassIfLess_Shift;
   }
+  XE_DRAW_EVENT(XE_DRAW_GUEST_PIPELINE, XE_DRAW_TRANSLATE);
   OwnedNativeDxil binary(xe_dxil_build_guest_pixel_owned(&options,
       shader.ucode_dwords(), shader.ucode_dword_count(), shader.cf_pair_index_bound()*2),
       &xe_dxil_shader_binary_delete);
@@ -833,6 +836,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeGeometryDxil(GeometryShad
   options.point_coordinates = key.has_point_coordinates;
   options.point_diameter_word = offsetof(SpirvShaderTranslator::SystemConstants,point_constant_diameter)/4;
   options.point_radius_word = offsetof(SpirvShaderTranslator::SystemConstants,point_screen_diameter_to_ndc_radius)/4;
+  XE_DRAW_EVENT(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_TRANSLATE);
   OwnedNativeDxil binary(xe_dxil_build_geometry_owned(&options),&xe_dxil_shader_binary_delete);
   if (binary && !cvars::dump_shaders.empty()) {
     std::filesystem::path dir = std::filesystem::absolute(cvars::dump_shaders);
@@ -2097,7 +2101,7 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
     pso_create_start = std::chrono::steady_clock::now();
   }
   HRESULT hr =
-      device->CreateGraphicsPipelineState(&state_desc, IID_PPV_ARGS(&state));
+      XE_DRAW_CALL((as_placeholder ? XE_DRAW_PLACEHOLDER : XE_DRAW_GUEST_PIPELINE), XE_DRAW_GRAPHICS_PSO, device->CreateGraphicsPipelineState(&state_desc, IID_PPV_ARGS(&state)));
   if (SUCCEEDED(hr) && profile) {
     // Driver DXIL->ISA compile time.
     XELOGI(

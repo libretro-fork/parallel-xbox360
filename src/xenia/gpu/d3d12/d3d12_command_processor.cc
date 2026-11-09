@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/gpu/d3d12/d3d12_command_processor.h"
 #include "libretro/core_gpu_downscale.h"
 
@@ -518,6 +519,7 @@ std::string D3D12CommandProcessor::GetTitleStateSuffix() const {
 }
 
 bool D3D12CommandProcessor::SetupContext() {
+  XE_DRAW_SCOPE(XE_DRAW_INITIALIZATION);
   if (!CommandProcessor::SetupContext()) {
     XELOGE("Failed to initialize base command processor context");
     return false;
@@ -2813,21 +2815,11 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
       }
     } else if (!stand_in_allowed &&
                pipeline_cache_->IsPipelineCreationPending(pipeline_handle)) {
-      uint64_t await_start = xe::Clock::QueryHostTickCount();
+
       pipeline_cache_->AwaitRealD3D12PipelineByHandle(pipeline_handle);
-      XELOGI(
-          "Awaited real pipeline for a draw into {} ({}): VS {:016X}, PS "
-          "{:016X}, {:.2f} ms",
-          render_target_cache_->GetLastUpdateDrawTargetName(),
-          draw_target_small        ? "small render target"
-          : !draw_target_recurring ? "not drawn recently"
-                                   : "memexport",
-          vertex_shader->ucode_data_hash(),
-          pixel_shader ? pixel_shader->ucode_data_hash() : 0,
-          double(xe::Clock::QueryHostTickCount() - await_start) * 1000.0 /
-              double(xe::Clock::QueryHostTickFrequency()));
     }
     if (pipeline_cache_->GetD3D12PipelineByHandle(pipeline_handle) == nullptr) {
+      XE_DRAW_EVENT(XE_DRAW_PLACEHOLDER, XE_DRAW_MISSING_DRAW);
       // No pipeline and no placeholder available (async_shader_skip_draws with
       // no interpreter stand-in, bindful async, or a failed placeholder) - skip
       // the draw until the real pipeline is ready.
@@ -2851,6 +2843,7 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
     pipeline_cache_->GetD3D12PipelineForDraw(pipeline_handle, &is_placeholder,
                                              &is_interpreter_placeholder);
     if (is_interpreter_placeholder) {
+      XE_DRAW_EVENT(XE_DRAW_PLACEHOLDER, XE_DRAW_MISSING_DRAW);
       OnVIZSurveyDraw(false);
       return true;
     }
@@ -2889,6 +2882,7 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
       pipeline_cache_->GetD3D12PipelineForDraw(
           pipeline_handle, &placeholder_pipeline, &interpreter_placeholder);
   if (placeholder_pipeline) {
+    XE_DRAW_EVENT(XE_DRAW_PLACEHOLDER, XE_DRAW_INCORRECT_STAND_IN);
     if (current_external_pipeline_ != draw_pipeline_state) {
       deferred_command_list_.D3DSetPipelineState(draw_pipeline_state);
       current_external_pipeline_ = draw_pipeline_state;

@@ -1,3 +1,4 @@
+#include "libretro/core_draw_stats.h"
 #include "core_job_pool.h"
 #include <retro_atomic.h>
 #include <rthreads/retro_eventcount.h>
@@ -86,6 +87,10 @@ int xe_job_pool_run_one(xe_job_pool *pool, void *context)
       if (retro_atomic_cas_64(&pool->tail, (int64_t)position,
                (int64_t)(position + 1))) break;
    }
+#if XE_GPU_DRAW_STATS
+   if(xe_draw_stats_role()!=XE_DRAW_COMPILER)
+      XE_DRAW_EVENT(XE_DRAW_GUEST_PIPELINE, XE_DRAW_INLINE_JOB);
+#endif
    pool->run(pool->opaque, pool->payloads + slot * pool->stride, context, position);
    /* The callback owns the lease; it may have released/reused the slot already. */
    return 1;
@@ -114,7 +119,11 @@ static void xe_job_worker_run(void *opaque)
 {
    xe_job_worker *worker = (xe_job_worker *)opaque;
    xe_job_pool *pool = worker->pool;
-   void *context = pool->context_new ? pool->context_new(pool->opaque) : NULL;
+   void *context;
+#if XE_GPU_DRAW_STATS
+   unsigned previous_role=xe_draw_stats_enter(XE_DRAW_COMPILER);
+#endif
+   context=pool->context_new ? pool->context_new(pool->opaque) : NULL;
    sthread_setname(pool->name);
    retro_atomic_store_release_int(&worker->ready, 1);
    retro_eventcount_notify(&pool->startup);
@@ -131,6 +140,9 @@ static void xe_job_worker_run(void *opaque)
       slock_unlock(pool->park_lock);
    }
    if (pool->context_free) pool->context_free(pool->opaque, context);
+#if XE_GPU_DRAW_STATS
+   xe_draw_stats_leave(previous_role);
+#endif
 }
 xe_job_pool *xe_job_pool_new(size_t capacity, size_t payload_size,
       const char *name, xe_job_run run, xe_job_discard discard,
@@ -228,6 +240,15 @@ int xe_job_pool_set_threads(xe_job_pool *pool, size_t count)
    return 1;
 }
 size_t xe_job_pool_threads(const xe_job_pool *pool) { return pool ? pool->count : 0; }
+void *xe_job_pool_try_begin(xe_job_pool *pool)
+{
+   size_t slot;
+   if(!pool)return NULL;
+   slot=(size_t)pool->head & (pool->capacity-1);
+   if((uint64_t)retro_atomic_load_acquire_64(&pool->sequences[slot])!=pool->head)
+      return NULL;
+   return pool->payloads+slot*pool->stride;
+}
 void *xe_job_pool_begin(xe_job_pool *pool)
 {
    size_t slot;
@@ -235,6 +256,7 @@ void *xe_job_pool_begin(xe_job_pool *pool)
    if (!pool) return NULL;
    slot = (size_t)pool->head & (pool->capacity - 1);
    while ((uint64_t)retro_atomic_load_acquire_64(&pool->sequences[slot]) != pool->head) {
+      XE_DRAW_EVENT(XE_DRAW_GUEST_PIPELINE, XE_DRAW_ADMISSION_WAIT);
       key = retro_eventcount_prepare_wait(&pool->space);
       if ((uint64_t)retro_atomic_load_acquire_64(&pool->sequences[slot]) == pool->head)
          retro_eventcount_cancel_wait(&pool->space);
@@ -265,6 +287,7 @@ void xe_job_pool_await(xe_job_pool *pool)
    int key;
    if (!pool) return;
    while (xe_job_pool_busy(pool)) {
+      XE_DRAW_EVENT(XE_DRAW_GUEST_PIPELINE, XE_DRAW_COMPILE_WAIT);
       key = retro_eventcount_prepare_wait(&pool->idle_event);
       if (!xe_job_pool_busy(pool)) retro_eventcount_cancel_wait(&pool->idle_event);
       else retro_eventcount_commit_wait(&pool->idle_event, key);
@@ -276,6 +299,7 @@ void xe_job_pool_await_pending(xe_job_pool *pool, xe_job_pending pending,
    int key;
    if (!pool || !pending) return;
    while (pending(state)) {
+      XE_DRAW_EVENT(XE_DRAW_GUEST_PIPELINE, XE_DRAW_COMPILE_WAIT);
       key = retro_eventcount_prepare_wait(&pool->space);
       if (!pending(state)) retro_eventcount_cancel_wait(&pool->space);
       else retro_eventcount_commit_wait(&pool->space, key);

@@ -342,3 +342,7 @@ SOURCES_C += libretro/core_media_audio.c third_party/libretro-common/formats/aud
  third_party/libretro-common/formats/data_transfer.c third_party/libretro-common/formats/mp3/rmp3.c \
  third_party/libretro-common/formats/wma/rwma_stream.c third_party/libretro-common/memmap/memmap.c
 $(BUILD_DIR)/obj/third_party/libretro-common/formats/audio_transfer.c.o: CPPFLAGS += -DHAVE_RMP3 -DHAVE_RWMA
+
+ifeq ($(GPU_DRAW_STATS),1)
+SOURCES_C += libretro/core_draw_stats.c
+endif

@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/gpu/vulkan/vulkan_render_target_cache.h"
 #include <new>
 #include "libretro/core_gpu_divide.h"
@@ -2773,9 +2774,9 @@ VkPipeline const* VulkanRenderTargetCache::GetTransferPipelines(
   pipeline_create_info.subpass = 0;
   pipeline_create_info.basePipelineHandle = VK_NULL_HANDLE;
   pipeline_create_info.basePipelineIndex = -1;
-  if (dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+  if (XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_GRAPHICS_PSO, dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
                                     &pipeline_create_info, nullptr,
-                                    &pipelines[0]) != VK_SUCCESS) {
+                                    &pipelines[0])) != VK_SUCCESS) {
     XELOGE(
         "VulkanRenderTargetCache: Failed to create the render target ownership "
         "transfer pipeline for render pass 0x{:08X}, shader 0x{:08X}",
@@ -2798,9 +2799,9 @@ VkPipeline const* VulkanRenderTargetCache::GetTransferPipelines(
               : i;
       sample_id_specialization_constant = host_sample_index;
       sample_mask = uint32_t(1) << host_sample_index;
-      if (dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+      if (XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_GRAPHICS_PSO, dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
                                         &pipeline_create_info, nullptr,
-                                        &pipelines[i]) != VK_SUCCESS) {
+                                        &pipelines[i])) != VK_SUCCESS) {
         XELOGE(
             "VulkanRenderTargetCache: Failed to create the render target "
             "ownership transfer pipeline for render pass 0x{:08X}, shader "

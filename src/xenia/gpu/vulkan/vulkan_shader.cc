@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/gpu/vulkan/vulkan_shader.h"
 
 #include <cstdint>
@@ -40,9 +41,9 @@ bool VulkanShader::VulkanTranslation::PrepareForPublication() {
   shader_module_create_info.pCode =
       reinterpret_cast<const uint32_t*>(translated_binary().data());
 
-  if (vulkan_device->functions().vkCreateShaderModule(
+  if (XE_DRAW_CALL(XE_DRAW_GUEST_PIPELINE, XE_DRAW_MODULE, vulkan_device->functions().vkCreateShaderModule(
           vulkan_device->device(), &shader_module_create_info, nullptr,
-          &shader_module_) != VK_SUCCESS) {
+          &shader_module_)) != VK_SUCCESS) {
     XELOGE(
         "VulkanShader::VulkanTranslation: Failed to create a Vulkan shader "
         "module for shader {:016X} modification {:016X}",

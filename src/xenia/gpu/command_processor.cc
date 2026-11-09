@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/gpu/command_processor.h"
 
 #include <atomic>
@@ -443,6 +444,7 @@ void CommandProcessor::RecordGuestSwap() {
 }
 
 void CommandProcessor::WorkerThreadMain() {
+  XE_DRAW_SCOPE(XE_DRAW_GPU);
   if (!SetupContext()) {
     xe::FatalError("Unable to setup command processor internal state");
     return;

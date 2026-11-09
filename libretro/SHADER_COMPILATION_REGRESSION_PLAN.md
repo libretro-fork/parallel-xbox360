@@ -704,3 +704,16 @@ was blocked before launch because RetroArch PID29120 was running; leave that
 process untouched and report timing unverified. Infrastructure/failure capture
 may land under this plan's existing allowance; no runtime performance pass is
 claimed. See tools/tests/shader_software_dot_results.txt and hosted CI artifacts.
+
+## Draw-event instrumentation foundation (2026-11-09)
+
+The opt-in stats profile now accounts at translation and19 direct driver
+creation sites, plus pool waiting/caller execution and current bad stand-in
+paths. Component/actual-translator negative controls fail the zero-event gate.
+Separate full-core profile builds validate the bounded snapshot ABI and release
+export isolation. This closes instrumentation plumbing only: no first-correct-
+draw gameplay replay, accurate generic fallback, worker-loss/retirement-pressure
+renderer integration, or restore coverage is established. Queue `TryPush` is
+nonblocking but not yet adopted by renderer callers. Do not exchange a blocked
+job for an omitted draw. Existing inline creation and waits remain failures.
+Keep the original performance/correctness gates and defaults unchanged.

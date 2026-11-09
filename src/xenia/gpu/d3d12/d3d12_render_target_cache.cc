@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/gpu/d3d12/d3d12_render_target_cache.h"
 #include <new>
 #include "libretro/core_gpu_divide.h"
@@ -867,9 +868,9 @@ bool D3D12RenderTargetCache::Initialize() {
           uint32_rtv_clear_pipeline_desc.SampleDesc.Count = 1 << j;
         }
         ID3D12PipelineState* uint32_rtv_clear_pipeline;
-        if (FAILED(device->CreateGraphicsPipelineState(
+        if (FAILED(XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_GRAPHICS_PSO, device->CreateGraphicsPipelineState(
                 &uint32_rtv_clear_pipeline_desc,
-                IID_PPV_ARGS(&uint32_rtv_clear_pipeline)))) {
+                IID_PPV_ARGS(&uint32_rtv_clear_pipeline))))) {
           XELOGE(
               "D3D12RenderTargetCache: Failed to create the {} {}-sample "
               "render target clearing pipeline",
@@ -2225,8 +2226,8 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(
     bool stencil_pipelines_created = true;
     for (uint32_t i = 0; i < 8; ++i) {
       pipeline_desc.DepthStencilState.StencilWriteMask = UINT8(1) << i;
-      if (SUCCEEDED(device->CreateGraphicsPipelineState(
-              &pipeline_desc, IID_PPV_ARGS(&stencil_bit_pipelines[i])))) {
+      if (SUCCEEDED(XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_GRAPHICS_PSO, device->CreateGraphicsPipelineState(
+              &pipeline_desc, IID_PPV_ARGS(&stencil_bit_pipelines[i]))))) {
         continue;
       }
       stencil_pipelines_created = false;
@@ -2272,8 +2273,8 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(
       pipeline_desc.DSVFormat = GetDepthDSVDXGIFormat(dest_depth_format);
     }
     ID3D12PipelineState* pipeline;
-    if (FAILED(device->CreateGraphicsPipelineState(&pipeline_desc,
-                                                   IID_PPV_ARGS(&pipeline)))) {
+    if (FAILED(XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_GRAPHICS_PSO, device->CreateGraphicsPipelineState(&pipeline_desc,
+                                                   IID_PPV_ARGS(&pipeline))))) {
       pipeline = nullptr;
     }
     // Even if creation fails, still store the null pointer not to try to create

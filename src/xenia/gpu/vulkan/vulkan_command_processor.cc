@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
 #include "libretro/core_vk_descriptor_image.h"
 #include "libretro/core_gpu_downscale.h"
@@ -239,6 +240,7 @@ std::string VulkanCommandProcessor::GetTitleStateSuffix() const {
 }
 
 bool VulkanCommandProcessor::SetupContext() {
+  XE_DRAW_SCOPE(XE_DRAW_INITIALIZATION);
   if (!CommandProcessor::SetupContext()) {
     XELOGE("Failed to initialize base command processor context");
     return false;
@@ -1173,27 +1175,27 @@ bool VulkanCommandProcessor::SetupContext() {
   swap_apply_gamma_pipeline_create_info.stage.module =
       swap_apply_gamma_table_shader_module;
   VkResult swap_apply_gamma_pipeline_256_entry_table_create_result =
-      dfn.vkCreateComputePipelines(
+      XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_COMPUTE_PSO, dfn.vkCreateComputePipelines(
           device, VK_NULL_HANDLE, 1, &swap_apply_gamma_pipeline_create_info,
-          nullptr, &swap_apply_gamma_256_entry_table_pipeline_);
+          nullptr, &swap_apply_gamma_256_entry_table_pipeline_));
   swap_apply_gamma_pipeline_create_info.stage.module =
       swap_apply_gamma_pwl_shader_module;
   VkResult swap_apply_gamma_pipeline_pwl_create_result =
-      dfn.vkCreateComputePipelines(device, VK_NULL_HANDLE, 1,
+      XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_COMPUTE_PSO, dfn.vkCreateComputePipelines(device, VK_NULL_HANDLE, 1,
                                    &swap_apply_gamma_pipeline_create_info,
-                                   nullptr, &swap_apply_gamma_pwl_pipeline_);
+                                   nullptr, &swap_apply_gamma_pwl_pipeline_));
   swap_apply_gamma_pipeline_create_info.stage.module =
       swap_apply_gamma_table_fxaa_luma_shader_module;
   VkResult swap_apply_gamma_pipeline_256_entry_table_fxaa_luma_create_result =
-      dfn.vkCreateComputePipelines(
+      XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_COMPUTE_PSO, dfn.vkCreateComputePipelines(
           device, VK_NULL_HANDLE, 1, &swap_apply_gamma_pipeline_create_info,
-          nullptr, &swap_apply_gamma_256_entry_table_fxaa_luma_pipeline_);
+          nullptr, &swap_apply_gamma_256_entry_table_fxaa_luma_pipeline_));
   swap_apply_gamma_pipeline_create_info.stage.module =
       swap_apply_gamma_pwl_fxaa_luma_shader_module;
   VkResult swap_apply_gamma_pipeline_pwl_fxaa_luma_create_result =
-      dfn.vkCreateComputePipelines(
+      XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_COMPUTE_PSO, dfn.vkCreateComputePipelines(
           device, VK_NULL_HANDLE, 1, &swap_apply_gamma_pipeline_create_info,
-          nullptr, &swap_apply_gamma_pwl_fxaa_luma_pipeline_);
+          nullptr, &swap_apply_gamma_pwl_fxaa_luma_pipeline_));
   dfn.vkDestroyShaderModule(device, swap_apply_gamma_table_shader_module,
                             nullptr);
   dfn.vkDestroyShaderModule(device, swap_apply_gamma_pwl_shader_module,
@@ -1303,13 +1305,13 @@ bool VulkanCommandProcessor::SetupContext() {
   fxaa_pipeline_create_info.basePipelineIndex = -1;
 
   fxaa_pipeline_create_info.stage.module = fxaa_shader_module;
-  VkResult fxaa_pipeline_create_result = dfn.vkCreateComputePipelines(
+  VkResult fxaa_pipeline_create_result = XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_COMPUTE_PSO, dfn.vkCreateComputePipelines(
       device, VK_NULL_HANDLE, 1, &fxaa_pipeline_create_info, nullptr,
-      &fxaa_pipeline_);
+      &fxaa_pipeline_));
   fxaa_pipeline_create_info.stage.module = fxaa_extreme_shader_module;
-  VkResult fxaa_extreme_pipeline_create_result = dfn.vkCreateComputePipelines(
+  VkResult fxaa_extreme_pipeline_create_result = XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_COMPUTE_PSO, dfn.vkCreateComputePipelines(
       device, VK_NULL_HANDLE, 1, &fxaa_pipeline_create_info, nullptr,
-      &fxaa_extreme_pipeline_);
+      &fxaa_extreme_pipeline_));
   dfn.vkDestroyShaderModule(device, fxaa_shader_module, nullptr);
   dfn.vkDestroyShaderModule(device, fxaa_extreme_shader_module, nullptr);
   if (fxaa_pipeline_create_result != VK_SUCCESS ||
@@ -1410,9 +1412,9 @@ bool VulkanCommandProcessor::SetupContext() {
     resolve_downscale_pipeline_create_info.basePipelineHandle = VK_NULL_HANDLE;
     resolve_downscale_pipeline_create_info.basePipelineIndex = -1;
 
-    VkResult resolve_downscale_pipeline_result = dfn.vkCreateComputePipelines(
+    VkResult resolve_downscale_pipeline_result = XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_COMPUTE_PSO, dfn.vkCreateComputePipelines(
         device, VK_NULL_HANDLE, 1, &resolve_downscale_pipeline_create_info,
-        nullptr, &resolve_downscale_pipeline_);
+        nullptr, &resolve_downscale_pipeline_));
     dfn.vkDestroyShaderModule(device, resolve_downscale_shader_module, nullptr);
     if (resolve_downscale_pipeline_result != VK_SUCCESS) {
       XELOGE("Failed to create the resolve downscale compute pipeline");
@@ -3615,19 +3617,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       (VkPipeline)xe_pipeline_handle_load(&pipeline->publication);
   if (!stand_in_allowed &&
       xe_pipeline_flag_load(&pipeline->publication, XE_PIPELINE_PENDING)) {
-    uint64_t await_start = xe::Clock::QueryHostTickCount();
     pipeline_cache_->AwaitPipelineCompletion(pipeline);
-    XELOGI(
-        "Awaited real pipeline for a draw into {} ({}): VS {:016X}, PS "
-        "{:016X}, {:.2f} ms",
-        render_target_cache_->GetLastUpdateDrawTargetName(),
-        draw_target_small        ? "small render target"
-        : !draw_target_recurring ? "not drawn recently"
-                                 : "memexport",
-        vertex_shader->ucode_data_hash(),
-        pixel_shader ? pixel_shader->ucode_data_hash() : 0,
-        double(xe::Clock::QueryHostTickCount() - await_start) * 1000.0 /
-            double(xe::Clock::QueryHostTickFrequency()));
     current_pipeline = (VkPipeline)xe_pipeline_handle_load(&pipeline->publication);
     if (current_pipeline != VK_NULL_HANDLE &&
         current_pipeline !=
@@ -3639,6 +3629,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     }
   }
   if (current_pipeline == VK_NULL_HANDLE) {
+    XE_DRAW_EVENT(XE_DRAW_PLACEHOLDER, XE_DRAW_MISSING_DRAW);
     // Nothing to draw with yet - no placeholder, real pipeline still building.
     // Skip rather than stall, a later frame renders it.
     XELOGI("Draw skipped (pipeline not ready yet): VS {:016X}, PS {:016X}",
@@ -3655,6 +3646,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       current_pipeline ==
           (VkPipeline)xe_pipeline_placeholder_load(&pipeline->publication) &&
       xe_pipeline_flag_load(&pipeline->publication, XE_PIPELINE_INTERPRETER)) {
+    XE_DRAW_EVENT(XE_DRAW_PLACEHOLDER, XE_DRAW_MISSING_DRAW);
     OnVIZSurveyDraw(false);
     return true;
   }
@@ -3834,6 +3826,9 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // samples), so its pixel textures/samplers must not be bound - the
   // placeholder pipeline's layout has none.
   bool placeholder_pixel_shader = bound_is_placeholder;
+  if (bound_is_placeholder) {
+    XE_DRAW_EVENT(XE_DRAW_PLACEHOLDER, XE_DRAW_INCORRECT_STAND_IN);
+  }
   {
     uint32_t ucode_base_dwords = 0, cf_instr_count = 0;
     if (interpreter_placeholder) {

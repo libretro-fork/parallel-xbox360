@@ -10,6 +10,7 @@
 #ifndef XENIA_UI_VULKAN_VULKAN_UTIL_H_
 #define XENIA_UI_VULKAN_VULKAN_UTIL_H_
 
+#include "libretro/core_draw_stats.h"
 #include <algorithm>
 #include <cstdint>
 
@@ -182,9 +183,9 @@ inline VkShaderModule CreateShaderModule(
   shader_module_create_info.codeSize = code_size_bytes;
   shader_module_create_info.pCode = code;
   VkShaderModule shader_module;
-  return vulkan_device->functions().vkCreateShaderModule(
+  return XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_MODULE, vulkan_device->functions().vkCreateShaderModule(
              vulkan_device->device(), &shader_module_create_info, nullptr,
-             &shader_module) == VK_SUCCESS
+             &shader_module)) == VK_SUCCESS
              ? shader_module
              : VK_NULL_HANDLE;
 }

@@ -124,6 +124,13 @@ endif()
 # link group the top-level CMakeLists.txt wraps every link in
 target_link_libraries(xenia-libretro PRIVATE ${_xe_libretro_libs})
 
+if(XENIA_ENABLE_DRAW_STATS)
+  target_sources(xenia-libretro PRIVATE core_draw_stats.c)
+  set(_xe_export_map "${CMAKE_CURRENT_SOURCE_DIR}/link-draw-stats.T")
+else()
+  set(_xe_export_map "${CMAKE_CURRENT_SOURCE_DIR}/link.T")
+endif()
+
 if(WIN32)
   target_link_libraries(xenia-libretro PRIVATE d3d12 dxgi)
 elseif(ANDROID)
@@ -136,7 +143,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # some sixteen thousand symbols before), and its own symbols bound inside
   # it, so the frontend's libraries don't stand in for them
   target_link_options(xenia-libretro PRIVATE -Wl,-Bsymbolic -Wl,--no-undefined
-    "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/link.T" -Wl,--exclude-libs,ALL)
+    "-Wl,--version-script=${_xe_export_map}" -Wl,--exclude-libs,ALL)
   set_property(TARGET xenia-libretro APPEND PROPERTY LINK_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/link.T")
+    "${_xe_export_map}")
 endif()

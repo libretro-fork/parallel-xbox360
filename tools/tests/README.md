@@ -1,5 +1,27 @@
 # Core runtime and raw shader checks
 
+## Draw-path compilation contract
+
+`check_draw_event_sites.py` checks wrapping of the current direct Vulkan/D3D12
+creation calls, with negative controls for missing/wrong/partial wrappers. This
+is lexical coverage of these names, not driver interposition or alias coverage.
+`run_draw_contract_tests.cmd` / `.sh` exercise C89 per-role counters, disabled
+argument evaluation, snapshot bounds, four-thread atomic accounting, scope
+unwind and real typed queue ownership under no-worker/full/wrap conditions.
+The shell runner defaults to ASan/UBSan. Intentionally blocking admission and
+critical events must fail the zero-event gate; the negative executable exits1.
+
+`run_draw_translate_tests.cmd` links the real instrumented shader translator,
+requires identical emitted words across roles and rejects actual emission on
+critical roles. Set `DRAW_CONTRACT_BUILD` to the normal Release build directory
+(default `build/windows-native`). `run_draw_profile_tests.cmd DLL release|stats`
+loads a core without a game and checks absent release exports or bounded stats
+snapshots and injected violations. CI builds a separate stats-enabled core with
+`XENIA_ENABLE_DRAW_STATS=ON`; that DLL is never the packaged release artifact.
+These are infrastructure/component checks, not complete runtime zero-event or
+first-correct-draw tests. Current renderer violations remain open. See
+`draw_contract_results.txt` for evidence and limitations.
+
 
 ## Raw SPIR-V operand storage
 

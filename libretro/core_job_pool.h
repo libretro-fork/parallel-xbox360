@@ -22,6 +22,9 @@ int xe_job_pool_set_threads(xe_job_pool *pool, size_t count);
 size_t xe_job_pool_threads(const xe_job_pool *pool);
 /* One begin/commit at a time. Full rings wait for a worker to release a slot.
  * No object construction may throw between begin and commit. */
+/* Nonblocking alternative: NULL changes no cursor and retains caller ownership.
+ * Shares begin/commit's sole-producer and one-uncommitted-lease contract. */
+void *xe_job_pool_try_begin(xe_job_pool *pool);
 void *xe_job_pool_begin(xe_job_pool *pool);
 void xe_job_pool_commit(xe_job_pool *pool);
 int xe_job_pool_run_one(xe_job_pool *pool, void *context);

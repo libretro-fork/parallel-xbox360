@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/kernel/guest_scheduler.h"
 
 #include <algorithm>
@@ -1556,6 +1557,7 @@ void GuestScheduler::RereadyBlocked(int cpu_index) {
 }
 
 void GuestScheduler::RunLoop(int cpu_index) {
+  XE_DRAW_SCOPE(XE_DRAW_GUEST);
   t_current_cpu = cpu_index;
   Profiler::ThreadEnter(
       ("GuestScheduler CPU " + std::to_string(cpu_index)).c_str());

@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
 #include <cstdint>
@@ -262,9 +263,9 @@ VkPipeline CreateComputePipeline(
   }
 
   VkPipeline pipeline;
-  if (vulkan_device->functions().vkCreateComputePipelines(
+  if (XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_COMPUTE_PSO, vulkan_device->functions().vkCreateComputePipelines(
           vulkan_device->device(), VK_NULL_HANDLE, 1, &pipeline_create_info,
-          nullptr, &pipeline) != VK_SUCCESS) {
+          nullptr, &pipeline)) != VK_SUCCESS) {
     return VK_NULL_HANDLE;
   }
   return pipeline;

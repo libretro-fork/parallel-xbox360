@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/gpu/vulkan/vulkan_pipeline_cache.h"
 
 #include <chrono>
@@ -2214,8 +2215,8 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     pso_create_start = std::chrono::steady_clock::now();
   }
   VkPipeline pipeline;
-  VkResult result = dfn.vkCreateGraphicsPipelines(
-      device, vk_pipeline_cache_, 1, &pipeline_create_info, nullptr, &pipeline);
+  VkResult result = XE_DRAW_CALL((fragment_shader_override != VK_NULL_HANDLE || vertex_shader_override != VK_NULL_HANDLE ? XE_DRAW_PLACEHOLDER : XE_DRAW_GUEST_PIPELINE), XE_DRAW_GRAPHICS_PSO, dfn.vkCreateGraphicsPipelines(
+      device, vk_pipeline_cache_, 1, &pipeline_create_info, nullptr, &pipeline));
   if (result == VK_SUCCESS && profile) {
     // Driver SPIR-V->ISA compile + link time.
     XELOGI(

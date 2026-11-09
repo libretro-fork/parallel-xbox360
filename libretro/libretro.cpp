@@ -17,6 +17,7 @@
 #endif
 #endif
 
+#include "libretro/core_draw_stats.h"
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -2013,6 +2014,7 @@ static void run_stats_end(std::chrono::steady_clock::time_point run_start, doubl
 }
 
 RETRO_API void retro_run(void) {
+  XE_DRAW_SCOPE(XE_DRAW_FRONTEND);
     if (xe_libretro_take_title_stop())
         xenia_stop_emulator();
     {

@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/ui/d3d12/d3d12_util.h"
 
 #include "xenia/base/assert.h"
@@ -61,7 +62,7 @@ ID3D12PipelineState* CreateComputePipeline(
   desc.CachedPSO.CachedBlobSizeInBytes = 0;
   desc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
   ID3D12PipelineState* pipeline = nullptr;
-  device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pipeline));
+  XE_DRAW_CALL(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_COMPUTE_PSO, device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pipeline)));
   return pipeline;
 }
 

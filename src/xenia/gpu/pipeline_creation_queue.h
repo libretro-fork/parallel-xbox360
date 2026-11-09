@@ -72,6 +72,10 @@ class PipelineCreationQueue {
   }
   void Push(const TRequest& request) { PushRequest(request); }
   void Push(TRequest&& request) { PushRequest(std::move(request)); }
+  // Optional specialization only: no workers/full storage returns false before
+  // constructing or moving a request. Callers must retain a ready correct path.
+  bool TryPush(const TRequest& request) { return TryPushRequest(request); }
+  bool TryPush(TRequest&& request) { return TryPushRequest(std::move(request)); }
   bool IsBusy() { return has_threads() && xe_job_pool_busy(pool_); }
   void Notify() { xe_job_pool_notify(pool_); }
   void AwaitCompletion() {
@@ -103,6 +107,15 @@ class PipelineCreationQueue {
       static_assert(std::is_nothrow_constructible<TRequest, U&&>::value);
     }
   };
+  template <typename U>
+  bool TryPushRequest(U&& request) {
+    if (!has_threads()) return false;
+    void* slot = xe_job_pool_try_begin(pool_);
+    if (!slot) return false;
+    new (slot) Request(std::forward<U>(request));
+    xe_job_pool_commit(pool_);
+    return true;
+  }
   template <typename U>
   void PushRequest(U&& request) {
     // The GPU thread (or paused initialization) is the sole producer. Wait for

@@ -4,6 +4,18 @@ SHELL := /bin/sh
 .DEFAULT_GOAL := all
 .DELETE_ON_ERROR:
 
+GPU_DRAW_STATS ?= 0
+ifeq ($(GPU_DRAW_STATS),1)
+CPPFLAGS += -DXE_GPU_DRAW_STATS=1
+endif
+
+LIBRETRO_EXPORT_MAP := libretro/link.T
+LIBRETRO_MACOS_EXPORTS := libretro/exports-macos.T
+ifeq ($(GPU_DRAW_STATS),1)
+LIBRETRO_EXPORT_MAP := libretro/link-draw-stats.T
+LIBRETRO_MACOS_EXPORTS := libretro/exports-draw-stats-macos.T
+endif
+
 TARGET_NAME := parallel_xbox360
 HOST_SYSTEM := $(shell uname -s)
 HOST_WINDOWS := $(filter MINGW% MSYS% CYGWIN%,$(HOST_SYSTEM))
@@ -149,7 +161,7 @@ CFLAGS += -std=c17
 CXXFLAGS += -std=c++20 $(WARNINGS)
 ifeq ($(OS),macos)
 BASE_FLAGS += -mmacosx-version-min=15.0
-LDFLAGS += -dynamiclib -mmacosx-version-min=15.0 -Wl,-exported_symbols_list,libretro/exports-macos.T
+LDFLAGS += -dynamiclib -mmacosx-version-min=15.0 -Wl,-exported_symbols_list,$(LIBRETRO_MACOS_EXPORTS)
 LDLIBS += -framework CoreFoundation -framework Foundation -framework IOKit -ldl -lpthread
 else
 LDFLAGS += -shared
@@ -158,7 +170,7 @@ ifeq ($(OS),linux)
 # Match local binding at link time and permit GCC to inline PM4 helpers.
 BASE_FLAGS += -fno-semantic-interposition
 LDLIBS += -lstdc++fs -ldl -lm -lpthread -lrt
-LDFLAGS += -Wl,-Bsymbolic -Wl,--no-undefined -Wl,--version-script=libretro/link.T -Wl,--exclude-libs,ALL
+LDFLAGS += -Wl,-Bsymbolic -Wl,--no-undefined -Wl,--version-script=$(LIBRETRO_EXPORT_MAP) -Wl,--exclude-libs,ALL
 endif
 ifeq ($(OS),android)
 LDFLAGS += -static-libstdc++ -Wl,-Bsymbolic -Wl,-z,max-page-size=16384
@@ -284,7 +296,7 @@ endif
 # extraction pulls in only the emulator/dependency members they actually use,
 # just as the existing build's static libraries do.
 $(BUILD_DIR)/$(TARGET): export MAKE_RESPONSE := $(foreach obj,$(FRONTEND_OBJECTS) $(CORE_ARCHIVE),"$(obj)")
-$(BUILD_DIR)/$(TARGET): $(FRONTEND_OBJECTS) $(CORE_ARCHIVE) libretro/link.T
+$(BUILD_DIR)/$(TARGET): $(FRONTEND_OBJECTS) $(CORE_ARCHIVE) $(LIBRETRO_EXPORT_MAP) $(LIBRETRO_MACOS_EXPORTS)
 	@$(CODEGEN) response "$(BUILD_DIR)/objects.rsp"
 	$(CXX) $(LDFLAGS) -o "$@" @$(BUILD_DIR)/objects.rsp $(LDLIBS)
 

@@ -497,3 +497,22 @@ Scalar, composite, struct and null shader constants use one exclusive C89 exact-
 Shader type and debug-type groups use a retained C89 registry in the exclusive compiler arena instead of two maps of vectors. Existing identity, layout and forward-reference rules still determine reuse; the registry only borrows records. Lookup scans borrow contiguous pointer views once, including the post-processing pointer-type pass. A view expires on mutation of its own group or module end; growth of another group leaves its record array in place. Compiler startup reserves 2,496 bytes of group descriptors/common-type pointer capacity on measured x64 builds, plus 32 bytes of owner state. Larger groups retain checked high-water capacity until shutdown. Growth can still copy pointer metadata; no instruction payload is copied for indexing. Measurements and limitations are in tools/tests/spv_type_groups_bench_results.txt.
 
 Shader loop, switch and debug-scope stacks use retained C89 frame pages instead of three default-allocated C++ deques. Each page has 64 stable slots in a 64-byte-aligned frame area; growth never relocates live frames. Loop frames are constructed directly in their final slots, preserving references returned across nested loops without a temporary frame copy. Stack views follow their module owner in declaration order; builder/module cleanup retires trivial frames before IR cleanup. Compiler startup reserves one page per stack, and deeper stacks retain checked growth until shutdown. This reserves capacity; it does not guarantee physical prefaulting of every payload page. ASan checks popped/reset frames as well as instruction lifetime. Measurements and limits are in tools/tests/spv_stack_bench_results.txt.
+
+### Draw-path contract instrumentation
+
+Developer builds can enable `XENIA_ENABLE_DRAW_STATS=ON` with CMake, or
+`GPU_DRAW_STATS=1` with Make in a separate build directory. The default is off.
+This test profile counts translation, driver module/PSO creation, compiler waits,
+blocked queue admission, caller-side jobs and existing incorrect stand-in/skip
+paths by thread role and pipeline kind. It performs no event logging or timing.
+The normal DLL exports no counter API; CI packages only that normal build.
+
+The bounded `xe_draw_stats_snapshot` API is for external test harnesses. Reset
+only while producers are quiescent; snapshots are individually atomic counters,
+not a transactional view. Unknown roles fail the contract gate conservatively.
+The queue also offers nonblocking `TryPush` with ownership retained on rejection.
+The renderer still uses blocking admission: adopting the new API requires a
+ready accurate fallback first. Existing inline compilation, compilation waits,
+no-op pixel stand-ins and skipped draws remain defects. These tests do not
+establish cold-play smoothness or correct fallback coverage. See
+[component coverage](tools/tests/draw_contract_results.txt).

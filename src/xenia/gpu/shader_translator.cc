@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "libretro/core_draw_stats.h"
 #include "xenia/gpu/shader_translator.h"
 
 #include <cstdarg>
@@ -716,6 +717,7 @@ void ShaderTranslator::Reset() {
 
 bool ShaderTranslator::TranslateAnalyzedShader(
     Shader::Translation& translation) {
+  XE_DRAW_EVENT(XE_DRAW_GUEST_PIPELINE, XE_DRAW_TRANSLATE);
   const Shader& shader = translation.shader();
   assert_true(shader.is_ucode_analyzed());
   if (!shader.is_ucode_analyzed()) {
