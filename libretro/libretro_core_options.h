@@ -596,17 +596,15 @@ struct retro_core_option_v2_definition option_defs_us[] = {
         "xenia_log_level",
         "Log Level",
         "Log Level",
-        "Set the verbosity of logging output.",
+        "Frontend error/warning delivery. Routine diagnostic logging is compiled out.",
         NULL,
         "Emulation",
         {
             { "error", "Error Only" },
             { "warn",  "Warning" },
-            { "info",  "Info" },
-            { "debug", "Debug" },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */

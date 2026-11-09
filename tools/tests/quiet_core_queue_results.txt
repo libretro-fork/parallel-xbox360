@@ -1,0 +1,77 @@
+Quiet frontend logging and C89 timer admission, 2026-11-09
+Parent: e2c9faaa0e46ad1e340c1643a26ff87fa0fd8c08
+
+Changes
+- Delete the asynchronous logger, its thread, 8 MiB payload buffer, sequence
+  metadata, file/stdout/debug/logcat sinks, fragmentation and flush waits.
+- Routine macros discard arguments; inline severity guards also eliminate
+  debug-only packet disassembly. Frontend varargs calls discard routine levels
+  before evaluating arguments. Warnings/errors borrow one complete message.
+- Replace 64 KiB per-thread formatting storage with bounded 4 KiB storage.
+  Clamp format_to_n's logical length; reject recursive frontend callbacks.
+- No logger object or sink allocation, log file, queue reservation, thread ID
+  lookup, frame-prefix formatting, or logging thread remains. The independently
+  required guest-progress counter is preserved. Frontend output may itself do
+  I/O; errors/warnings are deliberately retained.
+- Replace disruptorplus timer admission with C89 caller-owned record leases.
+  Typed shared_ptr slots, deadlines, recurrence and active timer lists remain;
+  this does not remove all timer allocations or claim lock-free waiting when
+  capacity is exhausted. Saturated/idle paths park through eventcounts.
+- Delete cxxopts and unused standalone command-line entry points; preserve the
+  CVar/core-option system and Android bundle parser.
+
+Correctness
+MSVC Release core build, three jobs: PASS.
+C89 queue: MSVC and Linux ASan/UBSan PASS; 156000 variable-span records,
+publication holes, complete capacity, unsigned wrap, stop/wake and payload checks.
+Actual services: PASS concurrent borrowed warnings, exact source-pointer
+identity, per-producer order, severity filtering, unevaluated quiet arguments,
+4096-byte formatting bound, recursion, shutdown and reinitialization;
+1024 timer cancellations and retained-item teardown.
+MSVC ASan production logging object + C driver/typed bridge: PASS. Other linked
+core libraries are not instrumented; STL container annotations are disabled to
+match those libraries, so this is not a whole-core sanitizer claim.
+Existing timer fixture: PASS 2000 pause/resume generations, self-cancel twice,
+shutdown while paused and retained-item cancellation.
+Real DLL: PASS three invalid-content load/unload cycles, repeated deinit,
+zero logging workers throughout, no core-owned workers after teardown, DLL unload.
+MinGW C++ logging/typed-bridge syntax check: PASS (not a full MinGW core build).
+Shader comparator oracle: 27 tests PASS.
+GPU arithmetic: 704 exact numerical cases PASS on RTX 5090.
+
+Transport benchmark (not timer callback latency or gameplay FPS)
+Windows MSVC /O2 /MD; same libretro-common; otherwise idle runner; 512 slots,
+16-byte pointer-shaped records, batches of64; 200000 records per producer.
+Seven alternating/reverse parent/candidate pairs, five raw batches per process.
+Median of process medians, ns/record:
+                         historical DP       C89
+one producer                 44.055         17.260
+four producers               32.4025        32.33375
+Contended throughput is essentially unchanged, not a demonstrated speedup.
+Metadata estimate: 4456 ->2552 bytes, excluding the same 8192-byte payload.
+The historical estimate is a lower bound including one barrier pointer.
+Run benchmark_mpsc_records.py --reference <parent> from VS x64 tools to reproduce.
+The C++ baseline exists only in private test output extracted from Git.
+
+Earlier generic 32768-slot /256-byte-unit experiments are retained privately.
+The selected layout improved uncontended and longer-record cases; a four-writer
+one-unit publish-and-wake case remained about12% slower. That logger-style path
+is not used by the timer; logging's queue has been deleted rather than retaining
+or presenting that case as a performance win. These results are not universal
+claims about all queue shapes or hardware.
+
+Shader/PSO comparison
+Same procedural corpus version8 and harness, seven alternating/reverse pairs,
+private application caches; driver disk/internal cache NOT certified cold.
+Parent production source matches sealed faf60da4f baseline exactly (only docs
+changed under libretro); its fixtures were already built with corpus8.
+768 Vulkan and80 D3D12/WARP case metrics: zero threshold alarms.
+All recorded generated module manifests match byte-for-byte across the parent
+and candidate. No shader lowering or cache compatibility was changed.
+Still NOT cross-game cold-play signoff: existing first-use driver compilation
+stalls remain unresolved; this cleanup does not claim to eliminate them.
+
+Private raw evidence: C:/git/core-queue-replacement/ (timer-shaped/, timing-*/,
+shader-comparison/, build/service/sanitizer/content-close logs). Mailbox delivery
+contains the reproducible test/benchmark sources; CI continues comparing each
+commit against its parent.

@@ -78,59 +78,9 @@ static void RequestWin32MMCSS() {
   FreeLibrary(dwmapi_module);
 }
 
-bool ParseWin32LaunchArguments(
-    bool transparent_options, const std::string_view positional_usage,
-    const std::vector<std::string>& positional_options,
-    std::vector<std::string>* args_out) {
-  auto command_line = GetCommandLineW();
-
-  int wargc;
-  wchar_t** wargv = CommandLineToArgvW(command_line, &wargc);
-  if (!wargv) {
-    return false;
-  }
-
-  // Convert all args to narrow, as cxxopts doesn't support wchar.
-  // Use WideCharToMultiByte with CP_UTF8 to support non-ANSI characters
-  // (e.g. CJK paths), unlike locale-dependent wcstombs.
-  int argc = wargc;
-  char** argv = reinterpret_cast<char**>(alloca(sizeof(char*) * argc));
-  for (int n = 0; n < argc; n++) {
-    int len = WideCharToMultiByte(CP_UTF8, 0, wargv[n], -1, nullptr, 0, nullptr,
-                                  nullptr);
-    argv[n] = reinterpret_cast<char*>(alloca(sizeof(char) * len));
-    WideCharToMultiByte(CP_UTF8, 0, wargv[n], -1, argv[n], len, nullptr,
-                        nullptr);
-  }
-
-  LocalFree(wargv);
-
-  if (!transparent_options) {
-    cvar::ParseLaunchArguments(argc, argv, positional_usage,
-                               positional_options);
-  }
-
-  if (args_out) {
-    args_out->clear();
-    for (int n = 0; n < argc; n++) {
-      args_out->push_back(std::string(argv[n]));
-    }
-  }
-
-  return true;
-}
-
 int InitializeWin32App(const std::string_view app_name) {
-  // Initialize logging. Needs parsed FLAGS.
+  // Initialize logging after the core has configured its cvars.
   xe::InitializeLogging(app_name);
-
-  // Print version info.
-  XELOGI(
-      "Build: "
-#ifdef XE_BUILD_IS_PR
-      "PR#" XE_BUILD_PR_NUMBER " - "
-#endif
-      XE_BUILD_BRANCH "@" XE_BUILD_COMMIT_SHORT " on " XE_BUILD_DATE);
 
   // Request high-performance timing and scheduling.
   if (cvars::win32_high_resolution_timer) {

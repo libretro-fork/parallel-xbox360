@@ -18,9 +18,7 @@ and nested sample dependencies were omitted.
 | `third_party/asio` | `55684d42ac00021b4c31ba8571aca414c863ead5` |
 | `third_party/boost_context/context` | `d2142b69252150dafb5f6569b7eb9a42312a92a3` |
 | `third_party/capstone` | `66b08439abd988e87b4542389b4937ce13bd0063` |
-| `third_party/cxxopts` | `f029892dab60526184ee42ae63a7f6d19a6b0e49` |
 | `third_party/date` | `f94b8f36c6180be0021876c4a397a054fe50c6f2` |
-| `third_party/disruptorplus` | `bf9c70c0cc92b6435f7edec75e12751ea37e5c2f` |
 | `third_party/fmt` | `407c905e45ad75fc29bf0f9bb7c5c2fd3475976f` |
 | `third_party/libusb` | `a61afe5f75d969c4561a1d0ad753aa23cee6329a` |
 | `third_party/miniaudio` (removed: standalone achievement sound) | `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d` |

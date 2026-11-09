@@ -8,10 +8,6 @@ cl /nologo /TC /MD /O2 /W4 /WX /I"%ROOT%" /I"%COMMON%\include" "%ROOT%\tools\tes
 if errorlevel 1 exit /b 1
 "%OUT%\wait.exe"
 if errorlevel 1 exit /b 1
-cl /nologo /TC /MD /O2 /W4 /WX /I"%ROOT%" "%ROOT%\tools\tests\core_log_line_test.c" /Fo"%OUT%\log-line.obj" /Fe"%OUT%\log-line.exe"
-if errorlevel 1 exit /b 1
-"%OUT%\log-line.exe"
-if errorlevel 1 exit /b 1
 cl /nologo /TC /MD /O2 /W4 /WX /I"%ROOT%" /I"%COMMON%\include" "%ROOT%\tools\tests\core_state_io_test.c" /Fo"%OUT%\cursor.obj" /Fe"%OUT%\cursor.exe"
 if errorlevel 1 exit /b 1
 "%OUT%\cursor.exe"

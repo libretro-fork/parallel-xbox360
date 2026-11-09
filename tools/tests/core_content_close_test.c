@@ -1,4 +1,4 @@
-/* Failed-content teardown must join the real logger. MSVC C89, Windows. */
+/* Failed-content teardown must leave no logger or core worker. MSVC C89, Windows. */
 #define _WIN32_WINNT 0x0A00
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -103,11 +103,11 @@ int main(int argc, char **argv) {
     memset(&game, 0, sizeof(game)); game.path = argv[3];
     if (load(&game)) { fputs("Invalid content unexpectedly loaded\n", stderr); return 5; }
     count = logger_threads();
-    if (count != 1) { fprintf(stderr, "Expected one live logger before close, got %u\n", count); return 6; }
+    if (count != 0) { fprintf(stderr, "Unexpected logger before close, got %u\n", count); return 6; }
     unload();
     count = logger_threads();
     if (count) { fprintf(stderr, "Logger survived content close: %u thread(s)\n", count); return 7; }
-    /* Repeated close/deinit must be safe. Next cycle must start a new logger. */
+    /* Repeated close/deinit must be safe. Next cycle must not create a logger. */
     unload(); deinit(); deinit();
     count = core_threads(module);
     if (count) { fprintf(stderr, "Core-owned thread entry points survived deinit: %u\n", count); return 9; }
@@ -119,6 +119,6 @@ int main(int argc, char **argv) {
     fputs("Core remained loaded after FreeLibrary\n", stderr); return 10;
   }
   Sleep(250);
-  puts("PASS: three real failed-content opens/closes, logger restart/join, repeated teardown and DLL unload");
+  puts("PASS: three real failed-content opens/closes, no logging worker, repeated teardown and DLL unload");
   return 0;
 }

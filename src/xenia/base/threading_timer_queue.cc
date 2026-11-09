@@ -11,17 +11,12 @@
 #include <mutex>
 #include <new>
 
-#include "third_party/disruptorplus/include/disruptorplus/blocking_wait_strategy.hpp"
-#include "third_party/disruptorplus/include/disruptorplus/multi_threaded_claim_strategy.hpp"
-#include "third_party/disruptorplus/include/disruptorplus/ring_buffer.hpp"
-#include "third_party/disruptorplus/include/disruptorplus/sequence_barrier.hpp"
-#include "third_party/disruptorplus/include/disruptorplus/spin_wait.hpp"
-#include "third_party/disruptorplus/include/disruptorplus/spin_wait_strategy.hpp"
 #include "xenia/base/assert.h"
 #include "xenia/base/platform.h"
 #include "xenia/base/threading.h"
 #include "xenia/base/threading_timer_queue.h"
 #include "libretro/core_pause_gate.h"
+#include "libretro/core_mpsc_records.h"
 #include <rthreads/rthreads.h>
 #include <rthreads/retro_eventcount.h>
 
@@ -29,39 +24,11 @@
 #include "xenia/base/platform_win.h"
 #endif
 
-namespace dp = disruptorplus;
 
 namespace xe {
 namespace threading {
 
 using WaitItem = TimerQueueWaitItem;
-/*
-        chrispy: changed this to a blocking wait from a spin-wait, the spin was
-   monopolizing a ton of cpu time (depending on the game 2-4% of total cpu time)
-   on my 3990x no complaints since that change
-*/
-
-/*
-        edit: actually had to change it back, when i was testing it only worked
-   because i fixed disruptorplus' code to compile (it gives wrong args to
-   condition_variable::wait_until) but now builds
-
-*/
-
-/*
-    edit2: (30.12.2024) After uplifting version of MSVC compiler Xenia cannot be
-   correctly initialized if you're using proton.
-*/
-// Windows producers keep spinning: blocking waits deadlocked initialisation
-// under Proton (c3301d928).
-// The dispatch thread waits on Win32 handles instead, since spin waits sleep
-// 1 ms at a time and fire timers 1-3 ms late.
-#if XE_PLATFORM_WIN32
-using WaitStrat = dp::spin_wait_strategy;
-#else
-using WaitStrat = dp::blocking_wait_strategy;
-#endif
-
 class TimerQueue {
  public:
   using clock = WaitItem::clock;
@@ -69,12 +36,8 @@ class TimerQueue {
 
  public:
   TimerQueue()
-      : buffer_(kWaitCount),
-        wait_strategy_(),
-        claim_strategy_(kWaitCount, wait_strategy_),
-        consumed_(wait_strategy_),
-        shutdown_(0) {
-    claim_strategy_.add_claim_barrier(consumed_);
+      : records_(xe_mpsc_records_new(kWaitCount), xe_mpsc_records_free), shutdown_(0) {
+    if (!records_) throw std::bad_alloc();
     pause_gate_.reset(xe_pause_gate_new());
     if (!pause_gate_ || !retro_eventcount_init(&changed_)) throw std::bad_alloc();
 #if XE_PLATFORM_WIN32
@@ -107,6 +70,7 @@ class TimerQueue {
 
   ~TimerQueue() {
     retro_atomic_store_release_int(&shutdown_, 1);
+    xe_mpsc_records_stop(records_.get());
     xe_pause_gate_stop(pause_gate_.get());
     Wake();
     sthread_join(dispatch_thread_);
@@ -126,7 +90,7 @@ class TimerQueue {
   }
 
   void TimerThreadMain() {
-    dp::sequence_t next_sequence = 0;
+    size_t next_sequence = 0;
     const auto comp = [](const std::shared_ptr<WaitItem>& left,
                          const std::shared_ptr<WaitItem>& right) {
       return left->due_ < right->due_;
@@ -138,7 +102,7 @@ class TimerQueue {
       if (!xe_pause_gate_wait_index(pause_gate_.get(), 0)) break;
       {
         // Consume new wait items and add them to sorted wait queue
-        dp::sequence_t available = WaitUntilPublished(
+        size_t available = WaitUntilPublished(
             next_sequence, wait_queue_.empty() ? clock::now() + kIdleWait
                                                : wait_queue_.front()->due_);
 
@@ -146,10 +110,12 @@ class TimerQueue {
         if (available != next_sequence - 1) {
           std::forward_list<std::shared_ptr<WaitItem>> wait_items;
           do {
-            wait_items.push_front(std::move(buffer_[next_sequence]));
-          } while (next_sequence++ != available);
+            wait_items.push_front(std::move(buffer_[next_sequence & (kWaitCount - 1)]));
+            xe_mpsc_records_advance(records_.get(), 1);
+            ++next_sequence;
+          } while (xe_mpsc_records_peek(records_.get(), nullptr));
 
-          consumed_.publish(available);
+          xe_mpsc_records_commit(records_.get());
 
           wait_items.sort(comp);
           wait_queue_.merge(wait_items, comp);
@@ -210,9 +176,13 @@ class TimerQueue {
     wait_item->due_ =
         std::max(clock::now() - wait_item->interval_, wait_item->due_);
 
-    auto sequence = claim_strategy_.claim_one();
-    buffer_[sequence] = std::move(wait_item);
-    claim_strategy_.publish(sequence);
+    size_t sequence;
+    if (!xe_mpsc_records_claim(records_.get(), 1, &sequence)) {
+      retro_atomic_store_release_int(&wait_item->state_, static_cast<int>(WaitItem::State::kDisarmed));
+      return wait_item_weak;
+    }
+    buffer_[sequence & (kWaitCount - 1)] = std::move(wait_item);
+    xe_mpsc_records_publish(records_.get(), sequence, 1);
     Wake();
 
     return wait_item_weak;
@@ -250,11 +220,11 @@ class TimerQueue {
  private:
   // Returns the last published sequence, or next_sequence - 1 if nothing new
   // was published.
-  dp::sequence_t WaitUntilPublished(dp::sequence_t next_sequence,
+  size_t WaitUntilPublished(size_t next_sequence,
                                     clock::time_point timeout) {
 #if XE_PLATFORM_WIN32
-    dp::sequence_t available =
-        claim_strategy_.last_published_after(next_sequence - 1);
+    size_t available =
+        (xe_mpsc_records_peek(records_.get(), nullptr) ? next_sequence : next_sequence - 1);
     if (available != next_sequence - 1 || xe_pause_gate_is_paused(pause_gate_.get()) ||
         retro_atomic_load_acquire_int(&cancelled_) || retro_atomic_load_acquire_int(&shutdown_)) {
       return available;
@@ -283,11 +253,11 @@ class TimerQueue {
                   std::chrono::ceil<std::chrono::milliseconds>(wait).count()));
     // A publish from another thread sets the event once it is visible. This
     // thread's own publishes came before the check above.
-    return claim_strategy_.last_published_after(next_sequence - 1);
+    return (xe_mpsc_records_peek(records_.get(), nullptr) ? next_sequence : next_sequence - 1);
 #else
     for (;;) {
       const int key = retro_eventcount_prepare_wait(&changed_);
-      dp::sequence_t available = claim_strategy_.last_published_after(next_sequence - 1);
+      size_t available = (xe_mpsc_records_peek(records_.get(), nullptr) ? next_sequence : next_sequence - 1);
       const auto remaining = std::chrono::ceil<std::chrono::microseconds>(timeout - clock::now()).count();
       if (available != next_sequence - 1 || remaining <= 0 ||
           xe_pause_gate_is_paused(pause_gate_.get()) ||
@@ -304,11 +274,8 @@ class TimerQueue {
 
   // This ring buffer will be used to introduce timers queued by the public API
   static constexpr size_t kWaitCount = 512;
-  dp::ring_buffer<std::shared_ptr<WaitItem>> buffer_;
-
-  WaitStrat wait_strategy_;
-  dp::multi_threaded_claim_strategy<WaitStrat> claim_strategy_;
-  dp::sequence_barrier<WaitStrat> consumed_;
+  std::shared_ptr<WaitItem> buffer_[kWaitCount];
+  std::unique_ptr<xe_mpsc_records, decltype(&xe_mpsc_records_free)> records_;
 
   // This is a _sorted_ (ascending due_) list of active timers managed by a
   // dedicated thread

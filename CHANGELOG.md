@@ -4,6 +4,9 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Remove routine release logging before argument evaluation. Send warnings/errors directly as borrowed frontend callbacks, without a logging worker, 8 MiB payload ring, separate log file, console output or flush waits. Keep the guest-progress counter used by the scheduler.
+- Replace disruptorplus timer admission with bounded C89 record leases using libretro-common atomics/eventcounts and reusable typed slots. Remove cxxopts and unused standalone command-line entry points; preserve core options and Android bundle settings.
+
 - Add software-RTZ dot-product compilation regression coverage, expanding the hardware-runner corpus to768 metrics. Reject an attempted vector-product optimization after compilation regressed; production shader lowering is unchanged.
 
 - Reuse native multiply/MAD flush predicates for partial-alias lanes too, avoiding component extraction and reinsertion. Add exhaustive C89 lane-mask tests and a partial-MAD compile profile. The heavy test PSO falls442 to360ms; first-use hitches remain unresolved.

@@ -12,10 +12,10 @@
 
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "third_party/cxxopts/include/cxxopts.hpp"
 #include "third_party/fmt/include/fmt/format.h"
 #include "third_party/tomlplusplus/include/toml++/toml.hpp"
 #include "xenia/base/assert.h"
@@ -42,8 +42,6 @@ class ICommandVar {
   virtual const std::string& name() const = 0;
   virtual const std::string& description() const = 0;
   virtual void UpdateValue() = 0;
-  virtual void AddToLaunchOptions(cxxopts::Options* options) = 0;
-  virtual void LoadFromLaunchOptions(cxxopts::ParseResult* result) = 0;
 };
 
 class IConfigVar : virtual public ICommandVar {
@@ -71,8 +69,6 @@ class CommandVar : virtual public ICommandVar {
   CommandVar(const char* name, T* default_value, const char* description);
   const std::string& name() const override;
   const std::string& description() const override;
-  void AddToLaunchOptions(cxxopts::Options* options) override;
-  void LoadFromLaunchOptions(cxxopts::ParseResult* result) override;
   void SetCommandLineValue(T val);
   T* current_value() { return current_value_; }
 
@@ -103,7 +99,6 @@ class ConfigVar : public CommandVar<T>, virtual public IConfigVar {
   const std::string& display_name() const override;
   bool is_advanced() const override;
   bool is_transient() const override;
-  void AddToLaunchOptions(cxxopts::Options* options) override;
   void LoadConfigValue(const toml::node* result) override;
   void LoadGameConfigValue(const toml::node* result) override;
   void ClearGameConfigValue() override;
@@ -135,37 +130,6 @@ const std::string& CommandVar<T>::name() const {
 template <class T>
 const std::string& CommandVar<T>::description() const {
   return description_;
-}
-template <class T>
-void CommandVar<T>::AddToLaunchOptions(cxxopts::Options* options) {
-  options->add_options()(name_, description_, cxxopts::value<T>());
-}
-template <>
-inline void CommandVar<std::filesystem::path>::AddToLaunchOptions(
-    cxxopts::Options* options) {
-  options->add_options()(name_, description_, cxxopts::value<std::string>());
-}
-template <class T>
-void ConfigVar<T>::AddToLaunchOptions(cxxopts::Options* options) {
-  options->add_options(category_)(this->name_, this->description_,
-                                  cxxopts::value<T>());
-}
-template <>
-inline void ConfigVar<std::filesystem::path>::AddToLaunchOptions(
-    cxxopts::Options* options) {
-  options->add_options(category_)(this->name_, this->description_,
-                                  cxxopts::value<std::string>());
-}
-template <class T>
-void CommandVar<T>::LoadFromLaunchOptions(cxxopts::ParseResult* result) {
-  T value = (*result)[name_].template as<T>();
-  SetCommandLineValue(value);
-}
-template <>
-inline void CommandVar<std::filesystem::path>::LoadFromLaunchOptions(
-    cxxopts::ParseResult* result) {
-  std::string value = (*result)[name_].template as<std::string>();
-  SetCommandLineValue(xe::to_path(value));
 }
 template <class T>
 void ConfigVar<T>::LoadConfigValue(const toml::node* result) {
@@ -395,12 +359,10 @@ inline void AddCommandVar(ICommandVar* cv) {
   }
   CmdVars->emplace(cv->name(), cv);
 }
-void ParseLaunchArguments(int& argc, char**& argv,
-                          const std::string_view positional_help,
-                          const std::vector<std::string>& positional_options);
+
 #if XE_PLATFORM_ANDROID
 void ParseLaunchArgumentsFromAndroidBundle(jobject bundle);
-#endif  // XE_PLATFORM_ANDROID
+#endif
 
 template <typename T>
 IConfigVar* define_configvar(const char* name, T* default_value,

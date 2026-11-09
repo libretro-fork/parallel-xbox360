@@ -259,3 +259,9 @@ src/xenia/gpu/trace_player.cc
 src/xenia/gpu/trace_player.h
 src/xenia/gpu/trace_reader.cc
 src/xenia/gpu/trace_reader.h
+third_party/cxxopts
+src/xenia/base/console_app_main.h
+src/xenia/base/console_app_main_win.cc
+src/xenia/base/console_app_main_posix.cc
+src/xenia/base/console_app_main_android.cc
+third_party/disruptorplus

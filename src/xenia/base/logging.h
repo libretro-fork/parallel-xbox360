@@ -10,6 +10,7 @@
 #ifndef XENIA_BASE_LOGGING_H_
 #define XENIA_BASE_LOGGING_H_
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstdint>
 #include <memory>
@@ -22,6 +23,9 @@
 namespace xe {
 
 #define XE_OPTION_ENABLE_LOGGING 1
+#ifndef XE_ENABLE_VERBOSE_LOGGING
+#define XE_ENABLE_VERBOSE_LOGGING 0
+#endif
 
 // Log level is a general indication of the importance of a given log line.
 //
@@ -42,51 +46,17 @@ namespace LogSrc {
 enum : uint32_t { Uncategorized = 0, Kernel = 1, Apu = 2, Cpu = 4, Gpu = 8 };
 }
 
-class LogSink {
- public:
-  virtual ~LogSink() = default;
+// Borrowed immutable bytes, valid only during the callback. Install before
+// initialization and replace/remove only after all emitting workers join.
+void SetLogCallback(void (*callback)(int, const char*, size_t, void*), void* opaque);
 
-  virtual void Write(const char* buf, size_t size) = 0;
-  virtual void Flush() = 0;
-};
-
-class FileLogSink final : public LogSink {
- public:
-  explicit FileLogSink(FILE* file, bool own_file)
-      : file_(file), owns_file_(own_file) {}
-  ~FileLogSink();
-
-  void Write(const char* buf, size_t size) override;
-  void Flush() override;
-
- private:
-  FILE* file_;
-  bool owns_file_;
-};
-
-class DebugPrintLogSink final : public LogSink {
- public:
-  DebugPrintLogSink() = default;
-
-  void Write(const char* buf, size_t size) override;
-  void Flush() override {}
-};
-
-// One more output for the log, from a host that has its own (a libretro
-// frontend's log); taken by InitializeLogging, so it has to come before it.
-void SetExtraLogSink(std::unique_ptr<LogSink> sink);
-
-// Initializes the logging system and any outputs requested.
+// Enables synchronous frontend delivery.
 // Must be called on startup.
 void InitializeLogging(const std::string_view app_name);
 void ShutdownLogging();
 void FlushLog();
 
-// Flushes all log sinks immediately.
-// Useful before quick_exit() to ensure logs are written.
-void FlushLog();
-// Whether the calling thread is the one writing the log out, which would wait
-// on itself to log.
+// Compatibility query: no logging worker exists.
 bool IsLogWriterThread();
 
 namespace logging {
@@ -96,10 +66,16 @@ constexpr char kPrefixCharWarning = 'w';
 constexpr char kPrefixCharInfo = 'i';
 constexpr char kPrefixCharDebug = 'd';
 
-bool ShouldLog(LogLevel log_level,
-               uint32_t log_mask = xe::LogSrc::Uncategorized);
+bool IsLogEnabled(LogLevel level, uint32_t mask);
+inline bool ShouldLog(LogLevel level,
+                      uint32_t mask = xe::LogSrc::Uncategorized) {
+#if !XE_ENABLE_VERBOSE_LOGGING
+  if (level > LogLevel::Warning) return false;
+#endif
+  return IsLogEnabled(level, mask);
+}
 
-// Advances the present-frame counter shown in the log prefix.
+// Advances the guest progress counter; independent of diagnostic delivery.
 // Called once per guest present (VdSwap).
 void IncrementFrameNumber();
 // The same counter, for anything needing a cheap "is the guest still
@@ -165,11 +141,13 @@ struct LoggerBatch {
   LoggerBatch() { reset(); }
   template <size_t fmtlen, typename... Ts>
   void operator()(const char (&fmt)[fmtlen], Ts&&... args) {
+    if (!ShouldLog(ll)) return;
     auto tmpres =
         fmt::format_to_n(thrd_buf, thrd_buf_rem, fmt::runtime(fmt), args...);
-    thrd_buf_rem -= tmpres.size;
+    size_t used = (std::min)(thrd_buf_rem, tmpres.size);
+    thrd_buf_rem -= used;
     thrd_buf = tmpres.out;
-    total_size += tmpres.size;
+    total_size += used;
   }
 
   void submit(char prefix_char) {
@@ -200,6 +178,7 @@ XE_COLD void XELOGW(std::string_view format, const Args&... args) {
       xe::logging::kPrefixCharWarning, format, args...);
 }
 
+#if XE_ENABLE_VERBOSE_LOGGING
 template <typename... Args>
 void XELOGI(std::string_view format, const Args&... args) {
   xe::logging::AppendLogLineFormat(
@@ -243,6 +222,16 @@ void XELOGFS(std::string_view format, const Args&... args) {
   xe::logging::AppendLogLineFormat(xe::LogSrc::Uncategorized,
                                    xe::LogLevel::Info, 'F', format, args...);
 }
+
+#else
+#define XELOGI(...) do {} while (false)
+#define XELOGD(...) do {} while (false)
+#define XELOGCPU(...) do {} while (false)
+#define XELOGAPU(...) do {} while (false)
+#define XELOGGPU(...) do {} while (false)
+#define XELOGKERNEL(...) do {} while (false)
+#define XELOGFS(...) do {} while (false)
+#endif
 
 #else
 

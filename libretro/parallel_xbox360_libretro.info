@@ -34,5 +34,5 @@ is_experimental = "false"
 # Firmware / BIOS
 firmware_count = 0
 
-notes = "(!) Needs RetroArch's vulkan video driver (on Windows also d3d12).|(!) Everything the core keeps is in system/Xenia-Edge/: saves, title updates and DLC under content/ (laid out as in standalone Xenia), caches, and Xenia's log, xenia.log."
+notes = "(!) Needs RetroArch's vulkan video driver (on Windows also d3d12).|(!) Everything the core keeps is in system/Xenia-Edge/: saves, title updates and DLC under content/ (laid out as in standalone Xenia), and caches. Warnings and errors use the frontend log."
 description = "A port of Xenia Edge, an Xbox 360 emulator, to libretro. It needs a GPU with Vulkan 1.1 (or Direct3D 12 on Windows), and no BIOS or firmware."

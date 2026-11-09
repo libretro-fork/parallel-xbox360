@@ -1,4 +1,4 @@
-# Suppress warnings for all third-party code — we can't clean them up and
+# Suppress warnings for all third-party code â€” we can't clean them up and
 # don't want them contributing to -Werror noise on our own targets.
 if(MSVC)
   add_compile_options(/W0)
@@ -89,12 +89,6 @@ target_include_directories(capstone PUBLIC capstone/include PRIVATE capstone)
 # Force all capstone sources to compile as C
 file(GLOB_RECURSE _capstone_all_c "capstone/*.c")
 set_source_files_properties(${_capstone_all_c} PROPERTIES LANGUAGE C)
-
-# ==============================================================================
-# cxxopts (header-only)
-# ==============================================================================
-add_library(cxxopts INTERFACE)
-target_include_directories(cxxopts INTERFACE cxxopts/include)
 
 # ==============================================================================
 # tomlplusplus (header-only)
@@ -265,7 +259,7 @@ if(WIN32)
 endif()
 
 # ==============================================================================
-# FFmpeg — upstream source lives in the FFmpeg submodule; xenia's static
+# FFmpeg â€” upstream source lives in the FFmpeg submodule; xenia's static
 # config.h / asm configuration overlay lives in ffmpeg-xenia alongside it.
 # ==============================================================================
 if(XENIA_BUILD_FFMPEG_REFERENCE)
@@ -273,9 +267,9 @@ set(XE_HAS_GAS_ASM FALSE)
 if(XE_TARGET_AARCH64)
   if(MSVC)
     # MSVC can't assemble GAS-syntax .S files. Use clang as the ASM compiler
-    # if available — the resulting .obj files link fine with MSVC-compiled code.
+    # if available â€” the resulting .obj files link fine with MSVC-compiled code.
     # Pick clang from the host architecture directory so it can actually
-    # run on this machine (clang is a cross-compiler — it handles the
+    # run on this machine (clang is a cross-compiler â€” it handles the
     # target arch via --target regardless of host).
     if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "ARM64")
       set(_clang_host_dir "ARM64")
@@ -292,7 +286,7 @@ if(XE_TARGET_AARCH64)
       set(XE_CLANG_ASM "${CLANG_EXE}")
       message(STATUS "Using clang for ARM64 assembly: ${CLANG_EXE}")
     else()
-      message(WARNING "clang not found — FFmpeg NEON assembly disabled on MSVC ARM64. "
+      message(WARNING "clang not found â€” FFmpeg NEON assembly disabled on MSVC ARM64. "
                       "Install LLVM/clang to enable optimized audio decoding.")
     endif()
   else()
@@ -357,7 +351,7 @@ function(ffmpeg_common target)
     target_include_directories(${target} PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/FFmpeg/compat/atomics/gcc
     )
-    # glibc POSIX feature macros — FFmpeg assumes them for certain
+    # glibc POSIX feature macros â€” FFmpeg assumes them for certain
     # syscalls and string extensions.
     target_compile_definitions(${target} PRIVATE
       _GNU_SOURCE

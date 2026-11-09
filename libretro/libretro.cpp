@@ -69,9 +69,6 @@ DECLARE_bool(use_50Hz_mode);
 #ifdef _WIN32
 DECLARE_path(d3d12_runtime_path);
 #endif
-#ifndef __ANDROID__
-DECLARE_path(log_file);  // not on Android, where Xenia logs to logcat
-#endif
 DECLARE_bool(apply_title_update);
 DECLARE_string(xma_decoder);
 DECLARE_int32(log_level);
@@ -294,7 +291,12 @@ extern "C" {
 static void launch_game(void);
 }
 static void xenia_stop_emulator(void);
-static void xenia_log(enum retro_log_level level, const char *fmt, ...);
+static void xenia_log_impl(enum retro_log_level level, const char *fmt, ...);
+/* Skip routine messages and their arguments before entering varargs code. */
+#define xenia_log(level, ...) do { \
+    if ((level) <= RETRO_LOG_WARN && core_state.log_cb) \
+        xenia_log_impl((level), __VA_ARGS__); \
+} while (0)
 
 static const VkApplicationInfo *xenia_vk_application_info(void) {
     static const VkApplicationInfo info = {
@@ -391,8 +393,8 @@ static bool d3d12_hw_render_active = false;
 /* ================================================================== */
 /*  Logging                                                            */
 /* ================================================================== */
-static void xenia_log(enum retro_log_level level, const char *fmt, ...) {
-    if (!core_state.log_cb) return;
+static void xenia_log_impl(enum retro_log_level level, const char *fmt, ...) {
+    if (!core_state.log_cb || level > RETRO_LOG_WARN) return;
     va_list va;
     va_start(va, fmt);
     char buf[4096];
@@ -401,25 +403,19 @@ static void xenia_log(enum retro_log_level level, const char *fmt, ...) {
     core_state.log_cb(level, "[Xenia] %s", buf);
 }
 
-// Xenia's errors and warnings into the frontend's log, so that the one log a
-// tester sends has them; the whole log goes to xenia.log in the save
-// directory. The logger writes a line in pieces - its "!> f:... " prefix, the
-// text, a newline - from its one writer thread, so they are put together here.
-#include "libretro/core_log_line.h"
-class RetroLogSink final : public xe::LogSink {
-public:
-    void Write(const char *buf, size_t size) override {
-        xe_log_line_write(&line_, buf, size, Emit, nullptr);
+// One complete borrowed message per callback. No shared line assembly.
+static void xenia_log_message(int level, const char *buf, size_t size, void *) {
+    if (!core_state.log_cb) return;
+    enum retro_log_level severity = level == int(xe::LogLevel::Error) ?
+        RETRO_LOG_ERROR : level == int(xe::LogLevel::Warning) ? RETRO_LOG_WARN : RETRO_LOG_INFO;
+    while (size) {
+        int count = (int)std::min(size, size_t(4096));
+        core_state.log_cb(severity, "[Xenia] %.*s%s", count, buf,
+            size <= 4096 && buf[count - 1] != '\n' ? "\n" : "");
+        buf += count;
+        size -= count;
     }
-    void Flush() override {}
-
-private:
-    static void Emit(void *, int severity, const char *text, size_t size, int newline) {
-        xenia_log(severity == 2 ? RETRO_LOG_ERROR : RETRO_LOG_WARN,
-                  "%.*s%s", (int)size, text, newline ? "\n" : "");
-    }
-    xe_log_line line_ = {};
-};
+}
 
 /* ================================================================== */
 /*  Vulkan HW render helpers                                           */
@@ -996,9 +992,9 @@ static void apply_core_options(void) {
         cvars::mount_scratch = (strcmp(v, "enabled") == 0);
     }
 
-    // Log level (0=error, 1=warning, 2=info, 3=debug)
+    // Release builds retain errors and warnings only.
     if ((v = opt_get(XENIA_OPT_LOG_LEVEL))) {
-        int level = 2;
+        int level = 1;
         if (strcmp(v, "error") == 0) level = 0;
         else if (strcmp(v, "warn") == 0) level = 1;
         else if (strcmp(v, "info") == 0) level = 2;
@@ -1344,17 +1340,9 @@ static bool xenia_setup_and_launch(const char *path) {
         std::error_code ec;
         fs::create_directories(cache, ec);
         fs::create_directories(content, ec);
-        // Initialize Xenia logging first: its default file is beside the
-        // executable, which for a core is the frontend's folder; and its errors
-        // and warnings go to the frontend's log as well
-#ifndef __ANDROID__
-        if (cvars::log_file.empty())
-            cvars::log_file = root / "xenia.log";
-#endif
-        // Share a logger across reset/context rebuild, but join its writer at
-        // content close. A core DLL may be unloaded before the process exits.
+        // The frontend owns diagnostics; no separate file or logging worker.
         if (!s_logging_initialized)
-            xe::SetExtraLogSink(std::make_unique<RetroLogSink>());
+            xe::SetLogCallback(core_state.log_cb ? xenia_log_message : nullptr, nullptr);
         if (!s_logging_initialized) {
 #ifdef _WIN32
             xe::InitializeWin32App("xenia_libretro");
@@ -1596,8 +1584,7 @@ static void xenia_shutdown(void) {
     d3d12_context_destroy();
 #endif
     d3d12_hw_render_active = false;
-    // Every producer above has stopped. Use the logger's terminator and join
-    // sequence before the frontend unloads the core's code and static runtime.
+    // All producers have stopped; detach the synchronous frontend callback.
     if (s_logging_initialized) {
 #ifdef _WIN32
         xe::ShutdownWin32App();

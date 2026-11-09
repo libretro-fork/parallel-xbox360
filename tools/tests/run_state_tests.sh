@@ -7,9 +7,6 @@ mkdir -p "$out"
 san=${SANITIZER--fsanitize=address,undefined}
 flags="-std=c89 -O1 -g -D_GNU_SOURCE -DHAVE_THREADS -DHAVE_THREAD_STORAGE"
 libs="-pthread"
-${CC:-cc} -std=c89 -pedantic -Wall -Wextra -Werror $san -I"$root" \
-  "$root/tools/tests/core_log_line_test.c" -o "$out/log-line"
-"$out/log-line"
 case $(uname -s) in MINGW*|MSYS*|CYGWIN*) libs="$libs -lwinmm" ;; esac
 ${CC:-cc} $flags $san -pedantic -Wall -Wextra -Werror -I"$root" -I"$common/include" \
   "$root/tools/tests/core_state_wait_test.c" -o "$out/wait"

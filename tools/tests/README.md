@@ -1043,24 +1043,22 @@ Git into the test output directory and is absent from production. These are byte
 checks, not gameplay or throughput measurements.
 
 
-`core_logger_apc_test.c` exercises the real DLL and logger through the public
-libretro API. It holds the writer in a frontend log callback, waits for the
-other core workers to stop, and queues an APC to the thread closing the core.
-An alertable join returns before the writer exits; the test records that failure
-while leaving the writer parked until process termination to avoid deliberately
-accessing freed memory. A correct join defers the APC, waits for the released
-writer, and permits safe DLL unload. The queued test APC is then explicitly
-delivered through a bounded alertable event wait. The installed b66630a MinGW
-DLL failed with lifetime error 4; the fixed MSVC and MinGW builds pass.
+The timer admission replacement retains the existing deadline, recurring timer,
+cancellation and pause rules. Its C89 queue reserves caller-owned storage once,
+publishes a complete record once, and retires borrowed spans in batches. It does
+not claim that all active timer-list allocations or service locks are removed.
 
-Build as C89 with the libretro include directory and run:
-
-```
-core-logger-apc.exe <core.dll> <private-system-directory> <invalid-content.xex>
-```
-
-The non-Windows build reports that the Windows APC test is skipped. The existing
-content-close and Vulkan/D3D12 lifetime tests cover the ordinary shutdown path.
+`run_mpsc_records_tests.cmd/.sh` checks the C89 bounded admission queue:
+156,000 variable-span records, publication gaps, full capacity, counter wrap,
+stop/wake races and borrowed payload ownership. Linux enables ASan/UBSan.
+`run_queue_services_tests.cmd/.sh` tests the actual timer service and frontend
+logging bridge: 1,024 queued cancellations, shutdown/reinitialization, concurrent
+borrowed warnings, bounded formatting and recursive callback rejection. Routine
+release macros must not evaluate their arguments even with log_level=debug.
+`core_content_close_test.c` exercises three failed-content open/close cycles and
+DLL unloading, requiring zero logging workers throughout and zero core workers
+after teardown. The old logger-APC and fragmented-line fixtures were removed with
+the logging thread, queue and line assembler they exercised.
 
 `run_guest_sha256_test.sh` compares the C89 adapter with the historical private
 SHA-256 class extracted from commit `183a97d1`. Git extraction is developer-only;

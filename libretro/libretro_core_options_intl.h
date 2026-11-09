@@ -779,11 +779,9 @@ struct retro_core_option_v2_definition option_defs_ar[] = {
         {
             { "error", OPTION_VAL_ERROR_AR },
             { "warn",  OPTION_VAL_WARN_AR },
-            { "info",  OPTION_VAL_INFO_AR },
-            { "debug", OPTION_VAL_DEBUG_AR },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -1799,11 +1797,9 @@ struct retro_core_option_v2_definition option_defs_ast[] = {
         {
             { "error", OPTION_VAL_ERROR_AST },
             { "warn",  OPTION_VAL_WARN_AST },
-            { "info",  OPTION_VAL_INFO_AST },
-            { "debug", OPTION_VAL_DEBUG_AST },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -2819,11 +2815,9 @@ struct retro_core_option_v2_definition option_defs_be[] = {
         {
             { "error", OPTION_VAL_ERROR_BE },
             { "warn",  OPTION_VAL_WARN_BE },
-            { "info",  OPTION_VAL_INFO_BE },
-            { "debug", OPTION_VAL_DEBUG_BE },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -3839,11 +3833,9 @@ struct retro_core_option_v2_definition option_defs_bg[] = {
         {
             { "error", OPTION_VAL_ERROR_BG },
             { "warn",  OPTION_VAL_WARN_BG },
-            { "info",  OPTION_VAL_INFO_BG },
-            { "debug", OPTION_VAL_DEBUG_BG },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -4859,11 +4851,9 @@ struct retro_core_option_v2_definition option_defs_ca[] = {
         {
             { "error", OPTION_VAL_ERROR_CA },
             { "warn",  OPTION_VAL_WARN_CA },
-            { "info",  OPTION_VAL_INFO_CA },
-            { "debug", OPTION_VAL_DEBUG_CA },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -5879,11 +5869,9 @@ struct retro_core_option_v2_definition option_defs_chs[] = {
         {
             { "error", OPTION_VAL_ERROR_CHS },
             { "warn",  OPTION_VAL_WARN_CHS },
-            { "info",  OPTION_VAL_INFO_CHS },
-            { "debug", OPTION_VAL_DEBUG_CHS },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -6899,11 +6887,9 @@ struct retro_core_option_v2_definition option_defs_cht[] = {
         {
             { "error", OPTION_VAL_ERROR_CHT },
             { "warn",  OPTION_VAL_WARN_CHT },
-            { "info",  OPTION_VAL_INFO_CHT },
-            { "debug", OPTION_VAL_DEBUG_CHT },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -7919,11 +7905,9 @@ struct retro_core_option_v2_definition option_defs_cs[] = {
         {
             { "error", OPTION_VAL_ERROR_CS },
             { "warn",  OPTION_VAL_WARN_CS },
-            { "info",  OPTION_VAL_INFO_CS },
-            { "debug", OPTION_VAL_DEBUG_CS },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -8939,11 +8923,9 @@ struct retro_core_option_v2_definition option_defs_cy[] = {
         {
             { "error", OPTION_VAL_ERROR_CY },
             { "warn",  OPTION_VAL_WARN_CY },
-            { "info",  OPTION_VAL_INFO_CY },
-            { "debug", OPTION_VAL_DEBUG_CY },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -9959,11 +9941,9 @@ struct retro_core_option_v2_definition option_defs_da[] = {
         {
             { "error", OPTION_VAL_ERROR_DA },
             { "warn",  OPTION_VAL_WARN_DA },
-            { "info",  OPTION_VAL_INFO_DA },
-            { "debug", OPTION_VAL_DEBUG_DA },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -10979,11 +10959,9 @@ struct retro_core_option_v2_definition option_defs_de[] = {
         {
             { "error", OPTION_VAL_ERROR_DE },
             { "warn",  OPTION_VAL_WARN_DE },
-            { "info",  OPTION_VAL_INFO_DE },
-            { "debug", OPTION_VAL_DEBUG_DE },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -11999,11 +11977,9 @@ struct retro_core_option_v2_definition option_defs_el[] = {
         {
             { "error", OPTION_VAL_ERROR_EL },
             { "warn",  OPTION_VAL_WARN_EL },
-            { "info",  OPTION_VAL_INFO_EL },
-            { "debug", OPTION_VAL_DEBUG_EL },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -13019,11 +12995,9 @@ struct retro_core_option_v2_definition option_defs_en[] = {
         {
             { "error", OPTION_VAL_ERROR_EN },
             { "warn",  OPTION_VAL_WARN_EN },
-            { "info",  OPTION_VAL_INFO_EN },
-            { "debug", OPTION_VAL_DEBUG_EN },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -14039,11 +14013,9 @@ struct retro_core_option_v2_definition option_defs_eo[] = {
         {
             { "error", OPTION_VAL_ERROR_EO },
             { "warn",  OPTION_VAL_WARN_EO },
-            { "info",  OPTION_VAL_INFO_EO },
-            { "debug", OPTION_VAL_DEBUG_EO },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -15059,11 +15031,9 @@ struct retro_core_option_v2_definition option_defs_es[] = {
         {
             { "error", OPTION_VAL_ERROR_ES },
             { "warn",  OPTION_VAL_WARN_ES },
-            { "info",  OPTION_VAL_INFO_ES },
-            { "debug", OPTION_VAL_DEBUG_ES },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -16079,11 +16049,9 @@ struct retro_core_option_v2_definition option_defs_fa[] = {
         {
             { "error", OPTION_VAL_ERROR_FA },
             { "warn",  OPTION_VAL_WARN_FA },
-            { "info",  OPTION_VAL_INFO_FA },
-            { "debug", OPTION_VAL_DEBUG_FA },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -17099,11 +17067,9 @@ struct retro_core_option_v2_definition option_defs_fi[] = {
         {
             { "error", OPTION_VAL_ERROR_FI },
             { "warn",  OPTION_VAL_WARN_FI },
-            { "info",  OPTION_VAL_INFO_FI },
-            { "debug", OPTION_VAL_DEBUG_FI },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -18119,11 +18085,9 @@ struct retro_core_option_v2_definition option_defs_fr[] = {
         {
             { "error", OPTION_VAL_ERROR_FR },
             { "warn",  OPTION_VAL_WARN_FR },
-            { "info",  OPTION_VAL_INFO_FR },
-            { "debug", OPTION_VAL_DEBUG_FR },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -19139,11 +19103,9 @@ struct retro_core_option_v2_definition option_defs_ga[] = {
         {
             { "error", OPTION_VAL_ERROR_GA },
             { "warn",  OPTION_VAL_WARN_GA },
-            { "info",  OPTION_VAL_INFO_GA },
-            { "debug", OPTION_VAL_DEBUG_GA },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -20159,11 +20121,9 @@ struct retro_core_option_v2_definition option_defs_gl[] = {
         {
             { "error", OPTION_VAL_ERROR_GL },
             { "warn",  OPTION_VAL_WARN_GL },
-            { "info",  OPTION_VAL_INFO_GL },
-            { "debug", OPTION_VAL_DEBUG_GL },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -21179,11 +21139,9 @@ struct retro_core_option_v2_definition option_defs_he[] = {
         {
             { "error", OPTION_VAL_ERROR_HE },
             { "warn",  OPTION_VAL_WARN_HE },
-            { "info",  OPTION_VAL_INFO_HE },
-            { "debug", OPTION_VAL_DEBUG_HE },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -22199,11 +22157,9 @@ struct retro_core_option_v2_definition option_defs_hr[] = {
         {
             { "error", OPTION_VAL_ERROR_HR },
             { "warn",  OPTION_VAL_WARN_HR },
-            { "info",  OPTION_VAL_INFO_HR },
-            { "debug", OPTION_VAL_DEBUG_HR },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -23219,11 +23175,9 @@ struct retro_core_option_v2_definition option_defs_hu[] = {
         {
             { "error", OPTION_VAL_ERROR_HU },
             { "warn",  OPTION_VAL_WARN_HU },
-            { "info",  OPTION_VAL_INFO_HU },
-            { "debug", OPTION_VAL_DEBUG_HU },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -24239,11 +24193,9 @@ struct retro_core_option_v2_definition option_defs_id[] = {
         {
             { "error", OPTION_VAL_ERROR_ID },
             { "warn",  OPTION_VAL_WARN_ID },
-            { "info",  OPTION_VAL_INFO_ID },
-            { "debug", OPTION_VAL_DEBUG_ID },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -25259,11 +25211,9 @@ struct retro_core_option_v2_definition option_defs_it[] = {
         {
             { "error", OPTION_VAL_ERROR_IT },
             { "warn",  OPTION_VAL_WARN_IT },
-            { "info",  OPTION_VAL_INFO_IT },
-            { "debug", OPTION_VAL_DEBUG_IT },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -26279,11 +26229,9 @@ struct retro_core_option_v2_definition option_defs_ja[] = {
         {
             { "error", OPTION_VAL_ERROR_JA },
             { "warn",  OPTION_VAL_WARN_JA },
-            { "info",  OPTION_VAL_INFO_JA },
-            { "debug", OPTION_VAL_DEBUG_JA },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -27299,11 +27247,9 @@ struct retro_core_option_v2_definition option_defs_ko[] = {
         {
             { "error", OPTION_VAL_ERROR_KO },
             { "warn",  OPTION_VAL_WARN_KO },
-            { "info",  OPTION_VAL_INFO_KO },
-            { "debug", OPTION_VAL_DEBUG_KO },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -28319,11 +28265,9 @@ struct retro_core_option_v2_definition option_defs_nl[] = {
         {
             { "error", OPTION_VAL_ERROR_NL },
             { "warn",  OPTION_VAL_WARN_NL },
-            { "info",  OPTION_VAL_INFO_NL },
-            { "debug", OPTION_VAL_DEBUG_NL },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -29339,11 +29283,9 @@ struct retro_core_option_v2_definition option_defs_no[] = {
         {
             { "error", OPTION_VAL_ERROR_NO },
             { "warn",  OPTION_VAL_WARN_NO },
-            { "info",  OPTION_VAL_INFO_NO },
-            { "debug", OPTION_VAL_DEBUG_NO },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -30359,11 +30301,9 @@ struct retro_core_option_v2_definition option_defs_or[] = {
         {
             { "error", OPTION_VAL_ERROR_OR },
             { "warn",  OPTION_VAL_WARN_OR },
-            { "info",  OPTION_VAL_INFO_OR },
-            { "debug", OPTION_VAL_DEBUG_OR },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -31379,11 +31319,9 @@ struct retro_core_option_v2_definition option_defs_pl[] = {
         {
             { "error", OPTION_VAL_ERROR_PL },
             { "warn",  OPTION_VAL_WARN_PL },
-            { "info",  OPTION_VAL_INFO_PL },
-            { "debug", OPTION_VAL_DEBUG_PL },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -32399,11 +32337,9 @@ struct retro_core_option_v2_definition option_defs_pt_br[] = {
         {
             { "error", OPTION_VAL_ERROR_PT_BR },
             { "warn",  OPTION_VAL_WARN_PT_BR },
-            { "info",  OPTION_VAL_INFO_PT_BR },
-            { "debug", OPTION_VAL_DEBUG_PT_BR },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -33419,11 +33355,9 @@ struct retro_core_option_v2_definition option_defs_pt_pt[] = {
         {
             { "error", OPTION_VAL_ERROR_PT_PT },
             { "warn",  OPTION_VAL_WARN_PT_PT },
-            { "info",  OPTION_VAL_INFO_PT_PT },
-            { "debug", OPTION_VAL_DEBUG_PT_PT },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -34439,11 +34373,9 @@ struct retro_core_option_v2_definition option_defs_ru[] = {
         {
             { "error", OPTION_VAL_ERROR_RU },
             { "warn",  OPTION_VAL_WARN_RU },
-            { "info",  OPTION_VAL_INFO_RU },
-            { "debug", OPTION_VAL_DEBUG_RU },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -35459,11 +35391,9 @@ struct retro_core_option_v2_definition option_defs_sk[] = {
         {
             { "error", OPTION_VAL_ERROR_SK },
             { "warn",  OPTION_VAL_WARN_SK },
-            { "info",  OPTION_VAL_INFO_SK },
-            { "debug", OPTION_VAL_DEBUG_SK },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -36479,11 +36409,9 @@ struct retro_core_option_v2_definition option_defs_sr[] = {
         {
             { "error", OPTION_VAL_ERROR_SR },
             { "warn",  OPTION_VAL_WARN_SR },
-            { "info",  OPTION_VAL_INFO_SR },
-            { "debug", OPTION_VAL_DEBUG_SR },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -37499,11 +37427,9 @@ struct retro_core_option_v2_definition option_defs_sv[] = {
         {
             { "error", OPTION_VAL_ERROR_SV },
             { "warn",  OPTION_VAL_WARN_SV },
-            { "info",  OPTION_VAL_INFO_SV },
-            { "debug", OPTION_VAL_DEBUG_SV },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -38519,11 +38445,9 @@ struct retro_core_option_v2_definition option_defs_th[] = {
         {
             { "error", OPTION_VAL_ERROR_TH },
             { "warn",  OPTION_VAL_WARN_TH },
-            { "info",  OPTION_VAL_INFO_TH },
-            { "debug", OPTION_VAL_DEBUG_TH },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -39539,11 +39463,9 @@ struct retro_core_option_v2_definition option_defs_tr[] = {
         {
             { "error", OPTION_VAL_ERROR_TR },
             { "warn",  OPTION_VAL_WARN_TR },
-            { "info",  OPTION_VAL_INFO_TR },
-            { "debug", OPTION_VAL_DEBUG_TR },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -40559,11 +40481,9 @@ struct retro_core_option_v2_definition option_defs_tt[] = {
         {
             { "error", OPTION_VAL_ERROR_TT },
             { "warn",  OPTION_VAL_WARN_TT },
-            { "info",  OPTION_VAL_INFO_TT },
-            { "debug", OPTION_VAL_DEBUG_TT },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -41579,11 +41499,9 @@ struct retro_core_option_v2_definition option_defs_uk[] = {
         {
             { "error", OPTION_VAL_ERROR_UK },
             { "warn",  OPTION_VAL_WARN_UK },
-            { "info",  OPTION_VAL_INFO_UK },
-            { "debug", OPTION_VAL_DEBUG_UK },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -42599,11 +42517,9 @@ struct retro_core_option_v2_definition option_defs_val[] = {
         {
             { "error", OPTION_VAL_ERROR_VAL },
             { "warn",  OPTION_VAL_WARN_VAL },
-            { "info",  OPTION_VAL_INFO_VAL },
-            { "debug", OPTION_VAL_DEBUG_VAL },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */
@@ -43619,11 +43535,9 @@ struct retro_core_option_v2_definition option_defs_vn[] = {
         {
             { "error", OPTION_VAL_ERROR_VN },
             { "warn",  OPTION_VAL_WARN_VN },
-            { "info",  OPTION_VAL_INFO_VN },
-            { "debug", OPTION_VAL_DEBUG_VN },
             { NULL, NULL }
         },
-        "info"
+        "warn"
     },
     /* ================================================================ */
     /* --- Compatibility ---                                             */

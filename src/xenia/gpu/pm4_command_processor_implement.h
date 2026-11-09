@@ -154,6 +154,7 @@ std::string GenerateRegnameForPm4Print(uint32_t reg) {
 
 XE_NOINLINE
 void COMMAND_PROCESSOR::DisassembleCurrentPacket() XE_RESTRICT {
+  if (!logging::ShouldLog(LogLevel::Debug)) return;
   xe::gpu::PacketInfo packet_info;
 
   logging::LoggerBatch<LogLevel::Debug> logger{};
