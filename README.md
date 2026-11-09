@@ -240,6 +240,8 @@ Xbox 360 games as a disc image (`.iso`), an executable (`.xex`), or a `.zar` / `
 
 Original Xbox games run through XeFu, the Xbox 360's own emulator of the original Xbox, which upstream Xenia Edge can run. It needs XeFu's files from a console (`xbox.xex` and the `xefu*.xex` builds of the system partition's `Compatibility` folder) in `<system>/Xenia-Edge/xefu/`; the game is opened as a disc image (`.iso`), a full dump or one rebuilt to the game partition alone. Only the games the console itself could run have a chance.
 
+The [draw-path compilation contract](AGENTS.md#top-priority-eliminate-draw-path-compilation-and-compilation-waits) makes accurate ready pipelines and zero frame-critical compilation/waits a top priority. Both renderers still violate it; passing component compilation tests does not establish cold-play smoothness. See the [immediate plan](libretro/SHADER_COMPILATION_REGRESSION_PLAN.md#immediate-priority-enforce-the-draw-path-contract).
+
 GPU trace capture and its Snappy compression dependency have been removed; the core does not record GPU trace files.
 
 Everything the core keeps is in `system/Xenia-Edge/`: saves, title updates and DLC under `content/`, laid out as in standalone Xenia's content folder; the shader and other caches under `cache/`. Warnings and errors go directly to the frontend log; the core creates no separate log file, logging worker or payload queue. Routine diagnostic calls are compiled out before argument evaluation. The core option Apply Title Updates turns updates off.

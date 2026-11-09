@@ -22,6 +22,34 @@ reduced scratch allocations do not establish smooth cold play across games.
 Correctness fixes, byte-identical storage changes and code-generation changes
 must be evaluated separately rather than indiscriminately reverting all work.
 
+## Immediate priority: enforce the draw-path contract
+
+The top-priority rules in [AGENTS.md](../AGENTS.md) govern this work. The audit at
+`9ebb681b0` found inline placeholder and synchronous real-PSO creation in both
+backends, draw-side translation, compile/publication waits, blocking queue
+admission and inaccurate stand-ins. Fixing these is a priority, not a completed
+optimization. The historical NG2 capture above remains separate evidence.
+
+1. Add test-only event-site counters by thread role and pipeline kind; cover
+   graphics/compute, helper pipelines, shader emission/module creation, queue
+   admission and waits. Exercise disabled async, missing workers, queue saturation
+   and retirement exhaustion. Current component CI does not certify these zeros.
+2. Establish complete accurate generic-pipeline coverage before gameplay and move
+   specialization entirely to workers. Preserve query/memexport/attachment
+   dependencies. Remove inline placeholder creation and all synchronous branches;
+   replace no-op pixel shaders/draw skipping rather than presenting them as fixes.
+3. Make specialization admission nonblocking and preserve key/generation identity
+   and CPU/GPU lifetime. Workers may park; a draw must use its ready correct path
+   without waiting for compilation or free job storage.
+4. Compare first play with warmed play at identical images and useful guest work,
+   including frame-time tails, boot/preparation cost and fresh-process savestate
+   restore where supported. Keep validation readbacks out of timing runs. Missing
+   coverage stays visible; isolated PSO metrics cannot certify gameplay smoothness.
+
+This policy update changes no production code and introduces no runtime counters
+or fallback implementation. Existing first-use defects remain open. Retain current
+cache defaults, automated per-commit CI and the pinned-reference policy.
+
 ## Inputs and decisions
 
 The user's current instructions govern this plan. The supplied PDFs are strategy
