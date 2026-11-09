@@ -50,14 +50,17 @@ int main(int argc,char **argv)
    unsigned softfrac_profile=softfrac && !strcmp(softfrac,"1");
    const char *partialmad=getenv("XE_SHADER_BENCH_PARTIALMAD_PROFILE");
    unsigned partialmad_profile=partialmad && !strcmp(partialmad,"1");
-   const char *stage=partialmad_profile?"spirv.partialmad_translate_batch4":softfrac_profile?"spirv.softfrac_translate_batch4":mad_profile?"spirv.mad_translate_batch4":frac_profile?"spirv.frac_translate_batch4":dot_profile?"spirv.dot_translate_batch4":
+   const char *softdot=getenv("XE_SHADER_BENCH_SOFTDOT_PROFILE");
+   unsigned softdot_profile=softdot && !strcmp(softdot,"1");
+   const char *stage=softdot_profile?"spirv.softdot_translate_batch4":partialmad_profile?"spirv.partialmad_translate_batch4":softfrac_profile?"spirv.softfrac_translate_batch4":mad_profile?"spirv.mad_translate_batch4":frac_profile?"spirv.frac_translate_batch4":dot_profile?"spirv.dot_translate_batch4":
        hardware_rtz?"spirv.rtz_translate_batch4":"spirv.translate_batch4";
    char path[512];FILE *file;
    if(argc!=2 || strlen(argv[1])>400)return 2;
    for(profile=0;profile<4;++profile) {
-      context=xe_compile_open(profile|((!softfrac_profile && (hardware_rtz || dot_profile || frac_profile || mad_profile || partialmad_profile))?8u:0u));if(!context)return 1;
+      context=xe_compile_open(profile|((!softfrac_profile && !softdot_profile && (hardware_rtz || dot_profile || frac_profile || mad_profile || partialmad_profile))?8u:0u));if(!context)return 1;
       for(pixel=0;pixel<2;++pixel)for(scenario=0;scenario<8;++scenario,++id) {
-         count=partialmad_profile?stress(pixel,additions[scenario%3],4,scenario):
+         count=softdot_profile?stress(pixel,additions[scenario%3],1,scenario):
+               partialmad_profile?stress(pixel,additions[scenario%3],4,scenario):
                softfrac_profile?stress(pixel,additions[scenario%3],2,scenario):
                mad_profile?stress(pixel,additions[scenario%3],3,scenario):
                frac_profile?stress(pixel,additions[scenario%3],2,scenario):

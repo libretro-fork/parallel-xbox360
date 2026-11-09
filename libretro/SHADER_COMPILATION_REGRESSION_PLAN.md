@@ -649,3 +649,30 @@ it. Existing384 performance modules,32 new pixels,8DXIL and all input/golden
 files are unchanged; only32 partial native MAD numerical modules differ.
 Driver disk/internal coldness and gameplay are unverified. Full details:
 tools/tests/shader_partial_product_results.txt.
+
+
+## Software-RTZ dot coverage, corpus8 (2026-11-09)
+
+Add64 software-RTZ DP4/DP3/DP2ADD-heavy VS/PS programs,32/96/256 chains across
+existing swizzle/scale configurations. Force software RTZ even on hardware with
+native RTZ. Require768 physical-runner metrics and eight matching device reports
+per sample; software Vulkan96,WARP80,numerical704 remain unchanged. Keep all
+corpus7 cases and all thresholds. Case identity/missing/duplicate-report checks
+must cover the new stages. Confirm that the baseline emits128/288/512 extended
+product recipes in shaders0/1/2, covering scalar4/3/2-lane products.
+
+Do not infer compile-time improvement from smaller SPIR-V. A rejected vector
+product experiment reduced32 VS bytes23,315,584 ->18,574,832 but heavy first PSO
+2219.2048 ->2630.7755ms, with three failed timing cases. Keep every raw sample
+and rejected-source identity; do not ship that runtime lowering or hide its
+failure with warmed reruns. Ordered sums were correct and704 numerical cases
+passed, which did not establish acceptable performance.
+
+The delivered commit changes test infrastructure only. All512 parent/candidate
+performance modules,704 numerical programs/inputs/goldens and8DXIL binaries are
+identical after restoring production sources. Strict C89/MSVC fixtures,128 new
+module validations and27 comparator tests pass. A new local timing comparison
+was blocked before launch because RetroArch PID29120 was running; leave that
+process untouched and report timing unverified. Infrastructure/failure capture
+may land under this plan's existing allowance; no runtime performance pass is
+claimed. See tools/tests/shader_software_dot_results.txt and hosted CI artifacts.

@@ -1,0 +1,79 @@
+Software-RTZ dot compilation regression coverage -- 2026-11-09
+Parentfaf60da4fb7754a41a74bd2e1f080628592449f5
+
+Delivered change
+----------------
+Test infrastructure only. No production shader, audio, scheduling, rendering,
+cache-default or file-I/O implementation changes. Add64 procedural software-RTZ
+DP4/DP3/DP2ADD-heavy VS/PS programs,32/96/256 chains, using the existing native/
+portable swizzle and1x/4x configurations. Force the software fallback even on
+physical devices supporting RTZ. Track translation,module and driver PSO stages
+separately. The corpus version becomes8; physical-runner metrics672 ->768 and
+eight matching device reports per sample. Software Vulkan96,WARP80 and numerical
+704 remain unchanged. Case-specific and device-report tests reject missing or
+substituted metrics; no thresholds are loosened. The existing hosted comparison
+workflow consumes this corpus. No new runtime logging,buffer,copy,lock or timer.
+
+Rejected optimization
+---------------------
+Attempted to emit the lane-independent C89 integer product recipe once per
+vertex dot vector instead of once per lane, retaining the original ordered
+scalar sums and SM3 correction. Native RTZ and pixels were intended unchanged.
+MSVC Release --parallel3,704 actual RTX5090 numerical cases, typed product-count
+checks and SPIR-V1.0 structural coverage passed. A parent structural negative
+control failed the one-product assertion at line73. In profile shaders0/1/2,
+extended product operations dropped128 ->32,288 ->96 and512 ->256.
+
+Smaller code did not meet the performance requirement. The same current C89
+harness against sealed parent/experimental libraries, seven alternating/reverse
+process pairs, RTX5090 vendor4318/device11141 driver2604679168, generated32 VS
+modules23,315,584 ->18,574,832 bytes (-20.33%) and1,134,880 ->896,660 instructions.
+Translation batch4 median across64 case medians1.64675 ->1.53610ms, maximum
+17.4445 ->20.1769ms. PSO median across16 case medians0.60950 ->0.66820ms.
+First-heavy PSO cases0/2/4 wall373.5730/806.0219/2219.2048
+->329.5509/733.6835/2630.7755ms; process CPU375.000/781.250/2218.750
+->328.125/750.000/2640.625ms. Windows CPU accounting quantizes/can exceed wall.
+No emulator cache; driver disk/internal coldness NOT certified.
+
+Three hardware timing cases fail unchanged gates: softdot translation case21
+median9.3472 ->13.5255ms, case37 p95 10.36064 ->19.09573ms, and basic translation
+case39 median3.8829 ->5.2297ms. The basic case is untargeted and does not by itself
+identify a cause; do not assign all variation to the runtime change or declare
+it harmless noise. The2.22 ->2.63s first PSO is worse even though its tail does
+not cross the existing max gate. WARP80 passes. Preserve all failed data and
+reject the runtime optimization conservatively; do not loosen tolerances or
+substitute a warmed success. No gameplay or GPU-execution improvement claim.
+
+Restored runtime and accepted coverage validation
+------------------------------------------------
+Save the experimental runtime and structural-test sources,restore the exact
+parent versions, and rebuild normal MSVC Release with three jobs. Both files
+are excluded from the delivered commit. All512 parent/accepted-candidate SPIR-V
+performance modules,704 numerical programs/inputs/expected outputs and8DXIL
+modules are byte-identical. The accepted candidate executes all704 numerical
+cases successfully during preparation. Thus no changed arithmetic ships.
+
+Strict MSVC C89 fixture compilation and Linux strict C89 fixture compilation
+pass. Validate128 parent/accepted software-dot modules with spirv-val vulkan1.1.
+All27 comparator tests pass, including768 case identities/eight report handling.
+The rejected numerical run passed finite/signed-zero/NaN oracles, but is not
+accepted runtime-performance evidence; the accepted source remains the parent.
+No whole-core sanitizer claim is made for this test-infrastructure change.
+
+A fresh infrastructure-only timing batch was held before launching any timed
+process because RetroArch PID29120 was active. Leave that process alone. Local
+accepted-commit timing is unverified, not a pass; hosted CI is reported separately.
+Infrastructure and reproducible failure capture land under the regression plan's
+existing allowance. All original failed timings remain in comparison.json;
+restored accepted artifacts are under infra/candidate, with explicit source and
+executable identities. No silent replacement of the failed experimental data.
+
+Delivery and remaining work
+---------------------------
+One git format-patch mailbox is applied at this exact parent using git am and
+its resulting tree compared before push to libretro. No installed core was
+replaced, no game was launched/stopped and no user cache was removed. Extracted
+game assets are absent. A2.22s software-dot PSO remains a visible defect; this
+commit supplies coverage, not a speedup or a cold-play/gameplay acceptance result.
+Future work must reduce compile stalls while preserving the exact ordered sums
+and pass both numerical and compilation gates before runtime changes land.

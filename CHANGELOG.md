@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Add software-RTZ dot-product compilation regression coverage, expanding the hardware-runner corpus to768 metrics. Reject an attempted vector-product optimization after compilation regressed; production shader lowering is unchanged.
+
 - Reuse native multiply/MAD flush predicates for partial-alias lanes too, avoiding component extraction and reinsertion. Add exhaustive C89 lane-mask tests and a partial-MAD compile profile. The heavy test PSO falls442 to360ms; first-use hitches remain unresolved.
 
 - Reuse native-RTZ input-flush predicates for distinct-lane multiply/MAD zero correction, removing redundant shader zero checks while preserving partial-identity handling. All704 GPU numerical cases pass. An unseen heavy MAD workload compiles in370ms instead of511ms; required driver-compilation hitches remain.
