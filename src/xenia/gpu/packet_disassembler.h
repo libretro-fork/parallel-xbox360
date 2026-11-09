@@ -13,7 +13,6 @@
 #include <vector>
 
 #include "xenia/gpu/register_file.h"
-#include "xenia/gpu/trace_protocol.h"
 #include "xenia/memory.h"
 
 namespace xe {

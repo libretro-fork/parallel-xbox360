@@ -33,8 +33,6 @@ class LibretroCommandProcessor : public CommandProcessor {
                            kernel::KernelState* kernel_state,
                            FrameSyncState* sync);
   ~LibretroCommandProcessor() override;
-
-  void TracePlaybackWroteMemory(uint32_t base_ptr, uint32_t length) override;
   void RestoreEdramSnapshot(const void* snapshot) override;
 
  private:
@@ -52,8 +50,6 @@ class LibretroCommandProcessor : public CommandProcessor {
                  IndexBufferInfo* index_buffer_info,
                  bool major_mode_explicit) override;
   bool IssueCopy() override;
-
-  void InitializeTrace() override;
 
   FrameSyncState* sync_ = nullptr;
 };

@@ -29,7 +29,6 @@
 #include "xenia/gpu/register_file.h"
 #include "xenia/gpu/shader.h"
 #include "xenia/gpu/shared_memory.h"
-#include "xenia/gpu/trace_writer.h"
 #include "xenia/gpu/xenos.h"
 #include "xenia/memory.h"
 
@@ -216,10 +215,9 @@ class PrimitiveProcessor {
       +XE_GPU_PRIMITIVE_PROCESSOR_SIMD_SIZE;
 
   PrimitiveProcessor(const RegisterFile& register_file, Memory& memory,
-                     TraceWriter& trace_writer, SharedMemory& shared_memory)
+                     SharedMemory& shared_memory)
       : register_file_(register_file),
         memory_(memory),
-        trace_writer_(trace_writer),
         shared_memory_(shared_memory) {}
 
   // Call from the backend-specific initialization function.
@@ -744,7 +742,6 @@ class PrimitiveProcessor {
 
   const RegisterFile& register_file_;
   Memory& memory_;
-  TraceWriter& trace_writer_;
   SharedMemory& shared_memory_;
 
   bool full_32bit_vertex_indices_used_ = false;

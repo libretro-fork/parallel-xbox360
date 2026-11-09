@@ -39,7 +39,7 @@ class RenderTargetCollectionTest final : public RenderTargetCache {
   }
  public:
   RenderTargetCollectionTest(const RegisterFile& registers, const Memory& memory)
-      : RenderTargetCache(registers,memory,nullptr,2,2) { CHECK(InitializeCommon()); }
+      : RenderTargetCache(registers,memory,2,2) { CHECK(InitializeCommon()); }
   Path GetPath() const override { return Path::kHostRenderTargets; }
   uint32_t GetMaxRenderTargetWidth() const override { return 16384; }
   uint32_t GetMaxRenderTargetHeight() const override { return 16384; }

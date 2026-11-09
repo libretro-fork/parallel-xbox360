@@ -17,7 +17,7 @@ class UniqueCache final : public xe::gpu::TextureCache {
  public:
   struct Item final : Texture {unsigned id;Item(UniqueCache& c,const TextureKey& k,unsigned i):Texture(c,k),id(i) {}};
   unsigned calls=0,ids[64]={},masks[64]={};bool success=true,invalidate=false,span_unchanged=false;
-  UniqueCache(const xe::gpu::RegisterFile& r,UniqueMemory& m):TextureCache(r,m,nullptr,1,1) {}
+  UniqueCache(const xe::gpu::RegisterFile& r,UniqueMemory& m):TextureCache(r,m,1,1) {}
   uint32_t GetHostFormatSwizzle(TextureKey) const override {return 0;}
   uint32_t GetMaxHostTextureWidthHeight(xe::gpu::xenos::DataDimension) const override {return 16384;}
   uint32_t GetMaxHostTextureDepthOrArraySize(xe::gpu::xenos::DataDimension) const override {return 2048;}

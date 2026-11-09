@@ -164,9 +164,6 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
   vblank_worker_thread_->set_name("Guest vblank");
   vblank_worker_thread_->Create();
   vblank_worker_thread_->thread()->set_priority(threading::ThreadPriority::kLowest);
-  if (cvars::trace_gpu_stream) {
-    BeginTracing();
-  }
 
   return X_STATUS_SUCCESS;
 }
@@ -174,7 +171,6 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
 void GraphicsSystem::Shutdown() {
   xe_state_control_stop(&pause_control_);
   if (command_processor_) {
-    EndTracing();
     command_processor_->Shutdown();
     command_processor_.reset();
   }
@@ -390,24 +386,6 @@ void GraphicsSystem::InitializeShaderStorage(
     command_processor_->CallInThreadParts(run,command_processor_.get(),
         &args,sizeof(args),path.c_str(),path.size()+1,cancel);
   }
-}
-
-void GraphicsSystem::RequestFrameTrace() {
-  command_processor_->RequestFrameTrace(cvars::trace_gpu_prefix);
-}
-
-void GraphicsSystem::BeginTracing() {
-  command_processor_->BeginTracing(cvars::trace_gpu_prefix);
-}
-
-void GraphicsSystem::EndTracing() { command_processor_->EndTracing(); }
-
-void GraphicsSystem::RequestEndTracing() {
-  command_processor_->RequestEndTracing();
-}
-
-bool GraphicsSystem::is_tracing_stream() const {
-  return command_processor_->is_tracing_stream();
 }
 
 void GraphicsSystem::Pause() {

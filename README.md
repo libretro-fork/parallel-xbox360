@@ -72,7 +72,6 @@ most one LSB. This does not establish gameplay cadence or all-format performance
 See [native comparison](tools/tests/xma_native_benchmark.md) and [results](tools/tests/xma_native_benchmark_results.txt). Guest PCM conversion
 and guest-ring copies remain; the entire audio path is not zero-copy.
 
-Optional GPU trace capture now writes through libretro-common VFS using a C89 stream owner, checked 64-bit header fixups and latched transfer failures. Snappy borrows gamma-ramp spans instead of building a second heap concatenation; its existing block scratch still gathers split input. The unused standalone raw-EDRAM-file dump API is removed from both renderers. Trace bytes match the archived writer across MSVC, ASan and MinGW fixtures. Default release tracing remains disabled; this does not establish a gameplay speedup. See [trace I/O checks](tools/tests/gpu_trace_results.txt).
 
 Both renderers capture resolve ownership rectangles once per copy and classify native scale/layout while filling the existing fixed worklist. Eligibility checks and direct or fallback dispatch borrow that same list. This removes repeated ownership-tree walks and failed-direct fallback recopying without changing pixel shaders, ownership, source order or GPU commands. Whole-EDRAM trace dumps still collect fresh rows. Existing C89 classification and cold storage are reused; no new runtime allocation, lock or profiling counter is added. See [prepared ownership checks](tools/tests/resolve_capture_results.txt); CPU/GPU timing and gameplay gains remain unmeasured.
 
@@ -240,6 +239,8 @@ Guest UI requests complete headlessly: message boxes choose an offline or confir
 Xbox 360 games as a disc image (`.iso`), an executable (`.xex`), or a `.zar` / `.xcp` package. No BIOS or firmware is needed.
 
 Original Xbox games run through XeFu, the Xbox 360's own emulator of the original Xbox, which upstream Xenia Edge can run. It needs XeFu's files from a console (`xbox.xex` and the `xefu*.xex` builds of the system partition's `Compatibility` folder) in `<system>/Xenia-Edge/xefu/`; the game is opened as a disc image (`.iso`), a full dump or one rebuilt to the game partition alone. Only the games the console itself could run have a chance.
+
+GPU trace capture and its Snappy compression dependency have been removed; the core does not record GPU trace files.
 
 Everything the core keeps is in `system/Xenia-Edge/`: saves, title updates and DLC under `content/`, laid out as in standalone Xenia's content folder; the shader and other caches under `cache/`. Warnings and errors go directly to the frontend log; the core creates no separate log file, logging worker or payload queue. Routine diagnostic calls are compiled out before argument evaluation. The core option Apply Title Updates turns updates off.
 

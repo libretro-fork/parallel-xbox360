@@ -28,10 +28,9 @@ class D3D12CommandProcessor;
 class D3D12PrimitiveProcessor final : public PrimitiveProcessor {
  public:
   D3D12PrimitiveProcessor(const RegisterFile& register_file, Memory& memory,
-                          TraceWriter& trace_writer,
                           SharedMemory& shared_memory,
                           D3D12CommandProcessor& command_processor)
-      : PrimitiveProcessor(register_file, memory, trace_writer, shared_memory),
+      : PrimitiveProcessor(register_file, memory, shared_memory),
         command_processor_(command_processor) {}
   ~D3D12PrimitiveProcessor();
 

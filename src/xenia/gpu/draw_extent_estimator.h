@@ -16,7 +16,6 @@
 #include "xenia/gpu/register_file.h"
 #include "xenia/gpu/shader.h"
 #include "xenia/gpu/shader_interpreter.h"
-#include "xenia/gpu/trace_writer.h"
 #include "xenia/memory.h"
 
 namespace xe {
@@ -24,14 +23,10 @@ namespace gpu {
 
 class DrawExtentEstimator {
  public:
-  DrawExtentEstimator(const RegisterFile& register_file, const Memory& memory,
-                      TraceWriter* trace_writer)
+  DrawExtentEstimator(const RegisterFile& register_file, const Memory& memory)
       : register_file_(register_file),
         memory_(memory),
-        trace_writer_(trace_writer),
-        shader_interpreter_(register_file, memory) {
-    shader_interpreter_.SetTraceWriter(trace_writer);
-  }
+        shader_interpreter_(register_file, memory) {}
 
   // The shader must have its ucode analyzed.
   uint32_t EstimateVertexMaxY(const Shader& vertex_shader);
@@ -65,7 +60,6 @@ class DrawExtentEstimator {
 
   const RegisterFile& register_file_;
   const Memory& memory_;
-  TraceWriter* trace_writer_;
 
   ShaderInterpreter shader_interpreter_;
 };

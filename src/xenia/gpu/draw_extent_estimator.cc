@@ -123,17 +123,11 @@ uint32_t DrawExtentEstimator::EstimateVertexMaxY(const Shader& vertex_shader) {
         index_endian = xenos::Endian::kNone;
       }
       index_buffer_base &= ~uint32_t(sizeof(uint16_t) - 1);
-      if (trace_writer_) {
-        trace_writer_->WriteMemoryRead(
-            index_buffer_base, sizeof(uint16_t) * index_buffer_read_count);
-      }
+
     } else {
       assert_true(vgt_draw_initiator.index_size == xenos::IndexFormat::kInt32);
       index_buffer_base &= ~uint32_t(sizeof(uint32_t) - 1);
-      if (trace_writer_) {
-        trace_writer_->WriteMemoryRead(
-            index_buffer_base, sizeof(uint32_t) * index_buffer_read_count);
-      }
+
     }
     index_buffer = memory_.TranslatePhysical(index_buffer_base);
   }

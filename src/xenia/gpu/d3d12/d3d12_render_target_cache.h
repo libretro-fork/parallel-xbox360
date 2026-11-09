@@ -33,7 +33,6 @@
 #include "xenia/gpu/edram_dump_shader.h"
 #include "xenia/gpu/edram_transfer_shader.h"
 #include "xenia/gpu/render_target_cache.h"
-#include "xenia/gpu/trace_writer.h"
 #include "xenia/gpu/xenos.h"
 #include "xenia/memory.h"
 #include "xenia/ui/d3d12/d3d12_cpu_descriptor_pool.h"
@@ -50,14 +49,11 @@ class D3D12CommandProcessor;
 class D3D12RenderTargetCache final : public RenderTargetCache {
  public:
   D3D12RenderTargetCache(const RegisterFile& register_file,
-                         const Memory& memory, TraceWriter& trace_writer,
-                         uint32_t draw_resolution_scale_x,
+                         const Memory& memory, uint32_t draw_resolution_scale_x,
                          uint32_t draw_resolution_scale_y,
                          D3D12CommandProcessor& command_processor)
-      : RenderTargetCache(register_file, memory, &trace_writer,
-                          draw_resolution_scale_x, draw_resolution_scale_y),
-        command_processor_(command_processor),
-        trace_writer_(trace_writer) {}
+      : RenderTargetCache(register_file, memory, draw_resolution_scale_x, draw_resolution_scale_y),
+        command_processor_(command_processor) {}
   ~D3D12RenderTargetCache() override;
 
   // Shader code for resolve copy operations.
@@ -183,7 +179,6 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
                                       EdramBufferModificationStatus::kAsROV);
 
   D3D12CommandProcessor& command_processor_;
-  TraceWriter& trace_writer_;
 
   Path path_ = Path::kHostRenderTargets;
 
@@ -237,9 +232,7 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   ID3D12PipelineState* resolve_copy_native_pipelines_[size_t(
       draw_util::ResolveCopyShaderIndex::kCount)] = {};
 
-  // For traces.
-  ID3D12Resource* edram_snapshot_download_buffer_ = nullptr;
-  bool edram_snapshot_download_mapped_ = false;
+  // EDRAM snapshot restoration.
   std::unique_ptr<ui::d3d12::D3D12UploadBufferPool>
       edram_snapshot_restore_pool_;
 
@@ -588,11 +581,6 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   void DumpRenderTargets(uint32_t dump_base, uint32_t dump_row_length_used,
                          uint32_t dump_rows, uint32_t dump_pitch,
                          bool native_layout, bool rectangles_prepared = false);
-
-  void DumpAllRenderTargetsToEdram() override;
-  bool BeginEdramSnapshotReadback() override;
-  const void* MapEdramSnapshotReadback() override;
-  void EndEdramSnapshotReadback() override;
 
   bool use_stencil_reference_output_ = false;
 

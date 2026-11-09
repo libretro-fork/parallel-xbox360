@@ -20,7 +20,6 @@
 #include "libretro/core_float_rtz.h"
 #include "xenia/gpu/register_file.h"
 #include "xenia/gpu/shader.h"
-#include "xenia/gpu/trace_writer.h"
 #include "xenia/memory.h"
 
 namespace xe {
@@ -39,9 +38,6 @@ class ShaderInterpreter {
                         const float* value, uint32_t value_mask) {}
   };
 
-  void SetTraceWriter(TraceWriter* new_trace_writer) {
-    trace_writer_ = new_trace_writer;
-  }
 
   ExportSink* GetExportSink() const { return export_sink_; }
   void SetExportSink(ExportSink* new_export_sink) {
@@ -130,8 +126,6 @@ class ShaderInterpreter {
 
   const RegisterFile& register_file_;
   const Memory& memory_;
-
-  TraceWriter* trace_writer_ = nullptr;
 
   ExportSink* export_sink_ = nullptr;
 

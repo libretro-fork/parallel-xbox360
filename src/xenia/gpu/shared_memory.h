@@ -149,22 +149,6 @@ class SharedMemory {
       xe_upload_range* upload_page_ranges,
       uint32_t num_upload_ranges) = 0;
 
-  const std::vector<std::pair<uint32_t, uint32_t>>& trace_download_ranges() {
-    return trace_download_ranges_;
-  }
-  uint32_t trace_download_page_count() const {
-    return trace_download_page_count_;
-  }
-  // Fills trace_download_ranges() and trace_download_page_count() with
-  // GPU-written ranges that need to be downloaded, and also invalidates
-  // non-GPU-written ranges so only the needed data - not the all the collected
-  // data - will be written in the trace. trace_download_page_count() will be 0
-  // if nothing to download.
-  void PrepareForTraceDownload();
-  // Release memory used for trace download ranges, to be called after
-  // downloading or in cases when download is dropped.
-  void ReleaseTraceDownloadRanges();
-
  private:
   Memory& memory_;
 
@@ -196,7 +180,7 @@ class SharedMemory {
   // ***************************************************************************
 
   // Validity readers may use atomic loads outside the critical region. Every
-  // writer, including bulk reset/trace paths, uses common atomic stores.
+  // writer, including bulk reset paths, uses common atomic stores.
   xe_page_valid_word* system_page_flags_valid_ = nullptr;
   uint64_t* system_page_flags_valid_and_gpu_written_ = nullptr;
 
@@ -266,9 +250,7 @@ class SharedMemory {
   WatchRange* watch_range_first_free_ = nullptr;
   WatchNode* watch_node_first_free_ = nullptr;
 
-  // GPU-written memory downloading for traces. <Start address, length>.
-  std::vector<std::pair<uint32_t, uint32_t>> trace_download_ranges_;
-  uint32_t trace_download_page_count_ = 0;
+
 
   // Triggers the watches (global and per-range), removing triggered range
   // watches.

@@ -1382,22 +1382,6 @@ old native libraries must not be mixed with a changed class ABI. The C89
 both layout/native flags fail. See resolve_capture_results.txt for coverage
 and the distinction between C89 sanitizer checks and full native fixtures.
 
-GPU trace VFS and borrowed Snappy input
---------------------------------------
-`run_gpu_trace_tests.sh` or `.cmd` builds the actual enabled trace writer and
-owned common I/O. The C89 driver checks borrowed spans, hostile VFS transfer,
-64-bit patch positions and the full trace-command fixture without a GPU.
-Shell sanitizers default on; use SANITIZER= for MinGW without those runtimes.
-Native ASan uses TRACE_TEST_FLAGS=/fsanitize=address /Zi and separate TRACE_TEST_OUT.
-The runner uses the existing C89 code generator for owned Snappy configuration;
-no system Snappy headers, Python or CMake build is required.
-
-Optional shell BASELINE_COMMIT=09ebce641 compares the emitted file byte-for-byte
-with the archived production writer. Only its external ASCII native-file opener
-is adapted in the test ABI bridge. Baseline mode checks protocol output, not
-the archived destructor's known file leak. Normal CI requires no local history.
-See gpu_trace_results.txt for successful format hashes, coverage and limits.
-
 GPU control task ownership
 --------------------------
 `run_gpu_tasks_tests.sh` or `.cmd` builds the C89 fixed task pool with owned

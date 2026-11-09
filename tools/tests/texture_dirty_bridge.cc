@@ -12,7 +12,7 @@ class DirtyMemory:public xe::gpu::SharedMemory {
 class DirtyCache:public xe::gpu::TextureCache {
  public:
   struct Item:Texture {Item(DirtyCache& c,const TextureKey& k):Texture(c,k) {}};
-  DirtyCache(const xe::gpu::RegisterFile& r,DirtyMemory& m):TextureCache(r,m,nullptr,1,1) {}
+  DirtyCache(const xe::gpu::RegisterFile& r,DirtyMemory& m):TextureCache(r,m,1,1) {}
   uint32_t GetHostFormatSwizzle(TextureKey) const override{return 0;}
   uint32_t GetMaxHostTextureWidthHeight(xe::gpu::xenos::DataDimension) const override{return 16384;}
   uint32_t GetMaxHostTextureDepthOrArraySize(xe::gpu::xenos::DataDimension) const override{return 2048;}

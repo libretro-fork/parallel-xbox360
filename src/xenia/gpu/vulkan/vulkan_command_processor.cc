@@ -188,12 +188,6 @@ void VulkanCommandProcessor::ClearReadbackBuffers() {
   }
 }
 
-void VulkanCommandProcessor::TracePlaybackWroteMemory(uint32_t base_ptr,
-                                                      uint32_t length) {
-  shared_memory_->MemoryInvalidationCallback(base_ptr, length, true);
-  primitive_processor_->MemoryInvalidationCallback(base_ptr, length, true);
-}
-
 void VulkanCommandProcessor::InitializeShaderStorage(
     const std::filesystem::path& cache_root, uint32_t title_id, bool blocking) {
   CommandProcessor::InitializeShaderStorage(cache_root, title_id, blocking);
@@ -415,7 +409,7 @@ bool VulkanCommandProcessor::SetupContext() {
   }
 
   shared_memory_ = std::make_unique<VulkanSharedMemory>(
-      *this, *memory_, trace_writer_, guest_shader_pipeline_stages_);
+      *this, *memory_, guest_shader_pipeline_stages_);
   if (!shared_memory_->Initialize()) {
     XELOGE("Failed to initialize shared memory");
     return false;
@@ -438,7 +432,7 @@ bool VulkanCommandProcessor::SetupContext() {
       ResolveReadCallbackThunk, this);
 
   primitive_processor_ = std::make_unique<VulkanPrimitiveProcessor>(
-      *register_file_, *memory_, trace_writer_, *shared_memory_, *this);
+      *register_file_, *memory_, *shared_memory_, *this);
   if (!primitive_processor_->Initialize()) {
     XELOGE("Failed to initialize the geometric primitive processor");
     return false;
@@ -472,7 +466,7 @@ bool VulkanCommandProcessor::SetupContext() {
   }
 
   render_target_cache_ = std::make_unique<VulkanRenderTargetCache>(
-      *register_file_, *memory_, trace_writer_, draw_resolution_scale_x,
+      *register_file_, *memory_, draw_resolution_scale_x,
       draw_resolution_scale_y, *this);
   if (!render_target_cache_->Initialize(shared_memory_binding_count)) {
     XELOGE("Failed to initialize the render target cache");
@@ -5078,28 +5072,6 @@ void VulkanCommandProcessor::AwaitVIZQueryResolve(
   }
 
   PumpQueryResolves();
-}
-
-void VulkanCommandProcessor::InitializeTrace() {
-  CommandProcessor::InitializeTrace();
-
-  if (!BeginSubmission(true)) {
-    return;
-  }
-  bool render_target_cache_submitted =
-      render_target_cache_->InitializeTraceSubmitDownloads();
-  bool shared_memory_submitted =
-      shared_memory_->InitializeTraceSubmitDownloads();
-  if (!render_target_cache_submitted && !shared_memory_submitted) {
-    return;
-  }
-  AwaitAllQueueOperationsCompletion();
-  if (render_target_cache_submitted) {
-    render_target_cache_->InitializeTraceCompleteDownloads();
-  }
-  if (shared_memory_submitted) {
-    shared_memory_->InitializeTraceCompleteDownloads();
-  }
 }
 
 void VulkanCommandProcessor::LogRecentSubmissions(const char* context) {

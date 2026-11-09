@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Remove Snappy and the unused standalone GPU trace recorder, including trace-only texture copies, screenshot capture, GPU readback buffers and Vulkan/D3D12 plumbing. Remove their build/code-generation dependencies and capture tests.
+
 - Remove routine release logging before argument evaluation. Send warnings/errors directly as borrowed frontend callbacks, without a logging worker, 8 MiB payload ring, separate log file, console output or flush waits. Keep the guest-progress counter used by the scheduler.
 - Replace disruptorplus timer admission with bounded C89 record leases using libretro-common atomics/eventcounts and reusable typed slots. Remove cxxopts and unused standalone command-line entry points; preserve core options and Android bundle settings.
 

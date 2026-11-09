@@ -83,7 +83,6 @@ void COMMAND_PROCESSOR::ExecuteIndirectBuffer(uint32_t ptr,
                                               uint32_t count) XE_RESTRICT {
   SCOPE_profile_cpu_f("gpu");
 
-  trace_writer_.WriteIndirectBufferStart(ptr, count * sizeof(uint32_t));
   if (count != 0) {
     RingBuffer old_reader = reader_;
 
@@ -107,7 +106,6 @@ void COMMAND_PROCESSOR::ExecuteIndirectBuffer(uint32_t ptr,
       }
     } while (reader_.read_count());
 
-    trace_writer_.WriteIndirectBufferEnd();
     reader_ = old_reader;
   } else {
     // rare, but i've seen it happen! (and then a division by 0 occurs)
@@ -382,9 +380,6 @@ bool COMMAND_PROCESSOR::ExecutePacket() {
   }
   else {
   handle_bad_packet:
-    trace_writer_.WritePacketStart(COMMAND_PROCESSOR::GuestReadPtrOffset(-4),
-                                   1);
-    trace_writer_.WritePacketEnd();
     return true;
   }
 }
@@ -410,9 +405,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType0(uint32_t packet) XE_RESTRICT {
 
   if (COMMAND_PROCESSOR::GetCurrentRingReadCount() >=
       count * sizeof(uint32_t)) {
-    trace_writer_.WritePacketStart(COMMAND_PROCESSOR::GuestReadPtrOffset(-4),
-                                   1 + count);
-
     uint32_t base_index = (packet & 0x7FFF);
     uint32_t write_one_reg = (packet >> 15) & 0x1;
 
@@ -424,7 +416,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType0(uint32_t packet) XE_RESTRICT {
       COMMAND_PROCESSOR::WriteOneRegisterFromRing(base_index, count);
     }
 
-    trace_writer_.WritePacketEnd();
     return true;
   } else {
     return COMMAND_PROCESSOR::ExecutePacketType0_CountOverflow(count);
@@ -434,22 +425,18 @@ XE_NOINLINE
 bool COMMAND_PROCESSOR::ExecutePacketType1(uint32_t packet) XE_RESTRICT {
   // Type-1 packet.
   // Contains two registers of data. Type-0 should be more common.
-  trace_writer_.WritePacketStart(COMMAND_PROCESSOR::GuestReadPtrOffset(-4), 3);
   uint32_t reg_index_1 = packet & 0x7FF;
   uint32_t reg_index_2 = (packet >> 11) & 0x7FF;
   uint32_t reg_data_1 = reader_.ReadAndSwap<uint32_t>();
   uint32_t reg_data_2 = reader_.ReadAndSwap<uint32_t>();
   COMMAND_PROCESSOR::WriteRegister(reg_index_1, reg_data_1);
   COMMAND_PROCESSOR::WriteRegister(reg_index_2, reg_data_2);
-  trace_writer_.WritePacketEnd();
   return true;
 }
 
 bool COMMAND_PROCESSOR::ExecutePacketType2(uint32_t packet) XE_RESTRICT {
   // Type-2 packet.
   // No-op. Do nothing.
-  trace_writer_.WritePacketStart(COMMAND_PROCESSOR::GuestReadPtrOffset(-4), 1);
-  trace_writer_.WritePacketEnd();
   return true;
 }
 XE_FORCEINLINE
@@ -474,15 +461,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3(uint32_t packet) XE_RESTRICT {
 
   if (COMMAND_PROCESSOR::GetCurrentRingReadCount() >=
       count * sizeof(uint32_t)) {
-    // To handle nesting behavior when tracing we special case indirect buffers.
-    if (opcode == PM4_INDIRECT_BUFFER) {
-      trace_writer_.WritePacketStart(COMMAND_PROCESSOR::GuestReadPtrOffset(-4),
-                                     2);
-    } else {
-      trace_writer_.WritePacketStart(COMMAND_PROCESSOR::GuestReadPtrOffset(-4),
-                                     1 + count);
-    }
-
     // & 1 == predicate - when set, we do bin check to see if we should execute
     // the packet. Only type 3 packets are affected.
     // We also skip predicated swaps, as they are never valid (probably?).
@@ -490,7 +468,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3(uint32_t packet) XE_RESTRICT {
       bool any_pass = (bin_select_ & bin_mask_) != 0;
       if (!any_pass || opcode == PM4_XE_SWAP) {
         reader_.AdvanceRead(count * sizeof(uint32_t));
-        trace_writer_.WritePacketEnd();
         return true;
       }
     }
@@ -677,37 +654,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3(uint32_t packet) XE_RESTRICT {
         return COMMAND_PROCESSOR::HitUnimplementedOpcode(opcode, count);
     }
 
-    trace_writer_.WritePacketEnd();
-#if XE_ENABLE_TRACE_WRITER_INSTRUMENTATION == 1
-
-    if (opcode == PM4_XE_SWAP) {
-      // End the trace writer frame.
-      if (trace_writer_.is_open()) {
-        trace_writer_.WriteEvent(EventCommand::Type::kSwap);
-        trace_writer_.Flush();
-        if (trace_state_ == TraceState::kSingleFrame) {
-          trace_state_ = TraceState::kDisabled;
-          trace_writer_.Close();
-          // The guest output now holds exactly the frame that was traced.
-          WriteTraceFrameScreenshot();
-        } else if (trace_state_ == TraceState::kDisabled) {
-          trace_writer_.Close();
-        }
-      } else if (trace_state_ == TraceState::kSingleFrame) {
-        // New trace request - we only start tracing at the beginning of a
-        // frame.
-        auto executable_module = kernel_state_->GetExecutableModule();
-        uint32_t title_id =
-            executable_module ? executable_module->title_id() : 0;
-        auto file_name = fmt::format("{:08X}_{}.xtr", title_id, counter_ - 1);
-        auto path = trace_frame_path_ / file_name;
-        trace_writer_.Open(xe::path_to_utf8(path).c_str(), title_id);
-        trace_frame_file_path_ = path;
-        InitializeTrace();
-      }
-    }
-#endif
-
     assert_true(reader_.read_offset() ==
                 (data_start_offset + (count * sizeof(uint32_t))) %
                     reader_.capacity());
@@ -724,7 +670,6 @@ bool COMMAND_PROCESSOR::HitUnimplementedOpcode(uint32_t opcode,
   XELOGGPU("Unimplemented GPU OPCODE: 0x{:02X}\t\tCOUNT: {}\n", opcode, count);
   assert_always();
   reader_.AdvanceRead(count * sizeof(uint32_t));
-  trace_writer_.WritePacketEnd();
   return false;
 }
 XE_NOINLINE
@@ -875,8 +820,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_WAIT_REG_MEM(
   do {
     uint32_t value = value_ref;
     if (is_memory) {
-      trace_writer_.WriteMemoryRead(CpuToGpu(poll_reg_addr & ~uint32_t(0x3)),
-                                    sizeof(uint32_t));
       value = xenos::GpuSwap(value,
                              static_cast<xenos::Endian>(poll_reg_addr & 0x3));
     } else {
@@ -981,8 +924,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_REG_TO_MEM(
   mem_addr &= ~0x3;
   reg_val = GpuSwap(reg_val, endianness);
   xe::store(memory_->TranslatePhysical(mem_addr), reg_val);
-  trace_writer_.WriteMemoryWrite(CpuToGpu(mem_addr), 4);
-
   return true;
 }
 XE_NOINLINE
@@ -1003,7 +944,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_MEM_WRITE(
     auto addr = write_addr & ~0x3;
     write_data = GpuSwap(write_data, endianness);
     xe::store(memory_->TranslatePhysical(addr), write_data);
-    trace_writer_.WriteMemoryWrite(CpuToGpu(addr), 4);
     write_addr += 4;
   }
 
@@ -1034,7 +974,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_COND_WRITE(
     // Memory.
     auto endianness = static_cast<xenos::Endian>(poll_reg_addr & 0x3);
     poll_reg_addr &= ~0x3;
-    trace_writer_.WriteMemoryRead(CpuToGpu(poll_reg_addr), 4);
     value = xe::load<uint32_t>(memory_->TranslatePhysical(poll_reg_addr));
     value = GpuSwap(value, endianness);
   } else {
@@ -1053,7 +992,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_COND_WRITE(
       write_reg_addr &= ~0x3;
       write_data = GpuSwap(write_data, endianness);
       xe::store(memory_->TranslatePhysical(write_reg_addr), write_data);
-      trace_writer_.WriteMemoryWrite(CpuToGpu(write_reg_addr), 4);
     } else {
       // Register.
       COMMAND_PROCESSOR::WriteRegister(write_reg_addr, write_data);
@@ -1134,7 +1072,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_EVENT_WRITE_SHD(
     }
   }
   xe::store(write_destination, data_value);
-  trace_writer_.WriteMemoryWrite(CpuToGpu(address), 4);
   return true;
 }
 
@@ -1177,7 +1114,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_EVENT_WRITE_EXT(
     destination[i] = extents[i];
   }
 
-  trace_writer_.WriteMemoryWrite(CpuToGpu(address), sizeof(extents));
   return true;
 }
 
@@ -1492,24 +1428,18 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_LOAD_ALU_CONSTANT(
 
   switch (type) {
     case 0:  // ALU
-      trace_writer_.WriteMemoryRead(CpuToGpu(address), size_dwords * 4);
       COMMAND_PROCESSOR::WriteALURangeFromMem(index, xlat_address, size_dwords);
 
       break;
     case 1:  // FETCH
-      trace_writer_.WriteMemoryRead(CpuToGpu(address), size_dwords * 4);
       COMMAND_PROCESSOR::WriteFetchRangeFromMem(index, xlat_address,
                                                 size_dwords);
       break;
     case 2:  // BOOL
-      trace_writer_.WriteMemoryRead(CpuToGpu(address), size_dwords * 4);
-
       COMMAND_PROCESSOR::WriteBoolRangeFromMem(index, xlat_address,
                                                size_dwords);
       break;
     case 3:  // LOOP
-      trace_writer_.WriteMemoryRead(CpuToGpu(address), size_dwords * 4);
-
       COMMAND_PROCESSOR::WriteLoopRangeFromMem(index, xlat_address,
                                                size_dwords);
 
@@ -1517,8 +1447,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_LOAD_ALU_CONSTANT(
     case 4:  // REGISTERS
       // chrispy: todo, REGISTERS cannot write any special regs, so optimize for
       // that
-      trace_writer_.WriteMemoryRead(CpuToGpu(address), size_dwords * 4);
-
       COMMAND_PROCESSOR::WriteREGISTERSRangeFromMem(index, xlat_address,
                                                     size_dwords);
       break;
@@ -1566,7 +1494,6 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_IM_LOAD(uint32_t packet,
         size_dwords);
   }
 
-  trace_writer_.WriteMemoryRead(CpuToGpu(addr), size_dwords * 4);
   auto shader = COMMAND_PROCESSOR::LoadShader(
       shader_type, memory_->TranslatePhysical<uint32_t*>(addr), size_dwords);
   switch (shader_type) {
@@ -1693,26 +1620,11 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_VIZ_QUERY(
 uint32_t COMMAND_PROCESSOR::ExecutePrimaryBuffer(uint32_t read_index,
                                                  uint32_t write_index) {
   SCOPE_profile_cpu_f("gpu");
-#if XE_ENABLE_TRACE_WRITER_INSTRUMENTATION == 1
-  // If we have a pending trace stream open it now. That way we ensure we get
-  // all commands.
-  if (!trace_writer_.is_open() && trace_state_ == TraceState::kStreaming) {
-    uint32_t title_id = kernel_state_->GetExecutableModule()
-                            ? kernel_state_->GetExecutableModule()->title_id()
-                            : 0;
-    auto file_name = fmt::format("{:08X}_stream.xtr", title_id);
-    auto path = trace_stream_path_ / file_name;
-    trace_writer_.Open(xe::path_to_utf8(path).c_str(), title_id);
-    InitializeTrace();
-  }
-#endif
   // Adjust pointer base.
   uint32_t start_ptr = primary_buffer_ptr_ + read_index * sizeof(uint32_t);
   start_ptr = (primary_buffer_ptr_ & ~0x1FFFFFFF) | (start_ptr & 0x1FFFFFFF);
   uint32_t end_ptr = primary_buffer_ptr_ + write_index * sizeof(uint32_t);
   end_ptr = (primary_buffer_ptr_ & ~0x1FFFFFFF) | (end_ptr & 0x1FFFFFFF);
-
-  trace_writer_.WritePrimaryBufferStart(start_ptr, write_index - read_index);
 
   // Execute commands!
 
@@ -1764,8 +1676,6 @@ uint32_t COMMAND_PROCESSOR::ExecutePrimaryBuffer(uint32_t read_index,
   } while (remaining);
 
   COMMAND_PROCESSOR::OnPrimaryBufferEnd();
-
-  trace_writer_.WritePrimaryBufferEnd();
 
   reader_ = old_reader;
   return write_index;

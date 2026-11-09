@@ -126,22 +126,6 @@ void D3D12CommandProcessor::InitializeShaderStorage(
   pipeline_cache_->InitializeShaderStorage(cache_root, title_id, blocking);
 }
 
-void D3D12CommandProcessor::RequestFrameTrace(
-    const std::filesystem::path& root_path) {
-  // Capture with PIX if attached.
-  if (GetD3D12Provider().GetGraphicsAnalysis() != nullptr) {
-    retro_atomic_store_relaxed_int(&pix_capture_requested_, 1);
-    return;
-  }
-  CommandProcessor::RequestFrameTrace(root_path);
-}
-
-void D3D12CommandProcessor::TracePlaybackWroteMemory(uint32_t base_ptr,
-                                                     uint32_t length) {
-  shared_memory_->MemoryInvalidationCallback(base_ptr, length, true);
-  primitive_processor_->MemoryInvalidationCallback(base_ptr, length, true);
-}
-
 void D3D12CommandProcessor::RestoreEdramSnapshot(const void* snapshot) {
   // Starting a new frame because descriptors may be needed.
   if (!BeginSubmission(true)) {
@@ -610,7 +594,7 @@ bool D3D12CommandProcessor::SetupContext() {
   }
 
   shared_memory_ =
-      std::make_unique<D3D12SharedMemory>(*this, *memory_, trace_writer_);
+      std::make_unique<D3D12SharedMemory>(*this, *memory_);
   if (!shared_memory_->Initialize()) {
     XELOGE("Failed to initialize shared memory");
     return false;
@@ -625,7 +609,7 @@ bool D3D12CommandProcessor::SetupContext() {
       ResolveReadCallbackThunk, this);
 
   render_target_cache_ = std::make_unique<D3D12RenderTargetCache>(
-      *register_file_, *memory_, trace_writer_, draw_resolution_scale_x,
+      *register_file_, *memory_, draw_resolution_scale_x,
       draw_resolution_scale_y, *this);
   if (!render_target_cache_->Initialize()) {
     XELOGE("Failed to initialize the render target cache");
@@ -824,7 +808,7 @@ bool D3D12CommandProcessor::SetupContext() {
   }
 
   primitive_processor_ = std::make_unique<D3D12PrimitiveProcessor>(
-      *register_file_, *memory_, trace_writer_, *shared_memory_, *this);
+      *register_file_, *memory_, *shared_memory_, *this);
   if (!primitive_processor_->Initialize()) {
     XELOGE("Failed to initialize the geometric primitive processor");
     return false;
@@ -3372,28 +3356,6 @@ void D3D12CommandProcessor::FlushMemexportStagingReadback() {
                               length);
   }
   memexport_staged_.clear();
-}
-
-void D3D12CommandProcessor::InitializeTrace() {
-  CommandProcessor::InitializeTrace();
-
-  if (!BeginSubmission(false)) {
-    return;
-  }
-  bool render_target_cache_submitted =
-      render_target_cache_->InitializeTraceSubmitDownloads();
-  bool shared_memory_submitted =
-      shared_memory_->InitializeTraceSubmitDownloads();
-  if (!render_target_cache_submitted && !shared_memory_submitted) {
-    return;
-  }
-  AwaitAllQueueOperationsCompletion();
-  if (render_target_cache_submitted) {
-    render_target_cache_->InitializeTraceCompleteDownloads();
-  }
-  if (shared_memory_submitted) {
-    shared_memory_->InitializeTraceCompleteDownloads();
-  }
 }
 
 void D3D12CommandProcessor::ResolveReadCallbackThunk(

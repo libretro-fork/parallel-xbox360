@@ -109,7 +109,6 @@ set(_xe_libretro_libs
   fmt
   xenia-spirv-writer
   mspack
-  snappy
   retro-common
 )
 if(XE_TARGET_X86_64)

@@ -5,9 +5,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 case $(uname -s) in MINGW*|MSYS*|CYGWIN*) suffix=.exe ;; *) suffix= ;; esac
 generator=${CORE_CODEGEN:-"$root/build/make/host/core-codegen$suffix"}
 out="$root/build/tests/bundle-dependencies/fixture-$$"
-mkdir -p "$out/libretro/data/patches" "$out/third_party/snappy/cmake"
-cp "$root/third_party/snappy/CMakeLists.txt" "$root/third_party/snappy/snappy-stubs-public.h.in" "$out/third_party/snappy/"
-cp "$root/third_party/snappy/cmake/config.h.in" "$out/third_party/snappy/cmake/"
+mkdir -p "$out/libretro/data/patches"
 printf '\n' > "$out/libretro/data/xenia_framerate_unlock.txt"
 cd "$out"
 patch='libretro/data/patches/Title #1 $variant;extra.patch.toml'

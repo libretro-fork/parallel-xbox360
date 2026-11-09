@@ -22,7 +22,6 @@
 #include "xenia/gpu/primitive_processor.h"
 #include "xenia/gpu/register_file.h"
 #include "xenia/gpu/shader.h"
-#include "xenia/gpu/trace_writer.h"
 
 DECLARE_bool(log_draws);
 DECLARE_bool(log_resolves);
@@ -786,7 +785,7 @@ struct ResolveInfo {
 // emulated as snorm, with range limited to -1...1, but with correct blending
 // within that range.
 bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
-                    TraceWriter& trace_writer, uint32_t draw_resolution_scale_x,
+                    uint32_t draw_resolution_scale_x,
                     uint32_t draw_resolution_scale_y,
                     bool fixed_rg16_truncated_to_minus_1_to_1,
                     bool fixed_rgba16_truncated_to_minus_1_to_1,

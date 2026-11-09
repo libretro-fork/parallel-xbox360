@@ -20,9 +20,6 @@ LibretroCommandProcessor::LibretroCommandProcessor(
 
 LibretroCommandProcessor::~LibretroCommandProcessor() = default;
 
-void LibretroCommandProcessor::TracePlaybackWroteMemory(uint32_t base_ptr,
-                                                         uint32_t length) {}
-
 void LibretroCommandProcessor::RestoreEdramSnapshot(const void* snapshot) {}
 
 bool LibretroCommandProcessor::SetupContext() {
@@ -60,8 +57,6 @@ bool LibretroCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
 }
 
 bool LibretroCommandProcessor::IssueCopy() { return true; }
-
-void LibretroCommandProcessor::InitializeTrace() {}
 
 // ---- LibretroGraphicsSystem -----------------------------------------------
 

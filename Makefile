@@ -200,8 +200,7 @@ FRONTEND_OBJECTS := $(filter $(BUILD_DIR)/obj/libretro/%,$(OBJECTS))
 CORE_OBJECTS := $(filter-out $(FRONTEND_OBJECTS),$(OBJECTS))
 CORE_ARCHIVE := $(BUILD_DIR)/core.a
 CONFIG_INPUTS := tools/build/core_codegen.c tools/build/core_deflate.c \
- upstream.version $(wildcard libretro/data/*) \
- third_party/snappy/snappy-stubs-public.h.in third_party/snappy/cmake/config.h.in
+ upstream.version $(wildcard libretro/data/*)
 
 .PHONY: all clean generated shaders host-tools help print-config FORCE $(TARGET)
 all: $(TARGET)
@@ -259,8 +258,7 @@ $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/libretro-commo
 endif
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/capstone/%,$(SOURCES_C)))): CPPFLAGS += $(CAPSTONE_DEFS) -DCAPSTONE_USE_SYS_DYN_MEM -Ithird_party/capstone
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter src/xenia/cpu/backend/%,$(SOURCES_CXX)))): CPPFLAGS += $(CAPSTONE_DEFS) -DCAPSTONE_USE_SYS_DYN_MEM
-$(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/mspack/% third_party/snappy/%,$(SOURCES_C) $(SOURCES_CXX)))): CPPFLAGS += -DHAVE_CONFIG_H
-$(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/snappy/%,$(SOURCES_CXX)))): CPPFLAGS := -I$(GEN)/snappy $(CPPFLAGS) -w -DHAVE_CONFIG_H
+$(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/mspack/%,$(SOURCES_C) $(SOURCES_CXX)))): CPPFLAGS += -DHAVE_CONFIG_H
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(filter third_party/libusb/%,$(SOURCES_C)))): CPPFLAGS := -Ithird_party/libusb/$(if $(filter msvc,$(WINDOWS_ABI)),msvc,mingw) $(CPPFLAGS) -w
 ifneq ($(strip $(FFMPEG_SOURCES)),)
 $(addprefix $(BUILD_DIR)/obj/,$(addsuffix .o,$(FFMPEG_SOURCES))): CPPFLAGS += -DHAVE_AV_CONFIG_H -D_USE_MATH_DEFINES -Ithird_party/FFmpeg/libavcodec

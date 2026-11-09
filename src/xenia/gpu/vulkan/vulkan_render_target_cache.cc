@@ -111,12 +111,10 @@ const VulkanRenderTargetCache::ResolveCopyShaderCode
 
 VulkanRenderTargetCache::VulkanRenderTargetCache(
     const RegisterFile& register_file, const Memory& memory,
-    TraceWriter& trace_writer, uint32_t draw_resolution_scale_x,
+    uint32_t draw_resolution_scale_x,
     uint32_t draw_resolution_scale_y, VulkanCommandProcessor& command_processor)
-    : RenderTargetCache(register_file, memory, &trace_writer,
-                        draw_resolution_scale_x, draw_resolution_scale_y),
-      command_processor_(command_processor),
-      trace_writer_(trace_writer) {
+    : RenderTargetCache(register_file, memory, draw_resolution_scale_x, draw_resolution_scale_y),
+      command_processor_(command_processor) {
   const bool ready = xe_gpu_retire_pool_init(&framebuffer_retirement_pool_,
       framebuffer_retirement_slots_, kFramebufferRetirementSlots) != 0;
   assert_true(ready);
@@ -1033,8 +1031,6 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
                                          edram_snapshot_restore_buffer_);
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkFreeMemory, device,
                                          edram_snapshot_restore_buffer_memory_);
-  EndEdramSnapshotReadback();
-
   descriptor_set_pool_sampled_image_x2_.reset();
   descriptor_set_pool_sampled_image_.reset();
 
@@ -1153,7 +1149,7 @@ bool VulkanRenderTargetCache::Resolve(
 
   draw_util::ResolveInfo resolve_info;
   if (!draw_util::GetResolveInfo(
-          register_file(), memory, trace_writer_, draw_resolution_scale_x(),
+          register_file(), memory, draw_resolution_scale_x(),
           draw_resolution_scale_y(), IsFixedRG16TruncatedToMinus1To1(),
           IsFixedRGBA16TruncatedToMinus1To1(), resolve_info)) {
     XELOGE("Resolve: GetResolveInfo failed");
@@ -1200,8 +1196,7 @@ bool VulkanRenderTargetCache::Resolve(
       if (copy_native) {
         // Redo the resolve info at 1x1 so the scale-dependent fields match
         // what the unscaled copy shaders expect.
-        if (!draw_util::GetResolveInfo(register_file(), memory, trace_writer_,
-                                       1, 1, IsFixedRG16TruncatedToMinus1To1(),
+        if (!draw_util::GetResolveInfo(register_file(), memory, 1, 1, IsFixedRG16TruncatedToMinus1To1(),
                                        IsFixedRGBA16TruncatedToMinus1To1(),
                                        resolve_info)) {
           return false;
@@ -4346,78 +4341,6 @@ void VulkanRenderTargetCache::RestoreEdramSnapshot(const void* snapshot) {
       dfn.vkUnmapMemory(device, edram_snapshot_restore_buffer_memory_);
       assert_unhandled_case(GetPath());
   }
-}
-
-void VulkanRenderTargetCache::DumpAllRenderTargetsToEdram() {
-  DumpRenderTargets(0, xenos::kEdramTileCount, 1, xenos::kEdramTileCount,
-                    false);
-}
-
-bool VulkanRenderTargetCache::BeginEdramSnapshotReadback() {
-  if (edram_snapshot_download_buffer_ == VK_NULL_HANDLE) {
-    if (!ui::vulkan::util::CreateDedicatedAllocationBuffer(
-            command_processor_.GetVulkanDevice(), xenos::kEdramSizeBytes,
-            VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            ui::vulkan::util::MemoryPurpose::kReadback,
-            edram_snapshot_download_buffer_,
-            edram_snapshot_download_buffer_memory_)) {
-      XELOGE(
-          "VulkanRenderTargetCache: Failed to create the EDRAM snapshot "
-          "download buffer");
-      return false;
-    }
-  }
-
-  UseEdramBuffer(EdramBufferUsage::kTransferRead);
-  command_processor_.SubmitBarriers(true);
-
-  VkBufferCopy copy_region;
-  copy_region.srcOffset = 0;
-  copy_region.dstOffset = 0;
-  copy_region.size = xenos::kEdramSizeBytes;
-  command_processor_.deferred_command_buffer().CmdVkCopyBuffer(
-      edram_buffer_, edram_snapshot_download_buffer_, 1, &copy_region);
-
-  command_processor_.PushBufferMemoryBarrier(
-      edram_snapshot_download_buffer_, 0, VK_WHOLE_SIZE,
-      VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
-      VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
-  return true;
-}
-
-const void* VulkanRenderTargetCache::MapEdramSnapshotReadback() {
-  if (edram_snapshot_download_buffer_memory_ == VK_NULL_HANDLE) {
-    return nullptr;
-  }
-  const ui::vulkan::VulkanDevice* const vulkan_device =
-      command_processor_.GetVulkanDevice();
-  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
-  void* download_mapping;
-  if (dfn.vkMapMemory(vulkan_device->device(),
-                      edram_snapshot_download_buffer_memory_, 0, VK_WHOLE_SIZE,
-                      0, &download_mapping) != VK_SUCCESS) {
-    return nullptr;
-  }
-  edram_snapshot_download_mapped_ = true;
-  return download_mapping;
-}
-
-void VulkanRenderTargetCache::EndEdramSnapshotReadback() {
-  if (edram_snapshot_download_buffer_memory_ == VK_NULL_HANDLE) {
-    return;
-  }
-  const ui::vulkan::VulkanDevice* const vulkan_device =
-      command_processor_.GetVulkanDevice();
-  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
-  const VkDevice device = vulkan_device->device();
-  if (edram_snapshot_download_mapped_) {
-    dfn.vkUnmapMemory(device, edram_snapshot_download_buffer_memory_);
-    edram_snapshot_download_mapped_ = false;
-  }
-  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyBuffer, device,
-                                         edram_snapshot_download_buffer_);
-  ui::vulkan::util::DestroyAndNullHandle(
-      dfn.vkFreeMemory, device, edram_snapshot_download_buffer_memory_);
 }
 
 void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,

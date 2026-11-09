@@ -12,10 +12,8 @@
 #include <atomic>
 #include <retro_atomic.h>
 #include <algorithm>
-#include <fstream>
 
 #include "third_party/fmt/include/fmt/format.h"
-#include "third_party/stb/stb_image_write.h"
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
@@ -220,7 +218,6 @@ CommandProcessor::CommandProcessor(GraphicsSystem* graphics_system,
       kernel_state_(kernel_state),
       graphics_system_(graphics_system),
       register_file_(graphics_system_->register_file()),
-      trace_writer_(graphics_system->memory()->physical_membase()),
       worker_running_(1),
       write_ptr_index_event_(xe::threading::Event::CreateAutoResetEvent(false)),
       write_ptr_index_(0) {
@@ -289,7 +286,6 @@ void CommandProcessor::Shutdown() {
     return;
   }
 
-  EndTracing();
   xe_gpu_tasks_close(pending_tasks_.get());
 
   retro_atomic_store_release_int(&worker_running_, 0);
@@ -303,43 +299,6 @@ void CommandProcessor::Shutdown() {
 
 void CommandProcessor::InitializeShaderStorage(
     const std::filesystem::path& cache_root, uint32_t title_id, bool blocking) {
-}
-
-void CommandProcessor::RequestFrameTrace(
-    const std::filesystem::path& root_path) {
-  if (trace_state_ == TraceState::kStreaming) {
-    XELOGE("Streaming trace; cannot also trace frame.");
-    return;
-  }
-  if (trace_state_ == TraceState::kSingleFrame) {
-    XELOGE("Frame trace already pending; ignoring.");
-    return;
-  }
-  trace_state_ = TraceState::kSingleFrame;
-  trace_frame_path_ = root_path;
-}
-
-void CommandProcessor::BeginTracing(const std::filesystem::path& root_path) {
-  if (trace_state_ == TraceState::kStreaming) {
-    XELOGE("Streaming already active; ignoring request.");
-    return;
-  }
-  if (trace_state_ == TraceState::kSingleFrame) {
-    XELOGE("Frame trace pending; ignoring streaming request.");
-    return;
-  }
-  // Streaming starts on the next primary buffer execute.
-  trace_state_ = TraceState::kStreaming;
-  trace_stream_path_ = root_path;
-}
-
-void CommandProcessor::EndTracing() {
-  if (!trace_writer_.is_open()) {
-    return;
-  }
-  assert_true(trace_state_ == TraceState::kStreaming);
-  trace_state_ = TraceState::kDisabled;
-  trace_writer_.Close();
 }
 
 void CommandProcessor::RestoreRegisters(uint32_t first_register,
@@ -1040,7 +999,6 @@ void CommandProcessor::MakeCoherent() {
 }
 
 void CommandProcessor::PrepareForWait() {
-  trace_writer_.Flush();
   if (zpd_mode_ == ZPDMode::kStrict && zpd_awaited_report_count_) {
     PrepareZPDForWait();
   }
@@ -1050,52 +1008,6 @@ void CommandProcessor::PrepareForWait() {
 }
 
 void CommandProcessor::ReturnFromWait() {}
-
-void CommandProcessor::WriteTraceFrameScreenshot() {
-  if (trace_frame_file_path_.empty()) {
-    return;
-  }
-  std::filesystem::path png_path = trace_frame_file_path_;
-  png_path.replace_extension(".png");
-  trace_frame_file_path_.clear();
-
-  ui::Presenter* presenter =
-      graphics_system_ ? graphics_system_->presenter() : nullptr;
-  ui::RawImage image;
-  if (!presenter || !presenter->CaptureGuestOutput(image)) {
-    XELOGE("Failed to capture the guest output of the traced frame");
-    return;
-  }
-
-  auto file = std::ofstream(png_path, std::ios::binary);
-  if (!file.is_open()) {
-    XELOGE("Failed to open {} for the traced frame screenshot", png_path);
-    return;
-  }
-  if (!stbi_write_png_to_func(
-          [](void* context, void* data, int size) {
-            reinterpret_cast<std::ofstream*>(context)->write(
-                reinterpret_cast<const char*>(data), size);
-          },
-          &file, int(image.width), int(image.height), 4, image.data.data(),
-          int(image.stride))) {
-    XELOGE("Failed to write the traced frame screenshot to {}", png_path);
-    return;
-  }
-  XELOGI("Traced frame screenshot written to {}", png_path);
-}
-
-void CommandProcessor::InitializeTrace() {
-  // Write the initial register values, to be loaded directly into the
-  // RegisterFile since all registers, including those that may have side
-  // effects on setting, will be saved.
-  trace_writer_.WriteRegisters(
-      0, reinterpret_cast<const uint32_t*>(register_file_->values),
-      RegisterFile::kRegisterCount, false);
-
-  trace_writer_.WriteGammaRamp(gamma_ramp_256_entry_table(),
-                               gamma_ramp_pwl_rgb(), gamma_ramp_rw_component_);
-}
 
 void CommandProcessor::BeginVIZQuery(uint32_t id) {
   if (active_segment_.viz.generation != kInvalidVIZGeneration) {

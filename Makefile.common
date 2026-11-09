@@ -55,7 +55,7 @@ endif
 
 INCLUDE_DIRS := $(GEN) $(GEN)/generated \
  . src libretro third_party third_party/capstone/include third_party/fmt/include \
- third_party/stb third_party/snappy \
+ third_party/stb \
  third_party/libretro-common/include third_party/mspack \
  third_party/asio/include third_party/tomlplusplus/include third_party/llvm/include \
  third_party/Vulkan-Headers/include third_party/aes_128 \
@@ -70,8 +70,6 @@ SOURCES_C += third_party/aes_128/unroll/aes.c \
 SOURCES_C += $(filter-out %/X86ATTInstPrinter.c,$(wildcard third_party/capstone/arch/$(CAPSTONE_ARCH)/*.c))
 SOURCES_CXX += third_party/fmt/src/format.cc third_party/fmt/src/os.cc \
  third_party/mspack/logging.cc \
- third_party/snappy/snappy.cc \
- third_party/snappy/snappy-sinksource.cc third_party/snappy/snappy-stubs-internal.cc \
  third_party/zarchive/src/zarchivewriter.cpp
 SOURCES_CXX += $(wildcard src/xenia/gpu/spirv/*.cpp)
 

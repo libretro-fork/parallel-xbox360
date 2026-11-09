@@ -1762,7 +1762,6 @@ bool BaseHeap::Save(ByteStream* stream, bool contents) {
       continue;
     }
 
-    // TODO(DrChat): write compressed with snappy.
     if (page.state & kMemoryAllocationCommit) {
       if (stream->measuring()) {
         stream->Advance(page_size_);

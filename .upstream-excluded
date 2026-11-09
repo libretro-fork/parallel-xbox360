@@ -265,3 +265,9 @@ src/xenia/base/console_app_main_win.cc
 src/xenia/base/console_app_main_posix.cc
 src/xenia/base/console_app_main_android.cc
 third_party/disruptorplus
+
+third_party/snappy
+src/xenia/gpu/trace_writer.h
+src/xenia/gpu/trace_writer.cc
+src/xenia/gpu/trace_protocol.h
+src/xenia/gpu/trace_io_adapter.h

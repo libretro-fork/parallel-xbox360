@@ -171,8 +171,6 @@ class VulkanCommandProcessor final : public CommandProcessor {
   void InvalidateGpuMemory() override;
   void ClearReadbackBuffers() override;
 
-  void TracePlaybackWroteMemory(uint32_t base_ptr, uint32_t length) override;
-
   void InitializeShaderStorage(
       const std::filesystem::path& cache_root, uint32_t title_id, bool blocking) override;
 
@@ -404,8 +402,6 @@ class VulkanCommandProcessor final : public CommandProcessor {
                  IndexBufferInfo* index_buffer_info,
                  bool major_mode_explicit) override;
   bool IssueCopy() override;
-
-  void InitializeTrace() override;
 
  private:
   struct CommandBuffer {

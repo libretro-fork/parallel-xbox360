@@ -109,8 +109,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   };
 
   VulkanRenderTargetCache(const RegisterFile& register_file,
-                          const Memory& memory, TraceWriter& trace_writer,
-                          uint32_t draw_resolution_scale_x,
+                          const Memory& memory, uint32_t draw_resolution_scale_x,
                           uint32_t draw_resolution_scale_y,
                           VulkanCommandProcessor& command_processor);
   ~VulkanRenderTargetCache();
@@ -303,7 +302,6 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
           EdramBufferModificationStatus::kViaFragmentShaderInterlock);
 
   VulkanCommandProcessor& command_processor_;
-  TraceWriter& trace_writer_;
 
   Path path_ = Path::kHostRenderTargets;
 
@@ -324,11 +322,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   VkDeviceMemory edram_buffer_memory_ = VK_NULL_HANDLE;
   VkBuffer edram_buffer_ = VK_NULL_HANDLE;
   EdramBufferUsage edram_buffer_usage_;
-  VkBuffer edram_snapshot_download_buffer_ = VK_NULL_HANDLE;
-  VkDeviceMemory edram_snapshot_download_buffer_memory_ = VK_NULL_HANDLE;
-  bool edram_snapshot_download_mapped_ = false;
-  // Kept until shutdown so it outlives the copy it feeds - trace restore
-  // happens once per replay.
+  // Kept until shutdown so it outlives the copy it feeds.
   VkBuffer edram_snapshot_restore_buffer_ = VK_NULL_HANDLE;
   VkDeviceMemory edram_snapshot_restore_buffer_memory_ = VK_NULL_HANDLE;
   EdramBufferModificationStatus edram_buffer_modification_status_ =
@@ -703,11 +697,6 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   void DumpRenderTargets(uint32_t dump_base, uint32_t dump_row_length_used,
                          uint32_t dump_rows, uint32_t dump_pitch,
                          bool native_layout, bool rectangles_prepared = false);
-
-  void DumpAllRenderTargetsToEdram() override;
-  bool BeginEdramSnapshotReadback() override;
-  const void* MapEdramSnapshotReadback() override;
-  void EndEdramSnapshotReadback() override;
 
  public:
   void RestoreEdramSnapshot(const void* snapshot);

@@ -33,7 +33,6 @@
 
 #include "xenia/gpu/dxil/edram_dump.h"
 #include "xenia/gpu/dxil/edram_transfer.h"
-#include "xenia/gpu/trace_writer.h"
 #include "xenia/gpu/xenos.h"
 #include "xenia/ui/d3d12/d3d12_provider.h"
 #include "xenia/ui/d3d12/d3d12_util.h"
@@ -1067,7 +1066,6 @@ void D3D12RenderTargetCache::Shutdown(bool from_destructor) {
   ui::d3d12::util::ReleaseAndNull(resolve_copy_root_signature_);
 
   edram_snapshot_restore_pool_.reset();
-  ui::d3d12::util::ReleaseAndNull(edram_snapshot_download_buffer_);
 
   ui::d3d12::util::ReleaseAndNull(edram_buffer_descriptor_heap_);
   ui::d3d12::util::ReleaseAndNull(edram_buffer_);
@@ -1279,7 +1277,7 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
   draw_util::ResolveInfo resolve_info;
   bool fixed_16_truncated_to_minus_1_to_1 = IsFixed16TruncatedToMinus1To1();
   if (!draw_util::GetResolveInfo(
-          register_file(), memory, trace_writer_, draw_resolution_scale_x(),
+          register_file(), memory, draw_resolution_scale_x(),
           draw_resolution_scale_y(), fixed_16_truncated_to_minus_1_to_1,
           fixed_16_truncated_to_minus_1_to_1, resolve_info)) {
     return false;
@@ -1321,8 +1319,7 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
       if (copy_native) {
         // Redo the resolve info at 1x1 so the scale-dependent fields match
         // what the unscaled copy shaders expect.
-        if (!draw_util::GetResolveInfo(register_file(), memory, trace_writer_,
-                                       1, 1, fixed_16_truncated_to_minus_1_to_1,
+        if (!draw_util::GetResolveInfo(register_file(), memory, 1, 1, fixed_16_truncated_to_minus_1_to_1,
                                        fixed_16_truncated_to_minus_1_to_1,
                                        resolve_info)) {
           return false;
@@ -1563,66 +1560,6 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
   }
 
   return copied && cleared;
-}
-
-void D3D12RenderTargetCache::DumpAllRenderTargetsToEdram() {
-  DumpRenderTargets(0, xenos::kEdramTileCount, 1, xenos::kEdramTileCount,
-                    false);
-}
-
-bool D3D12RenderTargetCache::BeginEdramSnapshotReadback() {
-  if (!edram_snapshot_download_buffer_) {
-    D3D12_RESOURCE_DESC edram_snapshot_download_buffer_desc;
-    ui::d3d12::util::FillBufferResourceDesc(edram_snapshot_download_buffer_desc,
-                                            xenos::kEdramSizeBytes,
-                                            D3D12_RESOURCE_FLAG_NONE);
-    const ui::d3d12::D3D12Provider& provider =
-        command_processor_.GetD3D12Provider();
-    ID3D12Device* device = provider.GetDevice();
-    if (FAILED(device->CreateCommittedResource(
-            &ui::d3d12::util::kHeapPropertiesReadback,
-            provider.GetHeapFlagCreateNotZeroed(),
-            &edram_snapshot_download_buffer_desc,
-            D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-            IID_PPV_ARGS(&edram_snapshot_download_buffer_)))) {
-      XELOGE(
-          "D3D12RenderTargetCache: Failed to create a EDRAM snapshot download "
-          "buffer");
-      return false;
-    }
-  }
-  TransitionEdramBuffer(D3D12_RESOURCE_STATE_COPY_SOURCE);
-  command_processor_.SubmitBarriers();
-  command_processor_.GetDeferredCommandList().D3DCopyBufferRegion(
-      edram_snapshot_download_buffer_, 0, edram_buffer_, 0,
-      xenos::kEdramSizeBytes);
-  return true;
-}
-
-const void* D3D12RenderTargetCache::MapEdramSnapshotReadback() {
-  if (!edram_snapshot_download_buffer_) {
-    return nullptr;
-  }
-  void* download_mapping;
-  if (FAILED(edram_snapshot_download_buffer_->Map(0, nullptr,
-                                                  &download_mapping))) {
-    return nullptr;
-  }
-  edram_snapshot_download_mapped_ = true;
-  return download_mapping;
-}
-
-void D3D12RenderTargetCache::EndEdramSnapshotReadback() {
-  if (!edram_snapshot_download_buffer_) {
-    return;
-  }
-  if (edram_snapshot_download_mapped_) {
-    D3D12_RANGE download_write_range = {};
-    edram_snapshot_download_buffer_->Unmap(0, &download_write_range);
-    edram_snapshot_download_mapped_ = false;
-  }
-  edram_snapshot_download_buffer_->Release();
-  edram_snapshot_download_buffer_ = nullptr;
 }
 
 void D3D12RenderTargetCache::RestoreEdramSnapshot(const void* snapshot) {

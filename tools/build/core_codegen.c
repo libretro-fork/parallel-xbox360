@@ -205,21 +205,6 @@ static void output(const char *directory, const char *name, Buffer *value) {
   memset(value, 0, sizeof(*value));
 }
 
-static void replace(Buffer *value, const char *from, const char *to) {
-  Buffer result = {0, 0, 0};
-  const char *cursor;
-  const char *match;
-  cursor = value->data;
-  while ((match = strstr(cursor, from)) != NULL) {
-    append(&result, cursor, (size_t)(match - cursor));
-    text(&result, to);
-    cursor = match + strlen(from);
-  }
-  text(&result, cursor);
-  free(value->data);
-  *value = result;
-}
-
 static void quoted(Buffer *value, const char *string) {
   const unsigned char *cursor;
   char octal[8];
@@ -423,62 +408,6 @@ static void bundle(const char *out) {
   free_files(&files);
 }
 
-static int enabled(const char *name, int windows, int arm64, int msvc) {
-  const char *common[] = {"HAVE_ATTRIBUTE_ALWAYS_INLINE", "HAVE_BUILTIN_CTZ",
-    "HAVE_BUILTIN_EXPECT", "HAVE_BUILTIN_PREFETCH", NULL};
-  const char *posix[] = {"HAVE_FUNC_MMAP", "HAVE_FUNC_SYSCONF", "HAVE_SYS_MMAN_H",
-    "HAVE_SYS_RESOURCE_H", "HAVE_SYS_TIME_H", "HAVE_SYS_UIO_H", "HAVE_UNISTD_H", NULL};
-  int i;
-  for (i = 0; common[i]; ++i) if (!strcmp(name, common[i])) return !msvc;
-  if (!windows)
-    for (i = 0; posix[i]; ++i) if (!strcmp(name, posix[i])) return 1;
-  return (windows && !strcmp(name, "HAVE_WINDOWS_H")) ||
-    (arm64 && !strcmp(name, "SNAPPY_HAVE_NEON")) ||
-    (!arm64 && (!strcmp(name, "SNAPPY_HAVE_SSSE3") ||
-                !strcmp(name, "SNAPPY_HAVE_X86_CRC32")));
-}
-
-static void configs(const char *out, int windows, int arm64, int msvc) {
-  Buffer file;
-  Buffer result = {0, 0, 0};
-  char digits[32];
-  char token[128];
-  const char *cursor;
-  const char *match;
-  const char *end;
-  unsigned int major = 0;
-  unsigned int minor = 0;
-  unsigned int patch = 0;
-  int i;
-  file = read_file("third_party/snappy/CMakeLists.txt", 1);
-  match = strstr(file.data, "project(Snappy VERSION ");
-  if (!match || sscanf(match, "project(Snappy VERSION %u.%u.%u", &major, &minor, &patch) != 3)
-    fail("cannot read Snappy version", "third_party/snappy/CMakeLists.txt");
-  free(file.data);
-  file = read_file("third_party/snappy/snappy-stubs-public.h.in", 1);
-  sprintf(digits, "%u", major); replace(&file, "${PROJECT_VERSION_MAJOR}", digits);
-  sprintf(digits, "%u", minor); replace(&file, "${PROJECT_VERSION_MINOR}", digits);
-  sprintf(digits, "%u", patch); replace(&file, "${PROJECT_VERSION_PATCH}", digits);
-  replace(&file, "${HAVE_SYS_UIO_H_01}", windows ? "0" : "1");
-  output(out, "snappy-stubs-public.h", &file);
-  file = read_file("third_party/snappy/cmake/config.h.in", 1);
-  cursor = file.data;
-  while ((match = strstr(cursor, "#cmakedefine01 ")) != NULL) {
-    append(&result, cursor, (size_t)(match - cursor));
-    end = match + strlen("#cmakedefine01 ");
-    i = 0;
-    while ((*end == '_' || (*end >= 'A' && *end <= 'Z') ||
-            (*end >= '0' && *end <= '9')) && i < (int)sizeof(token) - 1)
-      token[i++] = *end++;
-    token[i] = 0;
-    text(&result, "#define "); text(&result, token);
-    text(&result, enabled(token, windows, arm64, msvc) ? " 1" : " 0");
-    cursor = end;
-  }
-  text(&result, cursor); free(file.data);
-  output(out, "snappy/config.h", &result);
-}
-
 static const char *environment(const char *name, const char *fallback) {
   const char *value;
   value = getenv(name);
@@ -584,9 +513,6 @@ static void sdk_overlay(const char *out, const char *root) {
 int main(int argc, char **argv) {
   Buffer value = {0, 0, 0};
   Buffer data;
-  int windows;
-  int arm64;
-  int msvc;
   int i;
   const char *variable;
   const char *cursor;
@@ -618,14 +544,10 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "response")) text(&value, "\n");
     write_file(argv[2], &value); free(value.data);
   } else if (!strcmp(argv[1], "inputs")) {
-    windows = 0; arm64 = 0; msvc = 0;
     for (i = 3; i < argc; ++i) {
-      if (!strcmp(argv[i], "windows")) windows = 1;
-      else if (!strcmp(argv[i], "aarch64")) arm64 = 1;
-      else if (!strcmp(argv[i], "msvc")) msvc = 1;
-      else fail("unknown option", argv[i]);
+      if (strcmp(argv[i], "windows") && strcmp(argv[i], "aarch64") &&
+          strcmp(argv[i], "msvc")) fail("unknown option", argv[i]);
     }
-    configs(argv[2], windows, arm64, msvc);
     bundle(argv[2]); version_header(argv[2]);
     data = read_file("libretro/data/xenia_framerate_unlock.txt", 1);
     text(&value, "#include <cstddef>\nextern const unsigned char xenia_libretro_framerate_unlock[] = {");

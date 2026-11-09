@@ -1,0 +1,51 @@
+Snappy/GPU capture removal, 2026-11-09
+Parent:26d55acff1c63b288ab6f021cc0cfc768de8adba
+
+Removed third_party/snappy, its CMake and static-Make compile/link/include
+entries and C89-generator configuration templates. Removed GPU trace capture,
+protocol, Snappy adapters, custom VFS trace owner, screenshot writer, CVar and
+CMake switches, callback APIs and caller parameters. Removed trace-only shared
+memory/EDRAM downloads, buffers, ranges and recording hooks from Vulkan/D3D12.
+Normal GPU uploads, memexport/resolve readbacks and snapshot restoration
+primitives remain. This is removal of optional debugging machinery, not a claim
+that all GPU copies disappeared or that normal Release gameplay is faster.
+Trace-only fixtures/runners/CI steps were deleted with the feature. Upstream
+exclusions cover the removed dependency and capture files. Historical optional
+Snappy references in unused FFmpeg sources do not link the deleted dependency.
+
+Validation
+- Full MSVC Release core build,3 jobs: PASS. The previous snappy.lib was moved
+  out of the build directory before the final link and tests, not reused.
+  Ninja target/link inputs have no Snappy archive, header or source dependency.
+- Static Make dry run: PASS; no Snappy input or generated-header dependency.
+  This is not a full MinGW core build.
+- Native C89 input generator /W4 /WX: PASS; fresh outputs contain only the patch
+  bundle, version and game data, without Snappy configuration.
+- Actual generator + GNU Make dependency tests, Linux ASan/UBSan: PASS cold,
+  patch edit/removal/addition/no-op and hostile filename characters.
+- Actual native texture dirty/unique fixtures: PASS4096 mask transitions,
+  20000 callback handshakes, aliases, signed ownership and watch/retry paths.
+- Native render-target fixture: PASS774400 ownership transfers,20000 moving
+  EDRAM bases,10000 resolve queries and10000 fixed-storage output comparisons.
+  Its existing Windows linker runner omitted core_disc.c.obj; add that actual
+  frontend dependency, matching the forward-flow runner.
+- Actual GPU sampling: PASS384 cases, signed/unsigned/mixed,2D/3D, aliases/guards.
+- Actual GPU arithmetic: PASS704 exact numerical cases, RTX5090.
+- Resolve readback/concurrency: PASS6.4M key stores,50000 reader passes,
+  20000 stable record leases. No normal readback path was removed for capture.
+- Real DLL teardown: PASS three invalid-content opens/closes, repeated deinit,
+  no logging workers, no surviving core-owned workers and successful unload.
+
+Shader contract: same version8 corpus/harness, seven alternating/reverse
+parent/candidate pairs.768 Vulkan and80 D3D12/WARP metrics: zero threshold
+alarms; all recorded module manifests match byte-for-byte. Baseline executables
+were sealed from the preceding logging commit before capture removal. Private
+application caches; driver internal/disk cache not certified cold. No new
+shader lowering, PSO-key normalization or persistent-cache schema is introduced.
+Existing first-use shader compilation stalls remain unresolved. These fixtures
+do not certify cross-game cold-play fluidity or a full platform build matrix.
+
+Raw local evidence: C:/git/remove-snappy/ (build/generator/renderer/teardown logs,
+shader-comparison raw samples/manifests/identities). Installed cores and live
+user caches were not modified. Final header cleanup after building changes only
+orphaned comments; production instructions and data match the tested build.

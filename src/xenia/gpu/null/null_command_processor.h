@@ -25,8 +25,6 @@ class NullCommandProcessor : public CommandProcessor {
                        kernel::KernelState* kernel_state);
   ~NullCommandProcessor();
 
-  void TracePlaybackWroteMemory(uint32_t base_ptr, uint32_t length) override;
-
   void RestoreEdramSnapshot(const void* snapshot) override;
 
  private:
@@ -50,8 +48,6 @@ class NullCommandProcessor : public CommandProcessor {
   void PushDebugMarker(const char* format, ...) {}
   void PopDebugMarker() {}
   void InsertDebugMarker(const char* format, ...) {}
-
-  void InitializeTrace() override;
 };
 
 }  // namespace null

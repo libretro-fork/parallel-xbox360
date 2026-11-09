@@ -128,32 +128,6 @@ target_include_directories(mspack PUBLIC mspack)
 target_link_libraries(mspack PUBLIC xenia-base)
 
 # ==============================================================================
-# snappy
-# ==============================================================================
-# Snappy configuration is generated into the build directory
-# with a configure of their own. A cross build configures them for the
-# target, not for the build machine (Release: the debug CRT is not part of a
-# cross toolchain's runtime).
-set(_xe_nested_toolchain_flag "")
-if(CMAKE_TOOLCHAIN_FILE)
-  set(_xe_nested_toolchain_flag "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
-    -G "${CMAKE_GENERATOR}" -DCMAKE_BUILD_TYPE=Release)
-endif()
-add_library(snappy STATIC
-  snappy/snappy-internal.h
-  snappy/snappy-sinksource.cc
-  snappy/snappy-sinksource.h
-  snappy/snappy-stubs-internal.cc
-  snappy/snappy-stubs-internal.h
-  ${XENIA_GENERATED_DIR}/snappy-stubs-public.h
-  snappy/snappy.cc
-  snappy/snappy.h
-)
-target_include_directories(snappy BEFORE PRIVATE ${XENIA_GENERATED_DIR}/snappy)
-target_include_directories(snappy PUBLIC snappy ${XENIA_GENERATED_DIR})
-target_compile_definitions(snappy PRIVATE HAVE_CONFIG_H)
-
-# ==============================================================================
 # Selected owned RetroArch libretro-common primitives
 # ==============================================================================
 add_library(retro-common STATIC

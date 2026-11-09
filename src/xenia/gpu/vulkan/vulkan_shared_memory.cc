@@ -37,11 +37,9 @@ namespace vulkan {
 
 VulkanSharedMemory::VulkanSharedMemory(
     VulkanCommandProcessor& command_processor, Memory& memory,
-    TraceWriter& trace_writer,
     VkPipelineStageFlags guest_shader_pipeline_stages)
     : SharedMemory(memory),
       command_processor_(command_processor),
-      trace_writer_(trace_writer),
       guest_shader_pipeline_stages_(guest_shader_pipeline_stages) {}
 
 VulkanSharedMemory::~VulkanSharedMemory() { Shutdown(true); }
@@ -400,8 +398,6 @@ void VulkanSharedMemory::TryInitializeHostBuffer() {
 }
 
 void VulkanSharedMemory::Shutdown(bool from_destructor) {
-  ResetTraceDownload();
-
   upload_buffer_pool_.reset();
 
   const ui::vulkan::VulkanDevice* const vulkan_device =
@@ -485,88 +481,6 @@ void VulkanSharedMemory::Use(Usage usage,
   last_written_range_ = written_range;
 }
 
-bool VulkanSharedMemory::InitializeTraceSubmitDownloads() {
-  ResetTraceDownload();
-  PrepareForTraceDownload();
-  uint32_t download_page_count = trace_download_page_count();
-  if (!download_page_count) {
-    return false;
-  }
-
-  if (!ui::vulkan::util::CreateDedicatedAllocationBuffer(
-          command_processor_.GetVulkanDevice(),
-          download_page_count << page_size_log2(),
-          VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-          ui::vulkan::util::MemoryPurpose::kReadback, trace_download_buffer_,
-          trace_download_buffer_memory_)) {
-    XELOGE(
-        "Shared memory: Failed to create a {} KB GPU-written memory download "
-        "buffer for frame tracing",
-        download_page_count << page_size_log2() >> 10);
-    ResetTraceDownload();
-    return false;
-  }
-
-  Use(Usage::kRead);
-  command_processor_.SubmitBarriers(true);
-  DeferredCommandBuffer& command_buffer =
-      command_processor_.deferred_command_buffer();
-
-  command_processor_.InsertDebugMarker(
-      "Trace Download: %u KB, %zu ranges",
-      download_page_count << page_size_log2() >> 10,
-      trace_download_ranges().size());
-
-  size_t download_range_count = trace_download_ranges().size();
-  VkBufferCopy* download_regions = command_buffer.CmdCopyBufferEmplace(
-      buffer_, trace_download_buffer_, uint32_t(download_range_count));
-  VkDeviceSize download_buffer_offset = 0;
-  for (size_t i = 0; i < download_range_count; ++i) {
-    VkBufferCopy& download_region = download_regions[i];
-    const std::pair<uint32_t, uint32_t>& download_range =
-        trace_download_ranges()[i];
-    download_region.srcOffset = download_range.first;
-    download_region.dstOffset = download_buffer_offset;
-    download_region.size = download_range.second;
-    download_buffer_offset += download_range.second;
-  }
-
-  command_processor_.PushBufferMemoryBarrier(
-      trace_download_buffer_, 0, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_TRANSFER_BIT,
-      VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-      VK_ACCESS_HOST_READ_BIT);
-
-  return true;
-}
-
-void VulkanSharedMemory::InitializeTraceCompleteDownloads() {
-  if (!trace_download_buffer_memory_) {
-    return;
-  }
-  const ui::vulkan::VulkanDevice* const vulkan_device =
-      command_processor_.GetVulkanDevice();
-  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
-  const VkDevice device = vulkan_device->device();
-  void* download_mapping;
-  if (dfn.vkMapMemory(device, trace_download_buffer_memory_, 0, VK_WHOLE_SIZE,
-                      0, &download_mapping) == VK_SUCCESS) {
-    uint32_t download_buffer_offset = 0;
-    for (const auto& download_range : trace_download_ranges()) {
-      trace_writer_.WriteMemoryRead(
-          download_range.first, download_range.second,
-          reinterpret_cast<const uint8_t*>(download_mapping) +
-              download_buffer_offset);
-      download_buffer_offset += download_range.second;
-    }
-    dfn.vkUnmapMemory(device, trace_download_buffer_memory_);
-  } else {
-    XELOGE(
-        "Shared memory: Failed to map the GPU-written memory download buffer "
-        "for frame tracing");
-  }
-  ResetTraceDownload();
-}
-
 bool VulkanSharedMemory::AllocateSparseHostGpuMemoryRange(
     uint32_t offset_allocations, uint32_t length_allocations) {
   if (!length_allocations) {
@@ -619,9 +533,6 @@ bool VulkanSharedMemory::UploadRanges(
     // The buffer aliases guest RAM - nothing to copy, just mark the pages valid
     // so RequestRange stops asking to upload them.
     for (uint32_t i = 0; i < num_upload_ranges; ++i) {
-      trace_writer_.WriteMemoryRead(
-          upload_page_ranges[i].first << page_size_log2(),
-          upload_page_ranges[i].second << page_size_log2());
       MakeRangeValid(upload_page_ranges[i].first << page_size_log2(),
                      upload_page_ranges[i].second << page_size_log2(), false);
     }
@@ -680,9 +591,6 @@ bool VulkanSharedMemory::UploadRanges(
   for (unsigned int i = 0; i < num_upload_ranges; ++i) {
     uint32_t upload_range_start = upload_page_ranges[i].first;
     uint32_t upload_range_length = upload_page_ranges[i].second;
-    trace_writer_.WriteMemoryRead(upload_range_start << page_size_log2(),
-                                  upload_range_length << page_size_log2());
-
     if (upload_range_length > 0 && !cvars::gpu_allow_invalid_upload_range) {
       const uint32_t range_start_addr = upload_range_start << page_size_log2();
       const uint32_t upload_range_last_page =
@@ -796,18 +704,6 @@ void VulkanSharedMemory::GetUsageMasks(Usage usage,
     default:
       assert_unhandled_case(usage);
   }
-}
-
-void VulkanSharedMemory::ResetTraceDownload() {
-  const ui::vulkan::VulkanDevice* const vulkan_device =
-      command_processor_.GetVulkanDevice();
-  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
-  const VkDevice device = vulkan_device->device();
-  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyBuffer, device,
-                                         trace_download_buffer_);
-  ui::vulkan::util::DestroyAndNullHandle(dfn.vkFreeMemory, device,
-                                         trace_download_buffer_memory_);
-  ReleaseTraceDownloadRanges();
 }
 
 }  // namespace vulkan

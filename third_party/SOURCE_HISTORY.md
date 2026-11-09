@@ -24,7 +24,6 @@ and nested sample dependencies were omitted.
 | `third_party/miniaudio` (removed: standalone achievement sound) | `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d` |
 | `third_party/pugixml` | `b2b466403084667c90a0f0cc4e960405cfc8117a` |
 | `third_party/rapidjson` (removed: unused by the core) | `7c73dd7de7c4f14379b781418c6e947ad464c818` |
-| `third_party/snappy` | `6af9287fbdb913f0794d0148c6aa43b58e63c8e3` |
 | `third_party/tomlplusplus` | `708fff700f36ab3c2ab107b984ec9f3b8be5f055` |
 | `third_party/utfcpp` | `65701fe00700577f9f4e9b96d682bd7cfcc0b76e` |
 | `third_party/xbyak` | `9d8ff37306f39c6a71cf998078cbe880ce5dc224` |

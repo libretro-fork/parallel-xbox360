@@ -11,8 +11,6 @@
 #define XENIA_GPU_GPU_FLAGS_H_
 #include "xenia/base/cvar.h"
 
-DECLARE_path(trace_gpu_prefix);
-DECLARE_bool(trace_gpu_stream);
 
 DECLARE_path(dump_shaders);
 

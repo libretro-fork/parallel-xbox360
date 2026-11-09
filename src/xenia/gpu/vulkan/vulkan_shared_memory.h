@@ -17,7 +17,6 @@
 
 #include "xenia/base/cvar.h"
 #include "xenia/gpu/shared_memory.h"
-#include "xenia/gpu/trace_writer.h"
 #include "xenia/memory.h"
 #include "xenia/ui/vulkan/vulkan_upload_buffer_pool.h"
 
@@ -30,7 +29,6 @@ class VulkanCommandProcessor;
 class VulkanSharedMemory : public SharedMemory {
  public:
   VulkanSharedMemory(VulkanCommandProcessor& command_processor, Memory& memory,
-                     TraceWriter& trace_writer,
                      VkPipelineStageFlags guest_shader_pipeline_stages);
   ~VulkanSharedMemory() override;
 
@@ -66,9 +64,6 @@ class VulkanSharedMemory : public SharedMemory {
   // are then unnecessary.
   bool is_zero_copy() const { return zero_copy_; }
 
-  // Returns true if any downloads were submitted to the command processor.
-  bool InitializeTraceSubmitDownloads();
-  void InitializeTraceCompleteDownloads();
 
  protected:
   bool AllocateSparseHostGpuMemoryRange(uint32_t offset_allocations,
@@ -82,7 +77,6 @@ class VulkanSharedMemory : public SharedMemory {
                      VkAccessFlags& access_mask) const;
 
   VulkanCommandProcessor& command_processor_;
-  TraceWriter& trace_writer_;
   VkPipelineStageFlags guest_shader_pipeline_stages_;
 
   // Creates a non-sparse buffer bound to imported guest RAM
@@ -117,10 +111,6 @@ class VulkanSharedMemory : public SharedMemory {
   std::unique_ptr<ui::vulkan::VulkanUploadBufferPool> upload_buffer_pool_;
   std::vector<VkBufferCopy> upload_regions_;
 
-  // Created temporarily, only for downloading.
-  VkBuffer trace_download_buffer_ = VK_NULL_HANDLE;
-  VkDeviceMemory trace_download_buffer_memory_ = VK_NULL_HANDLE;
-  void ResetTraceDownload();
 };
 
 }  // namespace vulkan

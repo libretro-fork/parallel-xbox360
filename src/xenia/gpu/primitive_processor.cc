@@ -20,7 +20,6 @@
 #include "xenia/gpu/register_file.h"
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/shader.h"
-#include "xenia/gpu/trace_writer.h"
 #include "xenia/gpu/xenos.h"
 
 // All these overrides are always safe to use as all backends are expected to
@@ -783,8 +782,6 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
       // for the shared memory buffer.
       // Writing to the trace irrespective of the cache lookup result because
       // cache behavior depends on runtime configuration and state.
-      trace_writer_.WriteMemoryRead(guest_index_base,
-                                    guest_index_buffer_needed_bytes);
       CacheTransaction cache_transaction(
           *this, CacheKey(guest_index_base, guest_draw_vertex_count,
                           guest_index_format, guest_index_endian,
@@ -949,8 +946,6 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
             // because cache behavior depends on runtime configuration and
             // state.
             // Example of 16-bit reset index replacement: 415607D4.
-            trace_writer_.WriteMemoryRead(guest_index_base,
-                                          guest_index_buffer_needed_bytes);
             // Not specifying the primitive type in the cache key because not
             // replacing it, only the reset index in a type-independent way.
             CacheTransaction cache_transaction(
@@ -1007,8 +1002,6 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
           // pre-swapping and pre-masking is done here.
           // Writing to the trace irrespective of the cache lookup result
           // because cache behavior depends on runtime configuration and state.
-          trace_writer_.WriteMemoryRead(guest_index_base,
-                                        guest_index_buffer_needed_bytes);
           // Not specifying the primitive type in the cache key because not
           // replacing it, only the reset index in a type-independent way.
           CacheTransaction cache_transaction(

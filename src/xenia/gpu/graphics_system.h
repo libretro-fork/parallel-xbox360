@@ -104,12 +104,6 @@ class GraphicsSystem {
   void InitializeShaderStorage(
       const std::filesystem::path& cache_root, uint32_t title_id, bool blocking);
 
-  void RequestFrameTrace();
-  void BeginTracing();
-  void EndTracing();
-  void RequestEndTracing();
-  bool is_tracing_stream() const;
-
   bool is_paused() const { return xe_state_control_held(&pause_control_) != 0; }
   void Pause();
   bool PauseForState(int64_t timeout_us);

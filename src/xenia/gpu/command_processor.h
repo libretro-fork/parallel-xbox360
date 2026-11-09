@@ -27,7 +27,6 @@
 #include "xenia/base/math.h"
 #include "xenia/base/ring_buffer.h"
 #include "xenia/gpu/register_file.h"
-#include "xenia/gpu/trace_writer.h"
 #include "xenia/gpu/xenos.h"
 #include "xenia/gpu/xenos_zpd_report.h"
 #include "xenia/kernel/xthread.h"
@@ -161,8 +160,6 @@ class CommandProcessor {
   virtual void InvalidateGpuMemory();
   virtual void ClearReadbackBuffers();
 
-  TraceWriter& trace_writer() { return trace_writer_; }
-
   // Whether resolve output reaches guest RAM when the CPU accesses it.
   bool IsReadbackResolveEnabled() const;
 
@@ -192,17 +189,6 @@ class CommandProcessor {
   // awaited.
   virtual void InitializeShaderStorage(
       const std::filesystem::path& cache_root, uint32_t title_id, bool blocking);
-
-  virtual void RequestFrameTrace(const std::filesystem::path& root_path);
-  virtual void BeginTracing(const std::filesystem::path& root_path);
-  virtual void EndTracing();
-  // Safe from any thread, the writer is closed on the next swap.
-  void RequestEndTracing() { trace_state_ = TraceState::kDisabled; }
-  bool is_tracing_stream() const {
-    return trace_state_ == TraceState::kStreaming;
-  }
-
-  virtual void TracePlaybackWroteMemory(uint32_t base_ptr, uint32_t length) = 0;
 
   // Shadowed by backends that route memory export through guest RAM (see
   // command_processor_memexport.inc). No-ops where export output never reaches
@@ -622,11 +608,6 @@ class CommandProcessor {
     return swap_post_effect_actual_;
   }
 
-  virtual void InitializeTrace();
-  // Saves the guest output of the frame that was just traced next to the trace
-  // itself, as ground truth for what a replay of it should produce.
-  void WriteTraceFrameScreenshot();
-
   Memory* memory_ = nullptr;
   kernel::KernelState* kernel_state_ = nullptr;
   GraphicsSystem* graphics_system_ = nullptr;
@@ -682,19 +663,6 @@ class CommandProcessor {
   uint32_t viz_pending_resolves_ = 0;
   // occlusion_query_viz as of the last SyncVIZEnabled.
   bool viz_enabled_ = false;
-
-  TraceWriter trace_writer_;
-  enum class TraceState {
-    kDisabled,
-    kStreaming,
-    kSingleFrame,
-  };
-  TraceState trace_state_ = TraceState::kDisabled;
-  std::filesystem::path trace_stream_path_;
-  std::filesystem::path trace_frame_path_;
-  // Full path of the frame trace currently being written, so the reference
-  // screenshot can be saved beside it when the frame closes.
-  std::filesystem::path trace_frame_file_path_;
 
   retro_atomic_int_t worker_running_;
   kernel::object_ref<kernel::XHostThread> worker_thread_;

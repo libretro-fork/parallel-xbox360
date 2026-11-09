@@ -90,10 +90,6 @@ class D3D12CommandProcessor final : public CommandProcessor {
   void InitializeShaderStorage(
       const std::filesystem::path& cache_root, uint32_t title_id, bool blocking) override;
 
-  void RequestFrameTrace(const std::filesystem::path& root_path) override;
-
-  void TracePlaybackWroteMemory(uint32_t base_ptr, uint32_t length) override;
-
   void RestoreEdramSnapshot(const void* snapshot) override;
 
   void PollCompletedSubmission() override;
@@ -440,8 +436,6 @@ class D3D12CommandProcessor final : public CommandProcessor {
     uint32_t offset;
   };
   std::vector<MemexportStagedRange> memexport_staged_;
-
-  void InitializeTrace() override;
 
  private:
   static constexpr uint32_t kQueueFrames = 3;
