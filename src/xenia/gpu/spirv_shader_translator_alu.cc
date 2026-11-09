@@ -556,12 +556,14 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
         }
       }
       if (instr.vector_opcode == ucode::AluVectorOpcode::kMad) {
+        // Product and any +0 replacement are already flushed. The independent
+        // third operand is still raw and must retain its input flush.
         // Not replacing true `0 + term` with conditional selection of the term
         // because +0 + -0 should result in +0, not -0.
         result = AluBinaryOperation(
             spv::OpFAdd, result_type, result,
             GetOperandComponents(operand_storage[2], instr.vector_operands[2],
-                                 used_result_components));
+                                 used_result_components), 1);
       }
       return result;
     }

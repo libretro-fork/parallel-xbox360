@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Avoid repeating the native-RTZ MAD product's denormal check before addition; retain independent third-operand flushing and exact arithmetic. Expand GPU numeric coverage to704 cases and hardware compile comparisons to480 metrics. Required first-use shader stalls remain unresolved.
+
 - Reduce Vulkan software-RTZ vertex shader expansion by emitting one lane-wise integer recipe per vector and sharing matching product-result types. Preserve exact arithmetic, pixel behavior and the hardware-RTZ path. Required first-use compilation stalls remain unresolved.
 
 - Remove duplicate raw storage loads within shader ALU instructions using a bounded C89 matcher. Keep addressing identity and per-operand swizzle/sign behavior; add adversarial matching and native load-count checks. Matched driver compilation timings remain essentially unchanged, so this is not a shader-stutter fix.

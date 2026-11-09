@@ -550,3 +550,28 @@ XYW-export/34,98,258 companion passes384 metrics and lowers worst observed
 PSO341.4789 ->269.3778ms. This remains a visible stall, not cold-play signoff.
 This fallback improvement is not a claim about the unchanged hardware-RTZ path.
 Complete cache-condition details: tools/tests/shader_vector_rtz_results.txt.
+
+## Native-RTZ MAD product state, corpus5 (2026-11-09)
+
+A vector MAD product has already passed output FTZ, including any per-component
+SM3 zero replacement/shuffle. Lend that clean-state fact only to the add's first
+operand. The independent third operand remains raw and must retain its input
+flush. Preserve separate uncontracted multiply/add and output FTZ. Do not infer
+clean state from a reused raw operand ID, skip the third flush or use FMA.
+
+Keep all corpus4 inputs and thresholds. Corpus5 adds64 MAD-heavy modules/96
+hardware metrics, making480 hardware metrics and five device reports per sample;
+software Vulkan96/WARP80 remain unchanged. Retain original576 numeric programs,
+inputs and goldens byte-for-byte, then append128 independent-third MAD programs
+(native/software, ordinary/partial same-register swizzles). New fixtures use48
+input bytes; legacy576 remain32. Pack c0/c0/c2 as c0,c2 according to the shader's
+constant map; validate exact file lengths. A valid SPIR-V fault bypassing only
+the third flush must return zero instead of signed min-normal and fail the GPU
+oracle. Do not weaken expected values to accommodate a packing mistake.
+
+The first comparison passes480 hardware and80 WARP metrics. MAD32 vertex bytes
+3,944,192 ->3,528,448; worst first PSO592.7058 ->437.2861ms with paired process
+CPU593.750 ->437.500ms. Existing four profiles and all non-targeted numeric
+modules remain unchanged. Driver disk/internal coldness is not certified;
+a437ms required compile is still a visible defect. Detailed coverage and limits:
+tools/tests/shader_mad_results.txt.

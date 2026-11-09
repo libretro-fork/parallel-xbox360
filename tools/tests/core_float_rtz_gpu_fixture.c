@@ -39,18 +39,35 @@ int main(int argc,char **argv) {
   {0x3e800000,0xbe800000,0x40000000,0,0x3f400000,0x3f400000,0xbf800000,0},
   {0x7f800000,0xff800000,0x7fc12345,0,0xff800000,0xff800000,0x3f800000,0},
   {0x00000001,0x80000001,0x00000000,0,0x7f800000,0xff800000,0x7fc12345,0}};
- uint32_t code[6],values[8],golden[4],seed=123456789;
+ uint32_t code[6],values[12],golden[4],seed=123456789;
  unsigned which,sample,op,c,hardware,index,mixed;uint32_t sum;size_t words;char path[512];
  CHECK(argc==2 && strlen(argv[1])<400);
- for(which=0;which<576;++which) {
+ for(which=0;which<704;++which) {
   mixed=which>=384;
   index=which%192;op=index%3+(which>=192?3:0);
   sample=(index/3)%32;hardware=index<96;
-  if(sample<10)memcpy(values,edges[sample],sizeof(values));
+  if(which>=576) {
+   index=which-576;op=6;sample=index%32;hardware=index<64;mixed=(index/32)%2;
+  }
+  if(sample<10)memcpy(values,edges[sample],sizeof(edges[sample]));
   else for(c=0;c<8;++c){seed=seed*1664525u+1013904223u;values[c]=seed&UINT32_C(0xff7fffff);}
   if(op<3) {
    values[3]=op==2?0x3fc00000:0x3f800000;values[7]=op==1?0x3f800000:0;
    for(c=0;c<4;++c)golden[c]=oracle(op,values[c],values[c+4]);
+  } else if(op==6) {
+   for(c=8;c<12;++c) {
+    seed=seed*1664525u+1013904223u;values[c]=seed&UINT32_C(0xff7fffff);
+   }
+   if(sample<10)for(c=8;c<11;++c)values[c]=edges[sample][c-3];
+   if(!sample && !mixed) {
+    /* A raw third subnormal must be flushed before min-normal +/- tiny. */
+    values[0]=0x00800000;values[4]=0x3f800000;values[8]=0x80000001;
+    values[1]=0x80800000;values[5]=0x3f800000;values[9]=0x00000001;
+    values[2]=0;values[6]=0x7f800000;values[10]=0x80000000;
+   }
+   values[3]=values[7]=0x3f800000;values[11]=0;
+   for(c=0;c<4;++c)golden[c]=oracle(0,
+       oracle(1,values[c],values[mixed?(c<2?(c^1):c):c+4]),values[c+8]);
   } else {
    if(!sample) {
     /* Ordered RTZ loses each 0.75 ULP; reassociation incorrectly retains them. */
@@ -72,12 +89,16 @@ int main(int argc,char **argv) {
   memset(code,0,sizeof(code));code[0]=0x1001;code[1]=0x2000;
   code[3]=62|(1u<<15)|(15u<<16)|(50u<<26);
   code[4]=mixed?0x0d00:0; /* c0.yxzw: xy differ, zw alias the first operand. */
-  code[5]=(mixed?0:1u<<8)|((op<3?(op==2?8:op):op+12)<<24);
+  code[5]=(mixed?0:1u<<8)|((op==6?11:op<3?(op==2?8:op):op+12)<<24);
+  if(op==6)code[5]|=2; /* independent c2 third operand. */
   words=xe_rtz_native_spirv(code,6,0,hardware,0,input,65536);CHECK(words>=5);
   words=shader_test_xfb(input,words,output,65560);
   sprintf(path,"%s/call%u.spv",argv[1],which);save(path,output,words*4);
-  sprintf(path,"%s/call%u.input",argv[1],which);save(path,values,sizeof(values));
+  /* With c0/c0/c2, the shader's constant map packs c2 immediately after c0.
+   * The expected result above still uses the original logical c2 values. */
+  if(op==6 && mixed)memcpy(values+4,values+8,16);
+  sprintf(path,"%s/call%u.input",argv[1],which);save(path,values,which<576?32:48);
   sprintf(path,"%s/call%u.expected",argv[1],which);save(path,golden,sizeof(golden));
  }
- puts("PASS: 576 actual guest ALU/dot fixtures, including same-register mixed swizzles, hardware/software RTZ with explicit mixed-lane inputs and integer oracle");return 0;
+ puts("PASS: 704 actual guest ALU/dot/MAD fixtures; original576 retained,128 MAD cases include independent third inputs and mixed swizzles");return 0;
 }

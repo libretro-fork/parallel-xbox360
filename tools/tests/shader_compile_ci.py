@@ -168,7 +168,7 @@ def prepare(source, out, results, backend, reuse_build=None):
                      source / "tools/tests/run_forward_flow_tests.cmd"],source,log,float_env)
                 float_exe=out / "float-numeric.exe"
                 run(["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/D_CRT_SECURE_NO_WARNINGS",
-                     "/DXE_VERTEX_TEST_CASES=576","/DXE_FLOAT_RTZ_GPU_TEST",
+                     "/DXE_VERTEX_TEST_CASES=704","/DXE_FLOAT_RTZ_GPU_TEST",
                      "/I"+str(source / "third_party/Vulkan-Headers/include"),HERE / "core_shader_call_vulkan_test.c",
                      "/Fo"+str(out / "float-numeric.obj"),"/Fe"+str(float_exe)],source,log,env)
             else:
@@ -176,12 +176,12 @@ def prepare(source, out, results, backend, reuse_build=None):
                 run(["sh",source / "tools/tests/run_forward_flow_tests.sh"],source,log,float_env)
                 float_exe=out / "float-numeric"
                 run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
-                     "-DXE_VERTEX_TEST_CASES=576","-DXE_FLOAT_RTZ_GPU_TEST","-isystem",source / "third_party/Vulkan-Headers/include",
+                     "-DXE_VERTEX_TEST_CASES=704","-DXE_FLOAT_RTZ_GPU_TEST","-isystem",source / "third_party/Vulkan-Headers/include",
                      HERE / "core_shader_call_vulkan_test.c","-ldl","-o",float_exe],source,log,env)
             run([float_exe,out / "float-correctness"],source,log,env,120)
         result={"cpu": cpu, "pso": exe, "source": source, "out": out}
         if backend == "vulkan-hardware":
-            for profile in ["rtz","dot","frac"]:
+            for profile in ["rtz","dot","frac","mad"]:
                 result[profile]=out / profile
                 result[profile].mkdir()
                 profile_env=env.copy();profile_env["XE_SHADER_BENCH_"+profile.upper()+"_PROFILE"]="1"
@@ -328,7 +328,7 @@ def expected_keys(backend):
     if backend.startswith("vulkan"):
         keys.update((stage,i) for stage in ["vulkan.module","vulkan.vs_ps_pso"] for i in range(16))
         if backend=="vulkan-hardware":
-            for profile in ["rtz","dot","frac"]:
+            for profile in ["rtz","dot","frac","mad"]:
                 keys.update(("spirv."+profile+"_translate_batch4",i) for i in range(64))
                 keys.update((stage,i) for stage in ["vulkan."+profile+"_module","vulkan."+profile+"_vs_ps_pso"] for i in range(16))
     elif backend=="d3d12-warp":
@@ -382,10 +382,11 @@ def run_comparison(args):
          "shader_compile_vulkan_test.c","shader_compile_bench.h","shader_compile_ci.py",
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c"]}
-    manifest["corpus_contract"]=dict(version=4,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
+    manifest["corpus_contract"]=dict(version=5,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_frac_cases=64 if args.backend=="vulkan-hardware" else 0,
-                                    hardware_alu_cases=576 if args.backend=="vulkan-hardware" else 0,alu_additions=[32,96,256],
+                                    hardware_mad_cases=64 if args.backend=="vulkan-hardware" else 0,
+                                    hardware_alu_cases=704 if args.backend=="vulkan-hardware" else 0,alu_additions=[32,96,256],
                                     profiles="VS/PS, native/portable swizzle,1x/4x",batch=4)
     for name,command in [("compiler",["cl","/Bv"] if WIN else [env.get("CC","cc"),"--version"]),
                          ("cmake",["cmake","--version"])]:
@@ -433,7 +434,7 @@ def run_comparison(args):
     (results/"environment.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     ir={version:spirv_manifest(b["out"]) for version,b in builds.items()}
     for version,b in builds.items():
-        for profile in ["rtz","dot","frac"]:
+        for profile in ["rtz","dot","frac","mad"]:
             if profile in b:
                 ir[version].update({profile+"/"+name:value for name,value in spirv_manifest(b[profile]).items()})
     new_ir=ir["candidate"]
@@ -451,7 +452,7 @@ def run_comparison(args):
             run([b["cpu"],b["out"]],b["source"],log,e,240)
             if "pso" in b:
                 run([b["pso"],b["out"]],b["source"],log,e,240)
-                for profile in ["rtz","dot","frac"]:
+                for profile in ["rtz","dot","frac","mad"]:
                     if profile in b:
                         profile_env=e.copy();profile_env["XE_SHADER_BENCH_"+profile.upper()+"_PROFILE"]="1"
                         run([b["cpu"],b[profile]],b["source"],log,profile_env,240)
@@ -472,7 +473,7 @@ def run_comparison(args):
         for version in builds:
             for sample in range(args.samples):
                 log=(results/(version+"-sample%d.log"%sample)).read_text(encoding="utf-8",errors="replace")
-                expected_reports=1+sum(profile in builds[version] for profile in ["rtz","dot","frac"])
+                expected_reports=1+sum(profile in builds[version] for profile in ["rtz","dot","frac","mad"])
                 identities.append(vulkan_device_identity(log,expected_reports))
         if len(set(identities))!=1:raise ValueError("different benchmark device/driver")
         software=any(x in identities[0].lower() for x in ["llvmpipe","lavapipe"])

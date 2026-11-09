@@ -173,8 +173,8 @@ int main(int argc,char **argv) {
   ((uint32_t*)((unsigned char*)buffers[0].mapped+2048))[0]=(which>=5 && which<10)?1u:0u;
 #ifdef XE_FLOAT_RTZ_GPU_TEST
   sprintf(path,"%s/call%u.input",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
-  i=(uint32_t)fread((unsigned char*)buffers[0].mapped+1024,1,32,file);
-  j=(uint32_t)fgetc(file);fclose(file);if(i!=32 || j!=(uint32_t)EOF)goto done;
+  i=(uint32_t)fread((unsigned char*)buffers[0].mapped+1024,1,48,file);
+  j=(uint32_t)fgetc(file);fclose(file);if(i!=(which<576?32u:48u) || j!=(uint32_t)EOF)goto done;
 #endif
   if(!cache_buffer(&buffers[0],0))goto done;
   XE_COMPILE_CASE(which);sprintf(path,"%s/call%u.spv",argv[1],which);if(!shader(path,&module))goto done;

@@ -1,0 +1,100 @@
+Native-RTZ MAD clean-product reuse -- 2026-11-09
+Parent2341287b9679789dde2126fa36653b7b7ad0da65
+
+Runtime
+-------
+The MAD multiply already returns a flushed result, including SM3 per-lane +0
+replacement and reassembly of partial identity masks. Mark only this product
+clean when calling the existing add helper. Retain the independent third input's
+flush, result FTZ, ordered/uncontracted multiply and add, and zero/NaN behavior.
+No FMA, lower precision or changed arithmetic recipe. This targets native-RTZ
+Vulkan with manual FTZ, including the tested RTX5090. Software RTZ, pixel and
+native hardware-FTZ lowering retain their prior paths.
+
+The production change is one existing clean-operand flag plus its invariant
+comment. No value-state table/cache, buffer, payload copy, allocation, vector,
+thread, lock, diagnostic or GPU roundtrip. Existing borrowed IR IDs remain in the
+exclusive compiler arena. An input-flush sequence disappears; output flushing
+and primitive/resource/pipeline ownership do not change.
+
+Correctness
+-----------
+The expanded704-case corpus passes on both the unchanged parent and candidate
+RTX5090. Original576 programs, inputs and goldens are byte-identical. Append128
+MAD cases:32 ordinary/32 partial same-register-swizzle programs for native RTZ,
+and the same counts for software RTZ. c2 is independent of the multiplicands;
+min-normal products plus opposite-sign subnormal third inputs must retain the
+signed minimum normal. The raw third input is never silently marked clean.
+
+With c0/c0/c2, the constant map packs c2 after c0. The initial parent run exposed
+a fixture packing error at call608 (W became2 instead of1). Correct the uniform
+packing, not the oracle, and retain that diagnostic. All704 then pass on the
+parent before applying the production change. Legacy input files remain exactly
+32 bytes, new MAD inputs48 bytes; the runtime rejects wrong lengths/trailing data.
+All parent/candidate inputs/goldens match. Exactly64 native MAD numeric modules
+change; original576 and64 software MAD modules remain byte-identical.
+
+A private valid SPIR-V fault substitutes raw c2 for only the add's flushed third
+input in call576. spirv-val accepts it, but GPU returns zero instead of00800000
+and80800000. The normal candidate passes704. No altered production module or
+fault hook is delivered. This verifies the independent third-input requirement.
+
+Full MSVC Release --parallel3, native mode/width/product/load guards,4M SSE/SSA,
+65536 FTZ classifications,65536 operand-lend cases, actual MinGW ALU syntax and
+Linux strict C89 fixture builds/ASan+UBSan numeric checks pass. Physical numerical
+coverage is vertex shader execution; no new pixel/tessellation execution or
+console-reference accuracy claim. The existing model's finite results are exact;
+only NaN payload canonicalization is permitted.
+
+CI and measured compilation
+---------------------------
+Corpus5 preserves all corpus4 cases and thresholds, adding64 MAD-heavy VS/PS
+modules across swizzle/resolution configurations and32/96/256 instruction chains.
+Hardware metrics384 ->480; require five matching device reports per paired sample.
+Hardware numeric goldens576 ->704. Software Vulkan96 and WARP80 remain unchanged.
+The same current C89 harness compiles both core revisions. No path filter or
+cache-default/schema change. Missing/duplicate reports and substituted cases fail.
+
+Seven alternating/reverse-order process pairs, same Release/MSVC build path and
+RTX5090 vendor4318/device11141 driver2604679168. No competing local compilation
+during measurement. First comparison passes480 hardware and80 WARP metrics with
+zero threshold alarms. The MAD profile is new to the earlier timing corpora;
+processes have no emulator cache, but driver disk/internal coldness is NOT
+certified. Keep every raw elapsed/CPU sample, per-case median/p95/p99/max and
+exact source/executable identity. Process CPU is supplementary, not a wall gate.
+
+MAD32 vertex modules:3,944,192 ->3,528,448 bytes (-10.54%); instructions
+202,688 ->181,184. This removes six SPIR-V operations/29 words per MAD,3584 MADs
+across the32 vertex programs. All256 old-profile modules and all32 MAD pixels
+are unchanged. Eight DXIL modules remain unchanged.
+
+MAD translation(batch4), median across64 case medians0.37475 ->0.36695ms;
+maximum2.6779 ->2.4730ms. These include unchanged pixel cases; no universal CPU
+translation speedup is inferred. PSO median across16 case medians0.26435 ->0.21610ms;
+first-heavy cases0/2/4 wall92.9294/220.6842/592.7058 ->64.0660/165.8296/437.2861ms;
+paired process CPU93.750/234.375/593.750 ->62.500/171.875/437.500ms. Windows CPU
+accounting quantizes and parallel work can exceed elapsed time.
+
+Final verification and artifacts
+--------------------------------
+27 comparator tests and895 SPIR-V validator checks pass. A final MSVC ASan
+fixture-generator run and all704 actual GPU cases pass. Enlarging the fixture's
+sample array initially also enlarged a row memcpy; final review corrected the
+copy to the source row's size. A private old-length negative control triggers
+ASan global-buffer-overflow. All2112 corrected module/input/golden artifacts are
+byte-identical to the sealed timed candidate; timings need no substitution.
+ASan instruments the fixture/bridge, not the entire linked core. STL container
+annotations are disabled to match the uninstrumented Release archives.
+
+All70 timed Vulkan device reports match. Preserve raw comparisons, first failed
+packing diagnostic, source/executable hashes, corrected fixture ASan logs and
+third-input fault control in the accompanying evidence archive. Delivery uses
+one git format-patch mailbox, validated by actual git am at the exact parent
+and identical resulting tree. Hosted CI status is reported separately.
+
+Limits
+------
+A437ms required PSO remains visible. No cross-game cold/warm acceptance, first
+correct draw, actual game frame pacing, GPU execution/register pressure or RSS
+benefit is established. No installed DLL replacement, RetroArch/game launch,
+user cache deletion or extracted game asset. The cold-play goal remains incomplete.
