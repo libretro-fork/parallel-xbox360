@@ -483,3 +483,28 @@ cancellation, stale token, resize, MPSC retirement and real backend publication
 coverage. No driver compilation, rendering or guest audio timing claim follows
 from this scheduling test. Shader corpus and elapsed regression gates remain
 unchanged. Results: tools/tests/pipeline_ready_results.txt.
+
+## Lane-wise native fractional parts, corpus4 (2026-11-09)
+
+For native-RTZ vertex fractional parts, flush the borrowed input once, emit a
+lane-wise Floor, then an uncontracted subtraction with both operands known clean.
+Floor yields zero, integral normal values or non-finite values, never subnormals.
+Keep output flushing. Preserve the scalar integer fallback and pixel lowering.
+No new tracking storage, payload copy, worker or cache schema is needed.
+
+Retain all corpus3 cases and thresholds. Corpus4 adds64 fraction-heavy VS/PS
+modules across native/portable swizzle and1x/4x, producing96 additional hardware
+translation/module/PSO metrics (384 total). Software Vulkan96 and WARP80 remain
+unchanged. Run the same current harness against each revision, including its
+first parent; seal the extra modules and require four device reports per hardware
+sample instead of three. Reject missing/duplicate reports and substituted cases.
+Native structural tests require one Floor with the expected width1..4. Retain
+all576 physical-GPU numeric cases; their existing fraction cases check signed
+zeros, subnormals, NaN/Inf and RTZ boundaries against the independent oracle.
+
+The first comparison has no alarms across384 hardware and80 WARP metrics.
+Fraction vertex bytes8,336,768 ->1,528,960; first heavy PSO548.2137 ->276.7256ms,
+with paired process CPU468.750 ->265.625ms. Disk/internal driver caches are not
+certified empty. This remaining277ms stall is visible and not a cold-play pass.
+Do not infer GPU execution speed or gameplay fluidity from shader size alone.
+Detailed evidence and limits: tools/tests/shader_fraction_results.txt.

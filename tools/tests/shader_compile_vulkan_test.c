@@ -18,9 +18,11 @@ int main(int argc,char **argv)
    const char *rtz=getenv("XE_SHADER_BENCH_RTZ_PROFILE");
    const char *dot=getenv("XE_SHADER_BENCH_DOT_PROFILE");
    unsigned dot_profile=dot && !strcmp(dot,"1");
-   unsigned hardware_rtz=dot_profile || (rtz && !strcmp(rtz,"1"));
+   const char *frac=getenv("XE_SHADER_BENCH_FRAC_PROFILE");
+   unsigned frac_profile=frac && !strcmp(frac,"1");
+   unsigned hardware_rtz=frac_profile || dot_profile || (rtz && !strcmp(rtz,"1"));
 
-   const char *pso_stage=dot_profile?"vulkan.dot_vs_ps_pso":hardware_rtz?"vulkan.rtz_vs_ps_pso":"vulkan.vs_ps_pso";
+   const char *pso_stage=frac_profile?"vulkan.frac_vs_ps_pso":dot_profile?"vulkan.dot_vs_ps_pso":hardware_rtz?"vulkan.rtz_vs_ps_pso":"vulkan.vs_ps_pso";
    VkPhysicalDeviceProperties2 properties2={0};VkPhysicalDeviceFloatControlsProperties controls={0};
    PFN_vkGetPhysicalDeviceProperties2 get_properties2;PFN_vkVoidFunction raw_properties2;
    VkApplicationInfo app={0};VkInstanceCreateInfo instance={0};
@@ -74,7 +76,7 @@ int main(int argc,char **argv)
    LOAD(vkDestroyDevice);LOAD(vkCreateDescriptorSetLayout);LOAD(vkDestroyDescriptorSetLayout);
    LOAD(vkCreatePipelineLayout);LOAD(vkDestroyPipelineLayout);LOAD(vkCreateShaderModule);LOAD(vkDestroyShaderModule);
    LOAD(vkCreateRenderPass);LOAD(vkDestroyRenderPass);LOAD(vkCreateGraphicsPipelines);LOAD(vkDestroyPipeline);
-   xe_test_module_stage=dot_profile?"vulkan.dot_module":hardware_rtz?"vulkan.rtz_module":"vulkan.module";
+   xe_test_module_stage=frac_profile?"vulkan.frac_module":dot_profile?"vulkan.dot_module":hardware_rtz?"vulkan.rtz_module":"vulkan.module";
    memset(bindings,0,sizeof(bindings));
    for(i=0;i<2;++i){bindings[i].binding=i;bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
       bindings[i].descriptorCount=i?1:4;bindings[i].stageFlags=VK_SHADER_STAGE_ALL_GRAPHICS;}

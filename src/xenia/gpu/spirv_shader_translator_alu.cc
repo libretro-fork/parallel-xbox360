@@ -160,6 +160,15 @@ spv::Id SpirvShaderTranslator::AluBinaryOperation(spv::Op opcode,
 spv::Id SpirvShaderTranslator::AluFract(spv::Id type, spv::Id operand) {
   if (!is_vertex_shader()) return builder_->createUnaryBuiltinCall(
       type,ext_inst_glsl_std_450_,GLSLstd450Fract,operand);
+  if (features_.rounding_mode_rtz_float32) {
+    // Floor produces zero, integral normal values or non-finite values: it
+    // cannot introduce a subnormal. Both subtraction inputs are already clean.
+    // SPIR-V vector Floor and uncontracted subtract remain lane-independent.
+    spv::Id clean = FlushAluDenormals(type, operand);
+    spv::Id floor = builder_->createUnaryBuiltinCall(
+        type, ext_inst_glsl_std_450_, GLSLstd450Floor, clean);
+    return AluBinaryOperation(spv::OpFSub, type, clean, floor, 3);
+  }
   const unsigned count=builder_->getNumComponents(operand);
   if (!count || count>4) throw std::bad_alloc();
   spv::Id components[4];

@@ -24,7 +24,7 @@ static size_t stress(unsigned pixel,unsigned additions,unsigned dot,unsigned sce
    for(i=0;i<additions;++i) {
       code[(payload+i)*3]=0xc80f0000;
       code[(payload+i)*3+2]=dot?
-         UINT32_C(0x80000000)|((1u+scenario)<<8)|(64u+scenario)|((15u+scenario%3)<<24):
+         UINT32_C(0x80000000)|((1u+scenario)<<8)|(64u+scenario)|((dot==2?8u:15u+scenario%3)<<24):
          UINT32_C(0xc0000100);
    }
    code[(payload+additions)*3]=(pixel?0:62)|(1u<<15)|(15u<<16)|(50u<<26);
@@ -41,14 +41,17 @@ int main(int argc,char **argv)
    unsigned hardware_rtz=rtz && !strcmp(rtz,"1");
    const char *dot=getenv("XE_SHADER_BENCH_DOT_PROFILE");
    unsigned dot_profile=dot && !strcmp(dot,"1");
-   const char *stage=dot_profile?"spirv.dot_translate_batch4":
+   const char *frac=getenv("XE_SHADER_BENCH_FRAC_PROFILE");
+   unsigned frac_profile=frac && !strcmp(frac,"1");
+   const char *stage=frac_profile?"spirv.frac_translate_batch4":dot_profile?"spirv.dot_translate_batch4":
        hardware_rtz?"spirv.rtz_translate_batch4":"spirv.translate_batch4";
    char path[512];FILE *file;
    if(argc!=2 || strlen(argv[1])>400)return 2;
    for(profile=0;profile<4;++profile) {
-      context=xe_compile_open(profile|((hardware_rtz || dot_profile)?8u:0u));if(!context)return 1;
+      context=xe_compile_open(profile|((hardware_rtz || dot_profile || frac_profile)?8u:0u));if(!context)return 1;
       for(pixel=0;pixel<2;++pixel)for(scenario=0;scenario<8;++scenario,++id) {
-         count=dot_profile?stress(pixel,additions[scenario%3],1,scenario):
+         count=frac_profile?stress(pixel,additions[scenario%3],2,scenario):
+               dot_profile?stress(pixel,additions[scenario%3],1,scenario):
                scenario<5?nested_scenario(code,pixel,scenario):
                stress(pixel,additions[scenario-5],0,0);
          XE_COMPILE_BEGIN();

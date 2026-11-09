@@ -1,0 +1,80 @@
+Native-RTZ lane-wise fractional parts -- 2026-11-09
+Parent43402e6f697f3bc69d655509bbcefb372060af68
+
+Change
+------
+Vertex fractional parts on native-RTZ Vulkan devices previously expanded each
+lane separately: explicit input FTZ, scalar Floor, repeated input FTZ around
+subtraction and result FTZ. Now lend the whole scalar/vector input to one flush,
+one lane-wise Floor and an uncontracted subtraction with both inputs known
+clean. Floor of a flushed input cannot create a subnormal: its result is zero,
+an integral normal value or non-finite. Keep output FTZ and native RTZ. No FMA,
+reassociation, OpFract substitution, precision relaxation or skipped work.
+Pixel lowering and devices without native RTZ retain their exact prior paths.
+
+Production adds only typed SPIR-V interoperability/capability dispatch. No new
+algorithmic C++ container, state map, allocation, request queue, lock, payload
+copy or GPU/CPU roundtrip. Values remain borrowed IDs in the exclusive compiler
+arena. The existing scalar reconstruction array is bypassed on this native path;
+other compiler and driver storage/allocations remain. No runtime logging added.
+
+Correctness and contract
+------------------------
+- Full MSVC Release core --parallel3 PASS; actual ALU translation unit MinGW
+  C++20 syntax PASS. No full MinGW/Linux core build claim here.
+- Native mode/interpreter regression fixture now produces53 modules: original49
+  plus native fraction widths1..4. Check one Floor and exact scalar/vector type,
+  keep uncontracted arithmetic/mode/capability and pixel identity checks.
+- C89 CPU integer/SSA,4M SSE oracle and65536 classified FTZ cases PASS.
+- All576 physical RTX5090 packed-guest GPU cases PASS, with finite bit identity
+  and only NaN payload canonicalization allowed. Existing full-width fraction
+  cases exercise RTZ boundaries, mixed signs, subnormals, NaN/Inf and signed zero.
+  Width1..3 additions are structural/validator checks, not new GPU executions.
+- Private negative control changes the single vector Floor to Ceil in call2.
+  spirv-val accepts the valid but wrong program; real GPU returns bf7fffff and
+  bf000000 where the oracle expects00800000 and3f000000. The unmodified candidate
+  passes576 cases. No fault branch or altered binary enters production.
+- spirv-val Vulkan1.1 accepts53 native modules and128 parent/candidate fraction
+  corpus modules. Linux GCC strict C89 builds both changed C test fixtures.
+-27 comparator tests PASS, including four-profile identity counts and rejection
+  of missing/duplicate/substituted profile/case coverage.
+
+Version corpus4 explicitly. Preserve every original normal/RTZ/dot module and
+all old timing thresholds. Add a fourth64-case fraction profile: VS/PS, four
+swizzle/resolution configurations and32/96/256 instruction stress. Hardware
+expected metrics rise288 ->384; software Vulkan96 and WARP80 are unchanged.
+The same current harness compiles both parent and candidate. Per-commit workflow
+orchestration runs the new hardware profile when its opt-in runner is enabled;
+no missing device or disabled hardware runner counts as passing coverage.
+
+Measured local compilation
+--------------------------
+Exact Release/MSVC parent/candidate core libraries sealed at the same build path.
+RTX5090 vendor4318/device11141, driver2604679168. Seven alternating/reverse-order
+process pairs; no competing local build during timing. Fresh processes/no emulator
+cache, but driver disk/internal cache emptiness is NOT certified. The new fraction
+stress module hashes were not part of earlier normal/RTZ/dot timing corpora.
+Preserve elapsed and process-CPU CSVs and per-case median/p95/p99/max separately.
+All384 hardware and80 WARP metrics pass unchanged thresholds on the first run.
+
+Fraction32 vertex modules:8,336,768 ->1,528,960 bytes (-81.66%). All32 fraction
+pixel modules byte-identical (632,960 bytes). All64 original,64 RTZ and64 dot
+modules, plus8 DXIL modules, are byte-identical across revisions.
+Fraction translation(batch4), median across64 case medians:0.49335 ->0.20730ms;
+worst observed10.2804 ->2.0509ms. This mixes changed vertex and unchanged pixel
+cases, not a universal per-case acceleration claim.
+Fraction PSO median across16 case medians:0.16545 ->0.11940ms. First heavy cases
+0/2/4 wall:85.4614/176.8447/548.2137 ->44.6358/91.2606/276.7256ms.
+Paired process CPU:93.750/156.250/468.750 ->46.875/93.750/265.625ms.
+CPU may exceed wall through parallel work and quantizes on Windows. Wall remains
+the authoritative regression channel. Subsequent in-process/disk-cache conditions
+are not substituted for these first observations; every sample is retained.
+
+Limits
+------
+No installed DLL replacement, RetroArch/game launch or extracted game asset.
+No cold/warm cross-game acceptance, first-correct-draw latency, GPU execution
+speed, register pressure or process RSS benefit is established. Native FTZ is
+unsupported on this physical GPU; static feature-mode checks cover that branch.
+A277ms required PSO compile is still a visible interruption. The overall goal
+of nearly imperceptible first-ever uncached gameplay remains incomplete.

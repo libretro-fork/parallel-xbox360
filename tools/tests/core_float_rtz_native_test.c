@@ -23,6 +23,23 @@ static unsigned scan(size_t size,unsigned *rtz,unsigned *rte,unsigned vertex) {
    }
    CHECK(at==size && *rtz+*rte==(vertex==2?0u:1u));if(vertex)CHECK(no_contraction);return integers;
 }
+static unsigned floor_shape(size_t size,unsigned *width) {
+   size_t at;
+   unsigned count=0,type=0,n,op;
+   *width=1;
+   for(at=5;at<size;at+=n) {
+      n=binary[at]>>16;op=binary[at]&65535;CHECK(n && n<=size-at);
+      if(op==12 && n==6 && binary[at+4]==8) {
+         ++count;type=binary[at+1];
+      }
+   }
+   for(at=5;at<size;at+=n) {
+      n=binary[at]>>16;
+      if((binary[at]&65535)==23 && n==4 && binary[at+1]==type)
+         *width=binary[at+3];
+   }
+   return count;
+}
 static void packed(uint32_t code[6],unsigned pixel,unsigned mul) {
    code[0]=0x1001;code[1]=0x2000;code[2]=0;
    code[3]=(pixel?0:62)|(1u<<15)|(15u<<16)|(50u<<26);
@@ -37,7 +54,7 @@ int main(int argc,char** argv) {
       {{0x3f800000,0xbf800000,0x3f7fffff,0x7f7fffff},{0x3f801002,0xbf801002,0x7f7fffff,0x3f800000},{0x3f7fffff,0x00800000,0,0}},
       {{0x3f800001,0xbf800001,0x3f800000,0x7f800000},{0x3f801003,0xbf801003,0x7f800000,0x3f800000},{0x3f800000,0x00800000,0,0}}};
    uint32_t code[6],out[4];size_t size,pixel_size=0;
-   unsigned pixel,mul,hardware,ftz,rtz,rte,integers,soft=0,fast=0;
+   unsigned pixel,mul,hardware,ftz,rtz,rte,integers,width,components,soft=0,fast=0;
    char path[256];FILE* file;
    if(argc>1)CHECK(strlen(argv[1])<180);
    for(pixel=0;pixel<2;++pixel)for(mul=0;mul<3;++mul) {
@@ -52,6 +69,8 @@ int main(int argc,char** argv) {
       for(ftz=0;ftz<2;++ftz)for(hardware=0;hardware<4;++hardware) {
          size=xe_rtz_native_spirv(code,6,pixel,hardware,ftz,binary,65536);CHECK(size);
          integers=scan(size,&rtz,&rte,!pixel);
+         if(!pixel && mul==2 && (hardware&1))
+            CHECK(floor_shape(size,&width)==1 && width==4);
          CHECK(rtz==(unsigned)(!pixel && (hardware&1)) && rte==(unsigned)!rtz);
          if(!pixel && ftz) {if(hardware&1)fast=integers;else soft=integers;}
          if(pixel) {
@@ -65,6 +84,17 @@ int main(int argc,char** argv) {
       }
       if(!pixel)CHECK(soft>fast);
    }
+   for(components=1;components<=4;++components) {
+      packed(code,0,2);
+      code[3]=(code[3]&~(15u<<16))|(((1u<<components)-1)<<16);
+      size=xe_rtz_native_spirv(code,6,0,1,0,binary,65536);CHECK(size);
+      CHECK(floor_shape(size,&width)==1 && width==components);
+      if(argc>1) {
+         sprintf(path,"%s/frac-width%u.spv",argv[1],components);file=fopen(path,"wb");
+         CHECK(file && fwrite(binary,4,size,file)==size && !fclose(file));
+      }
+   }
+   puts("PASS: native RTZ fraction uses one lane-wise Floor for widths1..4");
    packed(code,0,1);
    size=xe_rtz_native_spirv(code,6,0,4,0,binary,65536);CHECK(size);
    scan(size,&rtz,&rte,2);CHECK(binary[1]==0x10000);
