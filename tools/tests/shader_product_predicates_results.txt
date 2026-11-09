@@ -1,0 +1,101 @@
+Native RTZ product zero-predicate lends -- 2026-11-09
+Parent0f9f3254cfbf978021aa3ef7aec29f1b63657b4b
+
+Production
+----------
+For fully distinct multiplicand lanes, native-RTZ/manual-FTZ vertex multiply and
+MAD borrow zero-exponent predicates already emitted for input flushing. Reuse
+the existing dot product helper; extend its width guard to1..4 and rename it
+Sm3Products to describe both callers. Replace two FAbs, NMin and zero equality
+with one logical OR of existing predicates. For unmodified operands this removes
+three SPIR-V operations and19 words per product; already-absolute operands may
+save fewer operations. Keep the result's signed FTZ and +0 correction for
+SM3 zero/denormal times NaN/Inf; preserve NoContraction and the independent MAD
+third operand's flush. Partial-identity masks retain their extraction/insertion
+path. Identical products, pixel, software RTZ and hardware FTZ remain unchanged.
+
+New production code is a typed feature/operand-mask projection onto an existing
+C89 classified-flush emitter and existing typed product helper. No new math
+algorithm, buffer, payload copy, allocation, lock, thread, diagnostic, sleep or
+CPU/GPU roundtrip. Borrow existing immutable IDs in the compiler's own arena.
+The compiler still allocates elsewhere. This is not an end-to-end zero-copy,
+allocation-free or measured GPU execution/register-pressure improvement.
+
+Correctness
+-----------
+Full MSVC Release --parallel3 and all704 actual guest vertex numerical cases
+pass. Parent/candidate input and expected files are identical. Only32 ordinary
+native multiply and32 ordinary native MAD modules change; remaining640 numeric
+modules are byte-identical. All320 non-MAD performance modules,32 MAD pixel
+modules and8 DXIL binaries are unchanged. Partial same-register swizzles remain
+covered by existing numeric fixtures. Finite results remain exact, signed-zero
+rules remain and only NaN payload canonicalization is permitted.
+
+A new C89 guard scans64 actual product variants (MUL/MAD,widths1..4,VS/PS,
+software/native RTZ,manual/hardware FTZ). Only native manual-FTZ loses its NMin
+check. Explicit partial-identity and identical cases retain their prior behavior.
+The parent fails the guard at line127; the candidate passes. Existing mode,
+contraction,width,integer-product-type,operand-lend and SPIR-V1.0 checks pass.
+1095 SPIR-V modules validate (including128 extra unseen workloads and retained
+width snapshots). Strict C89 changed-test/fixture builds pass. Linux ASan+UBSan
+integer tests pass4M SSE RTZ/FTZ comparisons and65536 classified-flush patterns,
+plus emission failures and special-value forwarding. Existing65536 operand-lend
+tests and27 comparator tests pass. Sanitizers do not cover the entire linked
+core. Physical numerical execution covers vertex shaders, not console-reference
+accuracy or new pixel/tessellation execution.
+
+Initial comparison: retain the alarms
+-------------------------------------
+Same sealed C89 corpus6 harness against parent/candidate, MSVC Release at the
+same build path, seven alternating/reverse-order pairs. RTX5090 vendor4318,
+device11141,driver2604679168. No application cache. Driver disk/internal cache
+coldness is NOT certified. No RetroArch process was present before timing.
+
+The first576-metric hardware comparison flags MAD PSO cases0/2/4. Parent max
+0.4549/0.4338/0.8425ms vs candidate57.7716/146.3608/366.0390ms. The unchanged
+parent modules had been compiled in preceding work, while candidates are newly
+generated. Cache asymmetry is the inference, not an empty-cache guarantee.
+The WARP80 metrics pass. Keep this first failed report and every raw sample;
+do not replace it with the following warm run or relax any threshold.
+
+Follow-up evidence
+------------------
+A separate seven-pair warm comparison passes all576 Vulkan/80WARP metrics.
+Its MAD PSO median across16 case medians0.20825 ->0.17955ms; translation batch4
+median across64 case medians0.35995 ->0.35950ms (essentially unchanged).
+
+Build a private copy of the unchanged C89 compile fixture with only chain
+lengths32/96/256 ->33/97/257, used identically for both revisions. Seal the
+candidate executable, rebuild the exact parent sources, seal the parent, then
+restore the candidate sources and normal Release build. All builds use
+three jobs, and no build overlaps timing. Retain source/executable hashes and
+logs. A first generation attempt omitted the required timing CSV environment,
+failed before any PSO call, and is retained; corrected generation preserves the
+same workload source and oracle. No executable byte patching or cache deletion.
+
+Seven alternating pairs on those unseen workloads pass all96 translation,
+module and PSO metrics. First-heavy PSO cases0/2/4 wall85.1581/200.7341/510.9311
+->58.2338/151.0089/369.6393ms; paired process CPU93.750/203.125/515.625
+->46.875/140.625/375.000ms. MAD translation median0.35870 ->0.36490ms is slightly
+higher; PSO median0.20970 ->0.17925ms. Windows CPU accounting quantizes and may
+exceed elapsed. Newly generated workloads do not certify empty driver caches.
+
+Original32 MAD VS modules3,528,448 ->3,256,064 bytes (-7.72%);
+181,184 ->170,432 instructions.3584 MAD products remove10752 instructions and
+272384 bytes. Existing compiled driver-code size and GPU execution time are
+not inferred from these byte counts. Preserve original, warm and unseen raw
+elapsed/CPU samples, medians/p95/p99/max and device identity reports separately.
+
+Delivery and limits
+-------------------
+Corpus6,576 hardware-runner metrics,704 numerical cases,software Vulkan96 and
+WARP80 remain unchanged. Hosted workflows run the structural guard through the
+native-mode test and retain their existing hardware conditions. Missing devices
+or skipped suites are unverified. A cache-asymmetric hardware gate remains a
+failure requiring investigation, not a reason to disable the gate.
+
+One git format-patch mailbox is actually applied with git am at the exact parent
+and its tree compared before push to libretro. No installed DLL replacement,
+game launch, live-cache deletion or extracted game shader. A370ms required PSO
+still interrupts gameplay; first correct draw and cross-game cold/warm fluidity
+are unverified. The broader shader-stutter goal remains open.

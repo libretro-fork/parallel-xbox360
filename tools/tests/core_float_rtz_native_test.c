@@ -40,6 +40,14 @@ static unsigned floor_shape(size_t size,unsigned *width) {
    }
    return count;
 }
+static unsigned builtin_count(size_t size,unsigned builtin) {
+   size_t at;unsigned n,count=0;
+   for(at=5;at<size;at+=n) {
+      n=binary[at]>>16;CHECK(n && n<=size-at);
+      if((binary[at]&65535)==12 && n>=5 && binary[at+4]==builtin)++count;
+   }
+   return count;
+}
 static unsigned loads(size_t size) {
    size_t at;
    unsigned count=0,n;
@@ -108,6 +116,28 @@ int main(int argc,char** argv) {
       }
       if(!pixel)CHECK(soft>fast);
    }
+   for(mul=0;mul<2;++mul)for(components=1;components<=4;++components)
+      for(pixel=0;pixel<2;++pixel)for(hardware=0;hardware<2;++hardware)for(ftz=0;ftz<2;++ftz) {
+         packed(code,pixel,1);
+         if(mul)code[5]=(code[5]&~(31u<<24))|(11u<<24);
+         code[3]=(code[3]&~(15u<<16))|(((1u<<components)-1)<<16);
+         size=xe_rtz_native_spirv(code,6,pixel,hardware,ftz,binary,65536);CHECK(size);
+         /* The shared flush predicates replace only this native manual-FTZ
+          * product's separate NMin zero test. Other modes retain that test. */
+         CHECK(builtin_count(size,79)==(unsigned)(pixel || !hardware || ftz));
+         if(argc>1) {
+            sprintf(path,"%s/product-zero-op%u-width%u-stage%u-hw%u-ftz%u.spv",
+                  argv[1],mul,components,pixel,hardware,ftz);
+            file=fopen(path,"wb");CHECK(file && fwrite(binary,4,size,file)==size && !fclose(file));
+         }
+      }
+   packed(code,0,1);code[5]&=~(1u<<8);code[4]=0x0d00;
+   size=xe_rtz_native_spirv(code,6,0,1,0,binary,65536);CHECK(size);
+   CHECK(builtin_count(size,79)==1); /* xy differ; zw must keep identity. */
+   code[4]=0;
+   size=xe_rtz_native_spirv(code,6,0,1,0,binary,65536);CHECK(size);
+   CHECK(builtin_count(size,79)==0); /* Identical products need no correction. */
+   puts("PASS: product predicates shared only for native manual-FTZ widths1..4; partial/identity paths retained");
    for(hardware=0;hardware<2;++hardware) {
       scalar_integers=0;
       for(components=1;components<=4;++components) {

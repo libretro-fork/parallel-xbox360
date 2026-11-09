@@ -599,3 +599,28 @@ the unchanged tolerance; report it, never substitute byte savings for driver
 stutter improvement. All320 previous profile modules,32 new pixel modules and
 8 DXIL modules are identical. Driver disk/internal coldness and gameplay remain
 unverified. Full evidence/limits: tools/tests/shader_software_frac_results.txt.
+
+
+## Native product zero-predicate lends (2026-11-09)
+
+For vertex native RTZ with manual FTZ and fully distinct multiplicand lanes,
+reuse the existing classified-flush product helper from dot lowering. Preserve
+output FTZ, NoContraction and MAD third-input flushing. Partial identity masks,
+software RTZ, pixel and hardware FTZ retain their previous paths. Test widths1..4
+and all64 product/mode variants, retaining a failing pre-change structural control.
+No corpus6 cases or thresholds are removed/loosened.
+
+The first comparison flags three MAD PSOs: previously compiled parent binaries
+create in under1ms while changed candidates incur57.8/146.4/366.0ms first-use
+work. Preserve those failures. A separate seven-pair warm comparison passes all
+576 physical Vulkan/80WARP metrics. Additional unseen33/97/257-chain workloads
+built from the same private C89 fixture against the exact parent/candidate pass
+96 metrics, with first heavy PSO510.9311 ->369.6393ms. Both observations are
+required context; never present the warm rerun as the original first result or
+call an unknown driver disk/internal cache empty. Keep the extra fixture source,
+exact-parent rebuild/restoration logs, executable hashes and every raw sample.
+
+All704 numerical inputs/goldens are identical; only32 ordinary native MUL and32
+ordinary native MAD modules change. Existing320 non-MAD performance modules,
+32 MAD pixels and8 DXIL binaries are byte-identical. Details and remaining
+cold-play limits: tools/tests/shader_product_predicates_results.txt.

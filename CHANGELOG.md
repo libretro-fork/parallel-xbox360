@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Reuse native-RTZ input-flush predicates for distinct-lane multiply/MAD zero correction, removing redundant shader zero checks while preserving partial-identity handling. All704 GPU numerical cases pass. An unseen heavy MAD workload compiles in370ms instead of511ms; required driver-compilation hitches remain.
+
 - Reduce software-RTZ fraction shader expansion by lending complete vectors to the existing integer recipe. Keep exact numerical behavior and the native-RTZ/pixel paths; add a dedicated compile profile. Translation is faster in the fixture, but large first-use driver PSO stalls remain.
 
 - Avoid repeating the native-RTZ MAD product's denormal check before addition; retain independent third-operand flushing and exact arithmetic. Expand GPU numeric coverage to704 cases and hardware compile comparisons to480 metrics. Required first-use shader stalls remain unresolved.

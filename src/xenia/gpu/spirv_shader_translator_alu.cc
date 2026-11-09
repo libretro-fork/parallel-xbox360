@@ -114,10 +114,10 @@ spv::Id SpirvShaderTranslator::FlushAluDenormals(spv::Id type, spv::Id value) {
   if (!clean || emitter.failed) throw std::bad_alloc();
   return builder_->createUnaryOp(spv::OpBitcast, type, spv::Id(clean));
 }
-spv::Id SpirvShaderTranslator::Sm3DotProducts(spv::Id type, spv::Id a,
+spv::Id SpirvShaderTranslator::Sm3Products(spv::Id type, spv::Id a,
                                             spv::Id b, uint32_t different) {
   const unsigned count = builder_->getNumComponents(a);
-  if (count < 2 || count > 4) throw std::bad_alloc();
+  if (!count || count > 4) throw std::bad_alloc();
   RtzEmitContext context = RtzContext(count);
   xe_rtz_emitter emitter = {&context, &EmitRtzNode, 0};
   unsigned i;
@@ -449,13 +449,22 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
             GetOperandComponents(operand_storage[i], instr.vector_operands[i],
                                  used_result_components);
       }
-      spv::Id result = AluBinaryOperation(
-          spv::OpFMul, result_type, multiplicands[0], multiplicands[1]);
       uint32_t multiplicands_different =
           used_result_components &
           ~instr.vector_operands[0].GetIdenticalComponents(
               instr.vector_operands[1]);
-      if (multiplicands_different) {
+      // For fully distinct lanes, the input FTZ checks already classify zero.
+      // Borrow those predicates as in dot products, without a second NMin test.
+      // Partial identity masks keep their existing extraction/reinsertion path.
+      const bool fused_zero = is_vertex_shader() &&
+          features_.rounding_mode_rtz_float32 &&
+          !features_.denorm_flush_to_zero_float32 &&
+          multiplicands_different == used_result_components;
+      spv::Id result = fused_zero ? Sm3Products(result_type,
+          multiplicands[0], multiplicands[1],
+          (1u << used_result_component_count) - 1u) : AluBinaryOperation(
+          spv::OpFMul, result_type, multiplicands[0], multiplicands[1]);
+      if (multiplicands_different && !fused_zero) {
         // Shader Model 3: +0 or denormal * anything = +-0.
         spv::Id different_operands[2] = {multiplicands[0], multiplicands[1]};
         spv::Id different_result = result;
@@ -745,7 +754,7 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
       // Only independent products are vectorized; preserve ordered scalar sums.
       const bool native_rtz = is_vertex_shader() && features_.rounding_mode_rtz_float32;
       const bool fused_zero = native_rtz && !features_.denorm_flush_to_zero_float32 && different;
-      spv::Id products = fused_zero ? Sm3DotProducts(
+      spv::Id products = fused_zero ? Sm3Products(
           type_float_vectors_[component_count - 1], operands[0], operands[1], different)
           : native_rtz ? AluBinaryOperation(spv::OpFMul,
               type_float_vectors_[component_count - 1], operands[0], operands[1]) : spv::NoResult;

@@ -911,7 +911,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
   RtzEmitContext RtzContext(unsigned components);
   static spv::Id EmitRtzConstant(const RtzEmitContext*, uint32_t);
   spv::Id FlushAluDenormals(spv::Id type, spv::Id value);
-  spv::Id Sm3DotProducts(spv::Id type, spv::Id a, spv::Id b, uint32_t different);
+  spv::Id Sm3Products(spv::Id type, spv::Id a, spv::Id b, uint32_t different);
   static xe_rtz_id EmitRtzNode(void*, unsigned, xe_rtz_id, xe_rtz_id, xe_rtz_id, uint32_t);
 
   // Pack/unpack two floats as Xbox 360 extended-range float16, where exponent
