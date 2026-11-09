@@ -23,7 +23,8 @@ static size_t stress(unsigned pixel,unsigned additions,unsigned dot,unsigned sce
    }
    for(i=0;i<additions;++i) {
       code[(payload+i)*3]=0xc80f0000;
-      code[(payload+i)*3+2]=dot?
+      if(dot==4)code[(payload+i)*3+1]=0x0d00; /* r0.yxzw vs r0.xyzw. */
+      code[(payload+i)*3+2]=dot==4?UINT32_C(0xc0000000)|(64u+scenario)|(11u<<24):dot?
          UINT32_C(0x80000000)|((1u+scenario)<<8)|(64u+scenario)|((dot==3?11u:dot==2?8u:15u+scenario%3)<<24):
          UINT32_C(0xc0000100);
    }
@@ -47,14 +48,17 @@ int main(int argc,char **argv)
    unsigned mad_profile=mad && !strcmp(mad,"1");
    const char *softfrac=getenv("XE_SHADER_BENCH_SOFTFRAC_PROFILE");
    unsigned softfrac_profile=softfrac && !strcmp(softfrac,"1");
-   const char *stage=softfrac_profile?"spirv.softfrac_translate_batch4":mad_profile?"spirv.mad_translate_batch4":frac_profile?"spirv.frac_translate_batch4":dot_profile?"spirv.dot_translate_batch4":
+   const char *partialmad=getenv("XE_SHADER_BENCH_PARTIALMAD_PROFILE");
+   unsigned partialmad_profile=partialmad && !strcmp(partialmad,"1");
+   const char *stage=partialmad_profile?"spirv.partialmad_translate_batch4":softfrac_profile?"spirv.softfrac_translate_batch4":mad_profile?"spirv.mad_translate_batch4":frac_profile?"spirv.frac_translate_batch4":dot_profile?"spirv.dot_translate_batch4":
        hardware_rtz?"spirv.rtz_translate_batch4":"spirv.translate_batch4";
    char path[512];FILE *file;
    if(argc!=2 || strlen(argv[1])>400)return 2;
    for(profile=0;profile<4;++profile) {
-      context=xe_compile_open(profile|((!softfrac_profile && (hardware_rtz || dot_profile || frac_profile || mad_profile))?8u:0u));if(!context)return 1;
+      context=xe_compile_open(profile|((!softfrac_profile && (hardware_rtz || dot_profile || frac_profile || mad_profile || partialmad_profile))?8u:0u));if(!context)return 1;
       for(pixel=0;pixel<2;++pixel)for(scenario=0;scenario<8;++scenario,++id) {
-         count=softfrac_profile?stress(pixel,additions[scenario%3],2,scenario):
+         count=partialmad_profile?stress(pixel,additions[scenario%3],4,scenario):
+               softfrac_profile?stress(pixel,additions[scenario%3],2,scenario):
                mad_profile?stress(pixel,additions[scenario%3],3,scenario):
                frac_profile?stress(pixel,additions[scenario%3],2,scenario):
                dot_profile?stress(pixel,additions[scenario%3],1,scenario):

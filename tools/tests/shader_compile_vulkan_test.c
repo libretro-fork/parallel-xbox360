@@ -24,9 +24,11 @@ int main(int argc,char **argv)
    unsigned mad_profile=mad && !strcmp(mad,"1");
    const char *softfrac=getenv("XE_SHADER_BENCH_SOFTFRAC_PROFILE");
    unsigned softfrac_profile=softfrac && !strcmp(softfrac,"1");
-   unsigned hardware_rtz=!softfrac_profile && (mad_profile || frac_profile || dot_profile || (rtz && !strcmp(rtz,"1")));
+   const char *partialmad=getenv("XE_SHADER_BENCH_PARTIALMAD_PROFILE");
+   unsigned partialmad_profile=partialmad && !strcmp(partialmad,"1");
+   unsigned hardware_rtz=!softfrac_profile && (partialmad_profile || mad_profile || frac_profile || dot_profile || (rtz && !strcmp(rtz,"1")));
 
-   const char *pso_stage=softfrac_profile?"vulkan.softfrac_vs_ps_pso":mad_profile?"vulkan.mad_vs_ps_pso":frac_profile?"vulkan.frac_vs_ps_pso":dot_profile?"vulkan.dot_vs_ps_pso":hardware_rtz?"vulkan.rtz_vs_ps_pso":"vulkan.vs_ps_pso";
+   const char *pso_stage=partialmad_profile?"vulkan.partialmad_vs_ps_pso":softfrac_profile?"vulkan.softfrac_vs_ps_pso":mad_profile?"vulkan.mad_vs_ps_pso":frac_profile?"vulkan.frac_vs_ps_pso":dot_profile?"vulkan.dot_vs_ps_pso":hardware_rtz?"vulkan.rtz_vs_ps_pso":"vulkan.vs_ps_pso";
    VkPhysicalDeviceProperties2 properties2={0};VkPhysicalDeviceFloatControlsProperties controls={0};
    PFN_vkGetPhysicalDeviceProperties2 get_properties2;PFN_vkVoidFunction raw_properties2;
    VkApplicationInfo app={0};VkInstanceCreateInfo instance={0};
@@ -80,7 +82,7 @@ int main(int argc,char **argv)
    LOAD(vkDestroyDevice);LOAD(vkCreateDescriptorSetLayout);LOAD(vkDestroyDescriptorSetLayout);
    LOAD(vkCreatePipelineLayout);LOAD(vkDestroyPipelineLayout);LOAD(vkCreateShaderModule);LOAD(vkDestroyShaderModule);
    LOAD(vkCreateRenderPass);LOAD(vkDestroyRenderPass);LOAD(vkCreateGraphicsPipelines);LOAD(vkDestroyPipeline);
-   xe_test_module_stage=softfrac_profile?"vulkan.softfrac_module":mad_profile?"vulkan.mad_module":frac_profile?"vulkan.frac_module":dot_profile?"vulkan.dot_module":hardware_rtz?"vulkan.rtz_module":"vulkan.module";
+   xe_test_module_stage=partialmad_profile?"vulkan.partialmad_module":softfrac_profile?"vulkan.softfrac_module":mad_profile?"vulkan.mad_module":frac_profile?"vulkan.frac_module":dot_profile?"vulkan.dot_module":hardware_rtz?"vulkan.rtz_module":"vulkan.module";
    memset(bindings,0,sizeof(bindings));
    for(i=0;i<2;++i){bindings[i].binding=i;bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
       bindings[i].descriptorCount=i?1:4;bindings[i].stageFlags=VK_SHADER_STAGE_ALL_GRAPHICS;}

@@ -1,5 +1,6 @@
 /* Same production matcher, independent exact-key reference. MSVC C89. */
 #include "libretro/core_shader_operand_lend.h"
+#include "libretro/core_shader_lane_mask.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,9 +22,22 @@ static int read_key(const void *opaque, unsigned index, xe_shader_operand_key *o
 }
 int main(void)
 {
+   static const unsigned source_order[16][4]={
+      {4,4,4,4},{0,4,4,4},{1,4,4,4},{0,1,4,4},
+      {2,4,4,4},{0,2,4,4},{1,2,4,4},{0,1,2,4},
+      {3,4,4,4},{0,3,4,4},{1,3,4,4},{0,1,3,4},
+      {2,3,4,4},{0,2,3,4},{1,2,3,4},{0,1,2,3}};
    struct operand_fixture operands[3];
    unsigned a,b,c,index,wanted,i,round;
    uint32_t state;
+   for(a=0;a<16;++a)for(b=0;b<16;++b) {
+      wanted=0;
+      for(i=0;i<4 && source_order[a][i]!=4;++i)
+         wanted|=((b>>source_order[a][i])&1u)<<i;
+      CHECK(xe_shader_pack_lane_mask(a,b)==wanted);
+      CHECK(xe_shader_pack_lane_mask(a|~15u,b|~15u)==wanted);
+   }
+   puts("PASS: all256 lane-mask projections against explicit lane orders, including ignored high bits");
    memset(operands,0,sizeof(operands));
    for(i=0;i<3;++i) operands[i].valid=1;
    CHECK(xe_shader_operand_lend_index(operands,0,read_key)==0 && !reads);

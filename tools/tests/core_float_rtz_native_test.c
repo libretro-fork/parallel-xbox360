@@ -133,11 +133,21 @@ int main(int argc,char** argv) {
       }
    packed(code,0,1);code[5]&=~(1u<<8);code[4]=0x0d00;
    size=xe_rtz_native_spirv(code,6,0,1,0,binary,65536);CHECK(size);
-   CHECK(builtin_count(size,79)==1); /* xy differ; zw must keep identity. */
+   CHECK(builtin_count(size,79)==0); /* xy use shared classification; zw keep identity. */
+   for(components=1;components<16;++components) {
+      code[3]=(code[3]&~(15u<<16))|(components<<16);
+      size=xe_rtz_native_spirv(code,6,0,1,0,binary,65536);CHECK(size);
+      CHECK(builtin_count(size,79)==0);
+      if(argc>1) {
+         sprintf(path,"%s/partial-product-mask%u.spv",argv[1],components);
+         file=fopen(path,"wb");CHECK(file && fwrite(binary,4,size,file)==size && !fclose(file));
+      }
+   }
+   code[3]=(code[3]&~(15u<<16))|(15u<<16);
    code[4]=0;
    size=xe_rtz_native_spirv(code,6,0,1,0,binary,65536);CHECK(size);
    CHECK(builtin_count(size,79)==0); /* Identical products need no correction. */
-   puts("PASS: product predicates shared only for native manual-FTZ widths1..4; partial/identity paths retained");
+   puts("PASS: product predicates shared only for native manual-FTZ widths1..4; partial masks compacted and identity retained");
    for(hardware=0;hardware<2;++hardware) {
       scalar_integers=0;
       for(components=1;components<=4;++components) {

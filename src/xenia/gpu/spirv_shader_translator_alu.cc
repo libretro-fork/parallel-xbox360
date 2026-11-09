@@ -9,6 +9,7 @@
 
 #include "xenia/gpu/spirv_shader_translator.h"
 #include "libretro/core_shader_operand_lend.h"
+#include "libretro/core_shader_lane_mask.h"
 
 #include <cfloat>
 #include <cmath>
@@ -453,16 +454,17 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
           used_result_components &
           ~instr.vector_operands[0].GetIdenticalComponents(
               instr.vector_operands[1]);
-      // For fully distinct lanes, the input FTZ checks already classify zero.
-      // Borrow those predicates as in dot products, without a second NMin test.
-      // Partial identity masks keep their existing extraction/reinsertion path.
+      // Input FTZ already classifies zero. Pack the differing source lanes
+      // into this result vector's order; identical lanes retain raw products.
+      // Borrow the predicates without extracting/reinserting partial vectors.
       const bool fused_zero = is_vertex_shader() &&
           features_.rounding_mode_rtz_float32 &&
           !features_.denorm_flush_to_zero_float32 &&
-          multiplicands_different == used_result_components;
+          multiplicands_different != 0;
       spv::Id result = fused_zero ? Sm3Products(result_type,
           multiplicands[0], multiplicands[1],
-          (1u << used_result_component_count) - 1u) : AluBinaryOperation(
+          xe_shader_pack_lane_mask(used_result_components,
+                                   multiplicands_different)) : AluBinaryOperation(
           spv::OpFMul, result_type, multiplicands[0], multiplicands[1]);
       if (multiplicands_different && !fused_zero) {
         // Shader Model 3: +0 or denormal * anything = +-0.

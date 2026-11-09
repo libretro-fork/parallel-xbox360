@@ -25,13 +25,13 @@ class ComparisonTests(unittest.TestCase):
 
     def test_device_identity_counts_all_timed_profiles(self):
         identity="BENCH_DEVICE Vulkan vendor=4318 device=11141 driver=1 name=test"
-        for count in [1,2,3,4,5,6]:
+        for count in [1,2,3,4,5,6,7]:
             self.assertEqual(ci.vulkan_device_identity((identity+"\n")*count,count),identity)
 
     def test_device_identity_rejects_missing_or_duplicate_profile(self):
         identity="BENCH_DEVICE Vulkan vendor=4318 device=11141 driver=1 name=test\n"
-        for expected in [3,4,5,6]:
-            for actual in range(8):
+        for expected in [3,4,5,6,7]:
+            for actual in range(9):
                 if actual!=expected:
                     with self.assertRaises(ValueError):ci.vulkan_device_identity(identity*actual,expected)
         with self.assertRaises(ValueError):ci.vulkan_device_identity("",0)
@@ -181,7 +181,11 @@ class ComparisonTests(unittest.TestCase):
     def test_expected_cases_are_identified_not_just_counted(self):
         self.assertEqual(len(ci.expected_keys("vulkan-software")),96)
         self.assertEqual(len(ci.expected_keys("d3d12-warp")),80)
-        self.assertEqual(len(ci.expected_keys("vulkan-hardware")),576)
+        self.assertEqual(len(ci.expected_keys("vulkan-hardware")),672)
+        self.assertIn(("spirv.partialmad_translate_batch4",63),ci.expected_keys("vulkan-hardware"))
+        self.assertIn(("vulkan.partialmad_vs_ps_pso",15),ci.expected_keys("vulkan-hardware"))
+        self.assertIn(("vulkan.partialmad_module",15),ci.expected_keys("vulkan-hardware"))
+        self.assertNotIn(("vulkan.partialmad_module",16),ci.expected_keys("vulkan-hardware"))
         self.assertIn(("spirv.softfrac_translate_batch4",63),ci.expected_keys("vulkan-hardware"))
         self.assertIn(("vulkan.softfrac_vs_ps_pso",15),ci.expected_keys("vulkan-hardware"))
         self.assertIn(("vulkan.softfrac_module",15),ci.expected_keys("vulkan-hardware"))

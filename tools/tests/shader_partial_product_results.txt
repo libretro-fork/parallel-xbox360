@@ -1,0 +1,87 @@
+Partial native product predicate lends -- 2026-11-09
+Parentdb704eba2ba4c8642d0c971ad5cb0917b0f07c8b
+
+Production and ownership
+------------------------
+Extend native-RTZ/manual-FTZ vertex MUL/MAD predicate reuse to partial aliases.
+The existing product helper already supports a per-component correction mask.
+A C89 helper projects the original four-component difference mask into compact
+result-vector order. Its full-mask path returns immediately; other masks take
+at most four iterations. Identical components keep their uncorrected products;
+only differing components select SM3 +0 for zero/subnormal multiplicands. Keep
+ordered NoContraction arithmetic, signed input/output FTZ and independent MAD
+third-input flushing. Other feature/stage paths retain the existing lowering.
+
+This removes the native partial path's operand/product swizzles or extracts,
+separate absolute/minimum/equality zero checks, and insertion/shuffle back into
+the result. Lend the complete operands to the existing masked product emitter.
+No new dynamic container, persistent state, thread, lock, release diagnostic,
+sleep or GPU/CPU roundtrip. The new C89 projection itself allocates and copies
+no payload. The shared SPIR-V builder still owns/allocates IR instructions and
+interned constants, including a small bool-vector mask. This is not a claim of
+zero allocation across compilation, lower GPU register pressure or fewer GPU
+memory transfers. Runtime edits outside the new C89 helper are typed metadata
+glue; existing component paths remain for software/pixel/hardware-FTZ modes.
+
+Correctness
+-----------
+MSVC Release --parallel3 and704 physical RTX5090 numerical shader cases pass on
+parent and candidate. Input and expected files are identical. Exactly32 partial
+native MAD modules (608..639) change; other672 numeric modules are identical.
+This retains signed-zero/NaN/Inf/denormal cases and partial identical-component
+rules. Exact finite outputs remain; NaN payload canonicalization is permitted.
+All384 existing performance modules,32 new profile pixels and8DXIL modules are
+byte-identical. No new console-reference,pixel/tessellation execution claim.
+
+The C89 mask helper is checked for every256 selected/differing-mask pair against
+explicit source-order tables, plus high-bit inputs. Native structural tests
+cover all15 nonempty output masks; the unchanged parent fails the new partial
+NMin guard at line136. Candidate retains the64 product feature/width tests and
+identical-lane checks. Numerical tests execute full exported vectors; the15
+arbitrary output masks are structural coverage, not15 additional GPU oracles.
+
+982 emitted modules validate with spirv-val vulkan1.1. Strict C89 compilation of
+changed native guards and compile fixtures passes. The lane-projection/operand
+matcher tests also pass Linux ASan+UBSan, including65536 randomized operand plans.
+Existing integer tests pass4M SSE RTZ/FTZ comparisons,65536 flush classifications,
+emission failures and special forwarding with ASan+UBSan. Sanitizers do not
+cover the full linked core. All27 comparator tests pass.
+
+Corpus7 and timing
+------------------
+Add64 partial MAD-heavy VS/PS programs: r0.xyzw*r0.yxzw+cN, so xy differ and zw
+are identical. Preserve existing swizzle/scale configurations and32/96/256
+instruction chains. Stage labels identify the profile independently. Parent
+shader000 has32 NMin and64FAbs; candidate has zero of both, confirming the new
+workload reaches the intended path. Required physical-runner metrics576 ->672,
+with seven matching device reports per paired sample (98 reports across7pairs).
+Numerical704/software Vulkan96/WARP80 remain unchanged. Missing cases and
+missing/duplicate identity reports fail. No thresholds or cache defaults change.
+
+Same current C89 harness against sealed parent/candidate libraries, identical
+MSVC Release source/build paths, seven alternating/reverse-order process pairs.
+RTX5090 vendor4318/device11141 driver2604679168. No RetroArch process present
+before timing; no competing builds during timing. Empty application caches,
+but driver disk/internal coldness is NOT certified. The profile is new to the
+previous timing corpora. The first complete comparison passes672 physical
+Vulkan and80WARP metrics with zero alarms; retain all raw wall/process-CPU
+samples, per-case median/p95/p99/max, source/executable and cache manifests.
+
+Partial32 vertex modules3,944,192 ->3,314,688 bytes (-15.96%);
+191,936 ->170,496 instructions. This does not establish a matching reduction in
+the driver's final GPU machine code, register spills or execution cost.
+Translation(batch4) median across64 case medians0.39815 ->0.40540ms (slightly
+higher, essentially flat), max2.5307 ->2.3788ms. PSO median across16 case medians
+0.18180 ->0.16230ms. First-heavy PSO cases0/2/4 wall73.2227/171.1984/442.2871
+->50.1093/132.7014/360.2223ms; paired process CPU62.500/171.875/453.125
+->46.875/140.625/359.375ms. Windows CPU accounting quantizes and can exceed wall.
+No gameplay/RSS/register-pressure/GPU execution improvement is established.
+
+Delivery and limits
+-------------------
+One git format-patch mailbox is applied with actual git am at the exact parent
+and compared for identical resulting tree before push to libretro. Hosted CI
+status is reported separately; skipped hardware jobs are unverified. No installed
+core replacement, game launch, user cache removal or extracted asset. A360ms
+required PSO remains a visible stall. Cross-game cold/warm first correct draw,
+frame pacing and the overall shader-stutter goal remain open.

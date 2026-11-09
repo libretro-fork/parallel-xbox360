@@ -624,3 +624,28 @@ All704 numerical inputs/goldens are identical; only32 ordinary native MUL and32
 ordinary native MAD modules change. Existing320 non-MAD performance modules,
 32 MAD pixels and8 DXIL binaries are byte-identical. Details and remaining
 cold-play limits: tools/tests/shader_product_predicates_results.txt.
+
+
+## Partial native product predicates, corpus7 (2026-11-09)
+
+Reuse the existing per-lane masked SM3 product helper for partial aliases too.
+Project differing source lanes into compact result order with the C89 lane-mask
+helper. Preserve identical-lane products, signed FTZ, NoContraction and the MAD
+third input's flush. Never apply an uncompacted source mask to a smaller result
+vector. Exhaust all256 masks against explicit source-order tables, including
+ignored high bits, and structurally test every nonempty output mask.
+
+Keep every corpus6 case and threshold. Corpus7 adds64 partial-MAD VS/PS compile
+cases (r0.xyzw*r0.yxzw+cN,32/96/256 chains,swizzle/scale configurations). Require
+672 physical-runner metrics and seven matching device reports per sample.
+Software Vulkan96,WARP80 and numerical704 remain unchanged. Verify the new
+profile actually reaches partial correction: parent shader000 has32 NMin/64FAbs,
+candidate has neither. The parent must fail the new partial structural guard.
+
+Seven alternating pairs pass on the first full comparison with no alarms.
+Partial32 VS bytes3,944,192 ->3,314,688 and first heavy PSO442.2871 ->360.2223ms.
+Translation median0.39815 ->0.40540ms is essentially flat/slightly higher; record
+it. Existing384 performance modules,32 new pixels,8DXIL and all input/golden
+files are unchanged; only32 partial native MAD numerical modules differ.
+Driver disk/internal coldness and gameplay are unverified. Full details:
+tools/tests/shader_partial_product_results.txt.
