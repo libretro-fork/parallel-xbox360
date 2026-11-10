@@ -1,0 +1,89 @@
+Prepared integer Vulkan transfer family, 2026-11-11
+
+Supported integer color ownership transfers select initialization-owned PSOs.
+Dense storage contains 36 sample-shaded or 84 manual pipelines at global 1x,
+or 144/336 when native and scaled images differ. Source MSAA is an exact enum;
+four native/scaled combinations collapse to one at 1x. Initialization fixes
+sample mapping, scale class and destination codec. Pitches, base delta and
+source codec remain runtime data. Checked packets let the shader reuse source
+address width, expanding its boolean into the codec mask rather than loading
+an independent duplicate value. The generic constructor remains unchanged.
+
+Nine temporary modules and at most 21 creation descriptors are reused per group.
+Driver batches write directly into final handle storage. Failure cleans earlier
+and partial batch outputs. Single shader/layout outputs are published only on
+successful non-null creation: Vulkan failure outputs can be undefined. Lookup
+stores no creation/admission callback and introduces no wait or release logging.
+
+The C89 packet writer constructs constants directly in unpublished retained
+command pages. Only the four-byte sample index changes on later manual passes.
+Rejected packets publish nothing. View aliases 6/4 and 7/5 share ownership-pass
+keys. Ordinary draw formats, barriers, descriptors and completion lifetimes are
+preserved. Framebuffer and other transfer/shader families still allocate/compile;
+this is not an allocation-free renderer or complete accurate fallback claim.
+
+Correctness evidence:
+- MSVC Release core builds with three jobs. MSVC /TC /W4 /WX and GCC strict C89
+  ASan/UBSan pass 1,840 bank contexts, exact PSO state/lookup identity, poisoned
+  undefined error outputs, partial batches, missing handles and double close.
+- 1,296 shape programs pass strict SPIR-V validation. Mutating source width,
+  pitches and base delta leaves generated programs unchanged; those fields
+  must remain dynamic. Invalid preparation preserves output. Both compilers
+  generate byte-identical modules. The final width-reuse revision passes these checks.
+- Test-only counters cover initialization creation and zero GPU-role lookup
+  events. Production omits this accounting. Command reservation/replay tests
+  cover 40,000 records, abandoned/stale/foreign/double commits, allocation
+  rollback, retained pages, borrowed payloads and C++ owner teardown.
+- Software Vulkan legacy and dynamic rendering pass 3,888 shaded plus 2,592
+  feature-disabled/manual cases each. Native 2x is unsupported on that device.
+- NVIDIA RTX 5090 legacy/sample-shading passes 7,776 cases, feature-disabled
+  passes 5,184, and dynamic rendering passes 7,776. All 36 format pairs, six
+  native/scaled classes, mixed sample counts, inactive samples and probe tails
+  are checked. Final width-reuse coverage passes the same matrix.
+- Test readback allocation prefers host-cached visible memory with visible-only
+  fallback and unchanged noncoherent flush/invalidate. No oracle/guard checks
+  were removed. An earlier uncached test was stopped and is not a pass.
+
+Warmed GPU execution, not gameplay/cold-cache acceptance:
+- Independent existing-renderer shaders and actual prepared-bank pipelines
+  match 90 ownership image states: ten real format changes, 1x/2x/4x and three
+  sample counts. Large surfaces use 32x16 destination tiles, 33x16 source tiles,
+  distinct pitches and base delta. Both implementations match the same oracle.
+- Seven alternating matched pairs plus a retained warmup are measured at 64
+  and 512 draws per state. A second complete run reverses order. Raw timestamp
+  ticks/availability/wrap/host bounds and IA/VS/FS counters are retained. Exact
+  primitive and minimum fragment counts prevent missing work from looking fast.
+- Final source-width-reuse variant passes all 180 groups in BOTH full runs:
+  zero declared regressions and zero invalid work-scaling controls. Maximum
+  paired median ratio is 1.034 forward and 1.038 reversed. The predeclared rule
+  is median >5% AND >100 ns/draw with at least 5/7 paired exceedances; 512/64
+  work scaling must be >=2. Limits were not changed. This is no broad speedup,
+  first-frame latency or gameplay-fluidity claim.
+- Driver internal/disk caches are NOT certified cold. Earlier small-surface
+  observations were about 0.27 s initial native preparation and 0.81 s scaled,
+  followed by millisecond cached creation. Do not present these as controlled
+  cold-boot results or extrapolate them to all games/devices.
+
+Rejected evidence retained privately:
+The unpublished fully dynamic f9dea version passed the 768-metric procedural
+parent gate but regressed warmed GPU execution up to 1.83x (19 flagged groups).
+An earlier undersized test failed work-scaling controls. Fixing only MSAA still
+left substantial relative overhead. Fixing scale/destination fields removed most
+cost, but larger forward/reverse runs each flagged a different group; isolated
+reruns passed. An identical-legacy-pipeline control passed, so it did NOT prove
+noise as the cause. Those full-run failures remain failures of that revision.
+The final source-width-reuse version is a distinct tested revision, not a
+reinterpretation of discarded samples. A private boolean/mask mistake was
+caught by the image oracle and corrected before any production change.
+
+A compiler-sensitive packed inverse-sample expression was also exposed by the
+MSAA oracle. Shared normalized u32 mapping passes the unchanged address/sample
+oracles on NVIDIA, software Vulkan and WARP. Production has no diagnostic stores.
+Integer fill fixtures explicitly mask 16-bit channels: attachment writes clamp.
+
+Delivery requires the exact-parent seven-pair regression gate,
+mailbox application/tree validation and CI, with results in the delivery evidence.\nRemaining architectural work:
+D3D12 prepared integration, noninteger/depth/value-converting transfers, guest
+shader fallback/control flow and other utility creation. Invalid/out-of-domain
+metadata retains the accurate legacy path. No complete no-draw-compilation,
+no mid-game allocation or smooth cold-play claim is established.

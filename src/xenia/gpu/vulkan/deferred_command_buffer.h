@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <new>
 #include "libretro/core_command_stream.h"
 
 #include "xenia/base/assert.h"
@@ -426,6 +427,33 @@ class DeferredCommandBuffer {
     args.offset = offset;
     args.size = size;
     std::memcpy(args_ptr + sizeof(ArgsVkPushConstants), values, size);
+  }
+
+  // Build directly in final, unpublished storage. The synchronous C89 writer
+  // must not reenter this command buffer or retain the destination pointer.
+  bool CmdVkPushConstantsWrite(VkPipelineLayout layout,
+      VkShaderStageFlags stage_flags, uint32_t offset, uint32_t size,
+      int (*write)(void*, size_t, void*), void* context) {
+    uint32_t argument_elements;
+    size_t packet_bytes;
+    const size_t header_bytes = kCommandHeaderSizeElements * sizeof(uintmax_t);
+    xe_command_reservation lease = {};
+    if (!write || !size || ((size | offset) & 3) || size > UINT32_MAX - offset ||
+        size > size_t(-1) - sizeof(ArgsVkPushConstants) ||
+        !xe_command_packet_layout(sizeof(ArgsVkPushConstants) + size,
+        header_bytes, &argument_elements, &packet_bytes)) return false;
+    uint8_t* packet = static_cast<uint8_t*>(
+        xe_command_stream_reserve(&command_stream_, packet_bytes, &lease));
+    if (!packet) throw std::bad_alloc();
+    ArgsVkPushConstants* args = reinterpret_cast<ArgsVkPushConstants*>(packet + header_bytes);
+    if (!write(reinterpret_cast<uint8_t*>(args) + sizeof(*args), size, context)) return false;
+    args->layout = layout; args->stage_flags = stage_flags;
+    args->offset = offset; args->size = size;
+    CommandHeader* header = reinterpret_cast<CommandHeader*>(packet);
+    header->command = Command::kVkPushConstants;
+    header->arguments_size_elements = argument_elements;
+    if (!xe_command_stream_commit(&command_stream_, &lease)) throw std::bad_alloc();
+    return true;
   }
 
   void CmdVkSetBlendConstants(const float* blend_constants) {

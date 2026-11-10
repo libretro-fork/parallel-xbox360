@@ -21,6 +21,9 @@ jobs:
           TRANSFER_UINT_COLOR_TEST=1 GPU_TESTS=1 sh tools/tests/run_transfer_sample_tests.sh
           TRANSFER_ADDRESS_TEST=1 GPU_TESTS=1 sh tools/tests/run_transfer_sample_tests.sh
           GPU_TESTS=1 sh tools/tests/run_transfer_uint_image_tests.sh
+          sh tools/tests/run_transfer_uint_bank_tests.sh
+          GPU_TESTS=1 sh tools/tests/run_transfer_msaa_image_tests.sh
+          MSAA_DYNAMIC_RENDERING=1 GPU_TESTS=1 MSAA_IMAGE_OUT=build/tests/transfer-msaa-dynamic sh tools/tests/run_transfer_msaa_image_tests.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -31,6 +34,9 @@ jobs:
             build/tests/transfer-uint-color/
             build/tests/transfer-address/
             build/tests/transfer-uint-image/
+            build/tests/transfer-uint-bank/
+            build/tests/transfer-msaa-image/
+            build/tests/transfer-msaa-dynamic/
           if-no-files-found: error
   d3d12:
     runs-on: windows-2022
@@ -58,6 +64,10 @@ jobs:
           call tools\tests\run_transfer_sample_tests.cmd
           if errorlevel 1 exit /b 1
           call tools\tests\run_transfer_uint_image_tests.cmd
+          if errorlevel 1 exit /b 1
+          call tools\tests\run_transfer_uint_bank_tests.cmd
+          if errorlevel 1 exit /b 1
+          call tools\tests\run_transfer_msaa_image_tests.cmd
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -68,4 +78,6 @@ jobs:
             build/tests/transfer-uint-color-msvc/
             build/tests/transfer-address-msvc/
             build/tests/transfer-uint-image-msvc/
+            build/tests/transfer-uint-bank-msvc/
+            build/tests/transfer-msaa-image-msvc/
           if-no-files-found: error

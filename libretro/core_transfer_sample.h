@@ -118,8 +118,8 @@ static INLINE int xe_transfer_sample_decanonical_emit(
  xe_transfer_sample_emitter *e,const xe_transfer_sample_parameters *p,
  const xe_transfer_sample_coordinates *in,xe_transfer_sample_coordinates *out) {
  xe_transfer_sample_coordinates result;
- uintptr_t zero,one,two,not_two,not_three,x2,x4,y24,s2,s4;
- uintptr_t a,b,c,native,is2,is4,x,y,sample;
+ uintptr_t zero,one,two,not_three,active,four,two_samples,none,s2,s4;
+ uintptr_t a,b,c,native,is4,x,y,sample;
  if(!e || !e->emit || !p || !in || !out || !in->x || !in->y ||
     !in->sub_x || !in->sub_y || !p->msaa || !p->native2 ||
     !p->scale_x || !p->scale_y)return 0;
@@ -129,19 +129,32 @@ static INLINE int xe_transfer_sample_decanonical_emit(
  XE_SAMPLE_OP(zero,XE_TRANSFER_SAMPLE_CONST,0,0,0);
  XE_SAMPLE_OP(one,XE_TRANSFER_SAMPLE_CONST,1,0,0);
  XE_SAMPLE_OP(two,XE_TRANSFER_SAMPLE_CONST,2,0,0);
- XE_SAMPLE_OP(not_two,XE_TRANSFER_SAMPLE_CONST,0xfffffffdu,0,0);
  XE_SAMPLE_OP(not_three,XE_TRANSFER_SAMPLE_CONST,0xfffffffcu,0,0);
- XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_AND,in->x,not_two,0);
- XE_SAMPLE_OP(b,XE_TRANSFER_SAMPLE_AND,in->y,two,0);
- XE_SAMPLE_OP(x2,XE_TRANSFER_SAMPLE_OR,a,b,0);
- XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_AND,in->x,one,0);
- XE_SAMPLE_OP(b,XE_TRANSFER_SAMPLE_AND,in->x,not_three,0);
- XE_SAMPLE_OP(b,XE_TRANSFER_SAMPLE_SHR,b,one,0);
- XE_SAMPLE_OP(x4,XE_TRANSFER_SAMPLE_OR,a,b,0);
- XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_AND,in->y,one,0);
- XE_SAMPLE_OP(b,XE_TRANSFER_SAMPLE_AND,in->y,not_three,0);
- XE_SAMPLE_OP(b,XE_TRANSFER_SAMPLE_SHR,b,one,0);
- XE_SAMPLE_OP(y24,XE_TRANSFER_SAMPLE_OR,a,b,0);
+ /* Deinterleave once using normalized u32 flags. Whole-coordinate selects
+  * keep several competing bit layouts live through a texture fetch. */
+ XE_SAMPLE_OP(is4,XE_TRANSFER_SAMPLE_EQ,p->msaa,two,0);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_GE,p->msaa,one,0);
+ XE_SAMPLE_OP(active,XE_TRANSFER_SAMPLE_SELECT,a,one,zero);
+ XE_SAMPLE_OP(four,XE_TRANSFER_SAMPLE_SELECT,is4,one,zero);
+ XE_SAMPLE_OP(two_samples,XE_TRANSFER_SAMPLE_SUB,active,four,0);
+ XE_SAMPLE_OP(none,XE_TRANSFER_SAMPLE_SUB,one,active,0);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_AND,in->x,not_three,0);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_SHR,a,four,0);
+ XE_SAMPLE_OP(b,XE_TRANSFER_SAMPLE_AND,in->x,one,0);
+ XE_SAMPLE_OP(x,XE_TRANSFER_SAMPLE_OR,a,b,0);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_AND,in->x,two,0);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_MUL,a,none,0);
+ XE_SAMPLE_OP(x,XE_TRANSFER_SAMPLE_OR,x,a,0);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_AND,in->y,two,0);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_MUL,a,two_samples,0);
+ XE_SAMPLE_OP(x,XE_TRANSFER_SAMPLE_OR,x,a,0);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_AND,in->y,not_three,0);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_SHR,a,active,0);
+ XE_SAMPLE_OP(b,XE_TRANSFER_SAMPLE_AND,in->y,one,0);
+ XE_SAMPLE_OP(y,XE_TRANSFER_SAMPLE_OR,a,b,0);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_AND,in->y,two,0);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_MUL,a,none,0);
+ XE_SAMPLE_OP(y,XE_TRANSFER_SAMPLE_OR,y,a,0);
  XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_SHR,in->x,one,0);
  XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_AND,a,one,0);
  XE_SAMPLE_OP(b,XE_TRANSFER_SAMPLE_XOR,a,one,0);
@@ -151,14 +164,9 @@ static INLINE int xe_transfer_sample_decanonical_emit(
  XE_SAMPLE_OP(s2,XE_TRANSFER_SAMPLE_SELECT,native,b,c);
  XE_SAMPLE_OP(b,XE_TRANSFER_SAMPLE_AND,in->y,two,0);
  XE_SAMPLE_OP(s4,XE_TRANSFER_SAMPLE_OR,a,b,0);
- XE_SAMPLE_OP(is2,XE_TRANSFER_SAMPLE_EQ,p->msaa,one,0);
- XE_SAMPLE_OP(is4,XE_TRANSFER_SAMPLE_EQ,p->msaa,two,0);
- XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_SELECT,is2,x2,in->x);
- XE_SAMPLE_OP(x,XE_TRANSFER_SAMPLE_SELECT,is4,x4,a);
- XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_SELECT,is2,y24,in->y);
- XE_SAMPLE_OP(y,XE_TRANSFER_SAMPLE_SELECT,is4,y24,a);
- XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_SELECT,is2,s2,zero);
- XE_SAMPLE_OP(sample,XE_TRANSFER_SAMPLE_SELECT,is4,s4,a);
+ XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_MUL,s2,two_samples,0);
+ XE_SAMPLE_OP(b,XE_TRANSFER_SAMPLE_MUL,s4,four,0);
+ XE_SAMPLE_OP(sample,XE_TRANSFER_SAMPLE_OR,a,b,0);
  XE_SAMPLE_OP(a,XE_TRANSFER_SAMPLE_MUL,x,p->scale_x,0);
  XE_SAMPLE_OP(result.x,XE_TRANSFER_SAMPLE_ADD,a,in->sub_x,0);
  XE_SAMPLE_OP(b,XE_TRANSFER_SAMPLE_MUL,y,p->scale_y,0);

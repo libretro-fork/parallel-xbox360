@@ -660,3 +660,5 @@ and unused-source checks remain covered. Cold construction requests final bounde
 module storage directly instead of growing it midway. These are prototype
 coverage/ownership changes, not renderer integration or retail cold-play signoff.
 See `tools/tests/minmax_results.txt` for measured costs and missing coverage.
+
+Supported Vulkan integer ownership transfers use an initialization-owned fixed pipeline table and construct constants directly in retained deferred-command storage. Manual sample passes update only the sample index. Other transfer formats and guest shaders still have unresolved draw-path compilation; this is not a smooth cold-play guarantee. See [prepared transfer coverage and limits](tools/tests/transfer_uint_bank_results.txt).

@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Prepare Vulkan integer ownership-transfer pipelines at initialization and select them through a fixed lookup table during supported transfers. Build transfer constants directly in retained command storage, updating only the sample index for later manual passes. Add real multisample raster and partial-failure regressions, including devices without sample-rate shading. Other transfer families and guest shader compilation remain unfinished; this does not certify smooth cold play.
+
 - Build raw SPIR-V/native DXIL integer ownership-transfer fragment shaders from shared address and format recipes. Fetch real integer images, read an adjacent sample only for 32-to-64-bit transfers, and write raw fragment output without a copied payload. Add cross-format raster regressions on Vulkan/WARP and checked interface metadata. Actual renderer integration and MSAA raster coverage remain unfinished; this does not yet remove utility draw-path compilation.
 
 - Extend the generic transfer foundation with shared physical EDRAM tile, sample and word-half routing. Validate scaled/native and color/depth crossings against an independent legacy oracle on Vulkan and D3D12, retaining original destination coordinates for later host-depth reuse. This remains outside rendering; image access and prepared pipeline integration are unfinished.

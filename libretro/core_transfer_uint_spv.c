@@ -1,6 +1,8 @@
 /* Initialization-only raw SPIR-V fragment construction. BSD; MSVC C89. */
 #include "core_transfer_uint_spv.h"
 #include "core_transfer_sample_spv.h"
+#include "core_transfer_uint_shape.h"
+#include "core_draw_stats.h"
 #include <string.h>
 
 enum {
@@ -9,7 +11,7 @@ enum {
  IMAGE,CONSTANTS,OUTPUT,POSITION,SAMPLE,MAIN,LABEL,FETCH2,MERGE,
  CONST_BASE=40,FIRST_ID=128
 };
-typedef struct uint_shader {xe_spv_binary *out;uint32_t next;} uint_shader;
+typedef struct uint_shader {xe_spv_binary *out;uint32_t next;const xe_transfer_uint_shape *fixed;} uint_shader;
 static uint32_t literal(unsigned n){return CONST_BASE+n;}
 static void instruction(uint_shader *s,unsigned op,uint32_t type,uint32_t id,
  unsigned count,uint32_t a,uint32_t b,uint32_t c) {
@@ -21,7 +23,9 @@ static uint32_t value(uint_shader *s,unsigned op,uint32_t type,
  uint32_t id=s->next++;instruction(s,op,type,id,count,a,b,c);return id;
 }
 static uint32_t parameter(uint_shader *s,unsigned word) {
- uint32_t pointer=value(s,SpvOpAccessChain,PPU,3,CONSTANTS,literal(0),literal(word));
+ uint32_t pointer;
+ if(s->fixed && (s->fixed->mask & (UINT32_C(1)<<word)))return 80+word;
+ pointer=value(s,SpvOpAccessChain,PPU,3,CONSTANTS,literal(0),literal(word));
  return value(s,SpvOpLoad,TU,1,pointer,0,0);
 }
 static int fetch(uint_shader *s,uint32_t image,uint32_t x,uint32_t y,uint32_t sample,
@@ -35,8 +39,8 @@ static int fetch(uint_shader *s,uint32_t image,uint32_t x,uint32_t y,uint32_t sa
  for(i=0;i<4;++i)lanes[i]=value(s,SpvOpCompositeExtract,TU,2,result,i,0);
  return !s->out->failed;
 }
-int xe_transfer_uint_spv_build(xe_spv_binary *out,
- const xe_transfer_uint_options *options) {
+static int build_impl(xe_spv_binary *out,
+ const xe_transfer_uint_options *options,const xe_transfer_uint_shape *fixed) {
  uint_shader s;xe_transfer_sample_spv adapter;xe_transfer_sample_emitter e;
  xe_transfer_address_parameters address;xe_transfer_address_result route;
  xe_transfer_uint_color_parameters source,dest;
@@ -48,8 +52,9 @@ int xe_transfer_uint_spv_build(xe_spv_binary *out,
  uint32_t position,x,y,sample,image,condition,second_word,args[4];unsigned i;
  if(!out || !options || options->source_multisampled>1 ||
     options->sample_mode>XE_TRANSFER_UINT_SAMPLE_CONSTANT || options->target>3)return 0;
+ XE_DRAW_EVENT(XE_DRAW_UTILITY_PIPELINE,XE_DRAW_TRANSLATE);
  xe_spv_binary_reset(out);if(!xe_spv_binary_reserve(out,4096))return 0;
- s.out=out;s.next=FIRST_ID;xe_spv_binary_append(out,header,5);
+ s.out=out;s.next=FIRST_ID;s.fixed=fixed;xe_spv_binary_append(out,header,5);
  instruction(&s,SpvOpCapability,0,0,1,SpvCapabilityShader,0,0);
  if(options->sample_mode==XE_TRANSFER_UINT_SAMPLE_BUILTIN)
   instruction(&s,SpvOpCapability,0,0,1,SpvCapabilitySampleRateShading,0,0);
@@ -82,6 +87,8 @@ int xe_transfer_uint_spv_build(xe_spv_binary *out,
  instruction(&s,SpvOpConstant,TU,literal(35),1,0xfffffffcu,0,0);
  instruction(&s,SpvOpConstant,TU,literal(36),1,0xffffffffu,0,0);
  instruction(&s,SpvOpConstant,TU,literal(37),1,2047,0,0);
+ if(fixed)for(i=0;i<28;++i)if(fixed->mask & (UINT32_C(1)<<i))
+  instruction(&s,SpvOpConstant,TU,80+i,1,xe_transfer_uint_shape_word(fixed,i),0,0);
  image_type[4]=options->source_multisampled;
  xe_spv_binary_instruction(out,SpvOpTypeImage,0,TIMAGE,image_type,7);
  instruction(&s,SpvOpTypeArray,0,TPCARRAY,2,TU,literal(28),0);
@@ -117,7 +124,11 @@ int xe_transfer_uint_spv_build(xe_spv_binary *out,
  adapter.all=literal(36);adapter.tile_mask=literal(37);
  e.emit=xe_transfer_sample_spv_emit;e.context=&adapter;
  if(!xe_transfer_address_emit(&e,&address,x,y,sample,&route))goto fail;
- source.halves=parameter(&s,23);source.wide=parameter(&s,24);source.shift16=literal(16);
+ /* Checked prepared packets carry the same source width twice: address bool
+  * and codec mask. Reuse the borrowed address ID, expanding0/1 to0/~0. */
+ source.halves=parameter(&s,23);
+ source.wide=fixed?value(&s,SpvOpISub,TU,2,literal(0),(uint32_t)address.word[XE_ADDR_S_WIDE],0):parameter(&s,24);
+ source.shift16=literal(16);
  dest.halves=parameter(&s,25);dest.wide=parameter(&s,26);dest.shift16=literal(16);
  image=value(&s,SpvOpLoad,TIMAGE,1,IMAGE,0,0);
  if(!fetch(&s,image,(uint32_t)route.x,(uint32_t)route.y,(uint32_t)route.sample,
@@ -143,4 +154,15 @@ int xe_transfer_uint_spv_build(xe_spv_binary *out,
  if(out->failed)goto fail;
  out->words[3]=s.next;return 1;
 fail:out->count=0;return 0;
+}
+
+int xe_transfer_uint_spv_build(xe_spv_binary *out,const xe_transfer_uint_options *options) {
+ return build_impl(out,options,NULL);
+}
+int xe_transfer_uint_spv_build_shape(xe_spv_binary *out,
+ const xe_transfer_uint_options *options,const xe_transfer_address_key *key,
+ unsigned dest_format) {
+ xe_transfer_uint_shape shape;
+ if(!xe_transfer_uint_shape_prepare(&shape,options,key,dest_format))return 0;
+ return build_impl(out,options,&shape);
 }

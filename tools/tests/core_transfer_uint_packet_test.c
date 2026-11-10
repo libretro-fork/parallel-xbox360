@@ -7,6 +7,7 @@ int main(void) {
  static const unsigned scales[6][4]={{1,1,1,1},{2,2,2,2},{3,5,3,5},{1,1,3,5},{3,5,1,1},{1,1,1,3}};
  xe_transfer_address_key key={0};xe_transfer_uint_options options;
  xe_transfer_uint_packet packet,saved;
+ xe_transfer_uint_packet_source writer;
  xe_transfer_address_config address;xe_transfer_uint_color_config source,dest;
  unsigned s,d,dm,sm,n,scale,mode,cases=0;uint32_t sample;
  key.source_color=key.dest_color=1;key.source_pitch=key.dest_pitch=1;
@@ -26,6 +27,16 @@ int main(void) {
      memcmp(&packet.address,&address,sizeof(address)) ||
      memcmp(&packet.source,&source,sizeof(source)) ||
      memcmp(&packet.dest,&dest,sizeof(dest)) || packet.sample!=sample)return 1;
+  saved=packet;memset(&packet,0xa5,sizeof(packet));
+  writer.options=&options;writer.key=&key;writer.source_format=formats[s];
+  writer.dest_format=formats[d];writer.sample=sample;
+  if(!xe_transfer_uint_packet_write(&packet,sizeof(packet),&writer) ||
+     memcmp(&packet,&saved,sizeof(packet)))return 1;
+  if(xe_transfer_uint_packet_write(&packet,sizeof(packet)-4,&writer) ||
+     xe_transfer_uint_packet_write(&packet,sizeof(packet)+4,&writer) ||
+     xe_transfer_uint_packet_write(&packet,sizeof(packet),NULL) ||
+     xe_transfer_uint_packet_write(NULL,sizeof(packet),&writer) ||
+     memcmp(&packet,&saved,sizeof(packet)))return 1;
   ++cases;
  }
  memset(&packet,0xa5,sizeof(packet));saved=packet;
@@ -47,6 +58,11 @@ int main(void) {
  key.source_color=1;key.source_pitch=0;REJECT(&options,&key,15,15,0);
 #undef REJECT
  if(xe_transfer_uint_packet_prepare(NULL,&options,&key,15,15,0))return 1;
+ writer.options=&options;writer.key=&key;writer.source_format=writer.dest_format=15;
+ writer.sample=0;
+ if(xe_transfer_uint_packet_write(&packet,sizeof(packet),&writer) ||
+    memcmp(&packet,&saved,sizeof(packet)))return 1;
+ for(s=0;s<32;++s)if(xe_transfer_uint_view_format(s)!=(s==6 || s==7?s-2:s))return 1;
  printf("PASS: %u prepared integer interface packets, identity and failure preservation\n",cases);
  return 0;
 }

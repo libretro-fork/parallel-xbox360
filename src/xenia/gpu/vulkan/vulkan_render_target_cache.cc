@@ -692,6 +692,12 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
       }
     }
 
+    if (!InitializeUintTransferPipelines()) {
+      XELOGE("Unable to prepare integer ownership transfer pipelines");
+      Shutdown();
+      return false;
+    }
+
     // Dump pipeline layouts.
     VkDescriptorSetLayout
         dump_pipeline_layout_descriptor_set_layouts[kDumpDescriptorSetCount];
@@ -966,6 +972,12 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
                                          dump_pipeline_layout_color_);
 
+  xe_transfer_uint_vk_ops uint_ops = {};
+  UintTransferOps(&uint_ops);
+  const bool uint_closed =
+      xe_transfer_uint_vk_close(&uint_transfer_pipelines_, &uint_ops) != 0;
+  assert_true(uint_closed);
+  (void)uint_closed;
   for (const auto& transfer_pipeline_array_pair : transfer_pipelines_) {
     for (VkPipeline transfer_pipeline : transfer_pipeline_array_pair.second) {
       // May be null to prevent recreation attempts.
@@ -1742,6 +1754,13 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
     RenderPassKey key) {
   assert_true(GetPath() == Path::kHostRenderTargets);
 
+  // Only the single-color integer ownership pass aliases FLOAT/SNORM view
+  // keys. Guest draw formats and logical guest sample counts remain distinct.
+  if (key.color_rts_use_transfer_formats && key.depth_and_color_used == 2) {
+    key.color_0_view_format = static_cast<xenos::ColorRenderTargetFormat>(
+        xe_transfer_uint_view_format(unsigned(key.color_0_view_format)));
+  }
+
   auto it = render_passes_.find(key);
   if (it != render_passes_.end()) {
     return it->second;
@@ -2447,6 +2466,52 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
                            depth_and_color_render_targets,
                            uint32_t(render_pass_key.depth_and_color_used)))
               .first->second;
+}
+
+void VulkanRenderTargetCache::UintTransferOps(xe_transfer_uint_vk_ops* ops) const {
+  const auto& dfn = command_processor_.GetVulkanDevice()->functions();
+  ops->create_shader = dfn.vkCreateShaderModule;
+  ops->destroy_shader = dfn.vkDestroyShaderModule;
+  ops->create_layout = dfn.vkCreatePipelineLayout;
+  ops->destroy_layout = dfn.vkDestroyPipelineLayout;
+  ops->create_pipelines = dfn.vkCreateGraphicsPipelines;
+  ops->destroy_pipeline = dfn.vkDestroyPipeline;
+}
+
+bool VulkanRenderTargetCache::InitializeUintTransferPipelines() {
+  static const xenos::ColorRenderTargetFormat formats[4] = {
+      xenos::ColorRenderTargetFormat::k_16_16,
+      xenos::ColorRenderTargetFormat::k_16_16_16_16,
+      xenos::ColorRenderTargetFormat::k_32_FLOAT,
+      xenos::ColorRenderTargetFormat::k_32_32_FLOAT};
+  const auto* device = command_processor_.GetVulkanDevice();
+  xe_transfer_uint_vk_config config = {};
+  xe_transfer_uint_vk_ops ops = {};
+  config.device = device->device();
+  config.image_layout = descriptor_set_layout_sampled_image_;
+  config.vertex = transfer_passthrough_vertex_shader_;
+  config.native2 = msaa_2x_attachments_supported_ ? 1 : 0;
+  config.sample_shading = device->properties().sampleRateShading ? 1 : 0;
+  config.scale_x = draw_resolution_scale_x();
+  config.scale_y = draw_resolution_scale_y();
+  config.dynamic_rendering =
+      cvars::vulkan_dynamic_rendering && device->properties().dynamicRendering;
+  // The transfer pass also asks this cache for its framebuffer metadata when
+  // dynamic rendering is enabled. Warm all raw integer compatibility classes.
+  for (unsigned f = 0; f < 4; ++f) {
+    for (unsigned m = 0; m < 3; ++m) {
+      RenderPassKey key;
+      key.msaa_samples = static_cast<xenos::MsaaSamples>(m);
+      key.depth_and_color_used = 2;
+      key.color_0_view_format = formats[f];
+      key.color_rts_use_transfer_formats = 1;
+      config.passes[f][m] = GetHostRenderTargetsRenderPass(key);
+      if (!config.passes[f][m]) return false;
+    }
+  }
+  UintTransferOps(&ops);
+  return xe_transfer_uint_vk_init(&uint_transfer_pipelines_, &config, &ops,
+                                 &helper_shader_code_) != 0;
 }
 
 VkShaderModule VulkanRenderTargetCache::GetTransferShader(
@@ -3502,6 +3567,90 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
         }
         command_buffer.CmdVkBindVertexBuffers(0, 1, &transfer_vertex_buffer,
                                               &transfer_vertex_buffer_offset);
+
+        // Integer ownership views share one prepared image/word-routing
+        // family. Other conversions still use the legacy pipeline path below.
+        if (transfer_shader_key.mode == EdramTransferMode::kColorToColor &&
+            !transfer_shader_key.value_convert &&
+            !host_depth_source_vulkan_rt && !dest_rt_key.is_depth &&
+            !source_vulkan_rt.key().is_depth) {
+          const RenderTargetKey source_key = source_vulkan_rt.key();
+          bool source_uint, dest_uint;
+          GetColorOwnershipTransferVulkanFormat(source_key.GetColorFormat(),
+                                                &source_uint);
+          GetColorOwnershipTransferVulkanFormat(dest_rt_key.GetColorFormat(),
+                                                &dest_uint);
+          const VkPipeline* ready = source_uint && dest_uint
+              ? xe_transfer_uint_vk_get(&uint_transfer_pipelines_,
+                    unsigned(dest_rt_key.GetColorFormat()),
+                    unsigned(dest_rt_key.msaa_samples),
+                    unsigned(source_key.msaa_samples),
+                    dest_rt_key.scale_native, source_key.scale_native)
+              : nullptr;
+          if (ready) {
+            xe_transfer_address_key address = {};
+            address.dest_msaa = unsigned(dest_rt_key.msaa_samples);
+            address.source_msaa = unsigned(source_key.msaa_samples);
+            address.dest_native2 = address.source_native2 =
+                uint_transfer_pipelines_.native2;
+            address.dest_scale_x = GetKeyScaleX(dest_rt_key);
+            address.dest_scale_y = GetKeyScaleY(dest_rt_key);
+            address.source_scale_x = GetKeyScaleX(source_key);
+            address.source_scale_y = GetKeyScaleY(source_key);
+            address.dest_wide = dest_rt_key.Is64bpp();
+            address.source_wide = source_key.Is64bpp();
+            address.dest_color = address.source_color = 1;
+            address.dest_pitch = dest_pitch_tiles;
+            address.source_pitch = source_key.GetPitchTiles();
+            address.dest_to_source_base = int32_t(dest_rt_key.base_tiles) -
+                                         int32_t(source_key.base_tiles);
+            xe_transfer_uint_options options = {};
+            options.source_multisampled = address.source_msaa != 0;
+            options.sample_mode = !address.dest_msaa
+                ? XE_TRANSFER_UINT_SINGLE_SAMPLE
+                : uint_transfer_pipelines_.sample_shading
+                    ? XE_TRANSFER_UINT_SAMPLE_BUILTIN
+                    : XE_TRANSFER_UINT_SAMPLE_CONSTANT;
+            xe_transfer_uint_packet_source packet = {
+                &options, &address, unsigned(source_key.GetColorFormat()),
+                unsigned(dest_rt_key.GetColorFormat()), 0};
+            if (command_buffer.CmdVkPushConstantsWrite(
+                    uint_transfer_pipelines_.layout,
+                    VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                    sizeof(xe_transfer_uint_packet),
+                    xe_transfer_uint_packet_write, &packet)) {
+              VkDescriptorSet source_descriptor =
+                  source_vulkan_rt.GetDescriptorSetTransferSource();
+              command_buffer.CmdVkBindDescriptorSets(
+                  VK_PIPELINE_BIND_POINT_GRAPHICS,
+                  uint_transfer_pipelines_.layout, 0, 1,
+                  &source_descriptor, 0, nullptr);
+              for (uint32_t sample = 0; sample < transfer_sample_pipeline_count;
+                   ++sample) {
+                command_processor_.BindExternalGraphicsPipeline(ready[sample]);
+                if (sample) {
+                  const uint32_t physical_sample =
+                      xe_transfer_uint_vk_physical_sample(
+                          &uint_transfer_pipelines_, address.dest_msaa, sample);
+                  command_buffer.CmdVkPushConstants(
+                      uint_transfer_pipelines_.layout,
+                      VK_SHADER_STAGE_FRAGMENT_BIT,
+                      offsetof(xe_transfer_uint_packet, sample),
+                      sizeof(physical_sample), &physical_sample);
+                }
+                command_buffer.CmdVkDraw(XE_TRANSFER_RECTANGLE_VERTICES,
+                                         transfer_rectangle_count, 0, 0);
+              }
+              // Generic and legacy layouts have different push ranges. A
+              // subsequent legacy pass must rebind all of its cached state.
+              last_transfer_pipeline_layout_index =
+                  EdramTransferPipelineLayoutIndex::kCount;
+              continue;
+            }
+            // Out-of-domain metadata remains explicit legacy-path debt;
+            // failed preparation publishes no uninitialized command packet.
+          }
+        }
 
         const VkPipeline* transfer_pipelines = GetTransferPipelines(
             TransferPipelineKey(transfer_render_pass_key, transfer_shader_key));

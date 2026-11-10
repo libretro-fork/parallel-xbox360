@@ -19,14 +19,14 @@ This does not establish depth value conversion, stencil or host-depth semantics.
 
 Completed correctness checks:
 - 62208 independent MSVC C89 and strict GCC C89 ASan/UBSan CPU cases,
-  invalid configuration and164 emitter failure points/output preservation.
+  invalid configuration and170 emitter failure points/output preservation.
 - 186607 records each on RTX5090 Vulkan, llvmpipe Vulkan and D3D12 WARP,
   across three changing input replays and one module/PSO per execution.
   All ten result words, incomplete input range, deliberate over-dispatch and
   untouched output padding/tails are checked.
-- Raw SPIRV1.0 validation:1619words; MSVC/GCC byte identity SHA256
-  407420ea4e6f98d26722cf6063191bc5b1c1b759c46a0b7308960ad887d9c1c7.
-- Strict Microsoft DXIL validation:3232bytes, no HLSL/source compiler.
+- Raw SPIRV1.0 validation:1650words; MSVC/GCC byte identity SHA256
+  3d0b4e39ff064b8ebac47ef683cd0d8ccf9b37e136faf76dc5e924970c84cf00.
+- Strict Microsoft DXIL validation:3240bytes, no HLSL/source compiler.
 - A2047->2046 tile-mask mutation remains binary-valid but both GPU APIs fail
   case1 lane0:00000001 versus00000051 expected.
 - Existing sample-address147448 and color-codec110584 GPU record suites still

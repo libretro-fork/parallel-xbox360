@@ -17,7 +17,6 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
-#include <functional>
 #include <memory>
 #include <span>
 #include <type_traits>
@@ -33,6 +32,7 @@
 #include "xenia/gpu/xenos.h"
 #include "xenia/ui/vulkan/single_layout_descriptor_set_pool.h"
 #include "xenia/ui/vulkan/vulkan_upload_buffer_pool.h"
+#include "libretro/core_transfer_uint_vk.h"
 
 namespace xe {
 namespace gpu {
@@ -660,6 +660,8 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       RenderPassKey render_pass_key, uint32_t pitch_tiles_at_32bpp,
       const RenderTarget* const* depth_and_color_render_targets);
 
+  bool InitializeUintTransferPipelines();
+  void UintTransferOps(xe_transfer_uint_vk_ops* ops) const;
   VkShaderModule GetTransferShader(EdramTransferShaderKey key);
   // With sample-rate shading, returns a pointer to one pipeline. Without
   // sample-rate shading, returns a pointer to as many pipelines as there are
@@ -741,6 +743,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   std::unique_ptr<ui::vulkan::VulkanUploadBufferPool>
       transfer_vertex_buffer_pool_;
   VkShaderModule transfer_passthrough_vertex_shader_ = VK_NULL_HANDLE;
+  xe_transfer_uint_vk_bank uint_transfer_pipelines_ = {};
   VkPipelineLayout transfer_pipeline_layouts_[size_t(
       EdramTransferPipelineLayoutIndex::kCount)] = {};
   // VK_NULL_HANDLE if failed to create.

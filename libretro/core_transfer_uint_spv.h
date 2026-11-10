@@ -17,6 +17,11 @@ extern "C" {
  * Returned words are owned by out; no GLSL, source compiler or image staging. */
 int xe_transfer_uint_spv_build(xe_spv_binary *out,
  const xe_transfer_uint_options *options);
+/* Initialization-known sample/scale/destination view. Pitches, source codec
+ * and base delta remain runtime data in the unchanged 112-byte packet. */
+int xe_transfer_uint_spv_build_shape(xe_spv_binary *out,
+ const xe_transfer_uint_options *options,const xe_transfer_address_key *key,
+ unsigned dest_format);
 #ifdef __cplusplus
 }
 #endif

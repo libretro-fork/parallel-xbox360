@@ -12,6 +12,11 @@ enum xe_transfer_uint_sample_mode {
 typedef struct xe_transfer_uint_options {
  unsigned source_multisampled,sample_mode,target;
 } xe_transfer_uint_options;
+/* Only for backend-confirmed integer ownership views, never numeric draw
+ * attachments: these pairs have identical raw Vk/DXGI storage formats. */
+static INLINE unsigned xe_transfer_uint_view_format(unsigned format) {
+ return format==6 || format==7?format-2:format;
+}
 
 
 typedef struct xe_transfer_uint_packet {
@@ -45,6 +50,21 @@ static INLINE int xe_transfer_uint_packet_prepare(xe_transfer_uint_packet *out,
     (key->dest_native2 ? sample>1 : (sample!=0 && sample!=3)) : sample>3)return 0;
  if(!xe_transfer_address_prepare(&out->address,key))return 0;
  out->source=source;out->dest=dest;out->sample=sample;return 1;
+}
+
+/* Synchronous destination writer for unpublished command-stream storage.
+ * The references expire on return; only the completed packet is retained. */
+typedef struct xe_transfer_uint_packet_source {
+ const xe_transfer_uint_options *options;
+ const xe_transfer_address_key *key;
+ unsigned source_format,dest_format;
+ uint32_t sample;
+} xe_transfer_uint_packet_source;
+static INLINE int xe_transfer_uint_packet_write(void *destination,size_t bytes,void *context) {
+ const xe_transfer_uint_packet_source *source=(const xe_transfer_uint_packet_source*)context;
+ if(!source || bytes!=sizeof(xe_transfer_uint_packet))return 0;
+ return xe_transfer_uint_packet_prepare((xe_transfer_uint_packet*)destination,
+  source->options,source->key,source->source_format,source->dest_format,source->sample);
 }
 
 #endif

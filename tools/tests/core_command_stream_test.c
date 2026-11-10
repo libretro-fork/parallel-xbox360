@@ -51,6 +51,54 @@ static int replay(const xe_command_stream *s, uint32_t count) {
   }
   CHECK(total == s->size && expected == count); return 0;
 }
+static int reserved_record(xe_command_stream *s,uint32_t command,int publish) {
+  xe_command_reservation lease = {0};
+  uint32_t elements;size_t bytes,i,arguments=arguments_for(command);
+  unsigned char *packet;test_header *header;
+  if(!xe_command_packet_layout(arguments,sizeof(test_header),&elements,&bytes))return -1;
+  packet=(unsigned char*)xe_command_stream_reserve(s,bytes,&lease);if(!packet)return -1;
+  header=(test_header*)packet;header->command=command;header->elements=elements;
+  for(i=0;i<arguments;++i)packet[sizeof(*header)+i]=payload_for(command,i);
+  if(!publish)return 0;
+  return xe_command_stream_commit(s,&lease)?1:-1;
+}
+static int reservations(void) {
+  xe_command_stream s={0},other={0};xe_command_reservation lease={0};
+  xe_command_page *last,*current;size_t size,used,before;unsigned i;
+  unsigned char *borrowed;
+  CHECK(!xe_command_stream_reserve(&s,8,&lease));
+  CHECK(!xe_command_stream_commit(&s,&lease));
+  CHECK(xe_command_stream_init(&s,64) && xe_command_stream_init(&other,64));
+  CHECK(record(&s,0)==0);borrowed=xe_command_page_data(s.first);
+  size=s.size;current=s.current;used=current->used;
+  CHECK(xe_command_stream_reserve(&s,256,&lease));
+  CHECK(s.size==size && s.current==current && current->used==used && replay(&s,1)==0);
+  CHECK(!xe_command_stream_commit(&other,&lease));
+  CHECK(reserved_record(&s,1,0)==0 && s.size==size && replay(&s,1)==0);
+  CHECK(reserved_record(&s,1,1)==1 && replay(&s,2)==0);
+  CHECK(reserved_record(&s,2,1)==1 && replay(&s,3)==0 && ((test_header*)borrowed)->command==0);
+  last=s.last;current=s.current;size=s.size;used=current->used;
+  fail_at=calls+1;CHECK(!xe_command_stream_reserve(&s,1024,&lease));fail_at=0;
+  CHECK(s.last==last && s.current==current && s.size==size && current->used==used && replay(&s,3)==0);
+  CHECK(!xe_command_stream_reserve(&s,0,&lease) && !xe_command_stream_reserve(&s,3,&lease));
+  xe_command_stream_reset(&s);
+  CHECK(xe_command_stream_reserve(&s,16,&lease));
+  CHECK(record(&s,0)==0 && !xe_command_stream_commit(&s,&lease) && replay(&s,1)==0);
+  xe_command_stream_reset(&s);
+  CHECK(xe_command_stream_reserve(&s,8,&lease));
+  {test_header *header=(test_header*)(xe_command_page_data(lease.page)+lease.offset);
+   header->command=0;header->elements=0;}
+  CHECK(xe_command_stream_commit(&s,&lease) && !xe_command_stream_commit(&s,&lease) && replay(&s,1)==0);
+  xe_command_stream_reset(&s);
+  for(i=0;i<20000;++i){if(!(i&63))CHECK(reserved_record(&s,i,0)==0);CHECK(reserved_record(&s,i,1)==1);}
+  CHECK(replay(&s,20000)==0);before=calls;
+  xe_command_stream_reset(&s);
+  for(i=0;i<20000;++i){if(!(i&63))CHECK(reserved_record(&s,i,0)==0);CHECK(reserved_record(&s,i,1)==1);}
+  CHECK(replay(&s,20000)==0 && calls==before);
+  xe_command_stream_destroy(&s);xe_command_stream_destroy(&other);CHECK(!live);
+  puts("Command reservations: 40,000 published records, abandoned payloads, foreign/stale/double commits and allocation rollback pass");
+  return 0;
+}
 int main(void) {
   xe_command_stream s = {0};
   xe_command_page *first, *last, *current;
@@ -100,6 +148,7 @@ int main(void) {
   CHECK(borrowed); borrowed[0] = 0x71;
   CHECK(xe_command_stream_append(&s, 32) && borrowed[0] == 0x71 && s.size > 8u * 1024u * 1024u);
   xe_command_stream_destroy(&s); CHECK(!live);
+  CHECK(reservations()==0);
   puts("Command stream C89: aligned varied packets, 40,000 exact replay records, retained reset, stable views beyond 8 MiB, bounds and allocation rollback pass");
   return 0;
 }

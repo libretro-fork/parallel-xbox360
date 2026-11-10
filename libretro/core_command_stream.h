@@ -19,6 +19,14 @@ typedef struct xe_command_stream {
   xe_command_page *first, *last, *current;
   size_t page_size, size;
 } xe_command_stream;
+/* One synchronous, non-reentrant writer. Any append/reset/destroy invalidates
+ * the lease; callers must commit or abandon before another stream operation.
+ * Reservation may retain a new high-water page but publishes no packet bytes. */
+typedef struct xe_command_reservation {
+  xe_command_stream *owner;
+  xe_command_page *page, *previous_current;
+  size_t offset, bytes, previous_size;
+} xe_command_reservation;
 static INLINE size_t xe_command_page_header_size(void) {
   return ((sizeof(xe_command_page) + sizeof(uintmax_t) - 1) / sizeof(uintmax_t)) * sizeof(uintmax_t);
 }
@@ -83,6 +91,40 @@ static INLINE void *xe_command_stream_append(xe_command_stream *s, size_t bytes)
   packet = xe_command_page_data(page) + page->used;
   page->used += bytes; s->size += bytes;
   return packet;
+}
+/* A failed payload writer simply abandons this lease. Existing packets remain
+ * stable; no rollback copy or clearing of the unpublished payload is needed. */
+static INLINE void *xe_command_stream_reserve(xe_command_stream *s, size_t bytes,
+    xe_command_reservation *lease) {
+  xe_command_page *page;
+  if (!s || !lease || !s->current || !bytes || bytes % sizeof(uintmax_t) ||
+      bytes > (size_t)-1 - s->size) return NULL;
+  page = s->current;
+  if (bytes > page->capacity - page->used) {
+    page = page->next;
+    while (page && bytes > page->capacity) page = page->next;
+    if (!page) {
+      size_t capacity = bytes > s->page_size ? bytes : s->page_size;
+      page = xe_command_page_create(capacity);
+      if (!page) return NULL;
+      s->last->next = page; s->last = page;
+    }
+  }
+  lease->owner = s; lease->page = page; lease->previous_current = s->current;
+  lease->offset = page->used; lease->bytes = bytes; lease->previous_size = s->size;
+  return xe_command_page_data(page) + page->used;
+}
+static INLINE int xe_command_stream_commit(xe_command_stream *s,
+    xe_command_reservation *lease) {
+  if (!s || !lease || lease->owner != s || !lease->page || !lease->bytes ||
+      lease->bytes % sizeof(uintmax_t) ||
+      s->current != lease->previous_current || s->size != lease->previous_size ||
+      lease->page->used != lease->offset ||
+      lease->bytes > lease->page->capacity - lease->offset ||
+      lease->bytes > (size_t)-1 - s->size) return 0;
+  lease->page->used += lease->bytes; s->size += lease->bytes;
+  s->current = lease->page; lease->owner = NULL; lease->page = NULL;
+  return 1;
 }
 static INLINE void xe_command_stream_reset(xe_command_stream *s) {
   xe_command_page *page;

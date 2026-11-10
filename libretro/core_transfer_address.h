@@ -48,9 +48,9 @@ static INLINE int xe_transfer_address_prepare(xe_transfer_address_config *out,
       (key->dest_scale_x==1 && key->dest_scale_y==1) ||
       (key->source_scale_x==1 && key->source_scale_y==1)))return 0;
  dw=(80*key->dest_scale_x)>>(key->dest_wide+(key->dest_msaa==2));
- dh=(16*key->dest_scale_y)>>(key->dest_msaa!=0);
+ dh=(16*key->dest_scale_y)>>(uint32_t)(key->dest_msaa!=0);
  sw=(80*key->source_scale_x)>>(key->source_wide+(key->source_msaa==2));
- sh=(16*key->source_scale_y)>>(key->source_msaa!=0);
+ sh=(16*key->source_scale_y)>>(uint32_t)(key->source_msaa!=0);
  /* All rejection precedes output writes; each divisor below is nonzero. */
  out->word[XE_ADDR_D_MSAA]=key->dest_msaa;out->word[XE_ADDR_D_NATIVE2]=key->dest_native2;
  out->word[XE_ADDR_D_SX]=key->dest_scale_x;out->word[XE_ADDR_D_SY]=key->dest_scale_y;

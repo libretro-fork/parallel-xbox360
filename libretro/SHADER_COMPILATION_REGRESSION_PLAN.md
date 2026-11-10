@@ -1011,3 +1011,41 @@ The actual Vulkan utility pass uses a single color attachment at location0
 prepared bank by unused MRT target permutations. Preserve real sample masks,
 integer views, compatible render passes and reset/unload lifetimes when wiring
 the prepared bank. Existing inline compilation remains unresolved elsewhere.
+
+Prepared integer transfer integration (2026-11-10, pending acceptance): Vulkan
+integer color ownership transfers now select a cold-created dense24/56-PSO bank.
+Four immutable fragment interfaces cover source SS/MS and destination single/
+multisample semantics. Direct final command-packet preparation removes the112-byte
+intermediate constant payload copy; subsequent manual sample draws update4 bytes.
+Warm integer-compatible render passes and canonicalize only raw integer aliases.
+Preserve descriptor/image lifetimes, masks, rectangles and existing GPU completion.
+
+The MSAA regression uses independent sample-dependent pattern fill and readback,
+all36 format pairs, six scale classes, native/emulated2x and4x, and both actual
+sample shading and feature-disabled manual masking. CPU and software/hardware
+Vulkan/WARP tests cover partial bank creation failure, output guards and exact
+routing. Test-only creation counters verify initialization events and zero lookup
+events. Release builds omit this accounting. See transfer_uint_bank_results.txt.
+
+The live D3D12 bank, noninteger/depth/value conversions, framebuffers, guest shader
+fallback and other utility creation remain debt. Invalid/out-of-domain metadata
+still uses the legacy transfer path. These component tests do not certify cold
+play, GPU-speed gains or a fully allocation-free renderer. Exact-parent timing
+and warmed large-surface verification are pending before delivery.
+Prepared-table revision (2026-11-11): the unpublished fully
+runtime-parameterized f9dea shaders failed warmed execution despite passing the
+768 procedural metrics. Keep those failures. The replacement fixes known MSAA,
+scale class and destination view and reuses checked source-width metadata.
+Dense tables contain 36/84 PSOs at 1x or 144/336 with native/scaled classes.
+Nine modules and at most 21 descriptors are reused per batch; outputs land in
+final bank storage. Lookup cannot compile or admit work.
+
+CI adds 1,296 strict shape programs, ignored-runtime identity and 1,840 lifetime/
+failure contexts. Software and NVIDIA mixed-MSAA image matrices pass; the final
+revision is rechecked before delivery. Seven-pair full large-surface forward and
+reversed tests pass 180 groups each under unchanged limits, preserving image and
+hardware work-count checks. Earlier candidate failures are retained separately.
+Delivery requires exact-parent comparison and mailbox validation. See
+`tools/tests/transfer_uint_bank_results.txt` for scope and unsupported coverage.
+These checks do not certify cross-game cold-play fluidity or close other utility
+and guest draw-path compilation debt.
