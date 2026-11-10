@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Replace the shared shader microcode vector with a C89 snapshot owner and borrowed read-only views. Fill final storage directly without prior zero-filling, retaining large-block alignment and the owned copy required by asynchronous consumers. Add source-mutation, endian, allocation-failure and paired construction-cost regression checks for both renderers. This does not remove draw-path compilation or establish smoother cold play.
+
 - Add separate valid-work shader CI profiles alongside the unchanged mixed/fault workload. Retain successful payloads and reference checks, reject inactive negative-test lanes before VM execution, and check counts, module/device identity and paired timing independently. This changes test infrastructure, not rendering or cache defaults.
 
 - Extend raw shader validation with scalar predicate comparisons, predicate-controlled execution/calls/jumps and predicated ALUs. Preserve prior-instruction predicate/scalar state and partial-export ownership; skipped ALUs avoid validation and operand reads. Add nonfinite, divergence and side-effect regressions. This remains outside rendering; accurate fallback coverage and draw-path compilation removal are unfinished.

@@ -877,3 +877,20 @@ addition to existing gates, retaining first-use/cache uncertainty and the existi
 noise floors. A smaller companion time does not erase mixed-work cost debt or
 prove loop/predicate/stage/ROP performance or retail smoothness. This protocol
 applies to tests only and cannot authorize dropping or skipping guest draws.
+
+Production microcode snapshots now use a C89 owner with borrowed immutable
+views. Construction preserves the existing endian-copy routine and asynchronous
+owner lifetime, removing vector value-initialization rather than the required
+source snapshot. Paired real-Shader construction costs and ownership checks run
+beside translation/module/PSO gates; they cannot certify cold-play acceptance.
+See `tools/tests/shader_ucode_results.txt` for retained failed experiments/tails.
+
+Open exact-identity debt: both renderer LoadShader paths currently index shader
+owners by a 64-bit hash without confirming stage, count and exact normalized
+bytes. Persistent pipeline recipes also identify shaders by hash. Fix the whole
+lookup/recipe/publication identity chain; hash collisions must never select the
+wrong program, and ambiguous historical recipes must become recoverable cache
+misses. Borrow immutable snapshot bytes for comparison where safe. A local
+LoadShader check alone cannot repair hash-only downstream recipe lookup. This
+ownership change does not fix collisions or make frame-critical compilation
+and waits compliant.

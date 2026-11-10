@@ -1,0 +1,99 @@
+Production shader microcode snapshot ownership (2026-11-10)
+==========================================================
+
+Scope
+-----
+First parent: 2c4b112a4e8806f01d66c5f3d1b2e56db203501f.
+The shared Shader used by Vulkan and D3D12 replaces one microcode vector with
+an owned C89 pointer/count allocation. A narrow typed adapter preserves member
+destruction and exception-unwind lifetime; consumers borrow a const span.
+Construction fills final storage directly with the existing SIMD endian-copy
+routine or memcpy. It no longer zero-fills the payload before overwriting it.
+An empty snapshot allocates no payload. Allocation/size failure publishes nothing.
+
+The snapshot copy is necessary: guest memory and cache-read scratch can change
+while analysis, compilation or shader-storage consumers still use the Shader.
+Borrowing those mutable sources would introduce races/use-after-reuse. This
+change does not remove that copy, the first-seen malloc, other Shader vectors,
+or persistent-cache I/O. Owner teardown still requires all consumers quiescent.
+No new locking, release logging, timing, GPU readback or pacing is introduced.
+
+Large payloads (at least 4096 bytes) retain 32-byte alignment. The backing
+allocation includes at most 31 + sizeof(void*) extra bytes (39 on x64), with
+the original allocation pointer stored outside the borrowed payload. Arithmetic
+overflow is checked before allocation. Small payloads use plain malloc.
+MSVC x64 sizeof(Shader) changed from 448 to 440 bytes; allocator size classes,
+derived object sizes, physical RSS and game-level memory savings are unmeasured.
+
+Correctness and build coverage
+------------------------------
+- C89 poisoned-allocator tests cover 300 owner lifecycles, 1023/1024/1025-word
+  boundaries, no zero-fill, stable views, rejected reopen, arithmetic overflow,
+  allocation failure, redzones, idempotent close and empty input.
+- Actual first-parent and candidate native Shader fixtures each pass 96 cases:
+  two byte orders, four source alignments, 12 lengths from empty to 256 KiB.
+  Every word remains exact after the original source is mutated; views do not
+  alias nonempty source buffers. Candidate large views are checked for alignment.
+- MSVC strict C89 unit and native tests pass; GCC C89 ASan/UBSan unit and actual
+  native candidate fixtures pass. The Linux fixture needs a benchmark CSV path;
+  an initial invocation without one failed and was rerun with it configured.
+- Complete affected MSVC core build (Vulkan and D3D12) and Linux Make core build
+  pass at three jobs. Eight real D3D12 WARP graphics fixtures and shared CPU
+  corpus pass. WARP does not establish hardware D3D12 gameplay acceptance.
+- RTX 5090 driver 32.0.16.2101 numerical suites pass, including 3771 control GPU
+  invocations/2947 native references and companion valid-work checks. All 512
+  procedural generated shader modules are byte-identical to the first parent.
+  Original/control raw-program modules and their captured timed copies match.
+- CI adds actual-Shader snapshot cost/ownership coverage to both backend
+  preparation paths. Forty-six comparison/coverage guard tests and the real
+  seven-pair Vulkan CI runner self-check pass. The self-check compares candidate
+  against itself; it is not a first-parent performance result.
+
+Paired measurements and retained failures
+----------------------------------------
+Same native toolchain/options, separate coherent old/new production archives,
+alternating fresh processes, idle host, existing unchanged timing thresholds.
+Each of 24 snapshot cases constructs/checks/destroys 2000 actual Shaders.
+This measures CPU ownership cost, not shader translation or pure GPU time.
+
+The first plain-malloc experiment was rejected: removing the MSVC vector's
+large-block alignment caused repeatable copy-cost regressions, e.g. native
+256 KiB batches approximately 10.72 -> 14.03 ms. Its failed report is retained.
+The accepted implementation restores alignment without restoring zero-fill.
+
+The aligned first-parent seven-pair comparison passes all 768 main metrics,
+raw mixed/fault and companion valid-work gates. Its initial snapshot report
+FAILS one p95 gate: native 4095-word batches have medians 4.1807 -> 4.1768 ms,
+but candidate samples include 11.9248 and 11.1809 ms. All original samples are
+retained. Coarse process CPU samples do not establish the cause of these tails.
+No claim that this first seven-pair overall report passed is justified.
+
+A predeclared additional 21 snapshot-only pairs with the same prepared binaries
+pass all 24 unchanged gates. Pooling all 28 pairs, excluding no original sample,
+also passes all 24 unchanged gates. The initial failed p95 report remains intact;
+no thresholds, fixture iterations or tested cases were relaxed. These repeats
+support the component change, not a claim of universally better tail latency.
+Illustrative initial seven-pair batch medians after alignment restoration:
+  native 256 KiB:   11.462 -> 10.868 ms
+  swapped 48 KiB:    1.787 ->  1.465 ms
+  swapped 256 KiB:   7.355 ->  5.265 ms
+Individual cases/compilers can differ; these are not frame-time savings.
+
+Private evidence is retained under accurate-shader-fallback/ucode-owner:
+paired-first-parent (rejected unaligned experiment), paired-aligned/results
+(frozen source manifest, exact-parent reports, CSVs and module captures),
+snapshot-repeat21 (repeat and pooled28 reports, all raw CSVs), harness-control
+(real CI runner self-check), native/Linux/WARP build and sanitizer logs.
+No extracted game shader or user cache was published or modified.
+
+Unresolved renderer requirements
+-------------------------------
+Actual draw-path translation, module/PSO creation, compile waits and missing
+accurate ready fallbacks remain unresolved. This change cannot fix shader
+stutter by itself; cold-play cross-game acceptance is unverified. Internal/disk
+driver caches were not certified cold. No pinned smooth-play anchor exists.
+Raw validation kernels are still unlinked from rendering and lack full stages,
+fetch/ROP and control coverage. Existing 64-bit hash-only shader/recipe lookup
+also lacks exact stage/count/payload identity; fix the entire identity chain,
+not only LoadShader. The immutable snapshot is useful comparison storage, not
+a collision fix or proof of frame-critical compliance.

@@ -1786,3 +1786,22 @@ fail. Both reports use existing unchanged timing gates, and neither replaces the
 mixed fault/cycle gates. The active set covers primary arithmetic and clause/
 call/jump cases; loop/predicate context suites remain separate correctness tests.
 See `alu_valid_work_results.txt`; neither profile establishes gameplay acceptance.
+
+Production shader snapshot ownership
+------------------------------------
+
+`core_shader_ucode_test.c` exercises the C89 owner with poisoned allocations,
+failure injection, overflow checks, alignment boundaries and redzones.
+`core_shader_ucode_native_test.c` uses a narrow typed bridge to construct the
+actual production Shader. Its 96 cases cover both byte orders, four source
+alignments, empty/tail/large inputs and source mutation after construction.
+These tests apply to the shared owner used by Vulkan and D3D12.
+
+CI also times 24 construction/destruction batches of 2000 snapshots using the
+same fixtures against each revision's own compiled Shader. Historical vector
+revisions run the same native fixture without claiming the new owner unit ran.
+Coverage loss, missing batches and missing samples fail comparison. Separate
+elapsed and process-CPU CSVs use existing unchanged timing thresholds. These
+are CPU ownership costs, not translation, GPU execution or gameplay acceptance.
+See `shader_ucode_results.txt`, including the rejected alignment experiment and
+the initial tail alert retained alongside repeat and pooled samples.

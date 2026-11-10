@@ -192,6 +192,32 @@ def validate_loop_reference(source, build, out, log, env, backend):
     return coverage
 
 
+def validate_ucode_snapshot(source, build, out, log, env):
+    directory=out/"ucode-snapshot";directory.mkdir(parents=True,exist_ok=True)
+    coverage=dict(native=False,owner_unit=False,owner_available=(source/"libretro/core_shader_ucode.h").is_file(),cases=96)
+    inc=[("/I" if WIN else "-I")+str(source),("/I" if WIN else "-I")+str(source/"third_party/libretro-common/include")]
+    if coverage["owner_available"]:
+        unit=directory/("unit.exe" if WIN else "unit")
+        if WIN:
+            command=["cl","/nologo","/TC","/MD","/O2","/W4","/WX",*inc,HERE/"core_shader_ucode_test.c","/Fo"+str(directory/"unit.obj"),"/Fe"+str(unit)]
+        else:
+            command=[env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",*inc,HERE/"core_shader_ucode_test.c","-o",unit]
+        run(command,source,log,env,60);run([unit],source,log,env,30);coverage["owner_unit"]=True
+    fixture=env.copy();fixture.update(FORWARD_FLOW_SOURCE=str(HERE/"core_shader_ucode_native_test.c"),
+        FORWARD_FLOW_BRIDGE=str(HERE/"shader_ucode_bridge.cc"),FORWARD_FLOW_OUT=str(directory),
+        XE_SHADER_BENCH_CSV=str(directory/"prepare.csv"),XE_SHADER_BENCH_CPU_CSV=str(directory/"prepare-cpu.csv"))
+    fixture["FORWARD_FLOW_FLAGS"]=("/DXE_SHADER_COMPILE_BENCH /I" if WIN else "-DXE_SHADER_COMPILE_BENCH -I")+str(HERE)
+    if WIN:
+        fixture.update(FORWARD_FLOW_BUILD=str(build),FORWARD_FLOW_LINK_FLAGS="/CGTHREADS:"+str(JOBS))
+        run([os.environ.get("COMSPEC","cmd.exe"),"/d","/c",source/"tools/tests/run_forward_flow_tests.cmd"],source,log,fixture,240)
+    else:
+        fixture["CXX"]=env.get("CXX","c++")+" -Wl,--strip-debug"
+        run(["sh",source/"tools/tests/run_forward_flow_tests.sh"],source,log,fixture,240)
+    coverage["native"]=True
+    (directory/"coverage.json").write_text(json.dumps(coverage,indent=2))
+    return directory/("test.exe" if WIN else "test")
+
+
 def prepare(source, out, results, backend, reuse_build=None):
     out.mkdir(parents=True,exist_ok=True)
     env = os.environ.copy()
@@ -222,6 +248,7 @@ def prepare(source, out, results, backend, reuse_build=None):
     control_coverage=validate_raw_program(source,build,out,log,env,backend,control=True)
     (results/(source.name+"-"+out.parent.name+"-"+out.name+"-raw-control.json")).write_text(
         json.dumps(control_coverage,indent=2),encoding="utf-8")
+    snapshot=validate_ucode_snapshot(source,build,out,log,env)
     env["XE_SHADER_BENCH_CSV"] = str(out / "prepare.csv")
     env["XE_SHADER_BENCH_NO_DUMP"] = "0"
     cpu = cpu_build(source, build, out, log, env)
@@ -304,6 +331,7 @@ def prepare(source, out, results, backend, reuse_build=None):
                 result[profile].mkdir()
                 profile_env=env.copy();profile_env["XE_SHADER_BENCH_"+profile.upper()+"_PROFILE"]="1"
                 run([cpu,result[profile]],source,log,profile_env,240)
+        result["ucode_snapshot"]=snapshot
         return result
     if not WIN or backend != "d3d12-warp":
         raise ValueError("unsupported backend/platform")
@@ -318,7 +346,7 @@ def prepare(source, out, results, backend, reuse_build=None):
         module = out / ("vertex%d.dxil" % case)
         run([generator, module, case], source, log, env, 60)
         run([runtime, module, case, 0, 0, 0, 0], source, log, env, 60)
-    return {"cpu": cpu, "dxil": generator, "warp": runtime, "source": source, "out": out}
+    return {"cpu": cpu, "dxil": generator, "warp": runtime, "source": source, "out": out,"ucode_snapshot":snapshot}
 
 
 def source_wait_alarms(command_processor, pipeline_cache):
@@ -517,6 +545,31 @@ def compare_control_coverage(coverage, vulkan):
     return dict(revisions=coverage,failures=failures)
 
 
+def compare_ucode_snapshot(raw, samples):
+    if samples<5:raise ValueError("snapshot workload needs at least five pairs")
+    expected={("shader.ucode.snapshot_batch2000",i) for i in range(24)}
+    for version,data in raw.items():
+        if set(data)!=expected or any(len(x)!=samples for x in data.values()):
+            raise ValueError("missing snapshot workload/sample: "+version)
+    rows=compare(raw["base"],raw["candidate"],samples) if "base" in raw and "candidate" in raw else []
+    anchor=compare(raw["anchor"],raw["candidate"],samples) if "anchor" in raw and "candidate" in raw else []
+    removed=("base" in raw or "anchor" in raw) and "candidate" not in raw
+    return dict(cases=rows,anchor_cases=anchor,available=bool(raw),failure=removed or any(r["failures"] for r in rows+anchor),
+        scope="actual CPU Shader construction/destruction batches; not translation or gameplay")
+
+
+def compare_ucode_coverage(coverage):
+    failures=[];candidate=coverage.get("candidate")
+    if coverage and not candidate:failures.append("candidate snapshot coverage missing")
+    if candidate:
+        if not candidate.get("native") or candidate.get("cases")!=96:failures.append("candidate snapshot native coverage missing")
+        if candidate.get("owner_available") and not candidate.get("owner_unit"):failures.append("candidate C89 owner unit missing")
+        for version in ("base","anchor"):
+            if coverage.get(version,{}).get("owner_available") and not candidate.get("owner_available"):
+                failures.append(version+": removed C89 owner coverage")
+    return dict(revisions=coverage,failures=failures)
+
+
 def validate_valid_workload(log, components):
     counts={"raw_program":(363,380),"raw_control":(315,428)}
     expected=[counts[x] for x in counts if x in components]
@@ -553,7 +606,8 @@ def run_comparison(args):
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
-         "shader_control_program_fixture.h","core_alu_program_vulkan_test.c","alu_program_bridge.cc"]}
+         "shader_control_program_fixture.h","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
+         "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc"]}
     manifest["corpus_contract"]=dict(version=8,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_frac_cases=64 if args.backend=="vulkan-hardware" else 0,
@@ -610,7 +664,7 @@ def run_comparison(args):
         precision="Windows process CPU accounting may quantize short intervals; zero is not zero work")
     manifest["clock_controls"]={version:"clock-checks/"+b["out"].parent.name+"-"+b["out"].name for version,b in builds.items()}
     manifest["prepared_binaries"]={version:{name:dict(sha256=file_sha256(b[name]),bytes=b[name].stat().st_size)
-        for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module","raw_control","raw_control_module"] if name in b} for version,b in builds.items()}
+        for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module","raw_control","raw_control_module","ucode_snapshot"] if name in b} for version,b in builds.items()}
     (results/"environment.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     ir={version:spirv_manifest(b["out"]) for version,b in builds.items()}
     for version,b in builds.items():
@@ -656,12 +710,24 @@ def run_comparison(args):
                 valid_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-"+filename+"-valid-cpu.csv"))
                 valid_env["XE_ALU_PROGRAM_DUMP"]=str(results/(version+"-"+filename+"-valid-sample%d.spv"%sample))
                 run([b[component]],b["source"],log,valid_env,120)
+            if "ucode_snapshot" in b:
+                snapshot_env=e.copy()
+                snapshot_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-ucode.csv"))
+                snapshot_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-ucode-cpu.csv"))
+                run([b["ucode_snapshot"]],b["source"],log,snapshot_env,120)
     raw={version:read_samples(results/(version+".csv")) for version in builds}
     for version,measurements in raw.items():
         if set(measurements)!=expected_keys(args.backend):
             raise ValueError("missing or substituted expected stage cases: "+version)
     cpu={version:read_samples(results/(version+"-cpu.csv")) for version in builds}
     rows,anchor_rows,cpu_rows=compare_timing_channels(raw,cpu,args.samples)
+    snapshot_raw={v:read_samples(results/(v+"-ucode.csv")) for v,b in builds.items() if "ucode_snapshot" in b}
+    snapshot_report=compare_ucode_snapshot(snapshot_raw,args.samples)
+    snapshot_coverage={v:json.loads((b["ucode_snapshot"].parent/"coverage.json").read_text()) for v,b in builds.items() if "ucode_snapshot" in b}
+    snapshot_report["coverage"]=compare_ucode_coverage(snapshot_coverage)
+    snapshot_report["failure"]|=bool(snapshot_report["coverage"]["failures"])
+    snapshot_cpu={v:read_samples(results/(v+"-ucode-cpu.csv")) for v in snapshot_raw}
+    snapshot_report["process_cpu_diagnostics"]={v:cpu_diagnostics(snapshot_raw[v],snapshot_cpu[v],args.samples) for v in snapshot_raw}
     program_raw={v:read_samples(results/(v+"-raw-program.csv")) for v,b in builds.items() if "raw_program" in b}
     program_report=compare_raw_program(program_raw,args.samples)
     program_cpu={v:read_samples(results/(v+"-raw-program-cpu.csv")) for v in program_raw}
@@ -738,13 +804,15 @@ def run_comparison(args):
                 process_cpu_diagnostics=cpu_rows,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
-                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,
-                success=not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
+                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,ucode_snapshot=snapshot_report,
+                success=not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not snapshot_report["failure"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
                 self_check=bool(args.self_check))
     (results/"comparison.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     summary="# Shader compilation comparison\n\n%s -> %s (%s)\n\n"%(args.base,args.head,args.backend)
     summary+="**%s** across %d procedural stage/case metrics.\n\n"%("PASS" if report["success"] else "FAIL / investigate",len(rows))
     summary+="This is NOT cold-play gameplay signoff. Driver-cache status and missing anchor are recorded in environment.json.\n\n"
+    if snapshot_report["available"]:
+        summary+="Actual Shader snapshot construction/destruction: 24 paired batch cases with source-mutation/endian correctness checks; CPU ownership cost only, not gameplay fluidity.\n\n"
     if any(v["observed"] for v in valid_reports.values()):
         summary+="Companion valid-work profiles keep successful records unchanged and reject inactive negative lanes before VM execution. Separate elapsed/CPU samples, identity checks and unchanged timing gates supplement the full mixed-corpus gates; they do not replace fault coverage or establish pure GPU time.\n\n"
     if program_report["observed"]:

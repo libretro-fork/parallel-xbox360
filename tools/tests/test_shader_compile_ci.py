@@ -14,6 +14,25 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_snapshot_native_and_owner_coverage_are_required(self):
+        old=dict(native=True,cases=96,owner_available=True,owner_unit=True)
+        self.assertFalse(ci.compare_ucode_coverage(dict(base=old,candidate=old))["failures"])
+        for field,value in [("native",False),("cases",0),("owner_available",False),("owner_unit",False)]:
+            candidate=dict(old);candidate[field]=value
+            self.assertTrue(ci.compare_ucode_coverage(dict(base=old,candidate=candidate))["failures"])
+        self.assertTrue(ci.compare_ucode_coverage(dict(base=old))["failures"])
+
+    def test_snapshot_batches_reject_missing_or_substituted_cases(self):
+        data={("shader.ucode.snapshot_batch2000",i):[.001]*7 for i in range(24)}
+        self.assertFalse(ci.compare_ucode_snapshot(dict(base=data,candidate=data),7)["failure"])
+        self.assertTrue(ci.compare_ucode_snapshot(dict(base=data),7)["failure"])
+        missing=dict(data);missing.pop(("shader.ucode.snapshot_batch2000",23))
+        with self.assertRaisesRegex(ValueError,"missing snapshot"):
+            ci.compare_ucode_snapshot(dict(base=data,candidate=missing),7)
+        short=dict(data);short[("shader.ucode.snapshot_batch2000",0)]=[.001]*6
+        with self.assertRaisesRegex(ValueError,"missing snapshot"):
+            ci.compare_ucode_snapshot(dict(base=data,candidate=short),7)
+
     def test_valid_workload_profile_cannot_be_missing_or_substituted(self):
         program="PROFILE_VALID_WORK active=363 inactive=380; inactive lanes\n"
         control="PROFILE_VALID_WORK active=315 inactive=428; inactive lanes\n"

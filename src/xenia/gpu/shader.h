@@ -26,6 +26,7 @@
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/ucode.h"
 #include "xenia/gpu/shader_binary.h"
+#include "xenia/gpu/shader_ucode.h"
 
 namespace xe {
 namespace gpu {
@@ -904,7 +905,7 @@ class Shader {
   xenos::ShaderType type() const { return shader_type_; }
 
   // Microcode dwords in host endianness.
-  const std::vector<uint32_t>& ucode_data() const { return ucode_data_; }
+  std::span<const uint32_t> ucode_data() const { return ucode_data_.view(); }
   uint64_t ucode_data_hash() const { return ucode_data_hash_; }
   const uint32_t* ucode_dwords() const { return ucode_data_.data(); }
   size_t ucode_dword_count() const { return ucode_data_.size(); }
@@ -1101,7 +1102,7 @@ class Shader {
   virtual Translation* CreateTranslationInstance(uint64_t modification);
 
   xenos::ShaderType shader_type_;
-  std::vector<uint32_t> ucode_data_;
+  ShaderUcode ucode_data_;
   uint64_t ucode_data_hash_;
 
   // Whether info needed before translating has been gathered already - may be

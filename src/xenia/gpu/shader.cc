@@ -10,6 +10,7 @@
 #include "xenia/gpu/shader.h"
 
 #include <cstring>
+#include <new>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/filesystem.h"
@@ -26,8 +27,10 @@ Shader::Shader(xenos::ShaderType shader_type, uint64_t ucode_data_hash,
                const uint32_t* ucode_dwords, size_t ucode_dword_count,
                std::endian ucode_source_endian)
     : shader_type_(shader_type), ucode_data_hash_(ucode_data_hash) {
-  // We keep ucode data in host native format so it's easier to work with.
-  ucode_data_.resize(ucode_dword_count);
+  // Snapshot directly into the final owner, without zero-filling it first.
+  // Guest/file scratch bytes may change while asynchronous consumers use us.
+  if (!ucode_data_.Allocate(ucode_dword_count)) throw std::bad_alloc();
+  if (!ucode_dword_count) return;
   if (std::endian::native != ucode_source_endian) {
     xe::copy_and_swap(ucode_data_.data(), ucode_dwords, ucode_dword_count);
   } else {

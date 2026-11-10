@@ -599,3 +599,11 @@ The full mixed/cycle workload and all fault coverage remain separate gates.
 This helps distinguish valid arithmetic/clause/call/jump work from deliberate
 work-budget exhaustion; it is not a pure GPU timestamp or retail shader replay.
 See `tools/tests/alu_valid_work_results.txt` for scope and measurements.
+
+Shared Vulkan/D3D12 shader microcode snapshots use a C89 owner instead of a
+vector. Construction fills final uninitialized storage once, preserving 32-byte
+alignment for large payloads; readers borrow immutable pointer/count views.
+The snapshot copy remains necessary because guest or file scratch can change
+before asynchronous consumers finish. First-seen allocation remains. See
+`tools/tests/shader_ucode_results.txt` for ownership checks, timing outliers and
+limits; this does not eliminate draw-path compilation or certify cold play.
