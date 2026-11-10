@@ -8,6 +8,7 @@
 #define XE_ALU_CONTROL_PREDICATE 1
 #define XE_ALU_CONTROL_COMPARE 1
 #define XE_ALU_CONTROL_LAZY_SOURCE 1
+#define XE_ALU_CONTROL_BORROW_REGISTERS 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -62,6 +63,13 @@ int xe_alu_program_spv_build(xe_spv_binary *out);
  * instruction/target reads fail with status2. At most4096 CF steps are executed;
  * status5 reports exhausted work without committing output. This limit requires
  * resumable execution before renderer use; no valid-draw fallback is claimed.
+ * Initial registers borrow the immutable descriptor input until their first
+ * write. Partial writes preserve unwritten lanes; absent initial registers read
+ * zero. Two private dirty words publish fully defined private register slots.
+ * No input snapshot/zero-fill loop is used by this entry. Repeated reads of an
+ * unwritten register may reload the input; the caller keeps it immutable through
+ * completion. Private written values remain necessary. No guest-memory lease
+ * or CPU/frontend upload copy is removed by this change.
  * The original entry remains separately available for matched comparisons. */
 int xe_alu_control_spv_build(xe_spv_binary *out);
 #ifdef __cplusplus

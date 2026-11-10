@@ -1,0 +1,70 @@
+Borrowed initial registers in the raw control kernel (2026-11-10)
+================================================================
+
+Scope and ownership
+-------------------
+The experimental control entry now reads immutable descriptor input until a
+register is first written. Two active dirty words, held in one fixed private
+vec4, select fully defined private slots afterward. A register absent from the
+initial input is zero. Partial writes merge with a borrowed/private old value,
+then publish ownership; zero masks do not publish. Coissue operands are captured
+before either vector/scalar destination write. No atomics or shared mutable
+ownership are needed inside one GPU invocation.
+
+This removes the initial64-register zero initializer and input snapshot loop
+from this entry. It does not remove the64-slot private written-register array,
+the input upload, guest/frontend ownership copies or all GPU memory loads.
+Repeated unwritten-register reads can reload input. Binding lifetime and
+immutability/disjoint-output requirements are unchanged. This kernel is not
+linked into rendering; actual draw-path compilation/waits and complete accurate
+fallback coverage remain unresolved. The separate program entry retains its
+snapshot behavior; no per-game, audio, frame pacing or cache default changes.
+
+Correctness evidence
+--------------------
+Strict MSVC C89 and GCC C89 ASan/UBSan emission/ownership checks pass. SPIR-V
+validation precedes execution of the final prototype. NVIDIA5090 and llvmpipe
+LLVM20.1.2 full suites pass8763 GPU invocations /7911 native references. Standalone
+arithmetic retains12280 checks. The C89 build suite verifies allocation failure,
+recovery and1000 exact same-owner builds with no warm allocation.
+
+The new frozen fixture adds896 untimed replays /1792 invocations. It crosses
+register indices0/1/30/31/32/33/62/63, initial lengths0/1/31/32/33/63/64, eight
+read/write scenarios and both byte orders. Literal integer-exact goldens cover
+untouched input, full/partial writes, overlapping coissue, both dirty-word
+boundaries/collisions and zero-mask nonwrites. Input tails contain nonzero data
+so accidentally borrowing beyond the declared count cannot pass as zero.
+Three separately validated mutant modules fail numerical checks: dirty-word
+collision, loss of partial-write lanes and borrowing past the declared tail.
+CI requires the executed REGISTER_CONTEXT marker for the borrowed implementation,
+pins the new fixture and prevents loss of feature/context coverage.54 Python
+comparison/coverage tests pass. Timed children retain the original primary
+payload, with no extra context replays.
+
+Measurements and limitations
+----------------------------
+A private precommit experiment used seven alternating pairs and the established
+three-batch GPU timestamp protocol on NVIDIA5090 driver32.0.16.2101. Mixed warm
+GPU intervals were approximately0.821/0.816ms ->0.474/0.473ms; valid-work intervals
+0.0665/0.0668ms ->0.0293/0.0290ms. These include semaphore, scheduling, dispatch
+and visibility costs and are not isolated ALU time. Emission medians rose from
+about0.068-0.069ms to0.074-0.075ms in that experiment. The control module grows
+from8515 to9510 words (3980bytes); arithmetic remains2855 and program6051 words.
+Existing absolute/relative limits and growth gates were not changed. Compiler
+emission ordering may change module bytes even at an unchanged word count;
+per-revision captured module identity remains mandatory.
+
+These observations used explicitly reused native reference archives; they are
+not whole-commit first-parent acceptance. Exact-ref fresh-build comparison data
+and its final status belong to the generated artifacts. Do not infer retail FPS,
+physical RSS/register-spill reductions or cold-play smoothness from these data.
+
+Prior measured debt is retained: lazy-operand work increased mixed/fault GPU
+cost from about0.636ms to0.824ms while valid work remained similar. A private
+three-pair per-kind diagnostic points to the budget-exhausting self-jump as the
+dominant increase. The formal comparator correctly refuses fewer than five
+pairs; isolation results are descriptive only. No original timed case or work
+budget was removed, and no early self-loop failure was substituted to mask it.
+Two alternate operand shapes passed correctness but cost about1.18ms and0.89ms
+in the mixed test and were rejected. Borrowed-register work retains all those
+original mixed/fault cases. General resumability/loop proof is still unfinished.

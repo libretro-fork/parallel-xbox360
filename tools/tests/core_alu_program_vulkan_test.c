@@ -92,6 +92,7 @@ static unsigned expected_status(unsigned kind) {
 }
 #else
 #include "shader_control_program_fixture.h"
+#include "shader_register_borrow_fixture.h"
 #endif
 #ifdef XE_ALU_CONTROL_TEST
 #define XE_PROGRAM_BINDINGS 5
@@ -119,12 +120,20 @@ static unsigned expected_status(unsigned kind) {
 #ifndef XE_LAZY_CASES
 #define XE_LAZY_CASES 0
 #endif
+#ifndef XE_REGISTER_CASES
+#define XE_REGISTER_CASES 0
+#endif
 #define XE_COMPARE_FIRST (XE_BOOL_CASES+XE_LOOP_CASES+XE_PRED_CASES)
 #define XE_COMPARE_GOLDEN_FIRST 4096
 #define XE_LAZY_FIRST (XE_COMPARE_FIRST+XE_COMPARE_CASES)
 #define XE_LAZY_GOLDEN_FIRST 8192
-#define XE_EXTRA_CASES (XE_LAZY_FIRST+XE_LAZY_CASES)
+#define XE_REGISTER_FIRST (XE_LAZY_FIRST+XE_LAZY_CASES)
+#define XE_REGISTER_GOLDEN_FIRST 16384
+#define XE_EXTRA_CASES (XE_REGISTER_FIRST+XE_REGISTER_CASES)
 static void round_program(uint32_t *p,unsigned group,unsigned round) {
+#if XE_REGISTER_CASES
+ if(round>=3+XE_REGISTER_FIRST){register_program(p,round-3-XE_REGISTER_FIRST);return;}
+#endif
  (void)round;
 #if XE_LAZY_CASES
  if(round>=3+XE_LAZY_FIRST){lazy_program(p,round-3-XE_LAZY_FIRST);return;}
@@ -145,6 +154,9 @@ static void round_program(uint32_t *p,unsigned group,unsigned round) {
 }
 #if XE_EXTRA_CASES
 static unsigned extra_which(unsigned which,unsigned invocation) {
+#if XE_REGISTER_CASES
+ if(which>=XE_REGISTER_FIRST)return XE_REGISTER_GOLDEN_FIRST+which-XE_REGISTER_FIRST;
+#endif
  (void)invocation;
 #if XE_LAZY_CASES
  if(which>=XE_LAZY_FIRST)return XE_LAZY_GOLDEN_FIRST+which-XE_LAZY_FIRST;
@@ -159,6 +171,9 @@ static unsigned extra_which(unsigned which,unsigned invocation) {
  return which;
 }
 static void extra_context(uint32_t *bank,unsigned which) {
+#if XE_REGISTER_CASES
+ if(which>=XE_REGISTER_FIRST){memset(bank,0,160);return;}
+#endif
 #if XE_LAZY_CASES
  if(which>=XE_LAZY_FIRST){lazy_context(bank);return;}
 #endif
@@ -176,6 +191,9 @@ static void extra_context(uint32_t *bank,unsigned which) {
 #endif
 }
 static unsigned extra_status(unsigned which) {
+#if XE_REGISTER_CASES
+ if(which>=XE_REGISTER_GOLDEN_FIRST)return 1;
+#endif
 #if XE_LAZY_CASES
  if(which>=XE_LAZY_GOLDEN_FIRST)return lazy_status(which-XE_LAZY_GOLDEN_FIRST);
 #endif
@@ -195,6 +213,9 @@ static unsigned extra_status(unsigned which) {
 #endif
 }
 static uint32_t extra_golden(unsigned which,unsigned lane) {
+#if XE_REGISTER_CASES
+ if(which>=XE_REGISTER_GOLDEN_FIRST)return register_golden(which-XE_REGISTER_GOLDEN_FIRST,lane);
+#endif
  (void)lane;
 #if XE_LAZY_CASES
  if(which>=XE_LAZY_GOLDEN_FIRST)return lazy_golden(which-XE_LAZY_GOLDEN_FIRST);
@@ -289,6 +310,9 @@ int main(void){
 #endif
 #if XE_LAZY_CASES
  unsigned lazy_invocations=0;
+#endif
+#if XE_REGISTER_CASES
+ unsigned register_invocations=0;
 #endif
  unsigned modules=0,pipelines=0,cases=0,inactive=0,context_replays=XE_EXTRA_CASES;float priority=1.0f;int result=1;
  const char *timing_only=getenv("XE_ALU_PROGRAM_TIMING_ONLY");
@@ -431,12 +455,15 @@ int main(void){
    if(round>=3+XE_COMPARE_FIRST && round<3+XE_LAZY_FIRST)compare_temporary(temporary,round-3-XE_COMPARE_FIRST);
 #endif
 #if XE_LAZY_CASES
-   if(round>=3+XE_LAZY_FIRST)lazy_temporary(temporary);
+   if(round>=3+XE_LAZY_FIRST && round<3+XE_REGISTER_FIRST)lazy_temporary(temporary);
 #endif
    if(kind==4)for(lane=0;lane<4;++lane)temporary[lane]=0xc0e00000u;
    if(group==5){temporary[0]=0xbf800000u;temporary[1]=0x40000000u;temporary[2]=0xc0400000u;temporary[3]=0x40800000u;}
    if(group==8){static const uint32_t initial[8]={0x3f800000u,0x40000000u,0x40400000u,0x40800000u,0x40a00000u,0x40c00000u,0x40e00000u,0x41000000u};memcpy(temporary,initial,sizeof(initial));}
    if(round>=3){descriptor[3]=64;descriptor[5]=512;descriptor[6]=0;descriptor[7]=511;}
+#if XE_REGISTER_CASES
+   if(round>=3+XE_REGISTER_FIRST){register_temporary(temporary);descriptor[3]=register_count(round-3-XE_REGISTER_FIRST);}
+#endif
    if(kind==16)descriptor[0]=UINT32_MAX;
    if(kind==17)descriptor[1]=2;
    if(kind==18)descriptor[3]=65;
@@ -577,21 +604,28 @@ int main(void){
     if(round>=3+XE_COMPARE_FIRST && round<3+XE_LAZY_FIRST)CHECK(out[i*8+5]==1);
 #endif
 #if XE_LAZY_CASES
-    if(round>=3+XE_LAZY_FIRST)CHECK(out[i*8+5]==lazy_exports(round-3-XE_LAZY_FIRST));
+    if(round>=3+XE_LAZY_FIRST && round<3+XE_REGISTER_FIRST)CHECK(out[i*8+5]==lazy_exports(round-3-XE_LAZY_FIRST));
 #endif
 #endif
     ++compared;
    }else{for(lane=0;lane<7;++lane)if(lane!=4)CHECK(out[i*8+lane]==0x6d6d6d6du);}
    CHECK(out[i*8+7]==0x6d6d6d6du);++cases;
+#if XE_REGISTER_CASES
+   if(round>=3+XE_REGISTER_FIRST){CHECK(out[i*8+5]==1);++register_invocations;}
+#endif
 #if XE_COMPARE_CASES
    if(round>=3+XE_COMPARE_FIRST && round<3+XE_LAZY_FIRST)++comparison_invocations;
 #endif
 #if XE_LAZY_CASES
-   if(round>=3+XE_LAZY_FIRST)++lazy_invocations;
+   if(round>=3+XE_LAZY_FIRST && round<3+XE_REGISTER_FIRST)++lazy_invocations;
 #endif
   }
  }
  CHECK(modules==1 && compared>300);
+#if XE_REGISTER_CASES
+ if(context_replays){CHECK(register_invocations==2*XE_REGISTER_CASES);
+  printf("REGISTER_CONTEXT replays=%u invocations=%u\n",register_invocations/2,register_invocations);}
+#endif
 #if XE_LAZY_CASES
  if(context_replays){CHECK(lazy_invocations==2*XE_LAZY_CASES);
   printf("LAZY_SOURCE_CONTEXT replays=%u invocations=%u\n",lazy_invocations/2,lazy_invocations);}

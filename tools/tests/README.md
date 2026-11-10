@@ -1877,3 +1877,21 @@ numeric output, raw ticks and submission metadata must match. Coarse scaling
 and delay-ratio bounds validate the instrument; they are not performance-gate
 tolerance changes. D3D12/WARP runs the C89 decoder unit but does not claim these
 Vulkan measurements. See `gpu_timestamp_results.txt` for source links and limits.
+
+Borrowed initial registers
+--------------------------
+
+The control entry uses immutable descriptor input until first write, with fixed
+private dirty words and defined private slots afterward. It does not copy or
+zero all 64 input registers at entry. Partial writes merge with the original
+borrowed or private value, and ALU coissue inputs are captured before either
+write. Input bindings stay immutable/disjoint from output through completion.
+
+The frozen C89 fixture adds896 untimed replays (1792 invocations) covering eight
+register indices at 0/1/30/31/32/33/62/63, seven input lengths, eight read/write
+scenarios and both byte orders. Literal goldens and native references cover zero
+tails, dirty-word collisions, same-register coissue and zero-mask nonwrites.
+The full suite requires `REGISTER_CONTEXT replays=896 invocations=1792`; timed
+children retain the original three replays and no context execution. See
+`register_borrow_results.txt` for measurements, lifetime limits and remaining
+renderer work. No full audio/video or cold-play claim follows from this suite.

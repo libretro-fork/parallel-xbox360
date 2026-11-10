@@ -14,6 +14,7 @@ typedef struct alu_constant { uint32_t literal,scalar,vector; } alu_constant;
 typedef struct alu_builder {
  xe_spv_binary *out;
  uint32_t next,block;
+ uint32_t register_dirty,register_base,register_count;
  unsigned constants;
  alu_constant constant[64];
 } alu_builder;
@@ -285,8 +286,45 @@ static void guard(alu_builder *b,uint32_t predicate,uint32_t output,unsigned sta
 static uint32_t reg_pointer(alu_builder *b,uint32_t registers,uint32_t index) {
  uint32_t pointer=id(b);emit(b,SpvOpAccessChain,T_PREG,pointer,2,registers,index,0,0);return pointer;
 }
+/* Borrow immutable input registers until written; private slots are read only
+ * after publication in this invocation's two active dirty words (a fixed vec4). */
+static uint32_t register_dirty_word(alu_builder *b,uint32_t index,uint32_t *slot) {
+ uint32_t value=id(b);*slot=field(b,index,5,1);
+ emit(b,SpvOpVectorExtractDynamic,T_UINT,value,2,local_load(b,T_U4,b->register_dirty),*slot,0,0);
+ return value;
+}
 static uint32_t reg_load(alu_builder *b,uint32_t registers,uint32_t index) {
- return local_load(b,T_U4,reg_pointer(b,registers,index));
+ uint32_t owned,borrowed,good,zero,merged,joined,value,loaded,original,result,slot,bit,dirty,condition,ops[4];
+ if(!b->register_dirty)return local_load(b,T_U4,reg_pointer(b,registers,index));
+ dirty=register_dirty_word(b,index,&slot);bit=operation(b,SpvOpShiftLeftLogical,T_UINT,scalar(b,1),field(b,index,0,31));
+ owned=id(b);borrowed=id(b);joined=id(b);good=id(b);zero=id(b);merged=id(b);
+ condition=yes(b,operation(b,SpvOpBitwiseAnd,T_UINT,dirty,bit));
+ emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
+ emit(b,SpvOpBranchConditional,0,0,3,condition,owned,borrowed,0);
+ emit(b,SpvOpLabel,0,owned,0,0,0,0,0);value=local_load(b,T_U4,reg_pointer(b,registers,index));
+ emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ emit(b,SpvOpLabel,0,borrowed,0,0,0,0,0);
+ condition=operation(b,SpvOpULessThan,T_BOOL,index,b->register_count);
+ emit(b,SpvOpSelectionMerge,0,0,2,merged,0,0,0);
+ emit(b,SpvOpBranchConditional,0,0,3,condition,good,zero,0);
+ emit(b,SpvOpLabel,0,good,0,0,0,0,0);
+ loaded=load_vector_from(b,V_INPUT,operation(b,SpvOpIAdd,T_UINT,b->register_base,operation(b,SpvOpIMul,T_UINT,index,scalar(b,4))),0);
+ emit(b,SpvOpBranch,0,0,1,merged,0,0,0);
+ emit(b,SpvOpLabel,0,zero,0,0,0,0,0);emit(b,SpvOpBranch,0,0,1,merged,0,0,0);
+ emit(b,SpvOpLabel,0,merged,0,0,0,0,0);original=id(b);
+ ops[0]=loaded;ops[1]=good;ops[2]=vector(b,0);ops[3]=zero;xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,original,ops,4);
+ emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ emit(b,SpvOpLabel,0,joined,0,0,0,0,0);result=id(b);
+ ops[0]=value;ops[1]=owned;ops[2]=original;ops[3]=merged;xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,4);return result;
+}
+static void register_publish(alu_builder *b,uint32_t index) {
+ uint32_t slot,dirty,bit,value;
+ if(!b->register_dirty)return;
+ value=id(b);
+ dirty=register_dirty_word(b,index,&slot);bit=operation(b,SpvOpShiftLeftLogical,T_UINT,scalar(b,1),field(b,index,0,31));
+ dirty=operation(b,SpvOpBitwiseOr,T_UINT,dirty,bit);
+ emit(b,SpvOpVectorInsertDynamic,T_U4,value,3,local_load(b,T_U4,b->register_dirty),dirty,slot,0);
+ local_store(b,b->register_dirty,value);
 }
 /* Invalid constant windows read zero, matching the CPU reference. No wrapping. */
 static uint32_t bank_load(alu_builder *b,uint32_t offset_words,uint32_t count,
@@ -499,8 +537,8 @@ static void register_write(alu_builder *b,uint32_t registers,uint32_t at,uint32_
  emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
  emit(b,SpvOpBranchConditional,0,0,3,predicate,write,joined,0);
  emit(b,SpvOpLabel,0,write,0,0,0,0,0);
- pointer=reg_pointer(b,registers,at);old=local_load(b,T_U4,pointer);
- local_store(b,pointer,choose(b,mask_predicate(b,mask),value,old));
+ pointer=reg_pointer(b,registers,at);old=b->register_dirty?reg_load(b,registers,at):local_load(b,T_U4,pointer);
+ local_store(b,pointer,choose(b,mask_predicate(b,mask),value,old));register_publish(b,at);
  emit(b,SpvOpBranch,0,0,1,joined,0,0,0);emit(b,SpvOpLabel,0,joined,0,0,0,0,0);
 }
 static uint32_t context_word(alu_builder *b,uint32_t word) {
@@ -655,7 +693,8 @@ static void program_entry(alu_builder *b,int control) {
  cf0=cf1=count=address=sequence=0;
  emit(b,SpvOpFunction,T_VOID,F_MAIN,2,0,T_MAIN_FN,0,0);
  emit(b,SpvOpLabel,0,start,0,0,0,0,0);
- emit(b,SpvOpVariable,T_PREG_ARRAY,registers,2,SpvStorageClassFunction,C_NULL_REG,0,0);
+ emit(b,SpvOpVariable,T_PREG_ARRAY,registers,control?1:2,SpvStorageClassFunction,C_NULL_REG,0,0);
+ if(control){b->register_dirty=id(b);emit(b,SpvOpVariable,T_PREG,b->register_dirty,2,SpvStorageClassFunction,vector(b,0),0,0);}
  emit(b,SpvOpVariable,T_PLOCAL_UINT,previous,2,SpvStorageClassFunction,scalar(b,0),0,0);
  emit(b,SpvOpVariable,T_PREG,position,2,SpvStorageClassFunction,vector(b,0),0,0);
  emit(b,SpvOpVariable,T_PLOCAL_UINT,exports,2,SpvStorageClassFunction,scalar(b,0),0,0);
@@ -706,6 +745,8 @@ static void program_entry(alu_builder *b,int control) {
  guard(b,predicate,output,3);
  }else available=operation(b,SpvOpUDiv,T_UINT,desc[1],scalar(b,3));
  for(i=0;i<4;++i)constants[i]=desc[i+4];
+ if(control){b->register_base=desc[2];b->register_count=desc[3];}
+ else{
  /* Initialize only the supplied input registers; remaining locals start zero. */
  h=id(b);body=id(b);advance=id(b);end=id(b);emit(b,SpvOpBranch,0,0,1,h,0,0,0);
  emit(b,SpvOpLabel,0,h,0,0,0,0,0);index=local_load(b,T_UINT,iterator);
@@ -716,6 +757,7 @@ static void program_entry(alu_builder *b,int control) {
  local_store(b,reg_pointer(b,registers,index),value);emit(b,SpvOpBranch,0,0,1,advance,0,0,0);
  emit(b,SpvOpLabel,0,advance,0,0,0,0,0);local_store(b,iterator,offset(b,index,1));emit(b,SpvOpBranch,0,0,1,h,0,0,0);
  emit(b,SpvOpLabel,0,end,0,0,0,0,0);local_store(b,iterator,scalar(b,0));
+ }
  if(control){
   control_dispatch(b,flow,desc[0],swap,available,output,&cf0,&cf1);
   count=field(b,cf0,12,7);address=field(b,cf0,0,4095);sequence=field(b,cf0,16,4095);

@@ -102,6 +102,11 @@ def validate_lazy_source_workload(log):
     if observed!=[("64","128")]:raise ValueError("missing or substituted lazy-source context execution")
 
 
+def validate_register_workload(log):
+    observed=re.findall(r"^REGISTER_CONTEXT replays=(\d+) invocations=(\d+)$",log,re.MULTILINE)
+    if observed!=[("896","1792")]:raise ValueError("missing or substituted register ownership context execution")
+
+
 def validate_raw_program(source, build, out, log, env, backend, control=False):
     """New component coverage; absent historical code is not a passing fixture."""
     script=source / "tools/tests" / ("run_alu_program_tests.cmd" if WIN else "run_alu_program_tests.sh")
@@ -143,13 +148,17 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
         predicate="#define XE_ALU_CONTROL_PREDICATE 1" in content
         comparison="#define XE_ALU_CONTROL_COMPARE 1" in content
         lazy_source="#define XE_ALU_CONTROL_LAZY_SOURCE 1" in content
+        borrowed_registers="#define XE_ALU_CONTROL_BORROW_REGISTERS 1" in content
         if comparison and coverage["vulkan_gpu"]:validate_comparison_workload(log.read_text())
         if lazy_source and coverage["vulkan_gpu"]:validate_lazy_source_workload(log.read_text())
+        if borrowed_registers and coverage["vulkan_gpu"]:validate_register_workload(log.read_text())
         coverage.update(control_flow_version=6 if lazy_source else 5 if comparison else 4 if predicate else 3 if loops else 2 if boolean else 1,
                         boolean_cf_supported=boolean,nonempty_loops_supported=loops,
                         predicate_cf_supported=predicate,
                         comparison_alu_supported=comparison,
                         lazy_source_supported=lazy_source,
+                        register_borrow_supported=borrowed_registers,register_context_cases=896 if coverage["vulkan_gpu"] else 0,
+                        pinned_register_fixture_sha256=file_sha256(HERE/"shader_register_borrow_fixture.h"),
                         timed_corpus_version=3,boolean_context_cases=224 if boolean and coverage["vulkan_gpu"] else 0,
                         loop_context_cases=36 if loops and coverage["vulkan_gpu"] else 0,
                         predicate_context_cases=1254 if predicate and coverage["vulkan_gpu"] else 0,
@@ -594,10 +603,10 @@ def compare_control_coverage(coverage, vulkan):
     for version in ("base","anchor"):
         if version not in coverage:continue
         previous=coverage[version]
-        for feature in ("available","boolean_cf_supported","nonempty_loops_supported","predicate_cf_supported","comparison_alu_supported","lazy_source_supported"):
+        for feature in ("available","boolean_cf_supported","nonempty_loops_supported","predicate_cf_supported","comparison_alu_supported","lazy_source_supported","register_borrow_supported"):
             if previous.get(feature,False) and not candidate.get(feature,False):
                 failures.append(version+": removed "+feature)
-        for feature in ("boolean_context_cases","loop_context_cases","predicate_context_cases","comparison_context_cases","lazy_source_context_cases"):
+        for feature in ("boolean_context_cases","loop_context_cases","predicate_context_cases","comparison_context_cases","lazy_source_context_cases","register_context_cases"):
             if previous.get(feature,0)>candidate.get(feature,0):failures.append(version+": reduced "+feature)
     return dict(revisions=coverage,failures=failures)
 
@@ -736,7 +745,7 @@ def run_comparison(args):
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
-         "shader_control_program_fixture.h","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
+         "shader_control_program_fixture.h","shader_register_borrow_fixture.h","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
          "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h"]}
     manifest["corpus_contract"]=dict(version=8,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,

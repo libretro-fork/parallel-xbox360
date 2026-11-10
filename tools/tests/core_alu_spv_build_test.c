@@ -12,6 +12,11 @@ static void release(void *p){if(p)++frees;free(p);}
 #define XE_SPV_BINARY_FREE release
 #include "../../libretro/core_spv_binary.c"
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"ALU build line %u\n",(unsigned)__LINE__);return 1;}}while(0)
+#ifdef XE_ALU_CONTROL_BORROW_REGISTERS
+#define XE_TEST_CONTROL_LOOPS 2u
+#else
+#define XE_TEST_CONTROL_LOOPS 3u
+#endif
 int main(int argc,char **argv){
  int (*builders[3])(xe_spv_binary*)={xe_alu_spv_build,xe_alu_program_spv_build,xe_alu_control_spv_build};
  xe_spv_binary module={0},reference={0};uint32_t *owner;
@@ -32,7 +37,7 @@ int main(int argc,char **argv){
    if(op==54)++functions;
    if(op==246)++loops;
   }
-  CHECK(at==words && functions==3 && loops==(mode==2?3u:mode?2u:0u));
+  CHECK(at==words && functions==3 && loops==(mode==2?XE_TEST_CONTROL_LOOPS:mode?2u:0u));
   for(builds=0;builds<1000;++builds){
    CHECK(builders[mode](&module));CHECK(module.words==owner && module.count==words);
    CHECK(reference.count==words && !memcmp(module.words,reference.words,words*4));

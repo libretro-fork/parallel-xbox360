@@ -111,13 +111,14 @@ class ComparisonTests(unittest.TestCase):
         old=dict(available=True,unit=True,vulkan_gpu=True,boolean_cf_supported=True,
                  nonempty_loops_supported=True,predicate_cf_supported=True,
                  comparison_alu_supported=True,comparison_context_cases=1536,
-                 lazy_source_supported=True,lazy_source_context_cases=64,
+                 lazy_source_supported=True,lazy_source_context_cases=64,register_borrow_supported=True,register_context_cases=896,
                  boolean_context_cases=224,loop_context_cases=32,predicate_context_cases=1254)
         for field,value in [("available",False),("unit",False),("vulkan_gpu",False),
                             ("boolean_cf_supported",False),("nonempty_loops_supported",False),
                             ("predicate_cf_supported",False),("predicate_context_cases",0),
                             ("comparison_alu_supported",False),("comparison_context_cases",0),
                             ("lazy_source_supported",False),("lazy_source_context_cases",0),
+                            ("register_borrow_supported",False),("register_context_cases",0),
                             ("boolean_context_cases",0),("loop_context_cases",0)]:
             candidate=dict(old);candidate[field]=value
             self.assertTrue(ci.compare_control_coverage(dict(base=old,candidate=candidate),True)["failures"],field)
@@ -174,6 +175,26 @@ class ComparisonTests(unittest.TestCase):
                 self.assertEqual(result["control_flow_version"],6)
                 self.assertTrue(result["lazy_source_supported"])
                 self.assertEqual(result["lazy_source_context_cases"],64 if backend.startswith("vulkan") else 0)
+
+    def test_borrowed_register_context_execution_is_required(self):
+        marker="REGISTER_CONTEXT replays=896 invocations=1792\n"
+        ci.validate_register_workload(marker)
+        for text in ("",marker+marker,marker.replace("896","0"),marker.replace("1792","2")):
+            with self.assertRaisesRegex(ValueError,"register ownership"):
+                ci.validate_register_workload(text)
+        for backend in ("vulkan-software","d3d12-warp"):
+            with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run"):
+                root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True);(root/"libretro").mkdir()
+                (root/"libretro/core_alu_spv.h").write_text("xe_alu_control_spv_build(\n#define XE_ALU_CONTROL_BORROW_REGISTERS 1\n")
+                (tests/("run_alu_program_tests.cmd" if ci.WIN else "run_alu_program_tests.sh")).touch()
+                (root/"log").write_text(marker)
+                value=ci.validate_raw_program(root,root,root,root/"log",{},backend,control=True)
+                self.assertTrue(value["register_borrow_supported"])
+                self.assertEqual(value["register_context_cases"],896 if backend.startswith("vulkan") else 0)
+                (root/"log").write_text("")
+                if backend.startswith("vulkan"):
+                    with self.assertRaisesRegex(ValueError,"register ownership"):
+                        ci.validate_raw_program(root,root,root,root/"log",{},backend,control=True)
 
     def test_control_program_historical_absence_is_explicit(self):
         with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run") as run:

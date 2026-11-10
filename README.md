@@ -630,3 +630,14 @@ Work-scaling and CPU-recording-delay controls reject misleading measurements.
 Existing wall-time profiles stay uninstrumented. These queue intervals include
 GPU synchronization overhead and do not establish isolated ALU cost, register
 spills or retail cold-play behavior. See `tools/tests/gpu_timestamp_results.txt`.
+
+The raw control interpreter now borrows immutable initial register views until a
+register is written. Two private dirty words select fully defined owned values;
+missing input registers read zero and partial writes preserve the other lanes.
+This removes its eager register-copy/zero-fill loop, not the caller's upload or
+all private storage. Inputs must remain immutable through GPU completion. The
+separate raw program entry keeps its original snapshot behavior. Additional
+untimed tests cover both dirty-word boundaries, zero tails, overlapping writes
+and original coissue inputs. This prototype is still unlinked from rendering;
+these component changes do not establish improved retail frame times or remove
+draw-path compilation. See `tools/tests/register_borrow_results.txt`.

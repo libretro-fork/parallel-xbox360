@@ -925,3 +925,13 @@ D3D12 timestamp coverage stay unverified. Existing gate limits are unchanged;
 passing their absolute floors does not exclude smaller regressions. Runtime
 draw-role creation/wait counters and correct renderer fallback coverage are
 still required; these timestamps do not resolve either architectural failure.
+
+Borrowed-register prototype coverage (2026-11-10): the raw control entry lends
+immutable input until first write, then reads fully defined private values with
+fixed dirty-word ownership. Zero tails, both word boundaries, partial/coissued
+writes and byte order have896 untimed replay fixtures. The original timed
+primary payload stays unchanged. This is a component optimization outside the
+renderer; actual ready fallback integration, stages/fetch/ROP coverage and
+critical-thread compilation/wait removal remain unresolved. Retain historical
+mixed/fault GPU cost debt and all rejected alternatives when interpreting
+paired GPU intervals; do not substitute this test for retail cold-play signoff.
