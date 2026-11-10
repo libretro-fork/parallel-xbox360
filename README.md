@@ -579,8 +579,10 @@ support before general rendering use. This is not a rendering fallback: empty-lo
 semantics, predicates, relative constants/destinations, fetches, pixel RNE arithmetic,
 other stages/exports and ROP are missing. Out-of-window relative temp reads fail
 rather than assuming undocumented wrapping/clamping behavior.
+Direct temporary reads bypass loop-address loads and adjusted-index checks;
+their masked indices remain independent of high or negative loop addresses.
 Private per-invocation register storage may spill; rendering
 throughput and cold-play fluidity are unverified. See
 `tools/tests/alu_program_results.txt`, `tools/tests/alu_control_results.txt` and
-`tools/tests/alu_context_results.txt`
+`tools/tests/alu_context_results.txt` and `tools/tests/alu_direct_results.txt`
 for coverage and initialization costs.

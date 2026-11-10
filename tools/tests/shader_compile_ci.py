@@ -131,7 +131,7 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
         coverage.update(control_flow_version=3 if loops else 2 if boolean else 1,
                         boolean_cf_supported=boolean,nonempty_loops_supported=loops,
                         timed_corpus_version=2,boolean_context_cases=224 if boolean and coverage["vulkan_gpu"] else 0,
-                        loop_context_cases=32 if loops and coverage["vulkan_gpu"] else 0,
+                        loop_context_cases=36 if loops and coverage["vulkan_gpu"] else 0,
                         context_cases_untimed=True,timed_child_context_replays=0,
                         cf_step_limit=4096,call_depth_limit=4,
                         pinned_control_fixture_sha256=file_sha256(HERE/"shader_control_program_fixture.h"))

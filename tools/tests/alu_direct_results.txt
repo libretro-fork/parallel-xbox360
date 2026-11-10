@@ -1,0 +1,91 @@
+Direct temporary-read fast path (2026-11-10)
+==========================================
+First parent: 6c14f39bae370b860b17dba4e80255b611437a46.
+
+The control validation kernel previously loaded its loop-address vector for
+every temporary operand, selected zero for a direct operand, added that value
+and checked the resulting index. Direct indices are already masked to 0..63.
+They now branch directly to the register load. Only relative operands load aL,
+add it and enter the adjusted-index guard. The source value still has one final
+register load; no alternate register frame, payload copy or allocation is added.
+SPIR-V Phi inputs identify the actual predecessor after the relative guard.
+
+The control module grows from 7516 to 7558 words, trading 42 words for less work
+on direct reads. It retains three functions and three implementation loops;
+arithmetic/program modules remain byte-identical at 2855/6051 words. There is no
+GLSL parsing, added capability, float/64-bit shader type or per-program pipeline.
+No production build source or renderer call site consumes this validation kernel.
+
+Correctness before timing
+-------------------------
+Add four untimed context replays: direct R0 with aL=255 and direct R63 with
+aL becoming -1, each in both byte orders. Literal output values are 0.25 and
+63.25; literal export counts are three and two. Neither path may apply aL or
+fail the relative-address guard. Existing relative reads and late out-of-window
+failures remain covered, with immutable inputs and transactional output guards.
+These new cases also pass on the actual parent with the same pinned harness.
+
+Total full control coverage is 1263 GPU invocations, 719 native-reference
+comparisons, 224 bool and 36 loop context replays. A deliberate mutant forcing
+all temporary reads through relative addressing fails on RTX 5090 at round 259,
+invocation 0: status 3 instead of 1. This is the first new high-address direct
+case, not a compiler/device failure. Its adjusted-index guard prevents an
+out-of-bounds register read. Mutant code remains private.
+
+MSVC /TC /O2 /W4 /WX and GCC strict C89/ASan/UBSan checks pass. All three modules
+pass official spirv-val Vulkan 1.0 validation and 1000 exact same-owner builds
+without additional allocation, plus failure/recovery/overflow/close checks.
+RTX 5090 driver 32.0.16.2101 and llvmpipe LLVM 20.1.2 pass the full control suite;
+the original 12280 arithmetic and 743-program/363-reference suites also pass.
+All 43 Python CI guard tests pass; coverage reports include all 36 loop replays.
+
+Seven matched final pairs
+-------------------------
+Compare actual first-parent source with candidate source, the same pinned
+harness, build options, GPU/driver and matching private application-cache state.
+Reuse identical production no-LTO archives: the changed standalone emitter is
+excluded from production sources. Compile each emitter from its own revision.
+This is not a new full-core build or a retail replay.
+
+Full correctness executes during preparation. Timed children execute only the
+unchanged primary 743-invocation/315-reference workload, not the additional
+context cases. Seven fresh-process pairs alternate order on an otherwise idle
+host. Final median/maximum milliseconds (parent -> candidate):
+
+  emission                 0.0513/0.0672 -> 0.0524/0.0666
+  module creation          0.0169/0.0253 -> 0.0149/0.0236
+  retained-first PSO       4.6074/5.7439 -> 4.1327/5.1010  [UNVERIFIED cold state]
+  explicit-cache warm PSO  0.0159/0.0209 -> 0.0152/0.0230
+  completion 0             3.2301/4.7729 -> 2.7058/2.7215  [UNVERIFIED first use]
+  warm completion 1        0.9691/1.0218 -> 0.9229/1.0136
+  warm completion 2        0.9685/1.1851 -> 0.9170/0.9266
+
+All 768 main, five original raw and five control controlled metrics pass the
+unchanged gates. All 512 main modules and original raw program captures are
+byte-identical across revisions. All 28 raw captures match their prepared
+modules; all 14 device groups agree. Frozen source hashes, coverage retention,
+module growth and unchanged source-wait alarms pass postvalidation.
+
+The warmed completion medians improve about 5% on this mixed/invalid-work corpus.
+They include host/queue service and are not isolated GPU timestamps. An earlier
+seven-pair exploratory comparison before adding the boundary cases showed about
+4% lower medians. Keep both complete sample sets; the final harness is the
+authoritative comparison. The initial invalid branch-order prototype failed
+SPIR-V validation/preparation before timing; its failed evidence is retained.
+
+Limits
+------
+Driver disk/internal caches are not certified cold. First-creation and initial
+completion observations cannot establish cold-boot gains. No threshold or cache
+default changes were made. This recovers only part of the earlier control-kernel
+runtime increase, and establishes no retail throughput/frame-time improvement.
+Register spilling/occupancy and full runtime cost need further measurement.
+
+The kernel remains unlinked from rendering. Empty-loop semantics, predicates,
+other addressing/ALUs, fetches, pixel/stage/ROP coverage and valid-work
+continuations remain incomplete. Actual draw-path compilation and compile waits
+are unresolved. No installed core, game or live cache was changed.
+
+Evidence: C:/git/accurate-shader-fallback/direct-source, especially paired-v3/
+results, linux-control-v3.log and wrong-direct/run.log. Earlier paired-final
+failed preparation and paired-v2 exploratory samples are retained separately.

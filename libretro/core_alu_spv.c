@@ -316,11 +316,20 @@ static uint32_t program_source(alu_builder *b,uint32_t registers,uint32_t consta
  emit(b,SpvOpLabel,0,temp,0,0,0,0,0);
  temporary=operation(b,SpvOpBitwiseAnd,T_UINT,at,scalar(b,63));
  if(loop_address){
-  uint32_t address=id(b),current=local_load(b,T_U4,loop_address);
+  /* The masked direct index is already safe; only relative reads need aL and
+   * the adjusted-index guard. Keep their loads out of the direct path. */
+  uint32_t direct=b->block,relative=id(b),merged=id(b),address=id(b),current,relative_end,adjusted;
+  uint32_t is_relative=yes(b,field(b,at,6,1));
+  emit(b,SpvOpSelectionMerge,0,0,2,merged,0,0,0);
+  emit(b,SpvOpBranchConditional,0,0,3,is_relative,relative,merged,0);
+  emit(b,SpvOpLabel,0,relative,0,0,0,0,0);current=local_load(b,T_U4,loop_address);
   emit(b,SpvOpCompositeExtract,T_UINT,address,2,current,0,0,0);
-  address=select_word(b,yes(b,field(b,at,6,1)),address,scalar(b,0));
-  temporary=operation(b,SpvOpIAdd,T_UINT,temporary,address);
-  guard(b,operation(b,SpvOpULessThan,T_BOOL,temporary,scalar(b,64)),output,3);
+  adjusted=operation(b,SpvOpIAdd,T_UINT,temporary,address);
+  guard(b,operation(b,SpvOpULessThan,T_BOOL,adjusted,scalar(b,64)),output,3);
+  relative_end=b->block;emit(b,SpvOpBranch,0,0,1,merged,0,0,0);
+  emit(b,SpvOpLabel,0,merged,0,0,0,0,0);address=id(b);
+  ops[0]=temporary;ops[1]=direct;ops[2]=adjusted;ops[3]=relative_end;
+  xe_spv_binary_instruction(b->out,SpvOpPhi,T_UINT,address,ops,4);temporary=address;
  }
  temporary=reg_load(b,registers,temporary);
  temp_end=b->block;

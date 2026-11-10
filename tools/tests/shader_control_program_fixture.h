@@ -128,7 +128,7 @@ static void bool_program(uint32_t *p,unsigned which)
 }
 #endif
 #ifdef XE_ALU_CONTROL_LOOPS
-#define XE_LOOP_CASES 32
+#define XE_LOOP_CASES 36
 static uint32_t loop_constant(unsigned count,unsigned start,int step)
 {return count|(start<<8)|(((uint32_t)step&255)<<16);}
 static void loop_context(uint32_t bank[40],unsigned which)
@@ -148,6 +148,8 @@ static void loop_context(uint32_t bank[40],unsigned which)
  if(scenario==12)bank[8]=loop_constant(2,1,1);
  if(scenario==14){bank[8]=0;bank[39]=loop_constant(3,1,1);}
  if(scenario==15)bank[8]=loop_constant(255,0,0);
+ if(scenario==16)bank[8]=loop_constant(3,255,0);
+ if(scenario==17)bank[8]=loop_constant(2,0,-1);
 }
 static unsigned loop_status(unsigned which)
 {
@@ -156,19 +158,22 @@ static unsigned loop_status(unsigned which)
 }
 static uint32_t loop_golden(unsigned which,unsigned lane)
 {
- static const uint32_t values[16]={0x40500000,0x3e800000,0x40100000,0x40a80000,
-  0x40a80000,0x40a80000,0,0,0,0,0,0x40500000,0x40100000,0x40500000,0x40500000,0x3e800000};
+ static const uint32_t values[18]={0x40500000,0x3e800000,0x40100000,0x40a80000,
+  0x40a80000,0x40a80000,0,0,0,0,0,0x40500000,0x40100000,0x40500000,0x40500000,0x3e800000,
+  0x3e800000,0x427d0000};
  return which/2==11 && (lane&1)?0x40000000u:values[which/2];
 }
 static unsigned loop_exports(unsigned which)
 {
- static const unsigned counts[16]={3,4,3,6,1,3,0,0,0,0,0,1,2,3,3,255};
+ static const unsigned counts[18]={3,4,3,6,1,3,0,0,0,0,0,1,2,3,3,255,3,2};
  return counts[which/2];
 }
 static void loop_program(uint32_t *p,unsigned which)
 {
  unsigned scenario=which/2,i;uint32_t slots=0;
  memset(p,0,21*4);control_alu(p,6,62,64,3,15,1,&slots);
+ /* Direct register reads ignore aL even when it is outside the register bank. */
+ if(scenario>=16)control_alu(p,6,62,scenario==16?0u:63u,3,15,1,&slots);
  if(scenario<3 || scenario==6 || scenario==10 || scenario>=14){
   control_cf(p,0,3|(scenario==2?1u<<13:0),0x7000);control_cf(p,1,6|(1u<<12),0x1000);
   control_cf(p,2,1,0x8000);control_cf(p,3,6,0x2000);

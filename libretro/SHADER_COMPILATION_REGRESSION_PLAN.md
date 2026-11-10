@@ -852,3 +852,9 @@ missing-execution gates supplement the existing cost/module/device checks.
 This remains an unlinked validation path: empty-loop semantics, predicates,
 remaining addressing/ALUs, fetch/stages/ROP and valid-work continuation coverage
 must be resolved before using it to replace a draw-path compilation/wait.
+
+Direct temporary reads now bypass the loop-address load/add/check path. Both
+byte orders have literal regressions with high/negative loop addresses, alongside
+relative-window failure tests. Measure this component against its first parent;
+it does not establish renderer throughput or resolve the remaining runtime-cost
+debt from extending the generic control kernel. See `tools/tests/alu_direct_results.txt`.

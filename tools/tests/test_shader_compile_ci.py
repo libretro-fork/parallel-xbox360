@@ -35,7 +35,7 @@ class ComparisonTests(unittest.TestCase):
                 self.assertNotIn("XE_ALU_PROGRAM_TIMING_ONLY",run.call_args.args[3])
                 self.assertEqual(result["control_flow_version"],3)
                 self.assertEqual(result["boolean_context_cases"],224 if backend.startswith("vulkan") else 0)
-                self.assertEqual(result["loop_context_cases"],32 if backend.startswith("vulkan") else 0)
+                self.assertEqual(result["loop_context_cases"],36 if backend.startswith("vulkan") else 0)
 
     def test_control_program_historical_absence_is_explicit(self):
         with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run") as run:

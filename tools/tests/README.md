@@ -1723,11 +1723,12 @@ copy it per invocation. Four return addresses, four loop counts/addresses and
 their counters occupy64 private bytes. Empty loops and out-of-window relative
 temporary reads explicitly fail until their full hardware behavior is verified.
 
-The full control fixture adds224 bool and32 loop context replays, totaling1255
-GPU invocations and711 native references. Literal values/counts cover bool-word
+The full control fixture adds 224 bool and 36 loop context replays, totaling 1263
+GPU invocations and 719 native references. Literal values/counts cover bool-word
 boundaries, untaken invalid work, a full call stack, signed steps, repeat/nesting,
 slot reuse, loop constant31, count255, calls/loops in both directions and scalar
-history. It checks immutable context bytes, payload/redzone ownership and both
+history. Direct reads of R0/R63 also ignore loop addresses 255 and -1, in both
+byte orders. It checks immutable context bytes, payload/redzone ownership and both
 byte orders. Fault-injected bool-index and repeat-address kernels fail at runtime.
 
 CI preparation always runs the full applicable correctness suite, clearing an
@@ -1739,3 +1740,5 @@ that remain unsupported on both revisions; their version is reported explicitly.
 Coverage guards fail if supported features/case coverage disappear, or required
 unit/GPU execution is absent. WARP reports source/unit support without pretending
 to have run these Vulkan cases. See `alu_context_results.txt`.
+The direct-read fast-path comparison and its semantic negative are recorded in
+`alu_direct_results.txt`; this remains an unlinked validation kernel.
