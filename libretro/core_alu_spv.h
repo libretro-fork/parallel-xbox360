@@ -7,6 +7,7 @@
 #define XE_ALU_CONTROL_LOOPS 1
 #define XE_ALU_CONTROL_PREDICATE 1
 #define XE_ALU_CONTROL_COMPARE 1
+#define XE_ALU_CONTROL_LAZY_SOURCE 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -49,6 +50,10 @@ int xe_alu_program_spv_build(xe_spv_binary *out);
  * clean hints), NOP, bool/predicate/unconditional JMP/CALL and RET, with four
  * fixed return addresses. Scalar SETP_EQ/NE/GT/GE update one private predicate;
  * predicated ALUs test its prior value before validation, reads and side effects.
+ * Ordinary vector/scalar EQ/GT/GE/NE produce exact1/0 without changing P0.
+ * Current vector operations skip unused result/operand work, including literal
+ * export-one overlap. Scalar history and P0 still update without a destination.
+ * Unused source slots are not read or checked as relative temporary addresses.
  * Nonempty counted/repeat
  * loops have four fixed count/address entries; temp-relative reads must stay
  * within the64-register window. Empty loops, predicated group-wide breaks,

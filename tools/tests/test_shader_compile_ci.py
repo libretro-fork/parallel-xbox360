@@ -48,11 +48,13 @@ class ComparisonTests(unittest.TestCase):
         old=dict(available=True,unit=True,vulkan_gpu=True,boolean_cf_supported=True,
                  nonempty_loops_supported=True,predicate_cf_supported=True,
                  comparison_alu_supported=True,comparison_context_cases=1536,
+                 lazy_source_supported=True,lazy_source_context_cases=64,
                  boolean_context_cases=224,loop_context_cases=32,predicate_context_cases=1254)
         for field,value in [("available",False),("unit",False),("vulkan_gpu",False),
                             ("boolean_cf_supported",False),("nonempty_loops_supported",False),
                             ("predicate_cf_supported",False),("predicate_context_cases",0),
                             ("comparison_alu_supported",False),("comparison_context_cases",0),
+                            ("lazy_source_supported",False),("lazy_source_context_cases",0),
                             ("boolean_context_cases",0),("loop_context_cases",0)]:
             candidate=dict(old);candidate[field]=value
             self.assertTrue(ci.compare_control_coverage(dict(base=old,candidate=candidate),True)["failures"],field)
@@ -92,6 +94,23 @@ class ComparisonTests(unittest.TestCase):
         for log in ("",marker.replace("1536","0"),marker.replace("3072","2"),marker+marker):
             with self.assertRaisesRegex(ValueError,"comparison context execution"):
                 ci.validate_comparison_workload(log)
+
+    def test_lazy_source_context_execution_is_required_only_for_vulkan(self):
+        marker="LAZY_SOURCE_CONTEXT replays=64 invocations=128\n"
+        ci.validate_lazy_source_workload(marker)
+        for log in ("",marker.replace("64","0"),marker.replace("128","2"),marker+marker):
+            with self.assertRaisesRegex(ValueError,"lazy-source context execution"):
+                ci.validate_lazy_source_workload(log)
+        for backend in ("vulkan-software","d3d12-warp"):
+            with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run"):
+                root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True);(root/"libretro").mkdir()
+                (root/"libretro/core_alu_spv.h").write_text("xe_alu_control_spv_build(\n#define XE_ALU_CONTROL_LAZY_SOURCE 1\n")
+                (tests/("run_alu_program_tests.cmd" if ci.WIN else "run_alu_program_tests.sh")).touch()
+                (root/"log").write_text(marker)
+                result=ci.validate_raw_program(root,root,root,root/"log",{},backend,control=True)
+                self.assertEqual(result["control_flow_version"],6)
+                self.assertTrue(result["lazy_source_supported"])
+                self.assertEqual(result["lazy_source_context_cases"],64 if backend.startswith("vulkan") else 0)
 
     def test_control_program_historical_absence_is_explicit(self):
         with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run") as run:

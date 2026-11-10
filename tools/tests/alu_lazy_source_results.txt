@@ -1,0 +1,101 @@
+Used-source control-kernel validation (2026-11-10)
+================================================
+First parent: dc2e58c854a4f99117609ca6ca0cab9a68f83f7c.
+
+Correctness and work removed
+----------------------------
+The raw control entry previously loaded all three source slots before deciding
+which opcode consumed them. An irrelevant relative temporary could therefore
+reject an otherwise valid program. The native interpreter already skips unused
+operands/results. The C89 SPIR-V control emitter now follows that behavior:
+- Slots0/1 and vector ALU work are skipped when no vector result is consumed.
+  For exports, overlapping vector/scalar mask bits write a literal one; those
+  bits do not require vector inputs. Temporary stores retain their existing
+  vector mask semantics. Unknown vector opcodes remain unsupported.
+- Slot2 is consumed by an active vector MAD or supported scalar operations
+  requiring it. RETAIN_PREV requires none. ADD_CONST_0 uses its own independent
+  constant/register selection; its encoded third slot is not an aL temp read.
+- Scalar history/P0 still execute with zero destination masks or literal-one
+  overlap. A vector MAD opcode still selects Z for scalar ADD's second input,
+  even when no vector result is written. Used invalid relative sources fail
+  without committing output; inactive predicated ALUs remain skipped.
+
+The third value is read before vector inputs, but all consumed values are still
+captured before either coissued operation writes registers or predicate state.
+Only immutable/shared input views and the existing private register state are
+used. No extra payload/context/frame copy, allocation, lock, production timer,
+diagnostic or GPU/CPU synchronization is added. Initial register snapshots and
+their initialization remain; physical memory traffic/register spills have not
+been profiled. No claim of a fully zero-copy shader invocation is justified.
+
+The original arithmetic/program modules remain2855/6051 words, byte-identical
+to the parent. The control module grows8424 ->8515 words (+91/364 bytes,1.08%).
+Both control versions retain the same existing16384-word output capacity after
+initial growth. The builder's1000 same-owner exact rebuilds allocate nothing.
+Actual driver register allocation and newly cold compilation remain unverified.
+
+Regression evidence
+-------------------
+32 scenarios in both byte orders use loop address255, with two invocations per
+replay. Tests cover ADD/MUL/comparisons with unused third slots, scalar-only work
+with invalid unused vector inputs, active/unused MAD inputs, the CONST scalar
+pair, literal-one overlap, scalar/P0 effects without writes, retained history,
+opposite ALU predicates and failure after a private position export. Seven
+scenarios per byte order deliberately use invalid required operands and retain
+transactional failure/status/redzone checks; successful cases use literal
+goldens plus the actual native interpreter. All prior context cases remain.
+
+The exact-parent emitter, forced to run the additional fixture cases, rejects
+the first new valid program at round3053 with status3 instead of1. Its module
+bytes match the normal parent module. Candidate full coverage passes6971 GPU
+invocations/6119 native references/3114 additional context replays on RTX5090
+driver32.0.16.2101 and Linux llvmpipe LLVM20.1.2. Linux C89 ASan/UBSan and MSVC
+/TC /W4 /WX pass. Existing12280 arithmetic records still pass. CI counts128
+completed new invocations and requires LAZY_SOURCE_CONTEXT replays=64
+invocations=128 exactly once. Missing/reduced/substituted/duplicate execution
+and coverage loss fail; historical parents and WARP do not claim Vulkan
+execution of these newly supported cases. All49 CI guard tests pass.
+
+Three private faulty variants are rejected: gating scalar reads on destination
+mask loses scalar/P0 effects; ignoring MAD's third slot accepts a malformed
+required read; reading literal-one export inputs wrongly rejects a valid case.
+These are numerical/status failures, not crashes or timeouts.
+
+Paired cost evidence and limits
+------------------------------
+Seven alternating fresh-process parent/candidate pairs pass the unchanged main,
+raw program/control, companion valid-work and snapshot gates. All512 production
+procedural modules and the old raw-program module are byte-identical. The raw
+emitter is compiled independently for each revision; native production core
+source/ABI and matching archives are unchanged. This kernel is still unlinked
+from the actual Vulkan/D3D12 rendering paths.
+
+Illustrative elapsed medians in milliseconds, parent -> candidate:
+  control emission:             0.0689 ->0.0704
+  control module creation:      0.0195 ->0.0187
+  primed control PSO creation:  0.0148 ->0.0137
+  mixed completion replay1:     0.8865 ->1.1413
+  mixed completion replay2:     0.7870 ->0.9666
+  valid completion replay1:     0.2300 ->0.2256
+  valid completion replay2:     0.2142 ->0.2178
+Higher mixed medians are retained explicitly, despite passing absolute noise
+floors; no throughput improvement is claimed. These elapsed completion samples
+include host scheduling and deliberate fault/budget work, not pure GPU time.
+The valid profile and unchanged numerical corpus are separate evidence.
+New lazy-source regressions are correctness cases outside timed children.
+Driver disk/internal caches are not certified cold, and no pinned smooth-play
+cross-game anchor is available. No game-level frame-time/FPS claim follows.
+
+Remaining requirements
+----------------------
+This repairs operand consumption for the current supported subset. Other
+opcodes and constant/destination addressing flags remain unsupported. Complete
+stage/fetch/ROP behavior, group-wide loop semantics and resumable continuation
+are still missing. Actual draw-path translation/module/PSO creation and waits,
+and a ready accurate rendering fallback, remain unfinished. Do not treat this
+validation pass as cold-play acceptance or elimination of shader stutter.
+
+Private procedural evidence: accurate-shader-fallback/lazy-source, including
+paired/results (frozen sources, CSVs, device/module identities and coverage),
+parent-proof.log, semantic-mutant reports and Linux sanitizer output. No user
+game, live shader cache or installed DLL was changed.

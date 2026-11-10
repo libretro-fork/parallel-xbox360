@@ -615,3 +615,10 @@ denormals, signed zeros and unordered comparisons independently of host float
 modes. CI verifies execution of the additional comparison cases. This kernel
 still lacks full shader/stage/ROP coverage and is not selected for rendering.
 See `tools/tests/alu_compare_results.txt` for scope and measured costs.
+
+The control kernel now reads operand slots only when its supported operations
+consume them. It skips vector work without an effective result, including
+literal-one export overlap; scalar history and predicate effects still execute
+with an empty destination mask. This fixes erroneous rejection of unused
+relative operands. See `tools/tests/alu_lazy_source_results.txt` for correctness
+and cost limits; rendering integration remains unfinished.

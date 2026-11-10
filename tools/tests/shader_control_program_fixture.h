@@ -384,6 +384,75 @@ static void compare_program(uint32_t *p,unsigned which) {
  }
 }
 #endif
+#ifdef XE_ALU_CONTROL_LAZY_SOURCE
+#define XE_LAZY_CASES 64
+static void lazy_context(uint32_t *bank) {
+ memset(bank,0,160);bank[8]=loop_constant(1,255,0);
+}
+static void lazy_temporary(uint32_t *temporary) {
+ unsigned lane;memset(temporary,0,256*4);
+ for(lane=0;lane<4;++lane){temporary[lane]=0x40000000u;temporary[4+lane]=0x40400000u;}
+ temporary[8]=0x3f800000u;temporary[9]=0x40000000u;temporary[10]=0x40800000u;temporary[11]=0x41000000u;
+}
+static unsigned lazy_status(unsigned which) {
+ unsigned s=which/2;
+ return s==12 || (s>=16 && s<=19) || s==22 || s==30?3:1;
+}
+static uint32_t lazy_golden(unsigned which) {
+ static const uint32_t values[32]={0x40a00000u,0x40c00000u,0,0,0,0x3f800000u,
+  0x41100000u,0x41100000u,0x41100000u,0x41100000u,0x41100000u,0x41100000u,
+  0,0x41400000u,0x40000000u,0x40000000u,0,0,0,0,0x40000000u,0x3f800000u,
+  0,0x41100000u,0,0x3f800000u,0x3f800000u,0x3f800000u,0x40000000u,0x40000000u,0,0x3f800000u};
+ return values[which/2];
+}
+static unsigned lazy_exports(unsigned which){return which/2==23?2:1;}
+static void lazy_program(uint32_t *p,unsigned which) {
+ static const unsigned vector_ops[6]={0,1,4,5,6,7};
+ unsigned s=which/2,op=s<12?vector_ops[s%6]:0;
+ memset(p,0,21*4);
+ control_cf(p,0,3,0x7000);control_cf(p,1,4|(1u<<12),0x1000);
+ control_cf(p,2,1,0x8000);control_cf(p,3,6,0x2000);
+ alu(p+12,62,15,0,50,op,0,1,127,7);p[12]|=1u<<15;
+ if(s>=6 && s<12){alu(p+12,62,0,15,0,op,127,127,2,7);p[12]|=1u<<15;}
+ if(s==12 || s==13 || s==31){
+  alu(p+12,62,s==13?0u:15u,s==13 || s==31?15u:0u,s==13?0u:50u,11,
+   s==12?0u:127u,s==12?1u:127u,s==13?2u:127u,7);p[12]|=1u<<15;
+ }
+ if(s==14 || s==15){
+  alu(p+12,62,0,15,44,0,127,127,64,7);p[12]|=1u<<15;
+  /* CONST scalar consumes c64.w and r2.x; source3's temp/relative encoding
+   * only supplies the custom scalar register selector, not an aL temp read. */
+  if(s==15)p[14]&=~(0xffu<<16);
+ }
+ if(s>=16 && s<=19){
+  static const unsigned scalar_ops[4]={0,7,27,29};
+  alu(p+12,0,0,0,scalar_ops[s-16],0,127,127,127,7);
+  if(s==19){
+   alu(p+15,0,0,0,29,0,127,127,127,7);
+   alu(p+12,62,15,0,50,0,1,3,3,0);p[12]|=1u<<15;
+   control_cf(p,1,4|(2u<<12),0x1000);
+  }
+ }
+ if(s==20){alu(p+12,0,0,0,50,0,127,127,127,7);control_cf(p,3,6|(1u<<12),0x2000);}
+ if(s==21 || s==22 || s==23){
+  alu(p+12,62,15,15,s==21?50u:0u,0,127,127,s==21 || s==22?127u:2u,7);p[12]|=1u<<15;
+  if(s==23)control_cf(p,3,6|(1u<<12),0x2000);
+ }
+ if(s>=24 && s<=27){
+  alu(p+12,62,0,15,7+s-24,0,s&1?0u:127u,s&1?127u:1u,2,7);p[12]|=1u<<15;
+ }
+ if(s==28){
+  alu(p+12,0,0,0,29,0,127,127,2,7);
+  control_cf(p,3,6|(1u<<12),0x6000|(1u<<10));control_cf(p,4,5|(1u<<12),0x2000);
+  alu(p+15,62,15,0,50,0,0,3,3,0);p[15]|=1u<<15;
+ }
+ if(s==29 || s==30){
+  alu(p+12,0,15,0,0,0,127,127,127,7);p[13]=(1u<<28)|(s==29?1u<<27:0);
+  control_cf(p,3,6|(1u<<12),0x2000);
+ }
+ alu(p+18,62,s==23?0u:15u,s==23?15u:0u,50,0,1,3,3,0);p[18]|=1u<<15;
+}
+#endif
 static unsigned expected_status(unsigned kind)
 {
  if(kind==14)return 5;

@@ -1829,3 +1829,24 @@ loss of feature coverage. Timed children still execute only the same primary
 three replays; these new tests do not make historical unsupported operations
 look comparable or establish new-operation GPU throughput. See
 `alu_compare_results.txt`; the kernel remains outside rendering.
+
+Used and unused operand slots
+----------------------------
+
+The control entry skips vector operations with no effective result. For
+exports, vector/scalar mask overlap writes literal one and does not consume a
+vector result. Supported vector operations have no other side effects. Source
+slots0/1 are read only for a vector result; slot2 is read for an active MAD or
+the supported scalar operations that consume it. RETAIN_PREV consumes no source;
+ADD_CONST_0 still reads its separate constant/register pair. Scalar history and
+P0 effects execute even when their destination mask is zero. MAD still selects
+the scalar ADD Z input rather than X when its vector destination is empty.
+
+64 new untimed replays use loop address255 and invalid relative slots. Literal
+goldens plus native references distinguish consumed and unused operands, export
+overlap, masked scalar/P0 effects, previous-scalar dependencies, predication and
+transactional failures after a private export. CI requires the actual completed
+128-invocation marker exactly once and rejects lost/missing/substituted coverage.
+Historical kernels do not claim these cases; the exact parent rejects the first
+new valid program when run against the extended fixture. See
+`alu_lazy_source_results.txt`; no full renderer or cold-play claim is implied.

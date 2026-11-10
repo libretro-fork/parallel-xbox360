@@ -461,6 +461,39 @@ static uint32_t mask_predicate(alu_builder *b,uint32_t mask) {
  for(lane=0;lane<4;++lane)predicates[lane]=yes(b,field(b,mask,lane,1));
  xe_spv_binary_instruction(b->out,SpvOpCompositeConstruct,T_B4,result,predicates,4);return result;
 }
+/* Only supported opcodes reach here. None of the current vector operations has
+ * side effects besides its result; export overlap writes a literal one instead.
+ * Scalar history/P0 still execute with an empty destination mask. */
+static uint32_t control_vector_value(alu_builder *b,uint32_t registers,uint32_t constants[4],
+ uint32_t word0,uint32_t word1,uint32_t word2,uint32_t opcode,uint32_t scalar_opcode,
+ uint32_t mask_v,uint32_t mask_s,uint32_t is_export,uint32_t loop_address,uint32_t output,uint32_t *third) {
+ uint32_t needed,scalar_needs,third_needed,read,joined,direct,last,value,result,a,c,ops[4];
+ needed=operation(b,SpvOpBitwiseAnd,T_UINT,mask_v,operation(b,SpvOpBitwiseXor,T_UINT,mask_s,scalar(b,15)));
+ needed=yes(b,select_word(b,is_export,needed,mask_v));
+ scalar_needs=both(b,operation(b,SpvOpINotEqual,T_BOOL,scalar_opcode,scalar(b,44)),
+  operation(b,SpvOpINotEqual,T_BOOL,scalar_opcode,scalar(b,50)));
+ third_needed=either(b,scalar_needs,both(b,needed,equal(b,opcode,scalar(b,11))));
+ read=id(b);joined=id(b);direct=b->block;
+ emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
+ emit(b,SpvOpBranchConditional,0,0,3,third_needed,read,joined,0);
+ emit(b,SpvOpLabel,0,read,0,0,0,0,0);
+ value=program_source(b,registers,constants,2,word0,word1,word2,loop_address,output);
+ last=b->block;emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ emit(b,SpvOpLabel,0,joined,0,0,0,0,0);*third=id(b);
+ ops[0]=value;ops[1]=last;ops[2]=vector(b,0);ops[3]=direct;
+ xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,*third,ops,4);
+ read=id(b);joined=id(b);direct=b->block;
+ emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
+ emit(b,SpvOpBranchConditional,0,0,3,needed,read,joined,0);
+ emit(b,SpvOpLabel,0,read,0,0,0,0,0);
+ a=program_source(b,registers,constants,0,word0,word1,word2,loop_address,output);
+ c=program_source(b,registers,constants,1,word0,word1,word2,loop_address,output);
+ value=vector_alu(b,opcode,a,c,*third,1);last=b->block;
+ emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ emit(b,SpvOpLabel,0,joined,0,0,0,0,0);result=id(b);
+ ops[0]=value;ops[1]=last;ops[2]=vector(b,0);ops[3]=direct;
+ xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,4);return result;
+}
 static void register_write(alu_builder *b,uint32_t registers,uint32_t at,uint32_t mask,uint32_t value) {
  uint32_t write=id(b),joined=id(b),pointer,old,predicate=yes(b,mask);
  emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
@@ -738,10 +771,14 @@ static void program_entry(alu_builder *b,int control) {
  if(!control)for(i=0;i<3;++i)valid=both(b,valid,equal(b,
   operation(b,SpvOpBitwiseAnd,T_UINT,field(b,word2,31-i,1),field(b,word2,22-i*8,1)),scalar(b,0)));
  guard(b,valid,output,3);
- a=program_source(b,registers,constants,0,word0,word1,word2,control?flow[11]:0,output);
- c=program_source(b,registers,constants,1,word0,word1,word2,control?flow[11]:0,output);
- d=program_source(b,registers,constants,2,word0,word1,word2,control?flow[11]:0,output);
- value=vector_alu(b,opcode,a,c,d,control);
+ if(control)value=control_vector_value(b,registers,constants,word0,word1,word2,opcode,scalar_opcode,
+  mask_v,mask_s,is_export,flow[11],output,&d);
+ else{
+  a=program_source(b,registers,constants,0,word0,word1,word2,0,output);
+  c=program_source(b,registers,constants,1,word0,word1,word2,0,output);
+  d=program_source(b,registers,constants,2,word0,word1,word2,0,output);
+  value=vector_alu(b,opcode,a,c,d,0);
+ }
  scalar_value=scalar_alu(b,scalar_opcode,opcode,d,previous,registers,constants,word0,word1,word2,control?flow[12]:0);
  store_export=id(b);store_temp=id(b);stored=id(b);
  emit(b,SpvOpSelectionMerge,0,0,2,stored,0,0,0);emit(b,SpvOpBranchConditional,0,0,3,is_export,store_export,store_temp,0);

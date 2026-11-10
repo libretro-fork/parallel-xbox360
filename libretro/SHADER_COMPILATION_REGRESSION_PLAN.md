@@ -904,3 +904,12 @@ complete addressing/ALUs, group-wide control semantics, fetch, stage linkage and
 ROP remain necessary before selecting a ready accurate renderer path. Keep
 its broader VM/initialization cost visible beside unchanged production metrics;
 do not label the additional opcode coverage a cold-play optimization.
+
+The control foundation now distinguishes consumed operand slots from irrelevant
+instruction fields. It skips vector result/input work for empty effective masks
+and literal-one export overlap, while retaining scalar history/P0 and checks on
+used sources. Exact-parent reproduction and high-loop-address cases establish
+the prior erroneous unused-source rejection. This repairs the supported subset;
+unsupported addressing, full ALUs/stages/fetch/ROP and resumable execution still
+prevent renderer use. Preserve mixed fault-work and valid-work costs separately;
+fewer source reads alone cannot certify higher GPU throughput or cold play.
