@@ -1,0 +1,53 @@
+Generic integer ownership-view codec foundation,2026-11-10
+
+Scope: shared C89 bit pack/unpack for actual integer views of guest formats4/6
+(two16-bit components),5/7(four16-bit),14(one32-bit),15(two32-bit). Raw encoded
+bits are preserved, including half/float NaNs and signed fixed-point minima.
+This is not numeric color conversion, a complete transfer shader or renderer
+integration. Existing inline shader/PSO creation and waits remain unresolved.
+
+Two CPU-prepared metadata masks select half-sized components and wide samples.
+Invalid/unsupported formats leave metadata intact. The caller must also confirm
+integer backend views; guest format alone does not establish that capability.
+Shader callbacks borrow native IR IDs, operate directly on u32 values and publish
+complete output IDs only after success. No floating operations, variable-width
+shifts, temporary payload allocation or component data copies are introduced.
+Inactive packed word1 and unused decoded components are zero, matching ownership
+unpack behavior; the separate numeric render codec's missing alpha-one rule is
+not used here. Native compiler arenas/output allocation still exist.
+
+Checks completed:
+- 24576 MSVC C89 and GCC strict C89 ASan/UBSan scalar cases, independent unpack
+  words, invalid metadata and failure-output preservation.
+- Raw SPIR-V Vulkan1.0 validation:730-word fixture.
+- Strict Microsoft DXIL validation:2176-byte native fixture.
+- 110584 dynamic records per backend on RTX5090 Vulkan, llvmpipe Vulkan and
+  D3D12 WARP, one module and one PSO across3 changing data replays. All36
+  source/destination pairs, partial input range, deliberate over-dispatch,
+  untouched output padding/tails, NaNs/minima and poisoned inactive components.
+- Valid mask-removal mutations pass binary validation but fail GPU oracles at
+  case4 lane0:80010000 versus80000000 expected, on both APIs.
+- Existing runtime sample-address GPU fixture still passes147448 records.
+
+Strict validation found an unused DXIL multiply-high declaration in the original
+adapter when this codec did not use multiplication. WARP accepted that module;
+Microsoft's validator rejected it. The adapter now declares the intrinsic only
+on its first actual use. Windows test runners require the SDK validator and fail
+when it is absent. No unused declaration is hidden by a dummy operation.
+
+Repeat:
+ TRANSFER_UINT_COLOR_TEST=1 GPU_TESTS=1 sh tools/tests/run_transfer_sample_tests.sh
+ MSVC developer prompt, built native archive:
+ set SAMPLE_BUILD=build\native-msvc
+ set TRANSFER_UINT_COLOR_TEST=1
+ set GPU_TESTS=1
+ call tools\tests\run_transfer_sample_tests.cmd
+Windows always executes WARP and strict DXIL validation; GPU_TESTS adds Vulkan.
+Linux requires spirv-val; GPU_TESTS enables execution instead of generation only.
+Transfer helper push CI runs sample-address and integer-codec suites separately.
+
+These are correctness fixtures, not performance measurements or cold-play
+acceptance. No texture/raster color/depth/stencil/MSAA image claim is made.
+Remaining work includes full physical addressing/word routing, actual integer
+image loads/stores, normalized/7e3/gamma/depth/stencil/host-depth families, prepared
+initialization tables, lifetime/queue pressure and live lookup-only integration.

@@ -1,6 +1,10 @@
 /* One native compute PSO, changing runtime sample layouts. BSD; C89. */
 
+#ifdef XE_TRANSFER_UINT_COLOR_TEST
+#include "transfer_uint_color_cases.h"
+#else
 #include "transfer_sample_cases.h"
+#endif
 enum { INPUT_BYTES=XE_SAMPLE_CASES*128, OUTPUT_BYTES=XE_SAMPLE_OUTPUT_CASES*64 };
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
@@ -121,7 +125,11 @@ int main(int argc,char **argv) {
   }
   range.Begin=range.End=0;ID3D12Resource_Unmap(readback,0,&range);readback_data=NULL;
  }
+#ifdef XE_TRANSFER_UINT_COLOR_TEST
+ printf("PASS: WARP %u dynamic integer color records, independent payloads, guards, one module and PSO\n",cases);
+#else
  printf("PASS: WARP %u dynamic sample records, bounds/padding guards, one module and PSO\n",cases);
+#endif
 done:
  printf("D3D12 sample status: %08lX\n",(unsigned long)status);
  if(readback_data)ID3D12Resource_Unmap(readback,0,NULL);

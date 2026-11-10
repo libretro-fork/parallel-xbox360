@@ -3,27 +3,32 @@
 #include <dxil_module.h>
 #include <dxil_function.h>
 int xe_dxil_transfer_sample_init(XeDxilTransferSample *state,XeDxilAlu *alu) {
- const struct dxil_type *parts[2],*pair;
  if(!state || !alu || !alu->module || alu->failed)return 0;
  state->alu=alu;state->multiply=NULL;
- parts[0]=dxil_module_get_int_type(alu->module,32);parts[1]=parts[0];
+ return 1;
+}
+/* Declare only when used: DXIL validation forbids unused external functions. */
+static const struct dxil_func *multiply(struct dxil_module *m) {
+ const struct dxil_type *parts[2],*pair;
+ parts[0]=dxil_module_get_int_type(m,32);parts[1]=parts[0];
  if(!parts[0])return 0;
- pair=dxil_module_get_struct_type(alu->module,"dx.types.twoi32",parts,2);
- state->multiply=pair?dxil_alloc_func_with_rettype(alu->module,
+ pair=dxil_module_get_struct_type(m,"dx.types.twoi32",parts,2);
+ return pair?dxil_alloc_func_with_rettype(m,
   "dx.op.binaryWithTwoOuts",DXIL_I32,pair,"iOO",DXIL_ATTR_KIND_READ_NONE):NULL;
- return state->multiply!=NULL;
 }
 uintptr_t xe_dxil_transfer_sample_emit(void *context,enum xe_transfer_sample_op op,
  uintptr_t a,uintptr_t b,uintptr_t c) {
  XeDxilTransferSample *s=(XeDxilTransferSample*)context;struct dxil_module *m;
  XeDxilValue av=(XeDxilValue)a,bv=(XeDxilValue)b,cv=(XeDxilValue)c,v=NULL,args[3];
  enum dxil_bin_opcode binary;
- if(!s || !s->alu || s->alu->failed || !s->multiply)return 0;
+ if(!s || !s->alu || !s->alu->module || s->alu->failed)return 0;
  m=s->alu->module;
  if(op==XE_TRANSFER_SAMPLE_CONST)v=dxil_module_get_int32_const(m,(int32_t)(uint32_t)a);
  else if(a && b) {
   switch(op) {
    case XE_TRANSFER_SAMPLE_MUL_HIGH:
+    if(!s->multiply)s->multiply=multiply(m);
+    if(!s->multiply){s->alu->failed=1;return 0;}
     args[0]=dxil_module_get_int32_const(m,42);args[1]=av;args[2]=bv;
     v=args[0]?dxil_emit_call(m,s->multiply,args,3):NULL;
     /* DXIL UMul returns high,low; SPIR-V UMulExtended returns low,high. */

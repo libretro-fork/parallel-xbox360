@@ -2,9 +2,13 @@
 #include "src/xenia/gpu/dxil/transfer_sample.h"
 #include "src/xenia/gpu/dxil/guest_resources.h"
 #include "src/xenia/gpu/dxil/shader_module.h"
+#ifdef XE_TRANSFER_UINT_COLOR_TEST
+#include "libretro/core_transfer_uint_color.h"
+#endif
 #include <dxil_module.h>
 #include <dxil_function.h>
 #include <stdio.h>
+#include <string.h>
 static XeDxilValue integer(struct dxil_module *m,uint32_t v) {
  return dxil_module_get_int32_const(m,(int32_t)v);
 }
@@ -20,10 +24,14 @@ static int block(struct dxil_module *m,unsigned id) {
 int main(int argc,char **argv) {
  XeDxilShaderModule *shader=NULL;XeDxilShaderBinary binary={0};struct dxil_module *m;
  XeDxilAlu alu;XeDxilTransferSample adapter;xe_transfer_sample_emitter e;
+#ifdef XE_TRANSFER_UINT_COLOR_TEST
+ xe_transfer_uint_color_parameters p;uintptr_t source[4],packed[2],result[4];
+#else
  xe_transfer_sample_parameters p;xe_transfer_sample_coordinates canonical,inverse,result;
+#endif
  XeDxilValue input,output,cbv,index,args[2],base,dest,limit,a,b,c,valid,values[7];
- const struct dxil_func *thread;unsigned blocks,i;FILE *file;int failed=1;
- if(argc!=2)return 1;
+ const struct dxil_func *thread;unsigned blocks,i;FILE *file;int failed=1;char path[4096];
+ if(argc!=2 || strlen(argv[1])>sizeof(path)-6)return 1;
  shader=xe_dxil_shader_create(DXIL_COMPUTE_SHADER);if(!shader)return 1;
  m=xe_dxil_shader_module(shader);xe_dxil_alu_init(&alu,m);
  if(!xe_dxil_shader_threads(shader,64,1,1) ||
@@ -47,6 +55,21 @@ int main(int argc,char **argv) {
  dest=dxil_emit_binop(m,DXIL_BINOP_MUL,index,integer(m,64),0);
  if(!base || !dest || !xe_dxil_transfer_sample_init(&adapter,&alu))goto done;
  e.emit=xe_dxil_transfer_sample_emit;e.context=&adapter;
+#ifdef XE_TRANSFER_UINT_COLOR_TEST
+ p.halves=(uintptr_t)field(&alu,input,base,6);p.wide=(uintptr_t)field(&alu,input,base,7);
+ p.shift16=(uintptr_t)integer(m,16);
+ for(i=0;i<4;++i)source[i]=(uintptr_t)field(&alu,input,base,i);
+ if(!xe_transfer_uint_color_pack(&e,&p,source,packed))goto done;
+ values[0]=(XeDxilValue)packed[0];values[1]=(XeDxilValue)packed[1];
+ a=dxil_emit_binop(m,DXIL_BINOP_AND,(XeDxilValue)p.wide,integer(m,1),0);
+ values[6]=a?dxil_emit_binop(m,DXIL_BINOP_ADD,a,integer(m,1),0):NULL;
+ if(!values[6])goto done;
+ p.halves=(uintptr_t)field(&alu,input,base,8);p.wide=(uintptr_t)field(&alu,input,base,9);
+ packed[0]=(uintptr_t)field(&alu,input,base,4);packed[1]=(uintptr_t)field(&alu,input,base,5);
+ if(!xe_transfer_uint_color_unpack(&e,&p,packed,result))goto done;
+ for(i=0;i<4;++i)values[i+2]=(XeDxilValue)result[i];
+ (void)sizeof(c);
+#else
  p.msaa=(uintptr_t)field(&alu,input,base,3);p.native2=(uintptr_t)field(&alu,input,base,4);
  p.scale_x=(uintptr_t)field(&alu,input,base,5);p.scale_y=(uintptr_t)field(&alu,input,base,6);
  p.reciprocal_x=(uintptr_t)field(&alu,input,base,7);p.reciprocal_y=(uintptr_t)field(&alu,input,base,8);
@@ -60,6 +83,7 @@ int main(int argc,char **argv) {
  values[0]=(XeDxilValue)canonical.x;values[1]=(XeDxilValue)canonical.y;
  values[2]=(XeDxilValue)canonical.sub_x;values[3]=(XeDxilValue)canonical.sub_y;
  values[4]=(XeDxilValue)result.x;values[5]=(XeDxilValue)result.y;values[6]=(XeDxilValue)result.sample;
+#endif
  for(i=0;i<7;++i) {
   a=dxil_emit_binop(m,DXIL_BINOP_ADD,dest,integer(m,i*4),0);
   if(!a || !xe_dxil_raw_buffer_store(&alu,output,a,values[i]))goto done;
@@ -69,6 +93,11 @@ int main(int argc,char **argv) {
  file=fopen(argv[1],"wb");if(!file)goto done;
  failed=fwrite(binary.data,1,binary.size,file)!=binary.size;
  if(fclose(file))failed=1;
+ if(!failed) {
+  sprintf(path,"%s.list",argv[1]);file=fopen(path,"wb");
+  if(!file)failed=1;
+  else {if(fprintf(file,"%s\n",argv[1])<0)failed=1;if(fclose(file))failed=1;}
+ }
  printf("Transfer sample DXIL: %lu bytes\n",(unsigned long)binary.size);
 done:xe_dxil_shader_binary_free(&binary);xe_dxil_shader_destroy(shader);return failed;
 }

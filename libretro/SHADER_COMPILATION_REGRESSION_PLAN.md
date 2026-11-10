@@ -966,3 +966,15 @@ This kernel is not integrated into rendering. Full transfer format/gamma/depth/
 stencil/host-depth semantics, raster sample images, prepared initialization tables,
 GPU/CPU ownership and lookup-only draw integration remain required. Do not call
 the utility path compliant or substitute this test for runtime draw-role gates.
+
+Integer ownership-view codec foundation (2026-11-10): raw C89 pack/unpack emits
+against runtime masks for16/32-bit components and32/64-bit samples, covering
+formats4,5,6,7,14,15 without float conversion. Do not choose this family merely
+from the guest format: verify that the backend actually provides integer views.
+Independent packed-input oracles and corrupted-mask mutations cover all36 format
+pairs, incomplete records, unused lanes and one-PSO reuse on Vulkan/WARP.
+The strict DXIL runner must reject unused intrinsic declarations as well as
+invalid programs; WARP accepting a pipeline alone is insufficient validation.
+Still required: complete physical tile/word routing, source/destination scale
+conversion, actual image loads/stores, normalized/gamma/depth/stencil/host-depth
+families, raster comparisons and prepared lookup-only renderer integration.

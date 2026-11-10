@@ -3,7 +3,11 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "vulkan_test_context.h"
+#ifdef XE_TRANSFER_UINT_COLOR_TEST
+#include "transfer_uint_color_cases.h"
+#else
 #include "transfer_sample_cases.h"
+#endif
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"Sample GPU line %u\n",(unsigned)__LINE__);goto done;}}while(0)
 enum {RECORDS=XE_SAMPLE_CASES,OUTPUT_RECORDS=XE_SAMPLE_OUTPUT_CASES};
 static struct buffer input_buffer,output_buffer;
@@ -86,7 +90,12 @@ int main(int argc,char **argv){
   }
  }
  CHECK(modules==1 && pipelines==1);
- printf("PASS: %u dynamic sample records, all scale/MSAA layouts, independent inverse inputs, bounds/padding guards; one module and PSO\n",cases);result=0;
+#ifdef XE_TRANSFER_UINT_COLOR_TEST
+ printf("PASS: %u dynamic integer color records, all source/destination pairs, independent inverse payloads, guards; one module and PSO\n",cases);
+#else
+ printf("PASS: %u dynamic sample records, all scale/MSAA layouts, independent inverse inputs, bounds/padding guards; one module and PSO\n",cases);
+#endif
+ result=0;
 
 done:
  if(g.device){if(fence)g.vkDestroyFence(g.device,fence,NULL);

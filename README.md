@@ -504,6 +504,8 @@ Transfer geometry uses one float4 rectangle instance (16 bytes) instead of six e
 
 Generic transfer-shader work now includes a shared C89 runtime sample-address emitter with raw SPIR-V and native DXIL adapters. One test PSO handles changing scale and MSAA parameters across 147,448 records, including independent inverse inputs and bounds guards. It remains a validation kernel outside rendering; format conversion, ownership/host-depth semantics and prepared graphics-pipeline integration still need implementation. See [sample-address coverage](tools/tests/transfer_sample_results.txt).
 
+The generic transfer foundation also has a shared integer-view color codec. Two metadata masks select 16/32-bit components and 32/64-bit samples without floating-point conversion or copied payloads. Procedural tests cover all 36 source/destination format pairs with one PSO, preserving raw NaN and signed-minimum encodings. The codec remains outside rendering and does not cover normalized/gamma/depth transfer semantics. See [integer codec coverage](tools/tests/transfer_uint_color_results.txt).
+
 ### Draw-path contract instrumentation
 
 Developer builds can enable `XENIA_ENABLE_DRAW_STATS=ON` with CMake, or

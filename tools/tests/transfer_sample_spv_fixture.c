@@ -1,5 +1,8 @@
 /* Single-PSO dynamic addressing fixture. Raw SPIR-V1.0; BSD; C89. */
 #include "libretro/core_transfer_sample_spv.h"
+#ifdef XE_TRANSFER_UINT_COLOR_TEST
+#include "libretro/core_transfer_uint_color.h"
+#endif
 #include <string.h>
 enum {TV=1,TU,TB,T3,TPAIR,TARRAY,TBUFFER,PB,PU,PI,TF,
  INPUT,OUTPUT,INVOCATION,MAIN,LABEL,WORK,END,CONST_BASE=32};
@@ -27,7 +30,11 @@ static void store(fixture *f,uint32_t base,unsigned field,uintptr_t value) {
 }
 int xe_test_transfer_sample_spv(xe_spv_binary *out) {
  fixture f;xe_transfer_sample_spv adapter;xe_transfer_sample_emitter emitter;
+#ifdef XE_TRANSFER_UINT_COLOR_TEST
+ xe_transfer_uint_color_parameters p;uintptr_t source[4],packed[2],result[4];
+#else
  xe_transfer_sample_parameters p;xe_transfer_sample_coordinates canonical,inverse,result;
+#endif
  uint32_t header[5]={0x07230203u,0x00010000u,0,0,0};
  uint32_t entry[5]={SpvExecutionModelGLCompute,MAIN,0x6e69616du,0,INVOCATION};
  uint32_t mode[5]={MAIN,SpvExecutionModeLocalSize,64,1,1};
@@ -82,15 +89,30 @@ int xe_test_transfer_sample_spv(xe_spv_binary *out) {
  put(&f,SpvOpBranchConditional,0,0,3,valid,WORK,END);put(&f,SpvOpLabel,0,WORK,0,0,0,0);
  base=bin(&f,SpvOpIMul,TU,index,constant(32));
  dest=bin(&f,SpvOpIMul,TU,index,constant(16));
+#ifndef XE_TRANSFER_UINT_COLOR_TEST
  p.msaa=load(&f,base,3);p.native2=load(&f,base,4);
  p.scale_x=load(&f,base,5);p.scale_y=load(&f,base,6);
  p.reciprocal_x=load(&f,base,7);p.reciprocal_y=load(&f,base,8);
+#endif
  memset(&adapter,0,sizeof(adapter));adapter.out=out;adapter.next=&f.next;
  adapter.uint_type=TU;adapter.bool_type=TB;adapter.pair_type=TPAIR;
  adapter.zero=constant(0);adapter.one=constant(1);adapter.two=constant(2);
  adapter.not_one=constant(33);adapter.not_two=constant(34);adapter.not_three=constant(35);
  adapter.all=constant(36);
  emitter.emit=xe_transfer_sample_spv_emit;emitter.context=&adapter;
+#ifdef XE_TRANSFER_UINT_COLOR_TEST
+ p.halves=load(&f,base,6);p.wide=load(&f,base,7);p.shift16=constant(16);
+ for(i=0;i<4;++i)source[i]=load(&f,base,i);
+ if(!xe_transfer_uint_color_pack(&emitter,&p,source,packed))goto fail;
+ store(&f,dest,0,packed[0]);store(&f,dest,1,packed[1]);
+ a=bin(&f,SpvOpBitwiseAnd,TU,(uint32_t)p.wide,constant(1));
+ b=bin(&f,SpvOpIAdd,TU,a,constant(1));store(&f,dest,6,b);
+ p.halves=load(&f,base,8);p.wide=load(&f,base,9);
+ packed[0]=load(&f,base,4);packed[1]=load(&f,base,5);
+ if(!xe_transfer_uint_color_unpack(&emitter,&p,packed,result))goto fail;
+ for(i=0;i<4;++i)store(&f,dest,2+i,result[i]);
+ (void)sizeof(c);
+#else
  a=load(&f,base,0);b=load(&f,base,1);c=load(&f,base,2);
  if(!xe_transfer_sample_canonical_emit(&emitter,&p,a,b,c,&canonical))goto fail;
  inverse.x=load(&f,base,9);inverse.y=load(&f,base,10);
@@ -101,6 +123,7 @@ int xe_test_transfer_sample_spv(xe_spv_binary *out) {
  store(&f,dest,0,canonical.x);store(&f,dest,1,canonical.y);
  store(&f,dest,2,canonical.sub_x);store(&f,dest,3,canonical.sub_y);
  store(&f,dest,4,result.x);store(&f,dest,5,result.y);store(&f,dest,6,result.sample);
+#endif
  put(&f,SpvOpBranch,0,0,1,END,0,0);put(&f,SpvOpLabel,0,END,0,0,0,0);
  put(&f,SpvOpReturn,0,0,0,0,0,0);put(&f,SpvOpFunctionEnd,0,0,0,0,0,0);
  if(out->failed)goto fail;

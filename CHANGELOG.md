@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Add a shared bit-preserving integer ownership-view codec for generic transfer-shader work, covering all six integer-view formats with runtime metadata. Add Vulkan/WARP cross-format and mutation regressions, and require strict DXIL validation before Windows GPU tests. Declare the shared multiply-high intrinsic only when used. This remains outside rendering; normalized/gamma/depth paths and prepared pipeline integration are unfinished.
+
 - Add shared C89 runtime sample addressing and raw SPIR-V/native DXIL adapters as a foundation for prepared generic ownership-transfer shaders. Validate dynamic resolution/MSAA layouts, multiply-high ordering and failure/bounds behavior on Vulkan and WARP. The new kernel is not connected to rendering yet; this does not remove the remaining inline transfer compilation or certify cold-play smoothness.
 
 - Compact Vulkan and D3D12 EDRAM transfer rectangles into one 16-byte instance instead of six duplicated float2 vertices (48 bytes). Preserve each backend's exact coordinates and winding, draw count, sample/stencil passes and upload retirement. Construct the small raw SPIR-V/native DXIL vertex helpers at initialization. Add C89, binary-validation and exact GPU vertex-output regressions. This reduces logical upload writes; it does not eliminate the upload pool or the remaining draw-path compilation debt.

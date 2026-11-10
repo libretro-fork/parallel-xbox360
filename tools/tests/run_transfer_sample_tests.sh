@@ -2,10 +2,17 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$root"
-out=${SAMPLE_OUT:-build/tests/transfer-sample}
+kind=transfer-sample
+unit=tools/tests/core_transfer_sample_test.c
+if test "${TRANSFER_UINT_COLOR_TEST:-0}" = 1; then
+ kind=transfer-uint-color
+ unit=tools/tests/core_transfer_uint_color_test.c
+fi
+out=${SAMPLE_OUT:-build/tests/$kind}
 mkdir -p "$out"
 flags='-std=c89 -pedantic-errors -Wno-long-long -Wall -Wextra -Werror -O2'
-${CC:-cc} $flags -I. tools/tests/core_transfer_sample_test.c -o "$out/unit"
+if test "${TRANSFER_UINT_COLOR_TEST:-0}" = 1; then flags="$flags -DXE_TRANSFER_UINT_COLOR_TEST"; fi
+${CC:-cc} $flags -I. "$unit" -o "$out/unit"
 "$out/unit"
 ${CC:-cc} $flags -I. -isystem third_party/SPIRV-Headers/include \
  -DXE_TRANSFER_SAMPLE_GENERATOR tools/tests/transfer_sample_spv_fixture.c \

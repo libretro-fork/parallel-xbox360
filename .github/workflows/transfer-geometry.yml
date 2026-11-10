@@ -18,6 +18,7 @@ jobs:
           test -n "$VK_ICD_FILENAMES"
           GPU_TESTS=1 sh tools/tests/run_transfer_geometry_tests.sh
           GPU_TESTS=1 sh tools/tests/run_transfer_sample_tests.sh
+          TRANSFER_UINT_COLOR_TEST=1 GPU_TESTS=1 sh tools/tests/run_transfer_sample_tests.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -25,6 +26,7 @@ jobs:
           path: |
             build/tests/transfer-geometry/
             build/tests/transfer-sample/
+            build/tests/transfer-uint-color/
           if-no-files-found: error
   d3d12:
     runs-on: windows-2022
@@ -43,6 +45,9 @@ jobs:
           call tools\tests\run_transfer_geometry_tests.cmd
           if errorlevel 1 exit /b 1
           call tools\tests\run_transfer_sample_tests.cmd
+          if errorlevel 1 exit /b 1
+          set TRANSFER_UINT_COLOR_TEST=1
+          call tools\tests\run_transfer_sample_tests.cmd
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -50,4 +55,5 @@ jobs:
           path: |
             build/tests/transfer-geometry-msvc/
             build/tests/transfer-sample-msvc/
+            build/tests/transfer-uint-color-msvc/
           if-no-files-found: error
