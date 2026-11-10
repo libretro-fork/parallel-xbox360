@@ -1,0 +1,121 @@
+Shared-context conditional/loop interpreter validation (2026-11-10)
+================================================================
+Parent:217dbba250f7deb177a36f21d4b048f6e0600230.
+
+The fixed control kernel now borrows binding4 as a160-byte uniform view: eight
+bool words and32 packed loop constants. Its uint4[10],16-byte-stride layout
+matches the existing bool/loop constant bytes. All invocations share the same
+immutable view through completion; there is no per-invocation context copy or
+host-side bytecode normalization. The eight-word descriptors are unchanged.
+Tests use the same five-binding layout for both revisions; the earlier module
+ignores the extra unused binding. Host writes have explicit UNIFORM_READ visibility.
+
+New execution includes bool COND_EXEC/COND_EXEC_END and conditional CALL/JMP,
+nonempty counted/repeat loops and relative temporary source reads within the64
+register window. An untaken transfer skips target/stack checks. A conditional
+EXEC_END terminates only when its condition matches. Repeat loops inherit the
+current enclosing address and restart their own count. Four return addresses,
+four loop counts/addresses and four counters occupy64 private bytes; register
+frames are not copied. Calls/loops retain registers and scalar history directly.
+
+Dispatch consumes the raw opcode directly, rather than normalizing all CF into
+an intermediate dispatch opcode. Unconditional transfers bypass context loads.
+Conditional-exec cases fall through into the shared EXEC case in valid SPIR-V
+case order. The initial normalization prototype emitted7205 words before loops;
+the direct-case equivalent emitted7134 and passed the same GPU corpus. Literal
+zero shifts are also omitted instead of asking the driver to simplify them.
+Final module sizes: arithmetic2855 words (was2875), EXEC_END6051 (was6171),
+control7516 (was6770). All remain integer-only32-bit SPIR-V1.0 with Shader
+capability, no GLSL import/parser, float/64-bit shader types or auxiliary module.
+There are three functions; the control entry has three structured implementation
+loops. The additional guest loops reuse its existing PC dispatch loop.
+
+Limits remain material
+----------------------
+Empty-loop stack effects and out-of-window temporary wrapping/clamping need
+hardware proof. These cases explicitly return unsupported status3, not an
+invented value. Predicate operations/clean modes and predicated loop breaks,
+relative constants/destinations, remaining ALUs, fetches, pixel RNE, other
+stages/exports and ROP are missing. The4096-CF-step guard can stop valid large
+nested loops; its status5 therefore requires continuation or equivalent complete
+valid-work coverage before renderer use. No incomplete fallback is selected.
+Neither the C89 module nor its header is linked/consumed by production sources.
+Actual draw-path translation/PSO creation/compile waits remain unresolved.
+
+Correctness and ownership
+-------------------------
+The primary743 invocations/315 CPU references remain the matched timing data.
+Its three unsupported CF negatives are pinned to predicate/clean modes that
+both revisions reject, instead of reusing newly supported bool modes. Both
+revisions compile the same current fixture (timed corpus version2).
+
+Preparation separately exercises224 bool and32 loop context replays. Together
+with the primary data, the current kernel executes1255 invocations and711 real
+CPU ShaderInterpreter comparisons. Literal values/export counts independently
+anchor the new behavior. Bool indices0,31,32,63,127,128,254,255 run both condition
+values and outcomes; every non-target bit is the opposite of the selected bit.
+Tests include untaken invalid targets/ALUs, conditional termination, conditional
+calls at full depth, signed steps, four nested repeats, reused slots, root repeat,
+loop constant31, count255, calls inside loops and loops inside calls. Scalar
+history is checked across clauses/loop iterations. Both byte orders are used.
+
+Negative data includes empty/overdeep loops, unmatched LOOP_END, late relative
+window failure and valid255x255 nested work exceeding the prototype budget.
+Unsupported/excessive work does not run through the CPU oracle. Failure changes
+only status, preserving every payload/guard word even after earlier exports.
+Input code/context bytes are checked unchanged, and output redzones are checked.
+The same pipeline/module and buffers execute every data replay; profiling creates
+two initialization PSOs for the retained-first/primed-cache test, normal runs one.
+
+A wrong bool-index kernel flips the selected bit index. It fails the actual
+RTX5090 run at round3/invocation0 (1.0 instead of3.0). A wrong repeat kernel uses
+start99 instead of inheriting aL; it fails at round231 (unsupported status3
+instead of successful status1). Both are semantic runtime failures, not compiler
+or missing-device errors. Mutants remain private and are not used by rendering.
+
+Checks
+------
+MSVC /TC /O2 /W4 /WX and GCC strict C89/ASan/UBSan checks pass. Each module
+rebuilds1000 times into the same owner without additional allocation, including
+failure/recovery/overflow/close ownership checks. Official spirv-val Vulkan1.0
+passes. RTX5090 driver32.0.16.2101 and llvmpipe LLVM20.1.2 pass the full control
+corpus, original12280 arithmetic records and the original743/363 EXEC_END suite.
+Windows WARP establishes unit/emitter checks only for this SPIR-V path.
+All43 Python guardrail tests pass, including removed features/reduced coverage,
+missing unit/GPU execution and clearing inherited timing-only mode for preparation.
+
+Comparison and cost
+-------------------
+Correctness and timing are separate: preparation always runs the full applicable
+context suite, while each timed child sets XE_ALU_PROGRAM_TIMING_ONLY=1 and
+executes only the same three primary replays. This prevents additional context
+work from changing either the measured workload or the load before the next
+paired process. Actual module captures, device identities and source hashes are
+retained. Feature/case removal is gated against parent and pinned anchor.
+
+Seven alternating idle-host pairs compare exact217dbba25 source with candidate
+source using the same pinned harness and shared matching no-LTO full-core
+archives. Production archive inputs are identical; each standalone emitter is
+compiled against its own actual revision. This is not a new full-core rebuild.
+All512 main-corpus modules are byte-identical. All768 main and5+5 raw controlled
+metrics pass existing gates; no accepted threshold/cache default changes.
+Control growth is2984 bytes, below the existing4096-byte/10-percent alarm.
+The complete CI runner also passes an identical-binary control including the
+new coverage gate. This self-check is not revision or gameplay acceptance.
+
+A runtime cost remains visible despite staying below the existing2ms absolute
+noise floor: on this mixed/invalid-work control corpus, warmed completion medians
+rose from0.7024 to0.9415 ms and0.6914 to0.9478 ms. Emission was0.0443/0.0489 ms,
+module creation0.0148/0.0146 ms and primed PSO creation0.0131/0.0142 ms
+(parent/candidate). This is not a GPU-throughput optimization claim. Completion
+includes host/queue service and deliberately heterogeneous/cyclic data; it is
+not pure GPU time or a retail workload. Runtime cost, register spills and full
+rendering performance must be improved/measured before selecting this path.
+Initial driver disk/internal cache and first-use work remain UNVERIFIED; all
+seven stage observations and raw samples are retained without weakening gates.
+
+Evidence: C:/git/accurate-shader-fallback/conditional-loop, especially
+paired-final/results, harness-control/results, wrong-bool/run.log and
+wrong-repeat/run.log. The full-context software hook/legacy runs are also kept.
+No installed core, game or live emulator cache was changed; no retail smoothness
+or complete ready-fallback claim is made. The broad optimization goal remains active.

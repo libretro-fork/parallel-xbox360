@@ -842,3 +842,13 @@ rendering. Conditional CF, loops, fetches, pixel arithmetic and stages/ROP remai
 Both existing and new kernels have separate CI correctness, payload/device
 identity and comparable cost gates. No renderer call site or synchronous fallback
 is changed by this addition. See `tools/tests/alu_control_results.txt`.
+
+The raw control entry now borrows a shared bool/loop uniform view and handles bool
+execution/transfers, nonempty counted/repeat loops and in-window relative temp
+reads. Fixed loop/call metadata occupies64 private bytes, with no register-frame
+copies. Its context regressions run once during preparation, separately from an
+identical pinned primary timing workload on both revisions. Coverage-loss and
+missing-execution gates supplement the existing cost/module/device checks.
+This remains an unlinked validation path: empty-loop semantics, predicates,
+remaining addressing/ALUs, fetch/stages/ROP and valid-work continuation coverage
+must be resolved before using it to replace a draw-path compilation/wait.

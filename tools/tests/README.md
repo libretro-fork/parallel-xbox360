@@ -1711,3 +1711,31 @@ and explicit historical/backend coverage. Comparable kernels use independent
 `raw_control.*` timing/module-growth gates and identical device/module checks.
 Initial creation/completion keep UNVERIFIED driver-cache observations. A new
 component has no fabricated parent timing; removal/missing samples fail.
+
+Shared bool/loop context
+-----------------------
+
+The control kernel additionally borrows one160-byte uniform view at binding4:
+eight bool words followed by32 packed loop constants. This matches the existing
+GPU constant layout, preserving the eight-word program descriptors. Context data
+is immutable through completion and shared by all invocations; the VM does not
+copy it per invocation. Four return addresses, four loop counts/addresses and
+their counters occupy64 private bytes. Empty loops and out-of-window relative
+temporary reads explicitly fail until their full hardware behavior is verified.
+
+The full control fixture adds224 bool and32 loop context replays, totaling1255
+GPU invocations and711 native references. Literal values/counts cover bool-word
+boundaries, untaken invalid work, a full call stack, signed steps, repeat/nesting,
+slot reuse, loop constant31, count255, calls/loops in both directions and scalar
+history. It checks immutable context bytes, payload/redzone ownership and both
+byte orders. Fault-injected bool-index and repeat-address kernels fail at runtime.
+
+CI preparation always runs the full applicable correctness suite, clearing an
+inherited XE_ALU_PROGRAM_TIMING_ONLY value. Timed children set that test-only flag
+to1 and run only the same three primary replays on both revisions. Context
+correctness work therefore cannot change the measured workload or inter-process
+load. The pinned timed corpus's unsupported CF cases use predicate/clean modes
+that remain unsupported on both revisions; their version is reported explicitly.
+Coverage guards fail if supported features/case coverage disappear, or required
+unit/GPU execution is absent. WARP reports source/unit support without pretending
+to have run these Vulkan cases. See `alu_context_results.txt`.

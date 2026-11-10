@@ -63,6 +63,9 @@ static int make_buffer(struct buffer *b, size_t bytes)
    uint32_t type, pass;
    info.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
    info.size=bytes; info.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+#ifdef XE_VK_TEST_UNIFORM
+    info.usage|=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+#endif
 #ifdef XE_VK_TEST_GRAPHICS
    info.usage|=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT;
 #endif

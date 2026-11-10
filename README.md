@@ -569,12 +569,18 @@ module consumes shared packed bytecode and constant views across repeated data
 submissions, including GPU-side endian correction. The original entry handles
 one EXEC_END clause, three vector arithmetic opcodes, three scalar forms, direct
 registers/constants, masks and position exports. A separate control-flow entry
-also executes multiple clauses, unconditional jumps/calls and returns, retaining
-four return addresses instead of copying register frames. Unsupported work fails
+also executes multiple clauses, bool-conditional jumps/calls/execution and returns,
+retaining four return addresses instead of copying register frames. Four fixed
+count/address entries support nonempty counted/repeat loops and checked temporary
+reads relative to the current loop address. A shared160-byte uniform view borrows
+the existing bool/loop constant layout. Unsupported work fails
 without committing a position. Its 4096-step work limit requires continuation
-support before general rendering use. This is not a rendering fallback: loops,
-predicates, fetches, pixel RNE arithmetic, other stages/exports and ROP are missing.
+support before general rendering use. This is not a rendering fallback: empty-loop
+semantics, predicates, relative constants/destinations, fetches, pixel RNE arithmetic,
+other stages/exports and ROP are missing. Out-of-window relative temp reads fail
+rather than assuming undocumented wrapping/clamping behavior.
 Private per-invocation register storage may spill; rendering
 throughput and cold-play fluidity are unverified. See
-`tools/tests/alu_program_results.txt` and `tools/tests/alu_control_results.txt`
+`tools/tests/alu_program_results.txt`, `tools/tests/alu_control_results.txt` and
+`tools/tests/alu_context_results.txt`
 for coverage and initialization costs.

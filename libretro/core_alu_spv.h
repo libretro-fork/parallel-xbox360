@@ -3,6 +3,8 @@
 #define XE_CORE_ALU_SPV_H
 #include "core_spv_binary.h"
 #define XE_ALU_PROGRAM_ABI 1
+#define XE_ALU_CONTROL_BOOL 1
+#define XE_ALU_CONTROL_LOOPS 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,9 +40,15 @@ int xe_alu_spv_build(xe_spv_binary *out);
  * This validation kernel is not wired into rendering and is not a fallback. */
 int xe_alu_program_spv_build(xe_spv_binary *out);
 /* Experimental control-flow entry, same descriptor ABI/ownership as above.
- * Supports EXEC/EXEC_END, NOP, unconditional JMP/CALL and RET, with four fixed
- * return addresses. A RET with an empty stack falls through. Unsupported CF,
- * including conditional execution and loops, fails with status3. Out-of-bounds
+ * Binding4 borrows a160-byte uniform view: eight bool words followed by32 loop
+ * words, matching the existing bool/loop constant layout. It is immutable and
+ * lives through completion; no per-invocation context copy is needed.
+ * Supports EXEC/EXEC_END, bool COND_EXEC/COND_EXEC_END, NOP, bool/unconditional
+ * JMP/CALL and RET, with four fixed return addresses. Nonempty counted/repeat
+ * loops have four fixed count/address entries; temp-relative reads must stay
+ * within the64-register window. Empty loops, predicated breaks/conditions,
+ * relative constants/destinations and other unsupported CF fail with status3.
+ * A RET with an empty stack falls through. Out-of-bounds
  * instruction/target reads fail with status2. At most4096 CF steps are executed;
  * status5 reports exhausted work without committing output. This limit requires
  * resumable execution before renderer use; no valid-draw fallback is claimed.

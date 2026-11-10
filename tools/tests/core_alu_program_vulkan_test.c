@@ -7,14 +7,22 @@
 #error The frozen packed-program-v1 fixture needs descriptor ABI 1
 #endif
 #include "libretro/core_float_rtz.h"
+#ifdef XE_ALU_CONTROL_TEST
+#define XE_VK_TEST_UNIFORM
+#endif
 #include "vulkan_test_context.h"
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"ALU GPU line %u\n",(unsigned)__LINE__);goto done;}}while(0)
 enum {RECORDS=259,OUTPUT_RECORDS=265,
  INPUT_WORDS=1+RECORDS*8+RECORDS*256,PROGRAM_WORDS=((RECORDS+1)/2)*21};
 static struct buffer input_buffer,program_buffer,constant_buffer,output_buffer;
+#ifdef XE_ALU_CONTROL_TEST
+static struct buffer context_buffer;
+#endif
 /* Packed fixtures, including literal coissue/mask anchors; no guest assets. */
 unsigned xe_alu_program_reference(const uint32_t*,const uint32_t*,unsigned,
  const uint32_t*,unsigned,unsigned,unsigned,uint32_t*);
+unsigned xe_alu_control_reference(const uint32_t*,const uint32_t*,unsigned,
+ const uint32_t*,unsigned,unsigned,unsigned,uint32_t*,const uint32_t*);
 void xe_alu_program_export(uint32_t *out,unsigned target,const void *value,uint32_t mask) {
  unsigned i;if(target!=62){out[5]=10000;return;}
  for(i=0;i<4;++i)if(mask&(1u<<i))memcpy(out+i,(const unsigned char*)value+i*4,4);
@@ -82,14 +90,70 @@ static unsigned expected_status(unsigned kind) {
 #include "shader_control_program_fixture.h"
 #endif
 #ifdef XE_ALU_CONTROL_TEST
+#define XE_PROGRAM_BINDINGS 5
 #define XE_PROGRAM_BUILD xe_alu_control_spv_build
 #define XE_PROGRAM_STAGE(x) "raw_control." x
 #define XE_PROGRAM_DEVICE "RAW_CONTROL_DEVICE"
 #else
+#define XE_PROGRAM_BINDINGS 4
 #define XE_PROGRAM_BUILD xe_alu_program_spv_build
 #define XE_PROGRAM_STAGE(x) "raw_program." x
 #define XE_PROGRAM_DEVICE "RAW_PROGRAM_DEVICE"
 #endif
+#ifndef XE_BOOL_CASES
+#define XE_BOOL_CASES 0
+#endif
+#ifndef XE_LOOP_CASES
+#define XE_LOOP_CASES 0
+#endif
+#define XE_EXTRA_CASES (XE_BOOL_CASES+XE_LOOP_CASES)
+static void round_program(uint32_t *p,unsigned group,unsigned round) {
+ (void)round;
+#if XE_LOOP_CASES
+ if(round>=3+XE_BOOL_CASES){loop_program(p,round-3-XE_BOOL_CASES);return;}
+#endif
+#if XE_BOOL_CASES
+ if(round>=3){bool_program(p,round-3);return;}
+#endif
+ program(p,group);
+}
+#if XE_EXTRA_CASES
+static void extra_context(uint32_t *bank,unsigned which) {
+#if XE_LOOP_CASES
+ if(which>=XE_BOOL_CASES){loop_context(bank,which-XE_BOOL_CASES);return;}
+#endif
+#if XE_BOOL_CASES
+ bool_context(bank,which);
+#endif
+}
+static unsigned extra_status(unsigned which) {
+#if XE_LOOP_CASES
+ if(which>=XE_BOOL_CASES)return loop_status(which-XE_BOOL_CASES);
+#endif
+#if XE_BOOL_CASES
+ return bool_status(which);
+#else
+ return 0;
+#endif
+}
+static uint32_t extra_golden(unsigned which,unsigned lane) {
+ (void)lane;
+#if XE_LOOP_CASES
+ if(which>=XE_BOOL_CASES)return loop_golden(which-XE_BOOL_CASES,lane);
+#endif
+#if XE_BOOL_CASES
+ return bool_golden(which);
+#else
+ return 0;
+#endif
+}
+#endif
+static int round_swap(unsigned round,unsigned group) {
+#if XE_LOOP_CASES
+ if(round>=3+XE_BOOL_CASES)return (round-3-XE_BOOL_CASES)&1;
+#endif
+ return round>=3?((round-3)>>1)&1:round==1 || (round==2 && !(group&1));
+}
 static uint32_t next(uint32_t *state){*state=*state*1664525u+1013904223u;return *state;}
 static int same(uint32_t a,uint32_t b){return a==b || ((a&0x7fffffffu)>0x7f800000u && (b&0x7fffffffu)>0x7f800000u);}
 static uint32_t reverse(uint32_t x){return (x<<24)|((x&0xff00u)<<8)|((x>>8)&0xff00u)|(x>>24);}
@@ -109,21 +173,23 @@ int main(void){
  static VkPhysicalDevice physical[8];static VkQueueFamilyProperties families[32];
  static VkPhysicalDeviceProperties properties;
  VkApplicationInfo app={0};VkInstanceCreateInfo instance={0};VkDeviceQueueCreateInfo queue_info={0};VkDeviceCreateInfo device_info={0};
- VkQueue queue=VK_NULL_HANDLE;VkDescriptorSetLayoutBinding bindings[4];VkDescriptorSetLayoutCreateInfo set_info={0};
+ VkQueue queue=VK_NULL_HANDLE;VkDescriptorSetLayoutBinding bindings[XE_PROGRAM_BINDINGS];VkDescriptorSetLayoutCreateInfo set_info={0};
  VkDescriptorSetLayout set_layout=VK_NULL_HANDLE;VkPipelineLayoutCreateInfo layout_info={0};VkPipelineLayout layout=VK_NULL_HANDLE;
  VkShaderModuleCreateInfo module_info={0};VkShaderModule module=VK_NULL_HANDLE;VkComputePipelineCreateInfo pipeline_info={0};VkPipeline pipeline=VK_NULL_HANDLE;
 #ifdef XE_SHADER_COMPILE_BENCH
  VkPipelineCacheCreateInfo pipeline_cache_info={0};VkPipelineCache pipeline_cache=VK_NULL_HANDLE;
  VkPipeline first_pipeline=VK_NULL_HANDLE;
 #endif
- VkDescriptorPoolSize pool_size={VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,4};VkDescriptorPoolCreateInfo pool_info={0};VkDescriptorPool pool=VK_NULL_HANDLE;
- VkDescriptorSetAllocateInfo set_allocate={0};VkDescriptorSet set=VK_NULL_HANDLE;VkDescriptorBufferInfo infos[4];VkWriteDescriptorSet writes[4];
+ VkDescriptorPoolSize pool_size[2]={{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,4},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1}};VkDescriptorPoolCreateInfo pool_info={0};VkDescriptorPool pool=VK_NULL_HANDLE;
+ VkDescriptorSetAllocateInfo set_allocate={0};VkDescriptorSet set=VK_NULL_HANDLE;VkDescriptorBufferInfo infos[XE_PROGRAM_BINDINGS];VkWriteDescriptorSet writes[XE_PROGRAM_BINDINGS];
  VkCommandPoolCreateInfo command_pool_info={0};VkCommandPool command_pool=VK_NULL_HANDLE;VkCommandBufferAllocateInfo command_allocate={0};
  VkCommandBuffer command;VkCommandBufferBeginInfo begin={0};VkMemoryBarrier barrier={0};VkFenceCreateInfo fence_info={0};VkFence fence=VK_NULL_HANDLE;VkSubmitInfo submit={0};
  VkResult completion;
  xe_spv_binary code={0};uint32_t count,family,i,lane,round,limit,output_limit,*in,*out,*programs,*constants,*descriptor,*temporary,reference[7],reference_code[21],seed=0x81732019u;
  unsigned kind,group,status,compared=0;
- unsigned modules=0,pipelines=0,cases=0;float priority=1.0f;int result=1;
+ unsigned modules=0,pipelines=0,cases=0,context_replays=XE_EXTRA_CASES;float priority=1.0f;int result=1;
+ const char *timing_only=getenv("XE_ALU_PROGRAM_TIMING_ONLY");
+ if(timing_only && !strcmp(timing_only,"1"))context_replays=0;
  (void)shader;CHECK(loader);XE_COMPILE_BEGIN();CHECK(XE_PROGRAM_BUILD(&code));
  XE_COMPILE_END(XE_PROGRAM_STAGE("emit"),0);
  CHECK(capture_module(&code));
@@ -150,8 +216,11 @@ int main(void){
  LOAD(vkCreateCommandPool);LOAD(vkDestroyCommandPool);LOAD(vkAllocateCommandBuffers);LOAD(vkResetCommandPool);LOAD(vkBeginCommandBuffer);LOAD(vkEndCommandBuffer);
  LOAD(vkCmdPipelineBarrier);LOAD(vkCmdBindPipeline);LOAD(vkCmdBindDescriptorSets);LOAD(vkCmdDispatch);LOAD(vkCreateFence);LOAD(vkDestroyFence);LOAD(vkResetFences);LOAD(vkQueueSubmit);LOAD(vkWaitForFences);
  g.vkGetDeviceQueue(g.device,family,0,&queue);CHECK(make_buffer(&input_buffer,INPUT_WORDS*4) && make_buffer(&program_buffer,PROGRAM_WORDS*4) && make_buffer(&constant_buffer,512*16) && make_buffer(&output_buffer,OUTPUT_RECORDS*32));
- memset(bindings,0,sizeof(bindings));for(i=0;i<4;++i){bindings[i].binding=i;bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;bindings[i].descriptorCount=1;bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT;}
- set_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;set_info.bindingCount=4;set_info.pBindings=bindings;OK(g.vkCreateDescriptorSetLayout(g.device,&set_info,NULL,&set_layout));
+#ifdef XE_ALU_CONTROL_TEST
+ CHECK(make_buffer(&context_buffer,160));memset(context_buffer.mapped,0,160);
+#endif
+ memset(bindings,0,sizeof(bindings));for(i=0;i<XE_PROGRAM_BINDINGS;++i){bindings[i].binding=i;bindings[i].descriptorType=i==4?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;bindings[i].descriptorCount=1;bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT;}
+ set_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;set_info.bindingCount=XE_PROGRAM_BINDINGS;set_info.pBindings=bindings;OK(g.vkCreateDescriptorSetLayout(g.device,&set_info,NULL,&set_layout));
  layout_info.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;layout_info.setLayoutCount=1;layout_info.pSetLayouts=&set_layout;OK(g.vkCreatePipelineLayout(g.device,&layout_info,NULL,&layout));
  module_info.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;module_info.codeSize=code.count*4;module_info.pCode=code.words;++modules;
  XE_COMPILE_BEGIN();OK(g.vkCreateShaderModule(g.device,&module_info,NULL,&module));XE_COMPILE_END(XE_PROGRAM_STAGE("module"),0);
@@ -179,32 +248,44 @@ int main(void){
  XE_COMPILE_END(XE_PROGRAM_STAGE("compute_pso_warm"),0);
 #endif
  xe_spv_binary_close(&code);
- pool_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;pool_info.maxSets=1;pool_info.poolSizeCount=1;pool_info.pPoolSizes=&pool_size;OK(g.vkCreateDescriptorPool(g.device,&pool_info,NULL,&pool));
+ pool_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;pool_info.maxSets=1;pool_info.poolSizeCount=XE_PROGRAM_BINDINGS==5?2:1;pool_info.pPoolSizes=pool_size;OK(g.vkCreateDescriptorPool(g.device,&pool_info,NULL,&pool));
  set_allocate.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;set_allocate.descriptorPool=pool;set_allocate.descriptorSetCount=1;set_allocate.pSetLayouts=&set_layout;OK(g.vkAllocateDescriptorSets(g.device,&set_allocate,&set));
  command_pool_info.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;command_pool_info.queueFamilyIndex=family;OK(g.vkCreateCommandPool(g.device,&command_pool_info,NULL,&command_pool));
  command_allocate.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;command_allocate.commandPool=command_pool;command_allocate.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;command_allocate.commandBufferCount=1;OK(g.vkAllocateCommandBuffers(g.device,&command_allocate,&command));
  fence_info.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;OK(g.vkCreateFence(g.device,&fence_info,NULL,&fence));
  in=(uint32_t*)input_buffer.mapped;out=(uint32_t*)output_buffer.mapped;
  programs=(uint32_t*)program_buffer.mapped;constants=(uint32_t*)constant_buffer.mapped;
- for(round=0;round<3;++round){
+ for(round=0;round<3+context_replays;++round){
   limit=round==1?RECORDS-17:RECORDS;output_limit=round==2?OUTPUT_RECORDS-23:OUTPUT_RECORDS;
+#if XE_EXTRA_CASES
+  if(round>=3){limit=output_limit=2;extra_context((uint32_t*)context_buffer.mapped,round-3);}
+#endif
   in[0]=limit;
-  for(i=0;i<(RECORDS+1)/2;++i){
-   program(programs+i*21,i);
-   if(round==1 || (round==2 && !(i&1)))for(lane=0;lane<21;++lane)programs[i*21+lane]=reverse(programs[i*21+lane]);
+  for(i=0;i<(round<3?(unsigned)(RECORDS+1)/2:1u);++i){
+   round_program(programs+i*21,i,round);
+   if(round_swap(round,i))for(lane=0;lane<21;++lane)programs[i*21+lane]=reverse(programs[i*21+lane]);
   }
+  if(round<3){
   for(i=0;i<512*4;++i)constants[i]=next(&seed);
   for(lane=0;lane<4;++lane){constants[lane]=0x3f800000u;constants[4+lane]=0x40000000u;constants[8+lane]=0xc0800000u;constants[12+lane]=0;}
   constants[257*4]=0x3f800000u;constants[257*4+1]=0xc0000000u;constants[257*4+2]=0x40400000u;constants[257*4+3]=0xc0800000u;
   constants[511*4]=0x40000000u;constants[511*4+1]=0x40400000u;constants[511*4+2]=0x40800000u;constants[511*4+3]=0x40a00000u;
-  for(i=0;i<RECORDS;++i){
+  }
+  for(i=0;i<(round<3?(unsigned)RECORDS:2u);++i){
    group=i/2;kind=group%32;descriptor=in+1+i*8;temporary=in+1+RECORDS*8+i*256;
-   descriptor[0]=group*21;descriptor[1]=21u|((round==1 || (round==2 && !(group&1)))?0x80000000u:0);descriptor[2]=1+RECORDS*8+i*256;descriptor[3]=kind==0?0:kind==1?1:64;
+   descriptor[0]=group*21;descriptor[1]=21u|(round_swap(round,group)?0x80000000u:0);descriptor[2]=1+RECORDS*8+i*256;descriptor[3]=kind==0?0:kind==1?1:64;
    descriptor[4]=0;descriptor[5]=kind==10?0:kind==9?1:512;descriptor[6]=kind==12?511:kind==13?257:0;descriptor[7]=kind==13?0:511;
-   for(lane=0;lane<256;++lane)temporary[lane]=next(&seed);
+   for(lane=0;lane<256;++lane){
+#if XE_LOOP_CASES
+    if(round>=3+XE_BOOL_CASES){float initial=(float)(lane/4)+0.25f;memcpy(temporary+lane,&initial,4);}
+    else
+#endif
+    temporary[lane]=next(&seed);
+   }
    if(kind==4)for(lane=0;lane<4;++lane)temporary[lane]=0xc0e00000u;
    if(group==5){temporary[0]=0xbf800000u;temporary[1]=0x40000000u;temporary[2]=0xc0400000u;temporary[3]=0x40800000u;}
    if(group==8){static const uint32_t initial[8]={0x3f800000u,0x40000000u,0x40400000u,0x40800000u,0x40a00000u,0x40c00000u,0x40e00000u,0x41000000u};memcpy(temporary,initial,sizeof(initial));}
+   if(round>=3){descriptor[3]=64;descriptor[5]=512;descriptor[6]=0;descriptor[7]=511;}
    if(kind==16)descriptor[0]=UINT32_MAX;
    if(kind==17)descriptor[1]=2;
    if(kind==18)descriptor[3]=65;
@@ -214,35 +295,52 @@ int main(void){
   }
   memset(out,0x6d,OUTPUT_RECORDS*32);
   CHECK(cache_buffer(&input_buffer,0) && cache_buffer(&program_buffer,0) && cache_buffer(&constant_buffer,0) && cache_buffer(&output_buffer,0));
+#ifdef XE_ALU_CONTROL_TEST
+  CHECK(cache_buffer(&context_buffer,0));
+#endif
   memset(infos,0,sizeof(infos));infos[0].buffer=input_buffer.buffer;infos[0].range=INPUT_WORDS*4;
   infos[1].buffer=program_buffer.buffer;infos[1].range=PROGRAM_WORDS*4;
   infos[2].buffer=constant_buffer.buffer;infos[2].range=512*16;
   infos[3].buffer=output_buffer.buffer;infos[3].range=output_limit*32;
-  memset(writes,0,sizeof(writes));for(i=0;i<4;++i){writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;writes[i].dstSet=set;writes[i].dstBinding=i;writes[i].descriptorCount=1;writes[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;writes[i].pBufferInfo=&infos[i];}
-  g.vkUpdateDescriptorSets(g.device,4,writes,0,NULL);OK(g.vkResetCommandPool(g.device,command_pool,0));
+#ifdef XE_ALU_CONTROL_TEST
+  infos[4].buffer=context_buffer.buffer;infos[4].range=160;
+#endif
+  memset(writes,0,sizeof(writes));for(i=0;i<XE_PROGRAM_BINDINGS;++i){writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;writes[i].dstSet=set;writes[i].dstBinding=i;writes[i].descriptorCount=1;writes[i].descriptorType=bindings[i].descriptorType;writes[i].pBufferInfo=&infos[i];}
+  g.vkUpdateDescriptorSets(g.device,XE_PROGRAM_BINDINGS,writes,0,NULL);OK(g.vkResetCommandPool(g.device,command_pool,0));
   begin.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;OK(g.vkBeginCommandBuffer(command,&begin));
-  barrier.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER;barrier.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT;
+  barrier.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER;barrier.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_UNIFORM_READ_BIT;
   g.vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&barrier,0,NULL,0,NULL);
   g.vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);g.vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&set,0,NULL);g.vkCmdDispatch(command,(OUTPUT_RECORDS+63)/64+1,1,1);
   barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;g.vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,NULL,0,NULL);
   OK(g.vkEndCommandBuffer(command));OK(g.vkResetFences(g.device,1,&fence));submit.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;submit.commandBufferCount=1;submit.pCommandBuffers=&command;
-  XE_COMPILE_BEGIN();OK(g.vkQueueSubmit(queue,1,&submit,fence));
+  if(round<3){XE_COMPILE_BEGIN();}OK(g.vkQueueSubmit(queue,1,&submit,fence));
   completion=g.vkWaitForFences(g.device,1,&fence,VK_TRUE,UINT64_C(5000000000));
   if(completion!=VK_SUCCESS){fprintf(stderr,"GPU completion failed (%d); retaining pending test resources\n",(int)completion);exit(1);}
  XE_COMPILE_END(XE_PROGRAM_STAGE("submit_complete"),round);
   CHECK(cache_buffer(&output_buffer,1) && cache_buffer(&program_buffer,1));
-  for(i=0;i<(RECORDS+1)/2;++i){
-   program(reference_code,i);
+#if XE_EXTRA_CASES
+  if(round>=3){uint32_t expected_bank[40];extra_context(expected_bank,round-3);
+   CHECK(cache_buffer(&context_buffer,1) && !memcmp(context_buffer.mapped,expected_bank,160));}
+#endif
+  for(i=0;i<(round<3?(unsigned)(RECORDS+1)/2:1u);++i){
+   round_program(reference_code,i,round);
    for(lane=0;lane<21;++lane)CHECK(programs[i*21+lane]==
-    ((round==1 || (round==2 && !(i&1)))?reverse(reference_code[lane]):reference_code[lane]));
+    (round_swap(round,i)?reverse(reference_code[lane]):reference_code[lane]));
   }
   for(i=0;i<OUTPUT_RECORDS;++i){
    if(i>=limit || i>=output_limit){for(lane=0;lane<8;++lane)CHECK(out[i*8+lane]==0x6d6d6d6du);continue;}
    group=i/2;kind=group%32;status=expected_status(kind);
+#if XE_EXTRA_CASES
+   if(round>=3)status=extra_status(round-3);
+#endif
    if(out[i*8+4]!=status){fprintf(stderr,"round %u invocation %u kind %u status %u != %u\n",round,i,kind,out[i*8+4],status);goto done;}
    if(status==1){
     descriptor=in+1+i*8;
-    program(reference_code,group);
+    round_program(reference_code,group,round);
+#if XE_EXTRA_CASES
+    if(round>=3){CHECK(xe_alu_control_reference(reference_code,in+descriptor[2],descriptor[3],constants+descriptor[4],descriptor[5],descriptor[6],descriptor[7],reference,(uint32_t*)context_buffer.mapped)==1);}
+    else
+#endif
     CHECK(xe_alu_program_reference(reference_code,in+descriptor[2],descriptor[3],constants+descriptor[4],descriptor[5],descriptor[6],descriptor[7],reference)==1);
     for(lane=0;lane<7;++lane){if(lane==4)continue;
      if(!same(out[i*8+lane],reference[lane])){fprintf(stderr,"round %u invocation %u kind %u word %u: %08x != %08x\n",round,i,kind,lane,out[i*8+lane],reference[lane]);goto done;}}
@@ -256,7 +354,14 @@ int main(void){
     if(group==10)for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==0);
     if(group==11)for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==0xc1000000u);
 #else
+#if XE_EXTRA_CASES
+    if(round>=3){for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==extra_golden(round-3,lane));}
+    else
+#endif
     CHECK(control_golden(group,out+i*8));
+#if XE_LOOP_CASES
+    if(round>=3+XE_BOOL_CASES)CHECK(out[i*8+5]==loop_exports(round-3-XE_BOOL_CASES));
+#endif
 #endif
     ++compared;
    }else{for(lane=0;lane<7;++lane)if(lane!=4)CHECK(out[i*8+lane]==0x6d6d6d6du);}
@@ -269,7 +374,7 @@ int main(void){
 #else
  CHECK(pipelines==1);
 #endif
- printf("PASS: %u packed program invocations (%u native CPU-reference comparisons); shared bytecode/constants, transactional failure/bounds; one active module/PSO across three replays (%u initialization PSO creates)\n",cases,compared,pipelines);result=0;
+ printf("PASS: %u packed program invocations (%u native CPU-reference comparisons); shared bytecode/constants, transactional failure/bounds; one active module/PSO across three primary and %u additional context replays (%u initialization PSO creates)\n",cases,compared,context_replays,pipelines);result=0;
 done:
  if(g.device){if(fence)g.vkDestroyFence(g.device,fence,NULL);
   if(command_pool)g.vkDestroyCommandPool(g.device,command_pool,NULL);
@@ -282,6 +387,9 @@ done:
   if(module)g.vkDestroyShaderModule(g.device,module,NULL);
   if(layout)g.vkDestroyPipelineLayout(g.device,layout,NULL);
   if(set_layout)g.vkDestroyDescriptorSetLayout(g.device,set_layout,NULL);
+#ifdef XE_ALU_CONTROL_TEST
+  close_buffer(&context_buffer);
+#endif
   close_buffer(&output_buffer);close_buffer(&constant_buffer);close_buffer(&program_buffer);close_buffer(&input_buffer);g.vkDestroyDevice(g.device,NULL);}
  if(g.instance)g.vkDestroyInstance(g.instance,NULL);
  xe_spv_binary_close(&code);

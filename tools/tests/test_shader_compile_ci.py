@@ -14,6 +14,29 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_control_feature_coverage_cannot_be_removed_or_skipped(self):
+        old=dict(available=True,unit=True,vulkan_gpu=True,boolean_cf_supported=True,
+                 nonempty_loops_supported=True,boolean_context_cases=224,loop_context_cases=32)
+        for field,value in [("available",False),("unit",False),("vulkan_gpu",False),
+                            ("boolean_cf_supported",False),("nonempty_loops_supported",False),
+                            ("boolean_context_cases",0),("loop_context_cases",0)]:
+            candidate=dict(old);candidate[field]=value
+            self.assertTrue(ci.compare_control_coverage(dict(base=old,candidate=candidate),True)["failures"],field)
+        self.assertFalse(ci.compare_control_coverage(dict(base=dict(available=False),candidate=old),True)["failures"])
+        self.assertFalse(ci.compare_control_coverage(dict(candidate=dict(available=True,unit=True,vulkan_gpu=False)),False)["failures"])
+
+    def test_full_context_correctness_cannot_inherit_timing_only_mode(self):
+        for backend in ("vulkan-software","d3d12-warp"):
+            with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run") as run:
+                root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True);(root/"libretro").mkdir()
+                (root/"libretro/core_alu_spv.h").write_text("xe_alu_control_spv_build(\n#define XE_ALU_CONTROL_BOOL 1\n#define XE_ALU_CONTROL_LOOPS 1\n")
+                (tests/("run_alu_program_tests.cmd" if ci.WIN else "run_alu_program_tests.sh")).touch()
+                result=ci.validate_raw_program(root,root,root,root/"log",{"XE_ALU_PROGRAM_TIMING_ONLY":"1"},backend,control=True)
+                self.assertNotIn("XE_ALU_PROGRAM_TIMING_ONLY",run.call_args.args[3])
+                self.assertEqual(result["control_flow_version"],3)
+                self.assertEqual(result["boolean_context_cases"],224 if backend.startswith("vulkan") else 0)
+                self.assertEqual(result["loop_context_cases"],32 if backend.startswith("vulkan") else 0)
+
     def test_control_program_historical_absence_is_explicit(self):
         with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run") as run:
             root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True)
@@ -237,6 +260,8 @@ class ComparisonTests(unittest.TestCase):
             for i in range(64):
                 (compiled/("shader%03u.spv"%i)).write_bytes(ci.struct.pack("<5I",0x07230203,0x10000,0,1,0))
             def prepare(source_arg,out,results,backend,reuse):
+                (results/(source.name+"-"+compiled.parent.name+"-"+compiled.name+"-raw-control.json")).write_text(
+                    json.dumps(dict(available=False,unit=False,vulkan_gpu=False)))
                 for role in ["base","candidate"]:
                     wall=[];cpu=[]
                     for sample in range(7):

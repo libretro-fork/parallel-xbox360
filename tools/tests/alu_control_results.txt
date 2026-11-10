@@ -1,5 +1,10 @@
 Raw packed control-flow interpreter foundation (2026-11-10)
 ==========================================================
+Historical introduction at217dbba25. The expanded conditional/loop entry and
+current word counts/coverage are described in alu_context_results.txt. The
+earlier workload remains available for matched timing, with its unsupported
+negative CF data pinned consistently across both compared revisions.
+
 First parent: d0720caa9815b3e67e467c530346c53ed0ce629f.
 
 xe_alu_control_spv_build emits one fixed SPIR-V1.0 compute module,6770 words,

@@ -104,6 +104,7 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
         coverage["reason"]="historical revision has no raw "+("control-flow" if control else "program")+" kernel"
         return coverage
     fixture=env.copy()
+    fixture.pop("XE_ALU_PROGRAM_TIMING_ONLY",None)
     fixture.update(ALU_PROGRAM_OUT=str(out / ("raw-control" if control else "raw-program")),
                    ALU_PROGRAM_FIXTURE=str(HERE / "core_alu_program_vulkan_test.c"),
                    ALU_PROGRAM_BRIDGE=str(HERE / "alu_program_bridge.cc"),
@@ -124,7 +125,15 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
                     pinned_fixture_sha256=file_sha256(HERE/"core_alu_program_vulkan_test.c"),
                     pinned_bridge_sha256=file_sha256(HERE/"alu_program_bridge.cc"))
     if control:
-        coverage.update(control_flow_version=1,cf_step_limit=4096,call_depth_limit=4,
+        content=header.read_text()
+        boolean="#define XE_ALU_CONTROL_BOOL 1" in content
+        loops="#define XE_ALU_CONTROL_LOOPS 1" in content
+        coverage.update(control_flow_version=3 if loops else 2 if boolean else 1,
+                        boolean_cf_supported=boolean,nonempty_loops_supported=loops,
+                        timed_corpus_version=2,boolean_context_cases=224 if boolean and coverage["vulkan_gpu"] else 0,
+                        loop_context_cases=32 if loops and coverage["vulkan_gpu"] else 0,
+                        context_cases_untimed=True,timed_child_context_replays=0,
+                        cf_step_limit=4096,call_depth_limit=4,
                         pinned_control_fixture_sha256=file_sha256(HERE/"shader_control_program_fixture.h"))
     return coverage
 
@@ -488,6 +497,22 @@ def compare_raw_program(raw, samples, prefix="raw_program."):
         scope="prototype emission/module and primed PSO/warm completion gates; not cold-play or pure GPU time")
 
 
+def compare_control_coverage(coverage, vulkan):
+    candidate=coverage["candidate"];failures=[]
+    if candidate["available"]:
+        if not candidate["unit"]:failures.append("candidate unit coverage missing")
+        if vulkan and not candidate["vulkan_gpu"]:failures.append("candidate Vulkan execution missing")
+    for version in ("base","anchor"):
+        if version not in coverage:continue
+        previous=coverage[version]
+        for feature in ("available","boolean_cf_supported","nonempty_loops_supported"):
+            if previous.get(feature,False) and not candidate.get(feature,False):
+                failures.append(version+": removed "+feature)
+        for feature in ("boolean_context_cases","loop_context_cases"):
+            if previous.get(feature,0)>candidate.get(feature,0):failures.append(version+": reduced "+feature)
+    return dict(revisions=coverage,failures=failures)
+
+
 def run_comparison(args):
     work=Path(args.out).resolve();results=work/"results";results.mkdir(parents=True,exist_ok=True)
     if any(results.glob("*.csv")):
@@ -561,6 +586,9 @@ def run_comparison(args):
             if source.resolve().parent!=work or target.parent!=source.resolve() or source.resolve()==ROOT:
                 raise ValueError("unsafe private build cleanup target")
             if target.exists():shutil.rmtree(target)
+    control_coverage={version:json.loads((results/(b["source"].name+"-"+b["out"].parent.name+"-"+b["out"].name+"-raw-control.json")).read_text())
+                      for version,b in builds.items()}
+    control_coverage_report=compare_control_coverage(control_coverage,args.backend.startswith("vulkan"))
     manifest["timing_contract"]=dict(version=2,gating="elapsed wall time only",
         process_cpu="supplementary per-process user+kernel time; may exceed wall time with parallel workers",
         limits="CPU/wall separation alone does not identify preemption, waits or GPU/service work",
@@ -603,6 +631,7 @@ def run_comparison(args):
                 if component not in b:continue
                 filename=component.replace("_","-")
                 program_env=e.copy()
+                program_env["XE_ALU_PROGRAM_TIMING_ONLY"]="1"
                 program_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-"+filename+".csv"))
                 program_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-"+filename+"-cpu.csv"))
                 program_env["XE_ALU_PROGRAM_DUMP"]=str(results/(version+"-"+filename+"-sample%d.spv"%sample))
@@ -673,8 +702,8 @@ def run_comparison(args):
                 process_cpu_diagnostics=cpu_rows,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
-                raw_program=program_report,raw_control=control_report,
-                success=not ir_failures and not alarm_failures and not program_report["failure"] and not control_report["failure"] and not any(x["failures"] for x in rows+anchor_rows),
+                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,
+                success=not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not program_report["failure"] and not control_report["failure"] and not any(x["failures"] for x in rows+anchor_rows),
                 self_check=bool(args.self_check))
     (results/"comparison.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     summary="# Shader compilation comparison\n\n%s -> %s (%s)\n\n"%(args.base,args.head,args.backend)
@@ -709,6 +738,7 @@ def run_comparison(args):
                 cpu["base"][key][which]*1000,cpu["candidate"][key][which]*1000)
     if ir_failures:summary+="\nIR growth failures: "+", ".join(ir_failures)+"\n"
     if alarm_failures:summary+="\nSource alarm increases: "+", ".join(alarm_failures)+"\n"
+    if control_coverage_report["failures"]:summary+="\nControl coverage failures: "+", ".join(control_coverage_report["failures"])+"\n"
     if anchor_rows:
         summary+="\nPinned anchor: %d failing case metrics.\n"%sum(bool(x["failures"]) for x in anchor_rows)
     (results/"summary.md").write_text(summary,encoding="utf-8")

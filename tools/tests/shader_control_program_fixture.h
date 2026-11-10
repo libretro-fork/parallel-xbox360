@@ -57,18 +57,152 @@ static void program(uint32_t *p,unsigned group)
   if(kind==29){control_alu(p,6,62,0,1,15,0,&slots);p[20]|=31u<<24;}
  }else if(kind==14 || kind==24){control_cf(p,0,1u<<13,kind==14?0xb000:0x9000);
  }else if(kind==15){control_cf(p,0,6,0x2000);
- }else if(kind==22 || kind==23){control_cf(p,0,2,kind==22?0xb000:0x9000);
+ }else if(kind==22 || kind==23){control_cf(p,0,2,kind==22?0x5000:0x6000);
  }else if(kind==25){control_cf(p,0,0,0xc000);
  }else if(kind==26){control_cf(p,0,8191|(1u<<13),0xb000);
  }else if(kind==27){control_cf(p,0,4095|(1u<<12),0x2000);
  }else if(kind==28){control_cf(p,0,6|(1u<<12)|(1u<<16),0x2000);
  }else if(kind==30){control_cf(p,0,7u<<12,0x2000);
- }else {control_cf(p,0,6|(1u<<12),0x3000);}
+ }else {control_cf(p,0,6|(1u<<12),0xd000);}
  if(group>=32 && kind<14)for(i=0;i<7;++i)if(slots&(1u<<i)){
   p[i*3]|=((group>>5)&1)<<7;
   p[i*3+1]|=(group*0x71b359u)&0xffffffu;p[i*3+1]|=((group>>5)&7)<<24;
  }
 }
+#ifdef XE_ALU_CONTROL_BOOL
+#define XE_BOOL_CASES 224
+static unsigned bool_index(unsigned which)
+{
+ static const unsigned indices[8]={0,31,32,63,127,128,254,255};
+ return indices[(which>>2)&7];
+}
+static int bool_taken(unsigned which){return (which&1)==((which>>1)&1);}
+static void bool_context(uint32_t bank[40],unsigned which)
+{
+ unsigned index=bool_index(which);
+ memset(bank,which&1?0:255,160);
+ if(which&1)bank[index>>5]|=1u<<(index&31);
+ else bank[index>>5]&=~(1u<<(index&31));
+}
+static unsigned bool_status(unsigned which)
+{
+ unsigned scenario=which/32;
+ if(!bool_taken(which))return 1;
+ return scenario==4?2:scenario>=5?3:1;
+}
+static uint32_t bool_golden(unsigned which)
+{
+ unsigned scenario=which/32;
+ if(scenario==0 || scenario==2)return bool_taken(which)?0x40400000u:0x3f800000u;
+ if(scenario==1 || scenario==3)return bool_taken(which)?0x40400000u:0x40000000u;
+ return 0x40400000u;
+}
+static void bool_program(uint32_t *p,unsigned which)
+{
+ unsigned scenario=which/32,i;uint32_t slots=0;
+ uint32_t condition=(bool_index(which)<<2)|(((which>>1)&1)<<10);
+ memset(p,0,21*4);
+ if(scenario==0 || scenario==2){
+  control_cf(p,0,4|(1u<<12),0x1000);
+  control_cf(p,1,scenario==0?5|(1u<<12):4,condition|(scenario==0?0x3000:0x9000));
+  control_cf(p,2,6|(1u<<12),0x2000);
+  if(scenario==2){control_cf(p,4,5|(1u<<12),0x1000);control_cf(p,5,0,0xa000);}
+  control_alu(p,4,0,0,3,15,0,&slots);control_alu(p,5,0,0,1,15,1,&slots);
+  control_alu(p,6,62,0,3,15,1,&slots);
+ }else if(scenario==1 || scenario==3){
+  control_cf(p,0,scenario==1?5|(1u<<12):2,condition|(scenario==1?0x4000:0xb000));
+  control_cf(p,1,6|(1u<<12),0x2000);
+  if(scenario==3)control_cf(p,2,5|(1u<<12),0x2000);
+  control_alu(p,5,62,0,1,15,0,&slots);control_alu(p,6,62,0,0,15,0,&slots);
+ }else if(scenario==4 || scenario==5){
+  control_cf(p,0,scenario==4?8191u:5|(1u<<12),condition|(scenario==4?0xb000:0x3000));
+  control_cf(p,1,6|(1u<<12),0x2000);
+  control_alu(p,5,62,0,1,15,0,&slots);p[17]|=31u<<24;
+  control_alu(p,6,62,0,1,15,0,&slots);
+ }else{
+  for(i=0;i<4;++i){control_cf(p,i*2,(i*2+2)|(1u<<13),0x9000);
+   control_cf(p,i*2+1,i?0:6|(1u<<12),i?0xa000:0x2000);}
+  control_cf(p,8,10,condition|0x9000);control_cf(p,9,0,0xa000);
+  control_alu(p,6,62,0,1,15,0,&slots);
+ }
+}
+#endif
+#ifdef XE_ALU_CONTROL_LOOPS
+#define XE_LOOP_CASES 32
+static uint32_t loop_constant(unsigned count,unsigned start,int step)
+{return count|(start<<8)|(((uint32_t)step&255)<<16);}
+static void loop_context(uint32_t bank[40],unsigned which)
+{
+ unsigned scenario=which/2,i;
+ memset(bank,0,160);bank[8]=loop_constant(3,1,1);
+ if(scenario==1)bank[8]=loop_constant(4,6,-2);
+ if(scenario==2)bank[8]=loop_constant(3,99,1);
+ if(scenario==3){bank[8]=loop_constant(2,5,2);bank[9]=loop_constant(3,99,-1);}
+ if(scenario==4)for(i=0;i<4;++i)bank[8+i]=loop_constant(1,i?99:5,1);
+ if(scenario==5){bank[8]=loop_constant(1,5,1);bank[9]=loop_constant(2,99,1);bank[10]=loop_constant(1,99,-1);}
+ if(scenario==6)bank[8]=0;
+ if(scenario==7)for(i=0;i<5;++i)bank[8+i]=loop_constant(1,0,0);
+ if(scenario==9)bank[8]=bank[9]=loop_constant(255,0,0);
+ if(scenario==10)bank[8]=loop_constant(2,63,1);
+ if(scenario==11)bank[8]=loop_constant(3,0,0);
+ if(scenario==12)bank[8]=loop_constant(2,1,1);
+ if(scenario==14){bank[8]=0;bank[39]=loop_constant(3,1,1);}
+ if(scenario==15)bank[8]=loop_constant(255,0,0);
+}
+static unsigned loop_status(unsigned which)
+{
+ unsigned scenario=which/2;
+ return scenario==8?2:scenario==9?5:(scenario==6 || scenario==7 || scenario==10)?3:1;
+}
+static uint32_t loop_golden(unsigned which,unsigned lane)
+{
+ static const uint32_t values[16]={0x40500000,0x3e800000,0x40100000,0x40a80000,
+  0x40a80000,0x40a80000,0,0,0,0,0,0x40500000,0x40100000,0x40500000,0x40500000,0x3e800000};
+ return which/2==11 && (lane&1)?0x40000000u:values[which/2];
+}
+static unsigned loop_exports(unsigned which)
+{
+ static const unsigned counts[16]={3,4,3,6,1,3,0,0,0,0,0,1,2,3,3,255};
+ return counts[which/2];
+}
+static void loop_program(uint32_t *p,unsigned which)
+{
+ unsigned scenario=which/2,i;uint32_t slots=0;
+ memset(p,0,21*4);control_alu(p,6,62,64,3,15,1,&slots);
+ if(scenario<3 || scenario==6 || scenario==10 || scenario>=14){
+  control_cf(p,0,3|(scenario==2?1u<<13:0),0x7000);control_cf(p,1,6|(1u<<12),0x1000);
+  control_cf(p,2,1,0x8000);control_cf(p,3,6,0x2000);
+  if(scenario==14){p[0]|=31u<<16;p[3]|=31u<<16;}
+ }else if(scenario==3 || scenario==9){
+  control_cf(p,0,5,0x7000);control_cf(p,1,4|(1u<<16)|(scenario==3?1u<<13:0),0x7000);
+  control_cf(p,2,6|(1u<<12),0x1000);control_cf(p,3,2|(1u<<16),0x8000);
+  control_cf(p,4,1,0x8000);control_cf(p,5,6,0x2000);
+ }else if(scenario==4){
+  for(i=0;i<4;++i)control_cf(p,i,(9-i)|(i<<16)|(i?1u<<13:0),0x7000);
+  control_cf(p,4,6|(1u<<12),0x1000);
+  for(i=0;i<4;++i)control_cf(p,5+i,(4-i)|((3-i)<<16),0x8000);
+  control_cf(p,9,6,0x2000);
+ }else if(scenario==5){
+  control_cf(p,0,8,0x7000);control_cf(p,1,4|(1u<<13)|(1u<<16),0x7000);
+  control_cf(p,2,6|(1u<<12),0x1000);control_cf(p,3,2|(1u<<16),0x8000);
+  control_cf(p,4,7|(1u<<13)|(2u<<16),0x7000);control_cf(p,5,6|(1u<<12),0x1000);
+  control_cf(p,6,5|(2u<<16),0x8000);control_cf(p,7,1,0x8000);control_cf(p,8,6,0x2000);
+ }else if(scenario==7){for(i=0;i<5;++i)control_cf(p,i,(11-i)|(i<<16),0x7000);
+ }else if(scenario==8){control_cf(p,0,1,0x8000);
+ }else if(scenario==11){
+  control_cf(p,0,3,0x7000);control_cf(p,1,5|(1u<<12),0x1000);control_cf(p,2,1,0x8000);
+  control_cf(p,3,6|(1u<<12),0x2000);
+  control_alu(p,5,0,0,0,15,1,&slots);p[15]&=0x03ffffffu;p[17]&=~255u;
+  control_alu(p,6,62,0,3,5,1,&slots);p[18]|=10u<<20;
+ }else if(scenario==12){
+  control_cf(p,0,3,0x7000);control_cf(p,1,4|(1u<<13),0x9000);control_cf(p,2,1,0x8000);
+  control_cf(p,3,6,0x2000);control_cf(p,4,6|(1u<<12),0x1000);control_cf(p,5,0,0xa000);
+ }else{
+  control_cf(p,0,2|(1u<<13),0x9000);control_cf(p,1,6,0x2000);control_cf(p,2,5,0x7000);
+  control_cf(p,3,6|(1u<<12),0x1000);control_cf(p,4,3,0x8000);control_cf(p,5,0,0xa000);
+ }
+}
+#endif
 static unsigned expected_status(unsigned kind)
 {
  if(kind==14)return 5;

@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Extend raw shader validation with shared bool/loop constant views, conditional execution/transfers, four-deep counted/repeat loops and checked relative temporary reads. Calls and loops retain fixed state without copying register frames. Add context/loop GPU regressions and coverage-loss gates; rendering integration and complete fallback semantics remain unfinished.
+
 - Extend the C89 raw shader validation path with multiple execution clauses, jumps and four-deep subroutines under one fixed pipeline, using borrowed bytecode and a small return-address stack. Add GPU, bounds, cycle and transactional-output regressions plus separate CI cost tracking. This path is not linked or selected by rendering; accurate ready fallbacks and draw-path compilation removal remain unfinished.
 
 - Fix repeat-loop addressing in the CPU shader interpreter used for draw-extent estimation. Repeated inner loops now inherit the enclosing current address and restart their own iteration count, including reused stack slots. Add literal packed-program and real Vulkan execution regressions to shader CI; accurate ready rendering fallbacks remain unfinished.
