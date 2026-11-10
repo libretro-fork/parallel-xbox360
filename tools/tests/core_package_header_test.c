@@ -9,7 +9,7 @@ static const char path[] = "content://package/\xE2\x98\x83";
 static size_t header_size = 1024, volume_offset = 0x3A9;
 static int64_t length, position;
 static unsigned opens, closes, reads, seeks, transferred, limit;
-static int fault;
+static int fault, legacy_seek_zero;
 #ifdef XE_PACKAGE_NATIVE
 size_t xe_package_native_size(void);
 size_t xe_package_native_volume_offset(void);
@@ -36,7 +36,7 @@ static int64_t RETRO_CALLCONV seek_file(struct retro_vfs_file_handle *file, int6
    (void)file; ++seeks;
    if (fault == 5 || origin != RETRO_VFS_SEEK_POSITION_START || at < 0 || at > length) return -1;
    position = at;
-   return fault == 10 ? 1 : 0;
+   return fault == 10 ? 1 : legacy_seek_zero ? 0 : position;
 }
 static int64_t RETRO_CALLCONV read_file(struct retro_vfs_file_handle *file, void *out, uint64_t size)
 {
@@ -67,7 +67,7 @@ static void setup(unsigned volume)
    data[volume_offset + 3] = (unsigned char)volume;
    length = INT64_MAX; position = 0;
    opens = closes = reads = seeks = transferred = 0;
-   limit = (unsigned)header_size; fault = 0;
+   limit = (unsigned)header_size; fault = 0; legacy_seek_zero = 0;
    memset(output, 0xA5, sizeof(output));
 }
 static void native_file_test(const char *name)
@@ -131,6 +131,11 @@ int main(int argc, char **argv)
       setup(i); CHECK(xe_package_native_type(path) == (i == 2 ? -1 : (int)i));
       CHECK(opens == 1 && closes == 1 && transferred == 8);
 #endif
+   }
+   for (i = 0; i < 2; ++i) {
+      setup(i); legacy_seek_zero = 1; volume = 99;
+      CHECK(xe_package_probe_type(path, header_size, volume_offset, &volume) == 1 && volume == i);
+      CHECK(opens == 1 && closes == 1 && transferred == 8 && seeks == 1);
    }
    for (chunk = 1; chunk <= 7; ++chunk) {
       setup(1); limit = chunk;

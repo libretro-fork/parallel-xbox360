@@ -46,7 +46,7 @@ static INLINE int xe_package_probe_type(const char *path, size_t minimum,
       size_t volume_offset, unsigned *volume)
 {
    RFILE *file;
-   int64_t size;
+   int64_t size, seek_position;
    unsigned char head[4], bytes[4];
    uint32_t value = 0;
    int result = 0;
@@ -62,8 +62,11 @@ static INLINE int xe_package_probe_type(const char *path, size_t minimum,
       if (!xe_file_probe_four(file, head)) result = -1;
       else if (!memcmp(head, "CON ", 4) || !memcmp(head, "LIVE", 4) ||
                !memcmp(head, "PIRS", 4)) {
-         if (filestream_seek(file, (int64_t)volume_offset,
-                  RETRO_VFS_SEEK_POSITION_START) != 0 ||
+         seek_position = filestream_seek(file, (int64_t)volume_offset,
+               RETRO_VFS_SEEK_POSITION_START);
+         /* VFS returns the resulting position; retain legacy zero success. */
+         if (seek_position < 0 ||
+             (seek_position != 0 && seek_position != (int64_t)volume_offset) ||
              !xe_file_probe_four(file, bytes)) result = -1;
          else {
             value = ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) |

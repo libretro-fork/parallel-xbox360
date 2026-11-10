@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fix package-type probing with position-returning VFS seeks. Accept the requested nonzero position or legacy zero success, while rejecting seek failures and inconsistent positive positions.
+
 - Fix unmapped VFS reads at nonzero offsets. Successful seeks returning the new position were incorrectly treated as failures, preventing bounded shader/pipeline-cache record reads and other ranged file transfers.
 
 - Remove the Vulkan pipeline/texture-layout mutex and two mutable layout maps. Ready layouts use immutable C89 publication with libretro-common atomics; compiler workers retain separate descriptor scratch instead of sharing a vector. Destroy losing native owners immediately and release published layouts after creators join. Fail a specialization if its required full layout is unavailable. Shader compilation and its remaining draw-side waits are not eliminated yet. Fix native shader-test architecture detection on ARM.
