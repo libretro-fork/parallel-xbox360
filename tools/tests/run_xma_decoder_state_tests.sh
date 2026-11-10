@@ -50,7 +50,7 @@ awk -v base="$response_root" '
  }
 }' "$objects" > "$out/core.rsp"
 for name in driver xma_context_new xma_decoder native pro standard; do
- printf '\"%s/%s.o\"\n' "$response_out" "$name"
+ printf '"%s/%s.o"\n' "$response_out" "$name"
 done > "$out/objects.rsp"
 cat "$out/core.rsp" >> "$out/objects.rsp"
 CXX="${CXX:-c++} $extra" \

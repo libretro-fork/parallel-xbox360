@@ -27,6 +27,7 @@
 #include <fstream>
 #include <algorithm>
 #include <retro_atomic.h>
+#include <rthreads/retro_eventcount.h>
 #include <chrono>
 #include <condition_variable>
 #include <memory>
@@ -1719,7 +1720,7 @@ RETRO_API void retro_deinit(void) {
     xe_libretro_notice_clear();
     clear_content_audio();
     xe::threading::ShutdownTimerQueue();
-
+    retro_eventcount_thread_cleanup();
 }
 
 RETRO_API void retro_get_system_info(struct retro_system_info *info) {

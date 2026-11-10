@@ -1,0 +1,98 @@
+Compiler worker notification and resource ownership, 2026-11-10
+Parent: d1c456ba18a11483805328da2febcd42311637f9
+Common source: RetroArch 61634586c0bd0f18274756cb6894d739f714f793
+
+Runtime
+-------
+Replace the shared worker parking mutex/condition with per-worker eventcounts.
+Count registration before exposing its atomic token. The sole producer/control
+owner claims at most one token, rotates selection and notifies that worker only.
+Workers recheck readiness and token ownership after preparing the eventcount;
+a notification before prepare plus another consumer stealing its job cannot
+leave an unregistered sleeper. Busy submission reads one separated counter.
+A 128-byte gap separates that read from completion-event writes. Queue slots
+remain final payload storage with the original finish lease, without another
+allocation, copy or C++ callable wrapper for notification.
+
+Preserve stop limits, reverse joins and joined destruction. Release each worker's
+cached backend resources after its context callback returns, and release the
+calling thread's cache at retro_deinit after shutdown. The two owned common files
+match the RetroArch commit above. The import also includes upstream's Windows
+wake-list detachment and Gekko backend changes; this is measured as an integrated
+change, not attributed entirely to the new worker selection algorithm.
+
+Correctness and negative controls
+---------------------------------
+MSVC /TC /O2 /W4 /WX and Linux C89 ASan/UBSan pass. Fresh TSan128/shared-source
+runs pass with per-process setarch -R. GCC's known fence-model warning remains
+visible (-Wno-error=tsan); this is not a proof that every race is absent.
+128 held count/registration/commit and stolen-job windows require producer notify
+to return while the worker is held. Fanout holds eight distinct callbacks, bounds
+selected wakes to one per job and checks resize/restart/joined teardown.
+The parent shared-mutex negative compiles then times out while notify is blocked.
+Removing the late token recheck compiles then fails the stolen-job re-registration
+check (line63). Correct source passes. Existing pool/typed adapter tests pass.
+Windows alert/keyed/event/none tier runs pass. Forced-event lifecycle tests assert
+the actual backend and show no handle growth across 32 four-worker lifetimes.
+The initial new wakeup prototype without cache cleanup leaked 128 handles in that
+scenario (75->203); explicit release holds 71->71. These are separate process
+baselines, not evidence of the same leak in the parent's condition-variable path.
+Common cleanup/reuse/adoption-failure fixtures pass MSVC, MinGW native, Wine and
+forced-semaphore ASan/UBSan; a compiled no-op cleanup negative fails.
+
+Builds and integration
+----------------------
+MSVC release/stats and Linux static Make (-j3) builds linked. Release counter
+absence, stats ABI, concrete publication, three failed-content close/unload cycles,
+704 GPU numerical and 384 sampling cases pass. The complete Linux post-build
+workflow command sequence passes after resuming at corrected harness failures.
+Retain each failed log and each successful continuation: wrong positive VFS seek
+positions are now rejected before reading; both legacy zero and exact position
+returns cover mapped/unmapped/direct transfers (16000 concurrent transfers).
+The native binary-slot fixture now links the real DXIL binary owner on Linux;
+service-test borrows end before their local buffer expires; XMA response-file
+paths no longer contain escaped literal quotes. MSVC service/binary-owner checks
+also pass. The two XMA decoder-state modes cover 320-owner restore/rollback,
+exact PCM and allocation-failure cleanup. Local CRLF script failures were corrected
+to the repository's existing LF content before running those tests.
+Linux cannot exercise the D3D12 hardware-request path; its explicit skip is not
+counted as a pass. GPU checks ran separately from timing.
+
+Matched measurement
+-------------------
+Seven alternating/reverse parent/candidate pairs, same flags, host and corpus.
+Parent production sources were restored/rebuilt at identical source/build paths;
+candidate was then restored/rebuilt. Source hashes and all raw samples retained.
+Shader gates are unchanged: 80 WARP and 768 RTX5090 Vulkan case metrics, zero
+threshold alarms. All 1248 generated Vulkan modules and 72 DXIL/reference modules
+in the comparison output trees have identical hashes. Driver disk/internal caches
+are not certified cold; this is procedural component/driver coverage, not gameplay.
+
+Public-C-ABI queue benchmark: 1/8/32 workers, 2000 registered idle handoffs or
+20000 jobs with 0/512/4096 scalar work iterations; exact checksums agree.
+32-worker bulk candidate/parent elapsed ratios: 0.507 / 0.505 / 0.540.
+8-worker bulk ratios: 0.370 / 0.974 / 0.984.
+1-worker bulk ratios: 1.048 / 1.032 / 1.005 (absolute increases 27/244/303 us
+across the entire 20000-job runs). Not every component improves.
+Registered idle handoffs include notify-before-kernel-park, not pure OS wake
+latency. 1-worker p99 medians: 400->300 ns; median maxima 2.2->11.9 us, with
+five of seven candidate maxima at the first job. 8-worker total rendezvous time
+increases 0.752 ms/7.6%, while p99 is unchanged and median maxima improve slightly.
+32-worker p99/max improve. Keep these startup/small-work costs visible; all raw
+job IDs/tails and earlier unsuccessful/noisy implementations are retained.
+Queue figures do not establish compiler throughput, GPU speed or game cadence.
+
+Remaining limits
+----------------
+Idle workers still park. First backend parking may create a per-thread cache;
+this is not complete eradication of mid-game allocation. Cleanup does not release
+process-global TLS indices/keyed handles, other threads or separate rthreads
+condition-variable caches. Broader unload resource auditing remains necessary.
+Blocking admission, draw-side translation/module/PSO creation and compilation
+waits remain architectural failures. Accurate ready fallbacks remain unfinished.
+No retail replay, sustained gameplay/unload, first-correct-frame measurement,
+fresh-process savestate acceptance or certified cold-driver-cache coverage is
+claimed. Existing host watchdog/timing and native-emission serialization elsewhere
+remain separate debt. This patch adds no release logging, event counters or clock
+samples; test hooks compile away. Shader timing passes do not certify cold-play
+smoothness or close the broader optimization goal.

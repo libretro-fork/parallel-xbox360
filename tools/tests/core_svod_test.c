@@ -18,7 +18,7 @@ static unsigned char contents[4][40000];
 static size_t lengths[4]={FRAGMENT_SIZE,FRAGMENT_SIZE,FRAGMENT_SIZE,0};
 static struct handle {unsigned file,active;int64_t at;} handles[8];
 static struct directory {unsigned at,active;} directory;
-static unsigned fault,limit=7,mapping,opens,closes,dirs,closedirs,enumerations;
+static unsigned fault,limit=7,mapping,opens,closes,dirs,closedirs,enumerations,position_seeks;
 static retro_atomic_int_t reads,bytes,start,bad;
 static unsigned char* direct;static size_t direct_size;
 static const char* entries[]={"Data0002","Data0000","Data0001"};
@@ -55,7 +55,7 @@ static int64_t RETRO_CALLCONV seek_file(struct retro_vfs_file_handle* file,int64
    struct handle* h=(struct handle*)file;
    if(fault==6 || at<0 || origin!=RETRO_VFS_SEEK_POSITION_START) return -1;
    if(fault==10) return at+1;
-   h->at=at;return 0;
+   h->at=at;return position_seeks?at:0;
 }
 static int64_t RETRO_CALLCONV read_file(struct retro_vfs_file_handle* file,void* out,uint64_t count) {
    struct handle* h=(struct handle*)file;size_t n;
@@ -224,14 +224,14 @@ int main(int argc,char** argv) {
    xe_svod_files* files;xe_svod_sectors cache;sthread_t* threads[4];
    codec();
    for(i=0;i<3;++i) for(j=0;j<FRAGMENT_SIZE;++j) contents[i][j]=(unsigned char)(i*31+j);
-   for(map=0;map<2;++map) {
-      configure(map);files=xe_svod_files_open("content://svod/game",3);CHECK(files && opens==3 && closedirs==2);
+   for(map=0;map<4;++map) {
+      configure(map&1);position_seeks=map>>1;files=xe_svod_files_open("content://svod/game",3);CHECK(files && opens==3 && closedirs==2);
       CHECK(xe_svod_files_size(files)==3u*FRAGMENT_SIZE);
       cache.valid=0;before=(unsigned)retro_atomic_load_relaxed_int(&bytes);
       view=xe_svod_sector(files,&cache,0,2048);CHECK(view && !memcmp(view,contents[0]+2048,2048));
       CHECK(xe_svod_sector(files,&cache,0,2048)==view);
-      CHECK((unsigned)retro_atomic_load_relaxed_int(&bytes)-before==(map?0u:2048u));
-      if(map) CHECK(view==contents[0]+2048);
+      CHECK((unsigned)retro_atomic_load_relaxed_int(&bytes)-before==(mapping?0u:2048u));
+      if(mapping) CHECK(view==contents[0]+2048);
       else {direct=out;direct_size=sizeof(out);}
       CHECK(xe_svod_files_read(files,2,77,out,64) && !memcmp(out,contents[2]+77,64));direct=NULL;
       CHECK(!xe_svod_files_read(files,3,0,out,1));CHECK(!xe_svod_files_read(files,0,FRAGMENT_SIZE-1,out,2));
@@ -241,6 +241,7 @@ int main(int argc,char** argv) {
       CHECK(!retro_atomic_load_acquire_int(&bad) && opens==before);
       xe_svod_files_close(files);closed();CHECK(closes==3);
    }
+   position_seeks=0;
    for(i=1;i<=13;++i) if(i<=5 || i==11 || i==12 || i==13) {
       configure(0);fault=i;files=xe_svod_files_open("content://svod/game",3);CHECK(!files);closed();
    }
@@ -255,5 +256,5 @@ int main(int argc,char** argv) {
    native();
 #endif
    if(argc>1) native_filesystem(argv[1]);
-   puts("PASS: SVOD borrowed/fallback sectors, direct reads, 8000 concurrent transfers and fault cleanup");return 0;
+   puts("PASS: SVOD borrowed/fallback sectors, direct reads, 16000 concurrent transfers, legacy and position-returning seeks and fault cleanup");return 0;
 }

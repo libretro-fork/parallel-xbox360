@@ -45,7 +45,7 @@ const uint8_t *xe_file_view(const xe_file *file, uint64_t offset, size_t size) {
   return file->mapping + (size_t)offset;
 }
 int xe_file_read_transfer(xe_file *file, uint64_t offset, void *out, size_t size, size_t *read) {
-  int64_t got;
+  int64_t got, position;
   uint8_t *destination = (uint8_t *)out;
   if (!read) return 0;
   *read = 0;
@@ -57,8 +57,9 @@ int xe_file_read_transfer(xe_file *file, uint64_t offset, void *out, size_t size
     return 1;
   }
   if (file->position != (int64_t)offset) {
-    if (filestream_seek(file->stream, (int64_t)offset,
-        RETRO_VFS_SEEK_POSITION_START) < 0) {
+    position = filestream_seek(file->stream, (int64_t)offset,
+        RETRO_VFS_SEEK_POSITION_START);
+    if (position < 0 || (position && position != (int64_t)offset)) {
       file->position = -1; return 0;
     }
     file->position = (int64_t)offset;

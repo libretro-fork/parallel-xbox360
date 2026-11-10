@@ -4,6 +4,12 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fix Linux regression harnesses to link the real DXIL binary deleter, end thread-local log borrows explicitly and quote XMA response-file paths correctly.
+
+- Reject inconsistent positive VFS seek positions before reading data. Preserve legacy zero-success and exact position-returning seeks; the SVOD regression suite now exercises both with mapped and cursor-backed reads.
+
+- Stop taking a shared parking mutex when submitting compiler jobs. Each idle worker registers a separate libretro-common eventcount wake, preserving direct queue-slot payload ownership and joined teardown. Release cached backend handles at compiler-worker exit and core deinitialization. Draw-path compilation and blocking queue admission still need accurate ready fallbacks.
+
 - Stop holding a binding mutex across SPIR-V translation. Each producer fills one final packed binding allocation and publishes it atomically; readers borrow immutable records and losing producers release only their own storage. Concurrent equivalent publication is accepted and conflicting records are rejected. Native DXIL emission still serializes duplicate work separately; draw-path compilation remains unresolved.
 
 - Remove the D3D12 native geometry-cache mutex and mutable map. Ready lookups borrow immutable DXIL through a C89 owner cache; failed generation remains cached, publication losers release their binaries and joined shutdown releases published owners. Optional geometry dumps write exact borrowed bytes through VFS, including non-word-sized containers. Cold generation and remaining draw-path compilation waits are not eliminated.

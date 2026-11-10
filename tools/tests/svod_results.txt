@@ -90,3 +90,16 @@ Remaining scope
 Cold tree/path/block-record allocations and legacy filesystem::path typed ABI
 remain. STFS native payloads, other containers, shader/DXIL WIP, complete
 savestates and broader optimization goal remain separate incomplete work.
+
+2026-11-10 seek-position regression
+-----------------------------------
+Hosted Windows, Linux x86_64 and Linux arm64 runs at d1c456ba1 failed the
+wrong-positive-seek fault at line 251. The same test failed locally without
+the fix. xe_file_read_transfer now accepts zero (legacy success) or the exact
+requested nonnegative position and rejects other positions before reading.
+The fixture runs mapped/unmapped transfers under both return conventions:
+16,000 concurrent transfers, direct destinations, bounds and existing fault
+cleanup. Windows native ABI and Linux ASan/UBSan unit coverage pass. Native
+Linux coverage is exercised by the post-build workflow suite; see the worker
+wakeup evidence bundle for the logs. No extra tell, read or intermediate copy
+is introduced. A borrowed mapped view still bypasses the cursor entirely.

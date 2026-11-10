@@ -764,3 +764,19 @@ DXIL jobs. Real concurrent translation under that held mutex, exact reference
 bytes, publication races and joined disposal are checked. A first owner still
 allocates; compilation/admission waits and missing accurate fallbacks remain
 unresolved. See tools/tests/binding_snapshot_results.txt for measured limits.
+
+
+## Targeted compiler worker wakeup (2026-11-10)
+
+Submission no longer takes the shared worker-park mutex. Registration is counted
+before its token is visible; the worker rechecks both readiness and token ownership
+after preparing its eventcount. A notifier selects at most one registered worker.
+Payloads retain their original final-slot lease without an intermediate copy.
+Workers may still park while idle; joins precede cache/worker destruction.
+Per-thread backend caches are explicitly released at compiler-worker exit and
+core deinitialization. The tests cover held registration/commit windows, stolen
+jobs, saturation through the existing pool suite, resize and forced-event handle
+lifetimes. This removes a notification blocking edge, not blocking queue admission,
+draw-path compilation, compilation waits or the missing accurate ready fallback.
+Procedural component/driver timing cannot certify retail cold-play fluidity.
+See tools/tests/job_wake_results.txt.

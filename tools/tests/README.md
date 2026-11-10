@@ -1592,3 +1592,19 @@ native-emission mutex remains held until all SPIR-V work finishes, rejecting
 accidental coupling to that lock. The native-binding fixture also races four
 publishers against four readers without an external lock, including maximum
 packed records, empty/sampler-only sets and mismatched republish rejection.
+
+## Compiler worker notification and lifetime
+
+`run_job_wake_tests.cmd` and `run_job_wake_tests.sh` build actual production
+C89 code with test-only held idle-registration windows. They require notification
+to finish while the worker is held, test a notification consumed before eventcount
+preparation with a stolen job, bound selected wakes to one per submission, and
+exercise resize/restart and joined release. The Windows lifetime fixture forces
+the event backend through CRT environment state, checks the backend identity and
+checks process handle counts across 32 four-worker lifetimes. Linux tests joined
+ownership; it does not pretend to measure Windows handles.
+
+The ordinary shell runner uses ASan/UBSan. A separate TSan build uses
+`SANITIZER="-fsanitize=thread -Wno-error=tsan"`: GCC's unsupported fence-model
+warning is retained. Test-only hooks and wait deadlines do not enter the core.
+See `job_wake_results.txt` for negative controls, measurements and missing coverage.

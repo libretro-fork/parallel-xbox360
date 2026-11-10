@@ -30,13 +30,15 @@ static void sink(void*opaque,const char*bytes,size_t size){struct capture*s=(str
  retro_atomic_fetch_add_int(&s->calls,1);
 }
 static void writer(void*opaque){struct writer*w=(struct writer*)opaque;unsigned i,n;char data[65537],prefix[32];current_id=w->id;borrowed=data;
- for(i=0;i<w->count;++i){n=i%17==0?65536:32+(i%511);memset(data,'A'+w->id,n);memset(data,32,32);sprintf(prefix,"%u:%u:%u:",w->id,i,n);memcpy(data,prefix,strlen(prefix));services_log_write(data,n);}}
+ for(i=0;i<w->count;++i){n=i%17==0?65536:32+(i%511);memset(data,'A'+w->id,n);memset(data,32,32);sprintf(prefix,"%u:%u:%u:",w->id,i,n);memcpy(data,prefix,strlen(prefix));services_log_write(data,n);}
+ borrowed=NULL;}
 static void timer_callback(void*opaque){(void)opaque;retro_atomic_fetch_add_int(&state.calls,1);retro_eventcount_notify(&state.changed);}
 int main(int argc,char**argv){struct writer writers[4];sthread_t*threads[4];void*timers[1024];unsigned i;
  (void)argv;CHECK(argc==2);CHECK(retro_eventcount_init(&state.changed));services_log_start(sink,&state);
  CHECK(services_log_quiet()==0);CHECK(retro_atomic_load_acquire_int(&state.calls)==0);
  for(i=0;i<4;++i){writers[i].id=i;writers[i].count=1000;threads[i]=sthread_create(writer,writers+i);CHECK(threads[i]);}
- for(i=0;i<4;++i)sthread_join(threads[i]);services_log_flush();CHECK(retro_atomic_load_acquire_int(&state.calls)==4000);
+ for(i=0;i<4;++i){sthread_join(threads[i]);}
+ services_log_flush();CHECK(retro_atomic_load_acquire_int(&state.calls)==4000);
  services_log_level(0);services_log_write("ignored warning",15);CHECK(retro_atomic_load_acquire_int(&state.calls)==4000);
  services_log_format();CHECK(retro_atomic_load_acquire_int(&state.calls)==4001);
  services_log_level(-1);services_log_format();CHECK(retro_atomic_load_acquire_int(&state.calls)==4001);services_log_stop();
@@ -45,7 +47,8 @@ int main(int argc,char**argv){struct writer writers[4];sthread_t*threads[4];void
  retro_atomic_store_release_int(&state.calls,0);
  timers[0]=services_timer_new(timer_callback,NULL,3600000000LL,0);CHECK(timers[0]);CHECK(services_timer_pause());services_timer_resume();
  for(i=1;i<1024;++i){timers[i]=services_timer_new(timer_callback,NULL,3600000000LL,0);CHECK(timers[i]);}
- for(i=0;i<1024;++i)services_timer_disarm(timers[i]);CHECK(retro_atomic_load_acquire_int(&state.calls)==0);services_timer_stop();
+ for(i=0;i<1024;++i){services_timer_disarm(timers[i]);}
+ CHECK(retro_atomic_load_acquire_int(&state.calls)==0);services_timer_stop();
  for(i=0;i<1024;++i){services_timer_disarm(timers[i]);services_timer_free(timers[i]);}
  timers[0]=services_timer_new(timer_callback,NULL,1000,0);CHECK(timers[0]);wait_int(&state.calls,1,5000000);services_timer_disarm(timers[0]);services_timer_free(timers[0]);services_timer_stop();
  retro_eventcount_free(&state.changed);puts("PASS: synchronous borrowed warnings, quiet macros, truncation/recursion/shutdown and timer saturation/cancel/shutdown/reinit");return 0;}

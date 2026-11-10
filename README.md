@@ -557,3 +557,5 @@ A first publication still allocates its owner, including an empty binding set.
 Native vertex/pixel DXIL emission retains a separate mutex against duplicate
 binary generation. Draw-side compilation, queue waits and accurate generic
 fallbacks remain unfinished; this is not cold-play acceptance.
+
+Compiler job notification uses a registered per-worker libretro-common eventcount instead of a shared parking mutex/condition. A submission selects at most one idle worker and retains the existing direct queue-slot lease; it does not copy or allocate a new payload. Worker teardown releases cached per-thread backend resources after its final wait. Required idle parking remains; this does not remove existing compilation/admission waits or establish cold-play smoothness. See [wakeup and lifetime checks](tools/tests/job_wake_results.txt).

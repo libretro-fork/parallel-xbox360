@@ -11,11 +11,17 @@
 #error The Xbox 360 job pool requires 64-bit atomics
 #endif
 
+/* Deterministic parked-worker injection is compiled out of normal cores. */
+#ifndef XE_JOB_PARK_HOOK
+#define XE_JOB_PARK_HOOK(index,phase) ((void)0)
+#endif
+
 typedef struct xe_job_worker {
    struct xe_job_pool *pool;
    size_t index;
    sthread_t *thread;
-   retro_atomic_int_t ready;
+   retro_atomic_int_t ready, parked;
+   retro_eventcount_t work;
 } xe_job_worker;
 struct xe_job_pool {
    retro_atomic_64_t *sequences;
@@ -40,9 +46,11 @@ struct xe_job_pool {
    unsigned char consumer_pad[128];
    retro_atomic_int_t outstanding;
    unsigned char completion_pad[128];
-   retro_atomic_int_t stop_from, waiters, idle_requested;
-   slock_t *park_lock;
-   scond_t *park_cond;
+   retro_atomic_int_t stop_from, parked_count, idle_requested;
+   size_t wake_cursor; /* Sole producer/control thread, like head/count. */
+   /* Every finish writes space. Busy submission reads parked_count; keep
+    * those on separate cache lines for both 64- and 128-byte hosts. */
+   unsigned char notification_pad[128];
    retro_eventcount_t space, idle_event, startup;
 };
 static int xe_job_ready(xe_job_pool *pool)
@@ -59,18 +67,40 @@ static int xe_job_ready(xe_job_pool *pool)
    }
 }
 
+/* Keep the busy-pool submit path as small as the former conditional signal. */
+static
+#if defined(_MSC_VER)
+__declspec(noinline)
+#elif defined(__GNUC__)
+__attribute__((noinline))
+#endif
+void xe_job_wake_one(xe_job_pool *pool)
+{
+   size_t scanned, index;
+   xe_job_worker *worker;
+   index = pool->wake_cursor < pool->count ? pool->wake_cursor : 0;
+   for (scanned = 0; scanned < pool->count; ++scanned) {
+      worker = pool->workers[index];
+      index = index + 1 == pool->count ? 0 : index + 1;
+      if (!retro_atomic_load_acquire_int(&worker->parked) ||
+            !retro_atomic_cas_int(&worker->parked, 1, 0)) continue;
+      retro_atomic_fetch_add_int(&pool->parked_count, -1);
+      pool->wake_cursor = index;
+      XE_JOB_PARK_HOOK(worker->index, 3);
+      /* One job wakes one registered worker, not the whole compiler pool. */
+      retro_eventcount_notify(&worker->work);
+      return;
+   }
+}
 void xe_job_pool_notify(xe_job_pool *pool)
 {
    if (!pool) return;
-   /* Pair the publication with the idle worker's registered-waiter recheck.
-    * Both sides need store/load ordering: acquire/release alone can miss it. */
+   /* Pair publication with the registered-waiter recheck. Configuration and
+    * notify share the existing sole producer/control owner of the array. */
    retro_atomic_thread_fence_seq_cst();
-   if (retro_atomic_load_acquire_int(&pool->waiters)) {
-      slock_lock(pool->park_lock);
-      scond_signal(pool->park_cond);
-      slock_unlock(pool->park_lock);
-   }
+   if (retro_atomic_load_acquire_int(&pool->parked_count)) xe_job_wake_one(pool);
 }
+
 int xe_job_pool_run_one(xe_job_pool *pool, void *context)
 {
    uint64_t position, sequence;
@@ -120,6 +150,7 @@ static void xe_job_worker_run(void *opaque)
    xe_job_worker *worker = (xe_job_worker *)opaque;
    xe_job_pool *pool = worker->pool;
    void *context;
+   int key;
 #if XE_GPU_DRAW_STATS
    unsigned previous_role=xe_draw_stats_enter(XE_DRAW_COMPILER);
 #endif
@@ -130,16 +161,33 @@ static void xe_job_worker_run(void *opaque)
    for (;;) {
       if (worker->index >= (size_t)retro_atomic_load_acquire_int(&pool->stop_from)) break;
       if (xe_job_pool_run_one(pool, context)) continue;
-      slock_lock(pool->park_lock);
-      retro_atomic_fetch_add_int(&pool->waiters, 1);
+      /* Account before exposing the registration: a notifier may claim the
+       * flag immediately. Its decrement must never precede this increment. */
+      retro_atomic_fetch_add_int(&pool->parked_count, 1);
+      XE_JOB_PARK_HOOK(worker->index, 4);
+      retro_atomic_store_release_int(&worker->parked, 1);
       retro_atomic_thread_fence_seq_cst();
+      XE_JOB_PARK_HOOK(worker->index, 1);
       if (worker->index < (size_t)retro_atomic_load_acquire_int(&pool->stop_from) &&
-            !xe_job_ready(pool))
-         scond_wait(pool->park_cond, pool->park_lock);
-      retro_atomic_fetch_add_int(&pool->waiters, -1);
-      slock_unlock(pool->park_lock);
+            !xe_job_ready(pool)) {
+         /* Avoid preparing/cancelling an event when a job is already visible.
+          * A notifier may consume our registration before prepare; recheck
+          * parked too, so a stolen job cannot leave an unregistered sleeper. */
+         key = retro_eventcount_prepare_wait(&worker->work);
+         if (worker->index < (size_t)retro_atomic_load_acquire_int(&pool->stop_from) &&
+               retro_atomic_load_acquire_int(&worker->parked) && !xe_job_ready(pool)) {
+            XE_JOB_PARK_HOOK(worker->index, 2);
+            retro_eventcount_commit_wait(&worker->work, key);
+         } else {
+            retro_eventcount_cancel_wait(&worker->work);
+         }
+      }
+      /* The notifier may already own this registration's count. */
+      if (retro_atomic_exchange_int(&worker->parked, 0))
+         retro_atomic_fetch_add_int(&pool->parked_count, -1);
    }
    if (pool->context_free) pool->context_free(pool->opaque, context);
+   retro_eventcount_thread_cleanup();
 #if XE_GPU_DRAW_STATS
    xe_draw_stats_leave(previous_role);
 #endif
@@ -161,15 +209,11 @@ xe_job_pool *xe_job_pool_new(size_t capacity, size_t payload_size,
    if (!pool) return NULL;
    pool->sequences = (retro_atomic_64_t *)malloc(capacity * sizeof(*pool->sequences));
    pool->payloads = (unsigned char *)malloc(capacity * stride);
-   pool->park_lock = slock_new();
-   pool->park_cond = scond_new();
-   if (!pool->sequences || !pool->payloads || !pool->park_lock || !pool->park_cond ||
+   if (!pool->sequences || !pool->payloads ||
          !retro_eventcount_init(&pool->space) ||
          !retro_eventcount_init(&pool->idle_event) ||
          !retro_eventcount_init(&pool->startup)) {
       /* No workers or constructed payloads exist on initialization failure. */
-      if (pool->park_cond) scond_free(pool->park_cond);
-      if (pool->park_lock) slock_free(pool->park_lock);
       retro_eventcount_free(&pool->space);
       retro_eventcount_free(&pool->idle_event);
       retro_eventcount_free(&pool->startup);
@@ -183,7 +227,7 @@ xe_job_pool *xe_job_pool_new(size_t capacity, size_t payload_size,
    retro_atomic_64_init(&pool->tail, 0);
    retro_atomic_int_init(&pool->outstanding, 0);
    retro_atomic_int_init(&pool->stop_from, INT_MAX);
-   retro_atomic_int_init(&pool->waiters, 0);
+   retro_atomic_int_init(&pool->parked_count, 0);
    retro_atomic_int_init(&pool->idle_requested, 0);
    for (i = 0; i < capacity; ++i) retro_atomic_64_init(&pool->sequences[i], (int64_t)i);
    name_size = name ? strlen(name) : 0;
@@ -202,12 +246,12 @@ int xe_job_pool_set_threads(xe_job_pool *pool, size_t count)
    old_count = pool->count;
    if (count < pool->count) {
       retro_atomic_store_release_int(&pool->stop_from, (int)count);
-      slock_lock(pool->park_lock);
-      scond_broadcast(pool->park_cond);
-      slock_unlock(pool->park_lock);
+      for (i = count; i < pool->count; ++i)
+         retro_eventcount_notify(&pool->workers[i]->work);
       while (pool->count > count) {
          worker = pool->workers[--pool->count];
          sthread_join(worker->thread);
+         retro_eventcount_free(&worker->work);
          free(worker);
       }
       retro_atomic_store_release_int(&pool->stop_from, INT_MAX);
@@ -222,10 +266,14 @@ int xe_job_pool_set_threads(xe_job_pool *pool, size_t count)
       if (!worker) return 0;
       worker->pool = pool; worker->index = pool->count;
       retro_atomic_int_init(&worker->ready, 0);
+      retro_atomic_int_init(&worker->parked, 0);
+      if (!retro_eventcount_init(&worker->work)) { free(worker); return 0; }
       /* Preserve the existing shader compiler worker stack budget. */
       worker->thread = sthread_create_with_stack_size(xe_job_worker_run, worker,
             (size_t)4 * 1024 * 1024);
-      if (!worker->thread) { free(worker); return 0; }
+      if (!worker->thread) {
+         retro_eventcount_free(&worker->work); free(worker); return 0;
+      }
       pool->workers[pool->count++] = worker;
    }
    for (i = old_count; i < pool->count; ++i) {
@@ -317,6 +365,7 @@ void xe_job_pool_clear(xe_job_pool *pool)
       ++position;
    }
    pool->head = 0;
+   pool->wake_cursor = 0;
    retro_atomic_store_relaxed_64(&pool->tail, 0);
    for (i = 0; i < pool->capacity; ++i)
       retro_atomic_store_relaxed_64(&pool->sequences[i], (int64_t)i);
@@ -329,7 +378,6 @@ void xe_job_pool_free(xe_job_pool *pool)
    xe_job_pool_set_threads(pool, 0);
    xe_job_pool_clear(pool);
    free(pool->workers);
-   scond_free(pool->park_cond); slock_free(pool->park_lock);
    retro_eventcount_free(&pool->space); retro_eventcount_free(&pool->idle_event);
    retro_eventcount_free(&pool->startup);
    free((void *)pool->sequences); free(pool->payloads); free(pool);

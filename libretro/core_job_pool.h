@@ -33,6 +33,7 @@ int xe_job_pool_run_one(xe_job_pool *pool, void *context);
  * never access it afterward. Exactly one owner finishes each lease. */
 int xe_job_pool_finish(xe_job_pool *pool, uint64_t lease);
 int xe_job_pool_busy(xe_job_pool *pool);
+/* Producer/control owner only, including notify; no concurrent reconfiguration. */
 void xe_job_pool_notify(xe_job_pool *pool);
 void xe_job_pool_await(xe_job_pool *pool);
 /* Condition storage and pool outlive the wait. A queued job must clear pending
