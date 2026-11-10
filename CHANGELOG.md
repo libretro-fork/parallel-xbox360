@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fix standalone Linux queue tests after the draw-counter changes: resolve the sibling accounting header without requiring the repository root on the include path.
+
 - Add test-only Vulkan/D3D12 compilation and blocking-admission counters, instrumented translator tests and CI profile/export checks. Add nonblocking specialization admission that preserves request ownership on rejection. Normal builds omit the counters; renderer compilation waits and inaccurate stand-ins remain unresolved.
 
 - Make eliminating draw-path shader/PSO creation and compilation waits a top development priority. Require accurate ready fallbacks, nonblocking specialization and runtime zero-event coverage; explicitly record existing violations. This policy change does not fix the renderer yet.

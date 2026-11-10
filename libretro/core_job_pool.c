@@ -1,4 +1,4 @@
-#include "libretro/core_draw_stats.h"
+#include "core_draw_stats.h"
 #include "core_job_pool.h"
 #include <retro_atomic.h>
 #include <rthreads/retro_eventcount.h>
