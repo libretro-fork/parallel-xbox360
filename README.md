@@ -502,6 +502,8 @@ Shader loop, switch and debug-scope stacks use retained C89 frame pages instead 
 
 Transfer geometry uses one float4 rectangle instance (16 bytes) instead of six expanded float2 vertices (48 bytes), with six procedural vertices per instance in both Vulkan and D3D12. The existing CPU coordinate calculations and each backend's triangle order are preserved. Initialization builds the raw SPIR-V/native DXIL helper; no shader-language compiler is added. Final upload storage, pool growth and utility pipeline cache misses remain. See [transfer geometry checks and limits](tools/tests/transfer_geometry_results.txt); this is not evidence of eliminated shader stutter or faster gameplay.
 
+Generic transfer-shader work now includes a shared C89 runtime sample-address emitter with raw SPIR-V and native DXIL adapters. One test PSO handles changing scale and MSAA parameters across 147,448 records, including independent inverse inputs and bounds guards. It remains a validation kernel outside rendering; format conversion, ownership/host-depth semantics and prepared graphics-pipeline integration still need implementation. See [sample-address coverage](tools/tests/transfer_sample_results.txt).
+
 ### Draw-path contract instrumentation
 
 Developer builds can enable `XENIA_ENABLE_DRAW_STATS=ON` with CMake, or

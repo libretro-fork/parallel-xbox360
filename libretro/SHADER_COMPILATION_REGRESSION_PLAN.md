@@ -953,3 +953,16 @@ validation, coordinate-bit preservation and checked byte counts. This covers
 vertex equivalence, not complete transfer color/depth/stencil/MSAA images or
 retail frame tails. Remaining utility PSO/module misses on the command path are
 still violations; smaller uploads do not waive the ready accurate pipeline rule.
+
+Generic transfer addressing foundation (2026-11-10): shared C89 construction
+accepts runtime resolution scales, sample layouts and CPU-prepared reciprocals.
+Raw SPIR-V and native DXIL adapters preserve the different multiply-high result
+orders. Public GPU fixtures change metadata across147448 records per backend
+without recreating their sole module/PSO, and check independently supplied inverse
+coordinates, input/output bounds and padding. The original packed-coordinate
+selection failed on tested llvmpipe; the current shared bit-layout calculation
+passes the same corpus without an extra output store or relaxed oracle.
+This kernel is not integrated into rendering. Full transfer format/gamma/depth/
+stencil/host-depth semantics, raster sample images, prepared initialization tables,
+GPU/CPU ownership and lookup-only draw integration remain required. Do not call
+the utility path compliant or substitute this test for runtime draw-role gates.

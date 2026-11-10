@@ -1,0 +1,65 @@
+Runtime transfer sample-address foundation, 2026-11-10
+
+Scope: C89 shared emission, raw SPIR-V and native DXIL adapters, CPU metadata
+validation/preparation. NOT a complete generic ownership-transfer shader and NOT
+connected to rendering. Existing inline shader/PSO creation and waits remain.
+No gameplay speed, renderer GPU-cost or cold-play smoothness improvement claimed.
+
+Address rules preserve scale quotient/remainder,1x, native2x,2x on host samples0/3
+of4x, and guest4x sample bits. Dynamic division uses CPU-prepared reciprocals and
+unsigned multiply-high/correction; there is no shader int64 or variable division
+in the address recipe. Fixed record-bound guards in the SPIR-V test use division
+by constant record widths. Inverse test inputs are independent of forward output
+so paired mistakes cannot hide through a round-trip test. All arithmetic wraps
+as u32, matching the existing coordinate operations.
+
+CPU validation rejects zero scales, sample log2 outside0..2 and nonboolean
+native2 flags without modifying output. Caller still validates backend-specific
+resolution limits and buffer ownership. Emission borrows native IR IDs, adds no
+intermediate payload representation, and leaves output records unchanged on
+failure. Native writer arenas/output buffers retain their normal allocations;
+allocation-free emission glue is not a claim of an allocation-free compiler.
+
+Current checks:
+- MSVC /TC /W4 /WX; SDK anonymous-union warning excluded where needed.
+- GCC strict C89 with ASan/UBSan for CPU oracle and SPIR-V construction.
+- 49152 CPU cases across16x16 scales,3 sample layouts,2 native flags and32
+  edge/random coordinates;96 injected emission failures; invalid metadata.
+- SPIR-V Vulkan1.0 validation:1116-word compute fixture.
+- Microsoft DXIL validation:2664-byte native compute fixture.
+- NVIDIA RTX5090 Vulkan, llvmpipe20.1.2 Vulkan and D3D12 WARP each match147448
+  dynamic records across3 metadata replays with one module and PSO. Include
+  UINT32 boundaries, non-power-of-two scales, three large-divisor cases,
+  independent inverse layout/scale choices, deliberate over-dispatch, a shorter
+  input range and untouched output padding/tail records.
+- Valid SPIR-V and DXIL multiply-low mutations instead of multiply-high are
+  rejected at case33 with80000000 versus00000000 expected, proving adapter-order
+  failures are observable. Mutation modules still pass their binary validators.
+
+Failure investigation retained privately:
+The initial1129-word packed-coordinate selection module passed NVIDIA and WARP
+but failed llvmpipe at2x record16385, among42658 mismatching lanes. Disabling its
+disk cache did not resolve it. Adding an observable u2 intermediate store made
+that module pass; storing unrelated inputs/final output did not. No such store
+was added to the production adapter. The current shared integer bit-layout
+calculation passes the unchanged oracle/corpus on all three implementations.
+An equivalent bitfield-insert experiment also failed and was rejected. Original
+modules, disassembly, output logs and intermediate probes remain in the evidence
+directory. These observations do not identify a particular upstream fix.
+
+Repeat:
+ GPU_TESTS=1 sh tools/tests/run_transfer_sample_tests.sh
+ MSVC developer prompt, built native archive:
+ set SAMPLE_BUILD=build\native-msvc
+ set GPU_TESTS=1
+ call tools\tests\run_transfer_sample_tests.cmd
+GPU_TESTS controls Vulkan execution; Windows always runs WARP. Linux requires
+spirv-val. Transfer helper push CI includes software Vulkan and WARP. Full shader
+parent comparisons are separate; these tests are correctness, not timing gates.
+
+Remaining work: complete generic transfer format/host-depth/gamma/depth/stencil
+behavior; exact raster images at all MSAA mappings; bounded prepared family/PSO
+tables at initialization; nonblocking specialization ownership; live renderer
+integration and zero frame-critical creation/wait counters. Source/destination
+subpixel scaling conversion between different scale classes also belongs to the
+full transfer algorithm; the present helpers preserve supplied subpixel values.
