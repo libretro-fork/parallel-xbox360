@@ -523,3 +523,15 @@ nullable diagnostic sink preserves disassembly when requested; the existing
 shader-dump setting opts in before analysis. This avoids diagnostic text work
 on the cold shader path. Analysis containers and shader/driver compilation
 still allocate, and accurate nonblocking fallback coverage remains unfinished.
+
+Vulkan pipeline and texture-descriptor layout caches publish immutable native
+owners through an intrusive C89 cache using libretro-common pointer atomics.
+Ready lookups borrow those owners without the former layout mutex. GPU and
+compiler callers retain separate descriptor-input scratch; larger input growth
+discards expired records without copying. Publication races may create duplicate
+native layouts temporarily; losers destroy their own handles immediately.
+Published owners retire after compiler joins and native consumers, with pipeline
+layouts destroyed before descriptor layouts. The fixed bucket array does not
+limit the number of entries; layout misses still allocate native owners and
+may grow exclusive scratch. This is not allocation-free gameplay or a completed
+nonblocking shader fallback. See [layout checks](tools/tests/layout_ready_results.txt).

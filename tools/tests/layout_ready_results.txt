@@ -1,0 +1,99 @@
+Immutable ready-layout publication -- 2026-11-10
+Parent df65985c11407be33065ce7e8c856cfa50634dec
+
+Production change
+-----------------
+Remove the Vulkan layout mutex and both layout unordered_maps. A zero-initialized
+256-bucket intrusive C89 cache publishes fully constructed immutable owners with
+libretro-common pointer CAS/acquire operations. Exact64-bit identity is checked
+in collision chains. No pending entry is installed, no compilation is dispatched
+by the cache, and ready hits allocate/copy nothing. There is no entry-count cap.
+A CAS loser scans only prefixes appended since its last attempt. Publishers and
+borrowers must join before detach/reset; entries never move or unlink while live.
+Typed C++ owners are noncopyable. Native handles are not cast into payload keys.
+
+Different keys may create native layouts concurrently. Two creators of the same
+key may both create a native handle; one published owner wins, and losers destroy
+their own native handle and metadata immediately. This duplicate cold work is an
+explicit tradeoff for removing a draw's wait behind a compiler's layout mutex.
+Vulkan layout creation is not shader/PSO compilation; misses can still allocate
+and call the driver. This does not satisfy the complete draw-path contract yet.
+
+The former shared descriptor-binding vector becomes C89 exclusive high-water
+scratch: one GPU/paused owner plus one per compiler context. Synchronous Vulkan
+creation borrows the records; growth discards expired records without copying.
+Compiler context destruction frees its scratch. Context joins precede layout
+teardown, and pipeline layouts are destroyed before descriptor layouts, retaining
+the previous native-consumer ordering. Larger per-worker scratch can increase
+retained memory relative to the former single shared scratch. The two bucket
+arrays use4096 bytes on64-bit hosts, plus native owner records. No whole-game
+RSS or mid-game-allocation freedom is claimed. No logging or clocks are added.
+
+Count keys are explicitly encoded and checked before narrowing; oversized values
+cannot alias another entry. Existing descriptor-reuse keys keep their valid32-bit
+encoding. A queued specialization with no required full layout now fails before
+PSO creation instead of using its minimal placeholder layout.
+
+Validation
+----------
+- Full MSVC Release and stats-profile core builds, three jobs; release exports
+  no stats API, and the stats DLL passes bounded snapshot/negative-gate checks.
+- MSVC /TC /W4 /WX, Linux C89 ASan/UBSan and Linux ThreadSanitizer pass.
+  Initial TSan startup failed due to randomized address mapping, not a test race;
+  a per-process setarch -R run passed, as did final ordinary TSan runs. Preserve
+  the initial failure logs; no global ASLR/kernel settings were changed.
+- Eight publishers race32768 transient owners over128 forced-collision keys,
+  including zero. Losing owners are poisoned/freed immediately. A staged race
+  forces one CAS failure and newly appended-prefix retry. Held creation leaves
+  100000 independent ready hits usable. Joined detach frees exactly129 owners;
+  post-reset high-bit-key reuse works. No capacity wait or failed lookup is used
+  as a substitute for a valid ready owner.
+- Poisoned VkDescriptorSetLayoutBinding records have exact binding/type/count,
+  stage and null immutable-sampler fields. Count overflow/narrowing rejects
+  without changing output keys. Growth failure preserves old backing storage;
+  100000 below-high-water reuses make no scratch allocations.
+- Real Vulkan device smoke:32 descriptor layouts and16 pipeline layouts from
+  borrowed C89 records, followed by matching native destruction. No GPU commands
+  or waits; this is API acceptance, not rendered-image/native-consumer testing.
+-704 physical GPU numerical shaders,384 sampler cases, native publication and
+  draw-counter negative controls pass. Three failed-content open/close/deinit/
+  DLL-unload cycles pass. No frontend/game launch or installed DLL replacement.
+- Seven alternating/reverse shader pairs:80 WARP and768 physical Vulkan per-case
+  metrics, unchanged thresholds, zero alarms. All module profiles and8DXIL
+  binaries are byte-identical. Driver disk/internal coldness is not certified.
+  Frozen baseline binaries were prepared with df659 source before its commit;
+  retain the original manifest rather than relabeling its revision.
+
+Isolated ready-hit benchmark
+----------------------------
+C89 timing/scheduling compares identical C-ABI lookup boundaries against a private
+parent-style MSVC std::mutex/unordered_map reference. Native creation and all GPU
+work are excluded. Each thread performs100000 checked lookups; seven alternating
+and reverse-order pairs for64/1024/4096 keys at1/8 threads. Lookup-result checksums
+are checked after joins. These are component measurements, not gameplay speedups.
+
+Single-thread median milliseconds (parent-style -> ready cache):
+64 keys:1.1925 ->0.1525;1024:1.3415 ->0.1839;4096:1.4286 ->0.7105.
+Eight-thread batch medians:62.1628 ->0.1802;53.9325 ->0.2597;56.6118 ->0.8241.
+The large concurrent ratios describe an intentionally contended lookup fixture,
+not whole-renderer throughput. All per-case raw samples/maxima and reference
+source/build commands are retained with the evidence. Do not promote this result
+to cold-play acceptance or a claim about frame-time tails.
+
+Coverage limits / next work
+--------------------------
+No loaded-game equal-image/guest-progress replay, first-correct-frame test, real
+in-flight GPU-consumer destruction fault injection, full native creator OOM/error
+injection or native ARM/macOS/Android validation locally. CI now runs the new
+C89 tests; optional GPU_TESTS=1 requires an actual device. Existing ARM CI also
+exposed a shared shader-test runner hardcoding linux-x86_64; default selection
+now uses uname -m. This changes harness input selection, not runtime code or
+thresholds. Hosted native ARM result remains pending.
+
+This removes one artificial draw/compiler blocking edge. Shader translation,
+inline PSO creation, compiler/admission waits, lazy utilities and inaccurate
+stand-ins remain. Accurate ready fallback coverage is still required before
+renderer TryPush adoption. D3D12 has no matching command-processor layout mutex
+in this audited path; its native geometry DXIL cache mutex remains separate work.
+
+Evidence: C:/git/layout-ready-cache and delivered mailbox/evidence bundle.

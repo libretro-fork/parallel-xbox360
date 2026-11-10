@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Remove the Vulkan pipeline/texture-layout mutex and two mutable layout maps. Ready layouts use immutable C89 publication with libretro-common atomics; compiler workers retain separate descriptor scratch instead of sharing a vector. Destroy losing native owners immediately and release published layouts after creators join. Fail a specialization if its required full layout is unavailable. Shader compilation and its remaining draw-side waits are not eliminated yet. Fix native shader-test architecture detection on ARM.
+
 - Stop formatting and retaining microcode disassembly during normal shader analysis. Gather the same semantic metadata without a text sink; explicit shader dumping still captures disassembly. This removes diagnostic formatting and a full-text copy from cold shader work, but does not remove driver compilation or its remaining draw-side waits.
 
 - Fix standalone Linux queue tests after the draw-counter changes: resolve the sibling accounting header without requiring the repository root on the include path.

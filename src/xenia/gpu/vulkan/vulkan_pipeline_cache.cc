@@ -368,9 +368,9 @@ bool VulkanPipelineCache::Initialize() {
   creation_queue_.Initialize(
       "Vulkan Pipelines", this,
       [](void* opaque, const PipelineCreationArguments& creation_arguments,
-             SpirvShaderTranslator* worker_translator) {
+             CreationContext* context) {
         return static_cast<VulkanPipelineCache*>(opaque)->CreateQueuedPipeline(
-            creation_arguments, worker_translator);
+            creation_arguments, context);
       },
       [](void* opaque, const PipelineCreationArguments& creation_arguments,
              VkPipeline pipeline) {
@@ -378,8 +378,8 @@ bool VulkanPipelineCache::Initialize() {
             creation_arguments, pipeline, false);
       },
       [](void* opaque) {
-        return static_cast<VulkanPipelineCache*>(opaque)->guest_shader_cache_
-            .CreateWorkerTranslator().release();
+        return new CreationContext{static_cast<VulkanPipelineCache*>(opaque)->guest_shader_cache_
+            .CreateWorkerTranslator()};
       });
   if (cvars::vulkan_pipeline_creation_threads != 0) {
     size_t creation_thread_count;
@@ -601,7 +601,8 @@ bool VulkanPipelineCache::CanCreatePipelineAsync(bool has_pixel_shader) const {
 const VulkanPipelineCache::PipelineLayoutProvider*
 VulkanPipelineCache::GetGuestGraphicsPipelineLayout(
     const VulkanShader::VulkanTranslation* vertex_shader,
-    const VulkanShader::VulkanTranslation* pixel_shader) {
+    const VulkanShader::VulkanTranslation* pixel_shader,
+    xe_descriptor_scratch* bindings) {
   // Binding counts come from translation. A shader whose bindings aren't ready
   // yet (being translated on a creation thread) reports 0 - reading its binding
   // vectors here would race the creation thread populating them. That yields
@@ -625,7 +626,7 @@ VulkanPipelineCache::GetGuestGraphicsPipelineLayout(
   return command_processor_.GetPipelineLayout(
       pixel_shader ? texture_count(pixel_shader) : 0,
       pixel_shader ? sampler_count(pixel_shader) : 0,
-      texture_count(vertex_shader), sampler_count(vertex_shader));
+      texture_count(vertex_shader), sampler_count(vertex_shader), bindings);
 }
 
 bool VulkanPipelineCache::ConfigurePipeline(
@@ -872,12 +873,12 @@ void VulkanPipelineCache::AwaitPipelineCompletion(Pipeline* pipeline) {
 
 VkPipeline VulkanPipelineCache::CreateQueuedPipeline(
     const PipelineCreationArguments& creation_arguments,
-    SpirvShaderTranslator* worker_translator) {
+    CreationContext* context) {
   VkPipeline created_pipeline = VK_NULL_HANDLE;
   const char* failed_stage = nullptr;
   if (!EnsureShadersTranslated(creation_arguments.vertex_shader,
                                creation_arguments.pixel_shader,
-                               worker_translator)) {
+                               context ? context->translator.get() : nullptr)) {
     failed_stage = "shader translation";
   } else {
     // Async pipelines are created with a minimal (no-texture) layout on the
@@ -886,14 +887,17 @@ VkPipeline VulkanPipelineCache::CreateQueuedPipeline(
     // translated, compute the real layout before creating the real pipeline.
     // Idempotent when the layout was already real (real-VS placeholder path).
     const PipelineLayoutProvider* real_layout = GetGuestGraphicsPipelineLayout(
-        creation_arguments.vertex_shader, creation_arguments.pixel_shader);
-    if (real_layout) {
+        creation_arguments.vertex_shader, creation_arguments.pixel_shader,
+        context ? &context->bindings : nullptr);
+    if (!real_layout) {
+      failed_stage = "pipeline layout";
+    } else {
       retro_atomic_store_release_ptr(&creation_arguments.pipeline->second.pipeline_layout,
           const_cast<PipelineLayoutProvider*>(real_layout));
-    }
-    if (!EnsurePipelineCreated(creation_arguments, VK_NULL_HANDLE,
-                               VK_NULL_HANDLE, &created_pipeline)) {
-      failed_stage = "pipeline creation";
+      if (!EnsurePipelineCreated(creation_arguments, VK_NULL_HANDLE,
+                                 VK_NULL_HANDLE, &created_pipeline)) {
+        failed_stage = "pipeline creation";
+      }
     }
   }
   if (failed_stage) {

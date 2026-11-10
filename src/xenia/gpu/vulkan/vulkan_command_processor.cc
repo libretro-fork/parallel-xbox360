@@ -10,6 +10,7 @@
 #include "libretro/core_draw_stats.h"
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
 #include "libretro/core_vk_descriptor_image.h"
+#include "libretro/core_vk_layout_input.h"
 #include "libretro/core_gpu_downscale.h"
 
 #include <new>
@@ -1572,17 +1573,27 @@ void VulkanCommandProcessor::ShutdownContext() {
 
   ClearTransientDescriptorPools();
 
-  for (const auto& pipeline_layout_pair : pipeline_layouts_) {
-    dfn.vkDestroyPipelineLayout(
-        device, pipeline_layout_pair.second.GetPipelineLayout(), nullptr);
+  for (size_t bucket = 0; bucket < XE_READY_CACHE_BUCKETS; ++bucket) {
+    xe_ready_node* node = xe_ready_detach(&pipeline_layouts_, bucket);
+    while (node) {
+      xe_ready_node* next = node->next;
+      auto* layout = static_cast<PipelineLayout*>(node->value);
+      dfn.vkDestroyPipelineLayout(device, layout->GetPipelineLayout(), nullptr);
+      delete layout;
+      node = next;
+    }
   }
-  pipeline_layouts_.clear();
-  for (const auto& descriptor_set_layout_pair :
-       descriptor_set_layouts_textures_) {
-    dfn.vkDestroyDescriptorSetLayout(device, descriptor_set_layout_pair.second,
-                                     nullptr);
+  for (size_t bucket = 0; bucket < XE_READY_CACHE_BUCKETS; ++bucket) {
+    xe_ready_node* node = xe_ready_detach(&descriptor_set_layouts_textures_, bucket);
+    while (node) {
+      xe_ready_node* next = node->next;
+      auto* layout = static_cast<TextureLayout*>(node->value);
+      dfn.vkDestroyDescriptorSetLayout(device, layout->handle, nullptr);
+      delete layout;
+      node = next;
+    }
   }
-  descriptor_set_layouts_textures_.clear();
+  xe_descriptor_scratch_free(&descriptor_set_layout_bindings_);
 
   ui::vulkan::util::DestroyAndNullHandle(
       dfn.vkDestroyDescriptorSetLayout, device,
@@ -2938,91 +2949,67 @@ VkDescriptorSet VulkanCommandProcessor::AllocateSingleTransientDescriptor(
 }
 
 VkDescriptorSetLayout VulkanCommandProcessor::GetTextureDescriptorSetLayout(
-    bool is_vertex, size_t texture_count, size_t sampler_count) {
-  size_t binding_count = texture_count + sampler_count;
-  if (!binding_count) {
-    return descriptor_set_layout_empty_;
-  }
-
-  TextureDescriptorSetLayoutKey texture_descriptor_set_layout_key;
-  texture_descriptor_set_layout_key.texture_count = uint32_t(texture_count);
-  texture_descriptor_set_layout_key.sampler_count = uint32_t(sampler_count);
-  texture_descriptor_set_layout_key.is_vertex = uint32_t(is_vertex);
-  auto it_existing =
-      descriptor_set_layouts_textures_.find(texture_descriptor_set_layout_key);
-  if (it_existing != descriptor_set_layouts_textures_.end()) {
-    return it_existing->second;
-  }
+    bool is_vertex, size_t texture_count, size_t sampler_count,
+    xe_descriptor_scratch& bindings) {
+  uint64_t key;
+  if (!xe_vk_texture_layout_key(texture_count, sampler_count, is_vertex, &key))
+    return VK_NULL_HANDLE;
+  if (!texture_count && !sampler_count) return descriptor_set_layout_empty_;
+  if (xe_ready_node* found = xe_ready_find(&descriptor_set_layouts_textures_, key))
+    return static_cast<TextureLayout*>(found->value)->handle;
 
   const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
 
-  descriptor_set_layout_bindings_.clear();
-  descriptor_set_layout_bindings_.reserve(binding_count);
-  VkShaderStageFlags stage_flags =
-      is_vertex ? guest_shader_vertex_stages_ : VK_SHADER_STAGE_FRAGMENT_BIT;
-  for (size_t i = 0; i < texture_count; ++i) {
-    VkDescriptorSetLayoutBinding& descriptor_set_layout_binding =
-        descriptor_set_layout_bindings_.emplace_back();
-    descriptor_set_layout_binding.binding = uint32_t(i);
-    descriptor_set_layout_binding.descriptorType =
-        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    descriptor_set_layout_binding.descriptorCount = 1;
-    descriptor_set_layout_binding.stageFlags = stage_flags;
-  }
-  for (size_t i = 0; i < sampler_count; ++i) {
-    VkDescriptorSetLayoutBinding& descriptor_set_layout_binding =
-        descriptor_set_layout_bindings_.emplace_back();
-    descriptor_set_layout_binding.binding = uint32_t(texture_count + i);
-    descriptor_set_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-    descriptor_set_layout_binding.descriptorCount = 1;
-    descriptor_set_layout_binding.stageFlags = stage_flags;
-  }
+  VkDescriptorSetLayoutBinding* input = xe_vk_layout_bindings(
+      &bindings, texture_count, sampler_count,
+      is_vertex ? guest_shader_vertex_stages_ : VK_SHADER_STAGE_FRAGMENT_BIT);
+  if (!input) return VK_NULL_HANDLE;
+  auto* owner = new (std::nothrow) TextureLayout;
+  if (!owner) return VK_NULL_HANDLE;
   VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create_info;
   descriptor_set_layout_create_info.sType =
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   descriptor_set_layout_create_info.pNext = nullptr;
   descriptor_set_layout_create_info.flags = 0;
-  descriptor_set_layout_create_info.bindingCount = uint32_t(binding_count);
+  descriptor_set_layout_create_info.bindingCount = uint32_t(texture_count + sampler_count);
   descriptor_set_layout_create_info.pBindings =
-      descriptor_set_layout_bindings_.data();
+      input;
   VkDescriptorSetLayout texture_descriptor_set_layout;
   if (dfn.vkCreateDescriptorSetLayout(
           device, &descriptor_set_layout_create_info, nullptr,
           &texture_descriptor_set_layout) != VK_SUCCESS) {
+    delete owner;
     return VK_NULL_HANDLE;
   }
-  descriptor_set_layouts_textures_.emplace(texture_descriptor_set_layout_key,
-                                           texture_descriptor_set_layout);
-  return texture_descriptor_set_layout;
+  owner->handle = texture_descriptor_set_layout;
+  xe_ready_node_init(&owner->node, key, owner);
+  auto* published = static_cast<TextureLayout*>(
+      xe_ready_publish(&descriptor_set_layouts_textures_, &owner->node)->value);
+  if (published != owner) {
+    dfn.vkDestroyDescriptorSetLayout(device, owner->handle, nullptr);
+    delete owner;
+  }
+  return published->handle;
 }
 
 const VulkanPipelineCache::PipelineLayoutProvider*
 VulkanCommandProcessor::GetPipelineLayout(size_t texture_count_pixel,
                                           size_t sampler_count_pixel,
                                           size_t texture_count_vertex,
-                                          size_t sampler_count_vertex) {
-  PipelineLayoutKey pipeline_layout_key;
-  pipeline_layout_key.texture_count_pixel = uint16_t(texture_count_pixel);
-  pipeline_layout_key.sampler_count_pixel = uint16_t(sampler_count_pixel);
-  pipeline_layout_key.texture_count_vertex = uint16_t(texture_count_vertex);
-  pipeline_layout_key.sampler_count_vertex = uint16_t(sampler_count_vertex);
-  // Called from the draw thread and from pipeline creation threads (deferred
-  // translation), and reads/writes the shared layout maps +
-  // GetTextureDescriptor SetLayout (only called from here), so serialize the
-  // whole lookup+create.
-  std::lock_guard<std::mutex> layouts_lock(pipeline_layouts_mutex_);
-  {
-    auto it = pipeline_layouts_.find(pipeline_layout_key);
-    if (it != pipeline_layouts_.end()) {
-      return &it->second;
-    }
-  }
+                                          size_t sampler_count_vertex,
+                                          xe_descriptor_scratch* bindings) {
+  uint64_t key;
+  if (!xe_vk_pipeline_layout_key(texture_count_pixel, sampler_count_pixel,
+          texture_count_vertex, sampler_count_vertex, &key)) return nullptr;
+  if (xe_ready_node* found = xe_ready_find(&pipeline_layouts_, key))
+    return static_cast<PipelineLayout*>(found->value);
+  if (!bindings) bindings = &descriptor_set_layout_bindings_;
 
   VkDescriptorSetLayout descriptor_set_layout_textures_vertex =
       GetTextureDescriptorSetLayout(true, texture_count_vertex,
-                                    sampler_count_vertex);
+                                    sampler_count_vertex, *bindings);
   if (descriptor_set_layout_textures_vertex == VK_NULL_HANDLE) {
     XELOGE(
         "Failed to obtain a Vulkan descriptor set layout for {} sampled images "
@@ -3032,7 +3019,7 @@ VulkanCommandProcessor::GetPipelineLayout(size_t texture_count_pixel,
   }
   VkDescriptorSetLayout descriptor_set_layout_textures_pixel =
       GetTextureDescriptorSetLayout(false, texture_count_pixel,
-                                    sampler_count_pixel);
+                                    sampler_count_pixel, *bindings);
   if (descriptor_set_layout_textures_pixel == VK_NULL_HANDLE) {
     XELOGE(
         "Failed to obtain a Vulkan descriptor set layout for {} sampled images "
@@ -3078,13 +3065,20 @@ VulkanCommandProcessor::GetPipelineLayout(size_t texture_count_pixel,
         texture_count_pixel, texture_count_vertex);
     return nullptr;
   }
-  auto emplaced_pair = pipeline_layouts_.emplace(
-      std::piecewise_construct, std::forward_as_tuple(pipeline_layout_key),
-      std::forward_as_tuple(pipeline_layout,
-                            descriptor_set_layout_textures_vertex,
-                            descriptor_set_layout_textures_pixel));
-  // unordered_map insertion doesn't invalidate element references.
-  return &emplaced_pair.first->second;
+  auto* owner = new (std::nothrow) PipelineLayout(pipeline_layout,
+      descriptor_set_layout_textures_vertex, descriptor_set_layout_textures_pixel);
+  if (!owner) {
+    dfn.vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+    return nullptr;
+  }
+  xe_ready_node_init(&owner->node, key, owner);
+  auto* published = static_cast<PipelineLayout*>(
+      xe_ready_publish(&pipeline_layouts_, &owner->node)->value);
+  if (published != owner) {
+    dfn.vkDestroyPipelineLayout(device, owner->GetPipelineLayout(), nullptr);
+    delete owner;
+  }
+  return published;
 }
 
 VulkanCommandProcessor::ScratchBufferAcquisition
@@ -6911,12 +6905,11 @@ uint32_t VulkanCommandProcessor::WriteTransientTextureBindings(
   if (!texture_count && !sampler_count) {
     return 0;
   }
-  TextureDescriptorSetLayoutKey texture_descriptor_set_layout_key;
-  texture_descriptor_set_layout_key.texture_count = texture_count;
-  texture_descriptor_set_layout_key.sampler_count = sampler_count;
-  texture_descriptor_set_layout_key.is_vertex = uint32_t(is_vertex);
+  uint64_t texture_descriptor_set_layout_key;
+  if (!xe_vk_texture_layout_key(texture_count, sampler_count, is_vertex,
+          &texture_descriptor_set_layout_key)) return 0;
   xe_descriptor_reuse_node* lease = xe_keyed_reuse_acquire(
-      &texture_transient_descriptors_, texture_descriptor_set_layout_key.key, frame_current_);
+      &texture_transient_descriptors_, texture_descriptor_set_layout_key, frame_current_);
   if (!lease) return 0;
   xe_keyed_reuse_scope lease_scope(&texture_transient_descriptors_);
   VkDescriptorSet texture_descriptor_set = (VkDescriptorSet)lease->handle;

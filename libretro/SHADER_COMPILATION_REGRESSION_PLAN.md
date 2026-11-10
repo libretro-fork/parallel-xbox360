@@ -727,3 +727,15 @@ threshold pairs show no regression and identical shader bytes; per-case median
 analysis/translation ratios are about0.887. This removes avoidable cold-path CPU
 work, not driver compilation or waits. No loaded-game/cold-frame acceptance or
 accurate ready fallback is claimed. See tools/tests/shader_analysis_text_results.txt.
+
+## Ready Vulkan layout ownership (2026-11-10)
+
+Remove the draw/compiler layout mutex, two mutable maps and shared binding-input
+vector. Fully built native owners publish into an immutable C89 cache; workers
+retain exclusive high-water scratch. Hits do not wait behind native creation.
+Losing creators destroy duplicate handles, and joined teardown preserves pipeline-
+before-descriptor destruction. A missing full layout now fails specialization
+before PSO creation. Ownership/race/input/device checks and unchanged shader timing
+gates pass; see tools/tests/layout_ready_results.txt. This removes one blocking
+edge, not shader compilation or the need for an accurate ready fallback. Native
+creation, allocation and driver synchronization on misses remain unverified costs.

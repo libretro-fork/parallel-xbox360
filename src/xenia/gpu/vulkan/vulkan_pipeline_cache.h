@@ -17,9 +17,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
-#include <functional>
 #include <memory>
-#include <mutex>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -36,6 +34,7 @@
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/shader_storage.h"
 #include "xenia/gpu/spirv_shader_translator.h"
+#include "libretro/core_descriptor_scratch.h"
 #include "xenia/gpu/vulkan/vulkan_render_target_cache.h"
 #include "xenia/gpu/vulkan/vulkan_shader.h"
 #include "xenia/gpu/xenos.h"
@@ -328,10 +327,12 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
 
   // Guest graphics pipeline layout for the given (translated) shaders. Binding
   // counts come from translation, so untranslated shaders yield the minimal
-  // no-texture layout used by the interpreter placeholder. Thread-safe.
+  // no-texture layout used by the interpreter placeholder. Compiler callers
+  // supply exclusive bindings scratch; null is for the GPU/paused owner.
   const PipelineLayoutProvider* GetGuestGraphicsPipelineLayout(
       const VulkanShader::VulkanTranslation* vertex_shader,
-      const VulkanShader::VulkanTranslation* pixel_shader);
+      const VulkanShader::VulkanTranslation* pixel_shader,
+      xe_descriptor_scratch* bindings = nullptr);
 
   void WritePipelineRenderTargetDescription(
       reg::RB_BLENDCONTROL blend_control, uint32_t write_mask,
@@ -508,15 +509,22 @@ class VulkanPipelineCache : public GuestSpirvShaderCache::Host {
   // Previously used pipeline, to avoid lookups if the state wasn't changed.
   std::pair<const PipelineDescription, Pipeline>* last_pipeline_ = nullptr;
 
+  // Each worker owns reusable translator and descriptor-layout scratch.
+  struct CreationContext {
+    std::unique_ptr<SpirvShaderTranslator> translator;
+    xe_descriptor_scratch bindings{};
+    ~CreationContext() { xe_descriptor_scratch_free(&bindings); }
+  };
+
   // Builds one queued pipeline on a creation thread. VK_NULL_HANDLE if it
   // failed.
   VkPipeline CreateQueuedPipeline(
       const PipelineCreationArguments& creation_arguments,
-      SpirvShaderTranslator* worker_translator);
+      CreationContext* context);
 
   // For asynchronous creation.
   PipelineCreationQueue<PipelineCreationArguments, VkPipeline,
-                        SpirvShaderTranslator>
+                        CreationContext>
       creation_queue_;
   // Deferred destruction of pipelines.
   // Pipelines are only destroyed after the GPU submission that might reference

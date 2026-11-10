@@ -12,14 +12,11 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <climits>
 #include <cstdint>
 #include <cstring>
 #include <deque>
-#include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -27,6 +24,7 @@
 #include <vector>
 
 #include "libretro/core_sampler_scratch.h"
+#include "libretro/core_ready_cache.h"
 #include "libretro/core_descriptor_scratch.h"
 #include "libretro/core_descriptor_reuse.h"
 #include "libretro/core_keyed_descriptor_reuse.h"
@@ -280,11 +278,14 @@ class VulkanCommandProcessor final : public CommandProcessor {
   // The returned reference is valid until a cache clear.
   VkDescriptorSetLayout GetTextureDescriptorSetLayout(bool is_vertex,
                                                       size_t texture_count,
-                                                      size_t sampler_count);
-  // The returned reference is valid until a cache clear.
+                                                      size_t sampler_count,
+                                                      xe_descriptor_scratch& bindings);
+  // Published owners are immutable. A worker must supply exclusive scratch;
+  // null selects GPU/paused-owner scratch. Owners survive until joined teardown.
   const VulkanPipelineCache::PipelineLayoutProvider* GetPipelineLayout(
       size_t texture_count_pixel, size_t sampler_count_pixel,
-      size_t texture_count_vertex, size_t sampler_count_vertex);
+      size_t texture_count_vertex, size_t sampler_count_vertex,
+      xe_descriptor_scratch* bindings = nullptr);
 
   // Returns a single temporary GPU-side buffer within a submission for tasks
   // like texture untiling and resolving. May push a buffer memory barrier into
@@ -409,57 +410,12 @@ class VulkanCommandProcessor final : public CommandProcessor {
     VkCommandBuffer buffer;
   };
 
-  union TextureDescriptorSetLayoutKey {
-    uint32_t key;
-    struct {
-      // If texture and sampler counts are both 0, use
-      // descriptor_set_layout_empty_ instead as these are owning references.
-      uint32_t texture_count : 16;
-      uint32_t sampler_count : 15;
-      uint32_t is_vertex : 1;
-    };
-
-    TextureDescriptorSetLayoutKey() : key(0) {
-      static_assert_size(*this, sizeof(key));
-    }
-
-    struct Hasher {
-      size_t operator()(const TextureDescriptorSetLayoutKey& key) const {
-        return std::hash<decltype(key.key)>{}(key.key);
-      }
-    };
-    bool operator==(const TextureDescriptorSetLayoutKey& other_key) const {
-      return key == other_key.key;
-    }
-    bool operator!=(const TextureDescriptorSetLayoutKey& other_key) const {
-      return !(*this == other_key);
-    }
-  };
-
-  union PipelineLayoutKey {
-    uint64_t key;
-    struct {
-      // Pixel textures in the low bits since those are varied much more
-      // commonly.
-      uint16_t texture_count_pixel;
-      uint16_t sampler_count_pixel;
-      uint16_t texture_count_vertex;
-      uint16_t sampler_count_vertex;
-    };
-
-    PipelineLayoutKey() : key(0) { static_assert_size(*this, sizeof(key)); }
-
-    struct Hasher {
-      size_t operator()(const PipelineLayoutKey& key) const {
-        return std::hash<decltype(key.key)>{}(key.key);
-      }
-    };
-    bool operator==(const PipelineLayoutKey& other_key) const {
-      return key == other_key.key;
-    }
-    bool operator!=(const PipelineLayoutKey& other_key) const {
-      return !(*this == other_key);
-    }
+  struct TextureLayout {
+    TextureLayout() = default;
+    TextureLayout(const TextureLayout&) = delete;
+    TextureLayout& operator=(const TextureLayout&) = delete;
+    xe_ready_node node{};
+    VkDescriptorSetLayout handle = VK_NULL_HANDLE;
   };
 
   class PipelineLayout : public VulkanPipelineCache::PipelineLayoutProvider {
@@ -473,6 +429,9 @@ class VulkanCommandProcessor final : public CommandProcessor {
               descriptor_set_layout_textures_vertex_ref),
           descriptor_set_layout_textures_pixel_ref_(
               descriptor_set_layout_textures_pixel_ref) {}
+    PipelineLayout(const PipelineLayout&) = delete;
+    PipelineLayout& operator=(const PipelineLayout&) = delete;
+    xe_ready_node node{};
     VkPipelineLayout GetPipelineLayout() const override {
       return pipeline_layout_;
     }
@@ -727,8 +686,8 @@ class VulkanCommandProcessor final : public CommandProcessor {
   // Final API records borrow nonmoving C89 bind pages through QueueBindSparse.
   xe_sparse_bind_queue sparse_binds_{};
 
-  // Temporary storage with reusable memory for creating descriptor set layouts.
-  std::vector<VkDescriptorSetLayoutBinding> descriptor_set_layout_bindings_;
+  // Exclusive GPU-owner layout input scratch. Compiler workers own theirs.
+  xe_descriptor_scratch descriptor_set_layout_bindings_{};
   // Temporary storage with reusable memory for writing image and sampler
   // descriptors.
   xe_descriptor_scratch descriptor_write_image_info_{};
@@ -744,17 +703,11 @@ class VulkanCommandProcessor final : public CommandProcessor {
   VkDescriptorSetLayout descriptor_set_layout_shared_memory_and_edram_ =
       VK_NULL_HANDLE;
 
-  // Guards the layout maps below - GetPipelineLayout is called both from the
-  // draw thread and from pipeline creation threads (for deferred translation).
-  std::mutex pipeline_layouts_mutex_;
-  // Descriptor set layouts are referenced by pipeline_layouts_.
-  std::unordered_map<TextureDescriptorSetLayoutKey, VkDescriptorSetLayout,
-                     TextureDescriptorSetLayoutKey::Hasher>
-      descriptor_set_layouts_textures_;
-  // Pipeline layouts are referenced by VulkanPipelineCache.
-  std::unordered_map<PipelineLayoutKey, PipelineLayout,
-                     PipelineLayoutKey::Hasher>
-      pipeline_layouts_;
+  // Fully constructed immutable owners, shared by the GPU and compiler workers.
+  // No pending entry can block a reader. Detach only after creators join and
+  // native consumers finish; pipeline layouts retire before descriptor layouts.
+  xe_ready_cache descriptor_set_layouts_textures_{};
+  xe_ready_cache pipeline_layouts_{};
 
   // No specific reason for 32768, just the "too much" descriptor count from
   // Direct3D 12 PIX warnings.

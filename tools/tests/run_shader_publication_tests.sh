@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-platform=${PLATFORM:-linux-x86_64}
+platform=${PLATFORM:-linux-$(uname -m)}
 libs="-pthread -ldl -lm -lrt"
 suffix=
 case $(uname -s) in

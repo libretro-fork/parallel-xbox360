@@ -1554,3 +1554,14 @@ They check public analysis metadata, untouched caller scratch, empty quiet text,
 exact emitted SPIR-V and shader-dump opt-in. `ANALYSIS_TEXT_BUILD` selects the
 MSVC core build; shell tests reuse the normal Make link inputs. These checks
 do not certify runtime fallback accuracy or gameplay frame-time tails.
+
+`run_layout_ready_tests.cmd` / `.sh` check the production C89 immutable cache and
+borrowed Vulkan layout records. Eight publishers race32768 owners across128
+forced-collision keys; losing owners are freed immediately. A deterministic CAS
+race verifies newly inserted prefixes, and held creation leaves unrelated ready
+lookups usable. Joined reset, high-bit/zero keys, count bounds, poisoned records,
+growth failure and100000 high-water scratch reuses are checked. Linux defaults
+to ASan/UBSan; `SANITIZER=-fsanitize=thread` selects TSan where supported.
+`GPU_TESTS=1` additionally requires an actual Vulkan device and checks32 native
+descriptor layouts and16 pipeline layouts from borrowed C89 records. This is
+API/ownership coverage, not a loaded-game image or cold-play smoothness test.
