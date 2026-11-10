@@ -1565,3 +1565,16 @@ to ASan/UBSan; `SANITIZER=-fsanitize=thread` selects TSan where supported.
 `GPU_TESTS=1` additionally requires an actual Vulkan device and checks32 native
 descriptor layouts and16 pipeline layouts from borrowed C89 records. This is
 API/ownership coverage, not a loaded-game image or cold-play smoothness test.
+
+
+`run_ready_owned_tests.cmd` / `.sh` test the production C89 resource-owner cache:
+borrowed identity, cached failure, allocation failure before emission, held
+success/failure publication races, 32768 concurrent queries and exact joined
+reset/disposal. Linux defaults to ASan/UBSan; `SANITIZER=-fsanitize=thread` selects
+TSan. Use per-process ASLR control only when required by that runtime.
+`run_geometry_owned_tests.cmd` links the real native DXIL geometry emitter and
+checks 32 variants across three creators, byte-identical direct emission, 96000
+borrowed hits, cached failure and exact binary destruction. `READY_OWNED_BUILD`
+selects the MSVC library build. Cache-file tests additionally cover unaligned and
+3662-byte diagnostic payloads with short writes and EINTR, preserving byte length.
+These are component/ownership checks, not gameplay cold-stutter acceptance.

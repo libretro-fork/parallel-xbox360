@@ -11,10 +11,10 @@
 #define XENIA_GPU_D3D12_PIPELINE_CACHE_H_
 
 #include "libretro/core_pipeline_publication.h"
+#include "libretro/core_ready_owned.h"
 #include "libretro/core_pipeline_retire.h"
 #include <cstdio>
 #include <memory>
-#include <mutex>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -348,7 +348,7 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
     Shader::Translation* native_pixel_translation = nullptr;
     // Native DXIL for the built-in geometry shader (primitive expansion). When
     // set, the pipeline binds it as the geometry shader. Points into
-    // native_geometry_dxil_cache_ (never erased).
+    // native_geometry_dxil_cache_ (released after creators and pipelines retire).
     const XeDxilShaderBinary* native_geometry_dxil = nullptr;
     PipelineDescription description;
   };
@@ -445,8 +445,10 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   GuestSpirvShaderCache guest_shader_cache_;
   using OwnedNativeDxil = std::unique_ptr<XeDxilShaderBinary,
                                         void (*)(XeDxilShaderBinary*)>;
-  std::unordered_map<uint32_t, OwnedNativeDxil> native_geometry_dxil_cache_;
-  std::mutex native_geometry_dxil_cache_mutex_;
+  // Successful binaries and completed failures are immutable until joined clear.
+  xe_ready_cache native_geometry_dxil_cache_{};
+  static void* CreateNativeGeometryDxil(void*, uint64_t key) noexcept;
+  static void DestroyNativeGeometryDxil(void* binary) noexcept;
   // Native ROV depth-only shaders: the optional interpreter uses legacy linkage;
   // guest vertex/domain/geometry stages use the fixed shared linkage.
   XeDxilShaderBinary native_rov_depth_pixel_shaders_[3][2] = {};

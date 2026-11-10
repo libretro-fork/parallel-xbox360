@@ -739,3 +739,16 @@ before PSO creation. Ownership/race/input/device checks and unchanged shader tim
 gates pass; see tools/tests/layout_ready_results.txt. This removes one blocking
 edge, not shader compilation or the need for an accurate ready fallback. Native
 creation, allocation and driver synchronization on misses remain unverified costs.
+
+
+## Ready D3D12 geometry ownership (2026-11-10)
+
+Native geometry cache hits borrow immutable DXIL without the previous mutex/map.
+The C89 owner preserves completed failures, releases unpublished losers and
+retains published binaries through joined creators and pipeline teardown. Optional
+dumps forward borrowed bytes through VFS without word-length truncation. Ownership,
+real-emitter byte identity and WARP geometry execution are checked separately from
+procedural shader timing. This does not move geometry emission off the draw path,
+remove cold allocation, change vertex/pixel binding locks or implement accurate
+nonblocking fallback rendering. Those remain architectural failures to fix.
+See tools/tests/geometry_ready_results.txt for exact coverage and timing limits.

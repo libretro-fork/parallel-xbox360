@@ -200,9 +200,11 @@ static int validation_test(const char *path) {
 
 static int dump_test(void) {
    uint32_t words[17];
+   unsigned char binary[3663];
    char oversized[4097];
    unsigned i, opens;
    static const int faults[] = {1, 6, 8, 9, 10};
+   static const size_t byte_sizes[] = {1, 2, 3, 5, 67};
    for (i = 0; i < 17; ++i) words[i] = UINT32_C(0x12345678) + i;
    dump_phase = 1; dump_bad = dump_directory = 0;
    dump_source = (const unsigned char *)words;
@@ -221,6 +223,20 @@ static int dump_test(void) {
          "cache://dumps\\/s00000000.spv"
 #endif
          )) return 0;
+   dump_source = (const unsigned char *)words + 1;
+   for (i = 0; i < sizeof(byte_sizes) / sizeof(byte_sizes[0]); ++i) {
+      if (!xe_cache_file_dump_keyed_bytes("cache://dumps", "shader_geometry_", 5,
+            ".native_dxil.bin.geom", dump_source, byte_sizes[i]) ||
+            length != byte_sizes[i] || memcmp(storage, dump_source, byte_sizes[i]) || dump_bad)
+         return 0;
+   }
+   for (i = 0; i < sizeof(binary); ++i) binary[i] = (unsigned char)(i * 37u ^ (i >> 8));
+   dump_source = binary + 1;
+   interrupted = 1;
+   if (!xe_cache_file_dump_keyed_bytes("cache://dumps", "shader_geometry_", 7,
+         ".native_dxil.bin.geom", dump_source, 3662) || length != 3662 ||
+         memcmp(storage, dump_source, 3662) || dump_bad) return 0;
+   dump_source = (const unsigned char *)words;
    for (i = 0; i < sizeof(faults) / sizeof(faults[0]); ++i) {
       fault = faults[i];
       if (fault == 9) dump_directory = 0;
@@ -236,6 +252,9 @@ static int dump_test(void) {
        xe_cache_file_dump_keyed_words("cache://dumps", "s", 0, ".spv", NULL, 17) ||
        xe_cache_file_dump_keyed_words("cache://dumps", "s", 0, ".spv", words, 0) ||
        xe_cache_file_dump_keyed_words("cache://dumps", "s", 0, ".spv", words, SIZE_MAX) ||
+       xe_cache_file_dump_keyed_bytes("cache://dumps", "s", 0, ".dxil", words, SIZE_MAX) ||
+       xe_cache_file_dump_keyed_bytes("cache://dumps", "s", 0, ".dxil", NULL, 3) ||
+       xe_cache_file_dump_keyed_bytes("cache://dumps", "s", 0, ".dxil", words, 0) ||
        dump_opens != opens) return 0;
    dump_phase = 0;
    return 1;

@@ -68,16 +68,15 @@ __declspec(noinline)
 #elif defined(__GNUC__)
 __attribute__((noinline))
 #endif
-int xe_cache_file_dump_keyed_words(const char *directory, const char *prefix,
-      uint32_t key, const char *suffix, const uint32_t *words, size_t count)
+int xe_cache_file_dump_keyed_bytes(const char *directory, const char *prefix,
+      uint32_t key, const char *suffix, const void *bytes, size_t size)
 {
    char path[4096];
    static const char hex[] = "0123456789ABCDEF";
    size_t length, prefix_length, suffix_length, at, i;
    int ok;
    RFILE *file;
-   if (!directory || !*directory || !prefix || !suffix || !words || !count ||
-       count > SIZE_MAX / sizeof(*words)) return 0;
+   if (!directory || !*directory || !prefix || !suffix || !bytes || !size || size > INT64_MAX) return 0;
    length = strlen(directory);
    prefix_length = strlen(prefix);
    suffix_length = strlen(suffix);
@@ -95,9 +94,16 @@ int xe_cache_file_dump_keyed_words(const char *directory, const char *prefix,
    if (!path_mkdir(directory)) return 0;
    file = filestream_open(path, RETRO_VFS_FILE_ACCESS_WRITE, 0);
    if (!file) return 0;
-   ok = xe_cache_file_write(words, sizeof(*words), count, file) == count;
+   ok = xe_cache_file_write(bytes, 1, size, file) == size;
    if (filestream_close(file) != 0) ok = 0;
    return ok;
+}
+
+int xe_cache_file_dump_keyed_words(const char *directory, const char *prefix,
+      uint32_t key, const char *suffix, const uint32_t *words, size_t count) {
+   if (count > SIZE_MAX / sizeof(*words)) return 0;
+   return xe_cache_file_dump_keyed_bytes(directory, prefix, key, suffix,
+         words, count * sizeof(*words));
 }
 
 int xe_cache_file_write_be32(RFILE *file, const uint32_t *words, size_t count) {

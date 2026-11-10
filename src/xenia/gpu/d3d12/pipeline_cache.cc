@@ -11,6 +11,8 @@
 #include "xenia/gpu/d3d12/pipeline_cache.h"
 
 #include <chrono>
+#include <mutex>
+#include "libretro/core_cache_file.h"
 #include <cmath>
 #include <cstring>
 #include <new>
@@ -207,6 +209,7 @@ void PipelineCache::Shutdown() {
     delete it.second;
   }
   pipelines_.clear();
+  xe_ready_owned_clear(&native_geometry_dxil_cache_, &DestroyNativeGeometryDxil);
   COUNT_profile_set("gpu/pipeline_cache/pipelines", 0);
 
   // Destroy all shaders.
@@ -821,11 +824,18 @@ SpirvShader* PipelineCache::GetGuestShader(uint64_t ucode_hash) {
 }
 
 const XeDxilShaderBinary* PipelineCache::GetGuestNativeGeometryDxil(GeometryShaderKey key) {
-  {
-    std::lock_guard<std::mutex> lock(native_geometry_dxil_cache_mutex_);
-    auto cached = native_geometry_dxil_cache_.find(key.key);
-    if (cached != native_geometry_dxil_cache_.end()) return cached->second.get();
-  }
+  return static_cast<const XeDxilShaderBinary*>(xe_ready_owned_get(
+      &native_geometry_dxil_cache_, key.key, &CreateNativeGeometryDxil,
+      &DestroyNativeGeometryDxil, nullptr));
+}
+
+void PipelineCache::DestroyNativeGeometryDxil(void* binary) noexcept {
+  xe_dxil_shader_binary_delete(static_cast<XeDxilShaderBinary*>(binary));
+}
+
+void* PipelineCache::CreateNativeGeometryDxil(void*, uint64_t raw_key) noexcept {
+  GeometryShaderKey key;
+  key.key = uint32_t(raw_key);
   XeDxilGeometryOptions options = {};
   options.type = uint32_t(key.type);
   options.interpolators = key.interpolator_count;
@@ -839,16 +849,24 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeGeometryDxil(GeometryShad
   XE_DRAW_EVENT(XE_DRAW_UTILITY_PIPELINE, XE_DRAW_TRANSLATE);
   OwnedNativeDxil binary(xe_dxil_build_geometry_owned(&options),&xe_dxil_shader_binary_delete);
   if (binary && !cvars::dump_shaders.empty()) {
-    std::filesystem::path dir = std::filesystem::absolute(cvars::dump_shaders);
-    std::filesystem::create_directories(dir);
-    auto path = dir / fmt::format("shader_geometry_{:08X}.native_dxil.bin.geom",key.key);
-    if (FILE* file = filesystem::OpenFile(path,"wb")) {
-      fwrite(binary->data,1,binary->size,file); fclose(file);
+    // Optional diagnostics borrow the final immutable bytes through the VFS sink.
+    // Path conversion failure must not discard a successfully generated shader.
+    try {
+      xe_cache_file_dump_keyed_bytes(xe::path_to_utf8(cvars::dump_shaders).c_str(),
+          "shader_geometry_", key.key, ".native_dxil.bin.geom",
+          binary->data, binary->size);
+    } catch (...) {
+      // Only diagnostic path conversion may throw; the emitter itself is C89.
     }
   }
-  if (!binary) XELOGW("native_dxil: geometry generation failed (key {:08X})",key.key);
-  std::lock_guard<std::mutex> lock(native_geometry_dxil_cache_mutex_);
-  return native_geometry_dxil_cache_.try_emplace(key.key,std::move(binary)).first->second.get();
+  if (!binary) {
+    try {
+      XELOGW("native_dxil: geometry generation failed (key {:08X})",key.key);
+    } catch (...) {
+      // Diagnostic callbacks cannot unwind through the C89 resource owner.
+    }
+  }
+  return binary.release();
 }
 
 bool PipelineCache::BuildNativePipelineDxil(

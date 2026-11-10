@@ -1,0 +1,51 @@
+D3D12 native geometry ready ownership — 2026-11-10
+
+Production change
+- Replace the geometry mutex/map with the C89 immutable owner cache, using
+  libretro-common atomics. Ready hits return the same borrowed final DXIL pointer.
+- Cache completed failures. Allocate metadata before invoking the creator;
+  publication losers destroy only their own unpublished binary/node.
+- Join compiler workers and retire pipeline descriptions before clearing owners.
+- Preserve the existing geometry key/options and emitted bytes. Do not alter
+  persistent cache schemas, shader defaults, compilation gates or fallback rules.
+- Optional dumps use VFS with the exact borrowed byte count. DXIL containers are
+  not assumed word-sized; no staging payload or truncating word cast is added.
+
+Local correctness
+PASS: full MSVC release and separate draw-stats core builds, three build jobs.
+PASS: strict MSVC C89 owner/cache tests; Linux ASan/UBSan and TSan ownership tests.
+      Initial TSan mapping failure retained; per-process setarch -R run passed.
+PASS: fake-resource identity, cached failures, node allocation failure before
+      emission, held success/failure winner races, 32768 concurrent queries,
+      exact joined destruction and repeated reset.
+PASS: 32 real native geometry variants across three creators; emitted bytes match
+      independent direct emission; 96000 borrowed hits; cached failure/disposal.
+PASS: 12 D3D12 WARP geometry stream-output execution cases and attributes.
+PASS: VFS short/EINTR transfers, unaligned spans and exact 3662-byte payload;
+      real cache-reader bridge repair/reopen/split-record persistence.
+PASS: native pipeline publication and draw-contract/translator negative controls;
+      19 direct driver sites accounted for. Normal DLL has no stats exports;
+      instrumented DLL rejects injected critical events with bounded snapshot.
+PASS: 704 actual guest numerical shaders and 384 production sampling cases on
+      NVIDIA GeForce RTX 5090. Three real failed-content close/deinit/unload cycles.
+
+Limitations
+The component tests do not establish correct generic fallback rendering or
+loaded-game frame-time behavior. Geometry misses still allocate/emit. Duplicate
+cold emission under a publication race remains possible. Vertex/pixel binding
+mutexes, draw-side translation/module/PSO creation, blocking queue admission,
+compilation waits and inaccurate stand-ins remain unresolved architectural debt.
+The fake failed-content unload check does not replace sustained gameplay unload.
+Driver caches are not certified cold. No user caches/core/game were replaced.
+Procedural shader timings do not exercise the D3D12 geometry-cache hit path and
+must not be represented as a measured gameplay speedup from this change.
+
+Matched procedural timing
+PASS: seven alternating/reverse parent/candidate pairs; exact committed parent
+59687b747 production sources rebuilt at identical paths/flags before candidate.
+80 WARP and 768 hardware Vulkan case metrics: zero unchanged-threshold alarms.
+All SPIR-V profile payloads and eight independent DXIL payloads are byte-identical.
+Raw wall/process-CPU samples, environment/cache manifests, exact source hashes
+and all initial fixture failures are retained in the delivered evidence bundle.
+These fixtures do not instantiate the changed D3D12 geometry cache and therefore
+show compatibility/no detected procedural regression, not its measured speedup.

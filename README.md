@@ -535,3 +535,14 @@ layouts destroyed before descriptor layouts. The fixed bucket array does not
 limit the number of entries; layout misses still allocate native owners and
 may grow exclusive scratch. This is not allocation-free gameplay or a completed
 nonblocking shader fallback. See [layout checks](tools/tests/layout_ready_results.txt).
+
+
+D3D12 native geometry DXIL uses the same immutable publication mechanism with a
+C89 resource owner. Ready hits borrow the published binary directly, including
+cached failed generation, without the former geometry mutex/map or a payload
+copy. Racing cold creators may still emit duplicate binaries; losers release
+theirs and all published resources survive until compiler joins and pipeline
+teardown. A cold key still allocates metadata and emits DXIL. Vertex/pixel
+binding locks, draw-side compilation and accurate ready fallback coverage remain
+unfinished. Optional geometry dumps use VFS and preserve the exact binary length,
+which need not be divisible by four. See [ownership checks](tools/tests/geometry_ready_results.txt).

@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Remove the D3D12 native geometry-cache mutex and mutable map. Ready lookups borrow immutable DXIL through a C89 owner cache; failed generation remains cached, publication losers release their binaries and joined shutdown releases published owners. Optional geometry dumps write exact borrowed bytes through VFS, including non-word-sized containers. Cold generation and remaining draw-path compilation waits are not eliminated.
+
 - Fix package-type probing with position-returning VFS seeks. Accept the requested nonzero position or legacy zero success, while rejecting seek failures and inconsistent positive positions.
 
 - Fix unmapped VFS reads at nonzero offsets. Successful seeks returning the new position were incorrectly treated as failures, preventing bounded shader/pipeline-cache record reads and other ranged file transfers.

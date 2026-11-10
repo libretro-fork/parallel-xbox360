@@ -15,8 +15,11 @@ size_t xe_cache_file_read(void *out, size_t size, size_t count, RFILE *file);
  * A failed read must not be treated as permission to replace a cache. */
 int xe_cache_file_read_header(RFILE *file, void *out, size_t size);
 size_t xe_cache_file_write(const void *data, size_t size, size_t count, RFILE *file);
-/* Optional diagnostic sink: checked path, exact borrowed word transfer, no
- * endian conversion or payload staging. Relative directories stay relative. */
+/* Optional diagnostic sinks: checked path, exact borrowed transfer, no endian
+ * conversion or payload staging. Relative directories stay relative. DXIL
+ * containers may end between words; the byte API preserves their full tail. */
+int xe_cache_file_dump_keyed_bytes(const char *directory, const char *prefix,
+      uint32_t key, const char *suffix, const void *bytes, size_t size);
 int xe_cache_file_dump_keyed_words(const char *directory, const char *prefix,
       uint32_t key, const char *suffix, const uint32_t *words, size_t count);
 /* Encode host words to persistent guest-endian bytes using fixed scratch. */
