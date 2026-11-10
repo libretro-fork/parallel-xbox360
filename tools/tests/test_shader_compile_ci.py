@@ -14,6 +14,82 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def raw_program_samples(self):
+        keys={("raw_program."+x,0) for x in ("emit","module","compute_pso","compute_pso_warm")}
+        keys.update(("raw_program.submit_complete",i) for i in range(3))
+        return {key:[.001]*7 for key in keys}
+
+    def test_new_raw_program_cost_has_no_fabricated_parent(self):
+        result=ci.compare_raw_program({"candidate":self.raw_program_samples()},7)
+        self.assertFalse(result["comparable"])
+        self.assertTrue(result["new_component_without_parent"])
+        self.assertEqual(result["cases"],[])
+        self.assertEqual(len(result["observed"]["candidate"]),7)
+
+    def test_existing_raw_program_removal_is_a_failure(self):
+        result=ci.compare_raw_program({"base":self.raw_program_samples()},7)
+        self.assertTrue(result["failure"])
+        self.assertTrue(result["missing_candidate"])
+        self.assertTrue(ci.compare_raw_program({"anchor":self.raw_program_samples()},7)["missing_candidate"])
+
+    def test_raw_program_regression_and_anchor_are_gated(self):
+        baseline=self.raw_program_samples();candidate=self.raw_program_samples()
+        candidate[("raw_program.compute_pso_warm",0)]=[.012]*7
+        result=ci.compare_raw_program({"base":baseline,"candidate":candidate,"anchor":baseline},7)
+        self.assertTrue(result["comparable"])
+        self.assertTrue(result["failure"])
+        self.assertTrue(any(r["failures"] for r in result["anchor_cases"]))
+        self.assertEqual(len(result["observed"]["candidate"][0]["outliers"]),5)
+
+    def test_uncontrolled_first_use_is_retained_and_never_claimed_verified(self):
+        baseline=self.raw_program_samples();candidate=self.raw_program_samples()
+        candidate[("raw_program.compute_pso",0)]=[.34]*7
+        result=ci.compare_raw_program({"base":baseline,"candidate":candidate},7)
+        self.assertIn("UNVERIFIED",result["first_use_cache_status"])
+        self.assertNotIn("raw_program.compute_pso",{r["stage"] for r in result["cases"]})
+        self.assertEqual(next(r["maximum"] for r in result["observed"]["candidate"] if r["stage"]=="raw_program.compute_pso"),.34)
+
+    def test_raw_program_missing_metric_or_samples_is_not_a_pass(self):
+        raw=self.raw_program_samples();raw.pop(("raw_program.emit",0))
+        with self.assertRaises(ValueError):ci.compare_raw_program({"candidate":raw},7)
+        with self.assertRaises(ValueError):ci.compare_raw_program({"candidate":self.raw_program_samples()},6)
+        with self.assertRaises(ValueError):ci.compare_raw_program({},3)
+
+    def test_raw_program_historical_absence_is_explicit(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(ci,"run") as run:
+            result=ci.validate_raw_program(Path(folder),Path(folder),Path(folder),Path(folder)/"log",{},"vulkan-software")
+            self.assertFalse(result["available"])
+            self.assertFalse(result["unit"])
+            self.assertFalse(result["vulkan_gpu"])
+            run.assert_not_called()
+
+    def test_raw_program_backend_coverage_and_build_identity(self):
+        for windows,backend,gpu in [(False,"vulkan-software",True),(True,"d3d12-warp",False),(True,"vulkan-hardware",True)]:
+            with tempfile.TemporaryDirectory() as folder, patch.object(ci,"WIN",windows),patch.object(ci,"run") as run:
+                root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True)
+                (tests/("run_alu_program_tests.cmd" if windows else "run_alu_program_tests.sh")).touch()
+                env={"preserved":"value"}
+                result=ci.validate_raw_program(root,root/"build",root/"out",root/"log",env,backend)
+                self.assertTrue(result["unit"]);self.assertEqual(result["vulkan_gpu"],gpu)
+                self.assertFalse(result["renderer_integration"])
+                self.assertFalse(result["full_guest_shader_coverage"])
+                actual=run.call_args.args[3]
+                self.assertEqual(actual["GPU_TESTS"],"1" if gpu else "0")
+                self.assertEqual(actual["preserved"],"value")
+                self.assertEqual(actual["ALU_PROGRAM_OUT"],str(root/"out/raw-program"))
+                self.assertEqual(actual["ALU_PROGRAM_FIXTURE"],str(ci.HERE/"core_alu_program_vulkan_test.c"))
+                self.assertEqual(actual["ALU_PROGRAM_BRIDGE"],str(ci.HERE/"alu_program_bridge.cc"))
+                if windows:self.assertEqual(actual["ALU_PROGRAM_BUILD"],str(root/"build"))
+                self.assertEqual(env,{"preserved":"value"})
+
+    def test_raw_program_failure_is_not_masked(self):
+        with tempfile.TemporaryDirectory() as folder,patch.object(ci,"WIN",False):
+            root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True)
+            (tests/"run_alu_program_tests.sh").touch()
+            with patch.object(ci,"run",side_effect=subprocess.CalledProcessError(1,"fixture")):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    ci.validate_raw_program(root,root,root,root/"log",{},"vulkan-software")
+
     def sample(self,values,stage="vulkan.vs_ps_pso"):
         return {(stage,0):values}
 

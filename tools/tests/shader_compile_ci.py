@@ -92,6 +92,36 @@ def cpu_build(source, build, out, logs, env):
     return out / "cpu"
 
 
+def validate_raw_program(source, build, out, log, env, backend):
+    """New component coverage; absent historical code is not a passing fixture."""
+    script=source / "tools/tests" / ("run_alu_program_tests.cmd" if WIN else "run_alu_program_tests.sh")
+    coverage=dict(available=script.is_file(),unit=False,vulkan_gpu=False,
+                  renderer_integration=False,full_guest_shader_coverage=False)
+    if not coverage["available"]:
+        coverage["reason"]="historical revision has no raw program kernel"
+        return coverage
+    fixture=env.copy()
+    fixture.update(ALU_PROGRAM_OUT=str(out / "raw-program"),
+                   ALU_PROGRAM_FIXTURE=str(HERE / "core_alu_program_vulkan_test.c"),
+                   ALU_PROGRAM_BRIDGE=str(HERE / "alu_program_bridge.cc"),
+                   GPU_TESTS="1" if backend.startswith("vulkan") else "0")
+    if fixture["GPU_TESTS"]=="1":
+        fixture["ALU_PROGRAM_FLAGS"]="/DXE_SHADER_COMPILE_BENCH" if WIN else "-DXE_SHADER_COMPILE_BENCH"
+        fixture["XE_SHADER_BENCH_CSV"]=str(out / "raw-program-prepare.csv")
+        fixture["XE_SHADER_BENCH_CPU_CSV"]=str(out / "raw-program-prepare-cpu.csv")
+    if WIN:
+        fixture["ALU_PROGRAM_BUILD"]=str(build)
+        fixture["FORWARD_FLOW_LINK_FLAGS"]="/CGTHREADS:"+str(JOBS)
+        command=[os.environ.get("COMSPEC","cmd.exe"),"/d","/c",script]
+    else:
+        command=["sh",script]
+    run(command,source,log,fixture,240)
+    coverage.update(unit=True,vulkan_gpu=fixture["GPU_TESTS"]=="1",corpus_version=1,timing_profile_version=2,
+                    pinned_fixture_sha256=file_sha256(HERE/"core_alu_program_vulkan_test.c"),
+                    pinned_bridge_sha256=file_sha256(HERE/"alu_program_bridge.cc"))
+    return coverage
+
+
 def prepare(source, out, results, backend, reuse_build=None):
     out.mkdir(parents=True,exist_ok=True)
     env = os.environ.copy()
@@ -113,6 +143,9 @@ def prepare(source, out, results, backend, reuse_build=None):
             run(["cmake", "--build", build, "--target", "xenia-libretro", "--parallel", JOBS], source, log, env)
         else:
             run(["make", "-j" + str(JOBS)], source, log, env)
+    program_coverage=validate_raw_program(source,build,out,log,env,backend)
+    (results/(source.name+"-"+out.parent.name+"-"+out.name+"-raw-program.json")).write_text(
+        json.dumps(program_coverage,indent=2),encoding="utf-8")
     env["XE_SHADER_BENCH_CSV"] = str(out / "prepare.csv")
     env["XE_SHADER_BENCH_NO_DUMP"] = "0"
     cpu = cpu_build(source, build, out, log, env)
@@ -180,6 +213,10 @@ def prepare(source, out, results, backend, reuse_build=None):
                      HERE / "core_shader_call_vulkan_test.c","-ldl","-o",float_exe],source,log,env)
             run([float_exe,out / "float-correctness"],source,log,env,120)
         result={"cpu": cpu, "pso": exe, "source": source, "out": out}
+        if program_coverage["vulkan_gpu"]:
+            result["raw_program"]=out / "raw-program/native" / ("test.exe" if WIN else "test")
+            result["raw_program_module"]=out / "raw-program/program.spv"
+            if not result["raw_program"].is_file():raise ValueError("raw program executable missing")
         if backend == "vulkan-hardware":
             for profile in ["rtz","dot","frac","mad","softfrac","partialmad","softdot"]:
                 result[profile]=out / profile
@@ -356,6 +393,33 @@ def spirv_manifest(directory):
     return result
 
 
+def compare_raw_program(raw, samples):
+    """Gate comparable program kernels; a newly added kernel has no old timing."""
+    if samples<5:raise ValueError("raw program needs at least five process pairs")
+    expected={("raw_program."+stage,0) for stage in ("emit","module","compute_pso","compute_pso_warm")}
+    expected.update(("raw_program.submit_complete",i) for i in range(3))
+    observed={}
+    for version,data in raw.items():
+        if set(data)!=expected or any(len(x)!=samples for x in data.values()):
+            raise ValueError("missing raw program case/sample: "+version)
+        observed[version]=[dict(stage=k[0],case=k[1],samples=len(v),
+            median=statistics.median(v),p95=percentile(v,.95),p99=percentile(v,.99),
+            maximum=max(v),outliers=sorted(enumerate(v),key=lambda x:x[1],reverse=True)[:5])
+            for k,v in sorted(data.items())]
+    first_use={("raw_program.compute_pso",0),("raw_program.submit_complete",0)}
+    controlled={v:{k:x for k,x in data.items() if k not in first_use} for v,data in raw.items()}
+    rows=compare(controlled["base"],controlled["candidate"],samples) if "base" in raw and "candidate" in raw else []
+    anchor=compare(controlled["anchor"],controlled["candidate"],samples) if "anchor" in raw and "candidate" in raw else []
+    removed=("base" in raw or "anchor" in raw) and "candidate" not in raw
+    return dict(comparable=bool(rows),new_component_without_parent="candidate" in raw and "base" not in raw,
+        missing_candidate=removed,cases=rows,anchor_cases=anchor,observed=observed,
+        failure=removed or any(r["failures"] for r in rows+anchor),
+        first_use_cache_status="UNVERIFIED: initial driver disk/internal state is not controlled",
+        first_use_observations_only=sorted(first_use),
+        controlled_condition="identical first PSO retained; explicit private application cache primed; submission0 completed",
+        scope="prototype emission/module and primed PSO/warm completion gates; not cold-play or pure GPU time")
+
+
 def run_comparison(args):
     work=Path(args.out).resolve();results=work/"results";results.mkdir(parents=True,exist_ok=True)
     if any(results.glob("*.csv")):
@@ -433,7 +497,7 @@ def run_comparison(args):
         precision="Windows process CPU accounting may quantize short intervals; zero is not zero work")
     manifest["clock_controls"]={version:"clock-checks/"+b["out"].parent.name+"-"+b["out"].name for version,b in builds.items()}
     manifest["prepared_binaries"]={version:{name:dict(sha256=file_sha256(b[name]),bytes=b[name].stat().st_size)
-        for name in ["cpu","pso","dxil","warp"] if name in b} for version,b in builds.items()}
+        for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module"] if name in b} for version,b in builds.items()}
     (results/"environment.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     ir={version:spirv_manifest(b["out"]) for version,b in builds.items()}
     for version,b in builds.items():
@@ -465,12 +529,30 @@ def run_comparison(args):
                     module=b["out"]/("vertex%d.dxil"%case)
                     run([b["dxil"],module,case],b["source"],log,e,60)
                     run([b["warp"],module,case,0,0,0,0],b["source"],log,e,60)
+            if "raw_program" in b:
+                program_env=e.copy()
+                program_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-raw-program.csv"))
+                program_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-raw-program-cpu.csv"))
+                program_env["XE_ALU_PROGRAM_DUMP"]=str(results/(version+"-raw-program-sample%d.spv"%sample))
+                run([b["raw_program"]],b["source"],log,program_env,120)
     raw={version:read_samples(results/(version+".csv")) for version in builds}
     for version,measurements in raw.items():
         if set(measurements)!=expected_keys(args.backend):
             raise ValueError("missing or substituted expected stage cases: "+version)
     cpu={version:read_samples(results/(version+"-cpu.csv")) for version in builds}
     rows,anchor_rows,cpu_rows=compare_timing_channels(raw,cpu,args.samples)
+    program_raw={v:read_samples(results/(v+"-raw-program.csv")) for v,b in builds.items() if "raw_program" in b}
+    program_report=compare_raw_program(program_raw,args.samples)
+    program_cpu={v:read_samples(results/(v+"-raw-program-cpu.csv")) for v in program_raw}
+    program_report["process_cpu_observed"]=compare_raw_program(program_cpu,args.samples)["observed"]
+    program_report["module_growth_failures"]=[]
+    if "candidate" in program_raw:
+        new_bytes=manifest["prepared_binaries"]["candidate"]["raw_program_module"]["bytes"]
+        for version in ("base","anchor"):
+            if version not in program_raw:continue
+            old_bytes=manifest["prepared_binaries"][version]["raw_program_module"]["bytes"]
+            if new_bytes-old_bytes>max(4096,old_bytes*.10):program_report["module_growth_failures"].append(version)
+        program_report["failure"]|=bool(program_report["module_growth_failures"])
     identities=[]
     if args.backend.startswith("vulkan"):
         for version in builds:
@@ -478,6 +560,13 @@ def run_comparison(args):
                 log=(results/(version+"-sample%d.log"%sample)).read_text(encoding="utf-8",errors="replace")
                 expected_reports=1+sum(profile in builds[version] for profile in ["rtz","dot","frac","mad","softfrac","partialmad","softdot"])
                 identities.append(vulkan_device_identity(log,expected_reports))
+                if "raw_program" in builds[version]:
+                    program_id=re.findall(r"^RAW_PROGRAM_DEVICE Vulkan .+$",log,re.MULTILINE)
+                    if len(program_id)!=1 or program_id[0].replace("RAW_PROGRAM_DEVICE","BENCH_DEVICE",1)!=identities[-1]:
+                        raise ValueError("raw program used missing/different device or driver")
+                    actual=results/(version+"-raw-program-sample%d.spv"%sample)
+                    if file_sha256(actual)!=manifest["prepared_binaries"][version]["raw_program_module"]["sha256"]:
+                        raise ValueError("raw program emitted a different module during timing")
         if len(set(identities))!=1:raise ValueError("different benchmark device/driver")
         software=any(x in identities[0].lower() for x in ["llvmpipe","lavapipe"])
         if software != (args.backend=="vulkan-software"):raise ValueError("wrong software/hardware device")
@@ -498,12 +587,17 @@ def run_comparison(args):
                 process_cpu_diagnostics=cpu_rows,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
-                success=not ir_failures and not alarm_failures and not any(x["failures"] for x in rows+anchor_rows),
+                raw_program=program_report,
+                success=not ir_failures and not alarm_failures and not program_report["failure"] and not any(x["failures"] for x in rows+anchor_rows),
                 self_check=bool(args.self_check))
     (results/"comparison.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     summary="# Shader compilation comparison\n\n%s -> %s (%s)\n\n"%(args.base,args.head,args.backend)
     summary+="**%s** across %d procedural stage/case metrics.\n\n"%("PASS" if report["success"] else "FAIL / investigate",len(rows))
     summary+="This is NOT cold-play gameplay signoff. Driver-cache status and missing anchor are recorded in environment.json.\n\n"
+    if program_report["observed"]:
+        status="paired primed-cache/warm-execution timing gates apply" if program_report["comparable"] else "no historical parent implementation; timing is UNCOMPARED"
+        if program_report["missing_candidate"]:status="candidate kernel removed: FAIL"
+        summary+="Raw program prototype: "+status+". First-use cache conditions remain UNVERIFIED; all first-use samples are retained. Rendering integration and full shader coverage remain absent.\n\n"
     summary+="Process CPU samples are supplementary diagnostics; elapsed-time thresholds remain authoritative.\n\n"
     summary+="Parallel workers can consume more process CPU than elapsed time; short Windows CPU intervals may quantize to zero.\n\n"
     summary+="|Stage|Case|Parent wall ms|Candidate wall ms|Parent CPU ms|Candidate CPU ms|Result|\n|---|---:|---:|---:|---:|---:|---|\n"

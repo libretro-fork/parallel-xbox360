@@ -794,3 +794,31 @@ used by rendering, but does not provide a ready accurate GPU fallback or remove
 any known draw-path compilation/wait violation. Component timings and unchanged
 shader/PSO comparisons are recorded in `tools/tests/alu_operand_results.txt`;
 retail image and cold-play acceptance remain unverified for this change.
+
+
+## Raw packed-program interpreter foundation (2026-11-10)
+
+A C89 raw SPIR-V validation kernel now executes bounded native EXEC_END clauses,
+including dependent masked temporary writes, coissued scalar/vector reads,
+scalar history and partial position exports. Descriptors borrow shared program
+and constant storage. Big-endian words are corrected by GPU loads, avoiding a
+host-normalized copy. Owners remain immutable through completion. Missing
+features fail transactionally; the module is not linked or selected by rendering.
+General CF/fetch, pixel arithmetic, stages/ROP and adequate execution throughput
+are still required before this can replace inaccurate stand-ins.
+
+The CI corpus pins the same packed fixtures/typed ABI bridge for each revision.
+It retains module sizes/hashes and separate emission/module/PSO/completion wall
+and process-CPU observations. Comparable parent and pinned-anchor kernels use
+paired primed-cache/warmed-execution timing gates; initial component absence is
+recorded as uncompared. First creation/completion retain their raw observations
+and unverified driver-cache status. An identical-binary control exposed an
+asymmetric first-create outlier; no cold gate is certified from that condition.
+Profiling keeps the first PSO alive and primes an explicit private in-memory
+pipeline cache before the comparable second creation. Each timed process must
+emit the exact prepared module bytes. The same thresholds apply; existing
+specialized-shader gates are unchanged.
+Deletion, missing samples/metrics, mismatched devices and ABI failures are not
+passes. No initialization or microkernel result certifies correct first draws,
+frame tails or the zero critical-thread compilation/wait requirement. Existing
+renderer violations remain unresolved; see `tools/tests/alu_program_results.txt`.

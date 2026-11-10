@@ -1,0 +1,92 @@
+Raw packed-program SPIR-V foundation, 2026-11-10
+Parent: 35e17e624d9f57abed5fb42cfb8deb8d0fbcfcae
+
+This emitter is built by validation tools, NOT linked/selected by the renderer.
+Draw-side compilation, inaccurate stand-ins and missing accurate fallback remain
+unresolved. No retail cold-play/FPS improvement or full shader accuracy is proved.
+
+Implementation:
+- C89 raw SPIR-V1.0, Shader capability, 32-bit integer math. No GLSL source/parser,
+  external instruction imports, ShaderInt64 or ShaderFloat64.
+- Independent ADD/MUL/MAD record module: RTZ, signed FTZ and SM3 zero semantics.
+- Packed ABI1 executes one native EXEC_END clause with at most six ALUs: vector
+  ADD/MUL/MAD; scalar ADD, ADD_CONST_0, RETAIN_PREV; 64 temps, checked constant
+  windows, coissued reads, dependent masks, scalar history and position exports.
+- Four borrowed bindings hold descriptors/initial temps, shared programs,
+  constants and outputs. GPU loads correct either program byte order. No host
+  normalized-code copy is required by this interface. Source resolution loads
+  the selected temp OR constant, rather than unconditionally loading both.
+- Input owners remain immutable through completion. This does not prove mutable
+  guest RAM may safely be borrowed without a shader-load snapshot.
+- Failure commits status only, leaving output payload/guards unchanged.
+- Initial register loads/private snapshots remain necessary. The 64-vec4 local
+  file is 1KiB/invocation; spilling and real VS/PS execution cost are unverified.
+- General CF/fetch/predication/relative/clamp/other ALUs, pixel RNE, other stages,
+  exports/ROP and sufficiently fast rendering still need implementation.
+
+Correctness/ownership:
+- MSVC /TC /O2 /W4 /WX and strict GCC C89; Linux ASan/UBSan and spirv-val Vulkan1.0.
+- Two emitted modules: 2875 arithmetic words, 6171 program words (24684 bytes).
+  Three functions each, two program loops. Float types/imports and 64-bit shader
+  types/capabilities are rejected by the structural C89 fixture.
+- 1000 exact same-owner rebuilds per module require zero further allocations;
+  initial allocation failure, overflow, recovery and exactly-once close pass.
+- RTX5090 driver32.0.16.2101 and llvmpipe LLVM20.1.2 execute 12280 arithmetic
+  records and 743 program invocations across three data replays.
+- 363 program results compare to the actual CPU interpreter; independent literal
+  anchors cover coissue, partial masks, overlap-to-one, zero export and history.
+  Finite bits/nonfinite classes are checked; exact NaN payloads are NOT proved.
+- Native/swapped/mixed shared programs, register63, zero/partial/full initial
+  registers, zero/full constants, constant windows, malformed counts/offsets,
+  unsupported/late failures, source immutability and output redzones pass.
+- A semantic negative stores vector results before acquiring the scalar source:
+  invocation10/fixture5 becomes4.0 instead of3.0. Both native/literal checks fail.
+- Normal runs create one PSO. Profiling creates two during initialization,
+  retaining the first and its primed private application cache for the second.
+  One active module/PSO remains unchanged across all three data submissions.
+
+CI and cache conditions:
+- One pinned C89 corpus/typed bridge is compiled against each actual revision;
+  descriptor ABI mismatch fails. WARP checks emitters only. Vulkan software/
+  opt-in hardware jobs run GPU/native correctness before timing.
+- 35 comparator tests cover absence, parent/anchor removal, bad/missing metrics,
+  samples, failure propagation, backend/build identity and first-use scope.
+- Seven alternating/reverse process pairs retain raw wall/CPU samples, size/hash,
+  median/p95/p99/max and outlier IDs. Every timed process dumps the actual module;
+  bytes must exactly match its revision's prepared module and device/driver.
+- Comparable kernels use existing thresholds for emission/module, primed-cache
+  creation and warmed completion. First creation/completion remain observations
+  with UNVERIFIED driver disk/internal cache state; they are NOT cold acceptance.
+  Vulkan manages cache contents: https://docs.vulkan.org/refpages/latest/refpages/source/VkPipelineCache.html
+- The introducing revision has no historical kernel cost: explicitly UNCOMPARED.
+  Later comparable parent/anchor kernels have warm timing and IR growth gates.
+- raw-final-self-check failed an asymmetric first-create control:342ms versus
+  mostly0.8ms, with343.75ms process CPU. All failed samples are retained. That
+  earlier run lacked per-process module captures and does not prove its cause.
+- raw-controlled-self-check passes768 established metrics and5 controlled raw
+  metrics. All14 captured modules match the prepared6171-word module. Frozen
+  source hashes remain identical. Existing shader limits were not loosened.
+- This is an IDENTICAL-BINARY HARNESS CONTROL, not revision acceptance or retail
+  smoothness signoff. Observed background work further limits local performance
+  acceptance; hosted first-parent comparisons are separate evidence.
+
+RTX5090 control candidate observations, milliseconds: median / p95 / maximum
+raw_program.compute_pso[0]: 3.5571 / 3.7216 / 3.7311
+raw_program.compute_pso_warm[0]: 0.0131 / 0.0149 / 0.0154
+raw_program.emit[0]: 0.0421 / 0.0424 / 0.0424
+raw_program.module[0]: 0.0143 / 0.0148 / 0.0149
+raw_program.submit_complete[0]: 1.5404 / 1.7549 / 1.8192
+raw_program.submit_complete[1]: 0.1138 / 0.1222 / 0.1223
+raw_program.submit_complete[2]: 0.1046 / 0.1205 / 0.1211
+
+These are synthetic fixture observations. Completion includes host/queue/driver/
+GPU service, not pure GPU time or game throughput. A development software run
+observed ~198ms first completion versus ~0.65ms later; cause is unestablished.
+Future integration must exercise fixed-pipeline first-use work during init,
+instead of moving it into a draw.
+
+Primary runtime sources/build lists are unchanged; actual Make/CMake inputs do
+not include the emitter. No installed core, saves, configuration or emulator
+cache was replaced/cleared. No cache default or existing limit is changed.
+Private evidence: C:/git/accurate-shader-fallback. Failed controls, GPU/native
+logs, negative source/log, source hashes and current control are preserved.

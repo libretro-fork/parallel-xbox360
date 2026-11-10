@@ -561,3 +561,16 @@ binary generation. Draw-side compilation, queue waits and accurate generic
 fallbacks remain unfinished; this is not cold-play acceptance.
 
 Compiler job notification uses a registered per-worker libretro-common eventcount instead of a shared parking mutex/condition. A submission selects at most one idle worker and retains the existing direct queue-slot lease; it does not copy or allocate a new payload. Worker teardown releases cached per-thread backend resources after its final wait. Required idle parking remains; this does not remove existing compilation/admission waits or establish cold-play smoothness. See [wakeup and lifetime checks](tools/tests/job_wake_results.txt).
+
+
+The C89 raw SPIR-V interpreter foundation in `libretro/core_alu_spv.c` is built
+only by validation tools, not linked or selected by the core. One fixed compute
+module consumes shared packed bytecode and constant views across repeated data
+submissions, including GPU-side endian correction. It currently handles one
+EXEC_END clause, three vector arithmetic opcodes, three scalar forms, direct
+registers/constants, masks and position exports. Other cases return explicit
+failure status without committing a position. This is not a rendering fallback:
+fetches, general control flow, pixel RNE arithmetic, other stages/exports and ROP
+are missing. Private per-invocation register storage may spill; rendering
+throughput and cold-play fluidity are unverified. See
+`tools/tests/alu_program_results.txt` for coverage and initialization costs.

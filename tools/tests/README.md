@@ -1626,3 +1626,42 @@ Only typed interpreter setup/export ownership is C++; packed programs, goldens
 and runtime source reading are C89. See `alu_operand_results.txt` for measured
 limits. These fixtures do not certify generic GPU fallback coverage or smooth
 cold gameplay.
+
+
+## Raw SPIR-V packed-program foundation
+
+`run_alu_program_tests.cmd` / `.sh` build the C89 emitters with allocator failure
+injection, overflow/recovery checks and 1000 exact same-owner rebuilds with no
+new allocations. The shell runner requires `spirv-val` and defaults to ASan/UBSan.
+`GPU_TESTS=1` also requires a Vulkan device and an already built native core. It
+runs the independent arithmetic corpus and 743 packed-program invocations,
+including 363 comparisons with the actual CPU interpreter plus literal coissue,
+mask and export goldens. Both little/big-endian and mixed-order shared programs
+are executed through one module/PSO across three data replays; source words and
+output guards are checked after GPU completion. Unsupported/bounds failures
+commit status only. This does not establish full shader or rendering coverage.
+
+Windows uses `ALU_PROGRAM_BUILD` (default common native-test build directory);
+`ALU_PROGRAM_OUT` selects private fixture output. `ALU_PROGRAM_FLAGS` enables
+optional test-only compiler flags. `-DXE_SHADER_COMPILE_BENCH` (MSVC `/D...`)
+records emission, module creation, first PSO creation, primed-cache PSO creation
+and submission-to-fence completion separately. Profiling retains the first PSO
+and its private in-memory application cache while creating the second. Normal
+correctness runs create one PSO. All data replays retain one active PSO; no
+pipeline is created inside the data loop. Completion includes host/queue service,
+not pure GPU time.
+
+The shader comparison workflow runs these checks before timing. Linux software
+Vulkan and opt-in hardware jobs run GPU coverage; Windows WARP runs emitter
+checks only. The timed C89 corpus/typed bridge are pinned to the harness checkout
+for both revisions through `ALU_PROGRAM_FIXTURE` / `ALU_PROGRAM_BRIDGE`; descriptor
+ABI mismatch is a failure. Comparable parent/anchor kernels use alternating
+process pairs and the existing timing/IR growth limits for emission/module,
+primed-cache PSO creation and warmed completion. Initial creation/completion are
+retained as observations with UNVERIFIED driver disk/internal cache conditions;
+they do not establish cold-init acceptance. Actual emitted bytes are captured
+and checked in every timed process. Missing metrics, sample
+counts, devices or a removed candidate fail. The introducing revision has no
+historical kernel: its initial cost is explicitly uncompared, not a fabricated
+parent pass. Retail cold-play, renderer integration and full semantics remain
+unverified. See `alu_program_results.txt`.

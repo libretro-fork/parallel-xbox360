@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Add a C89 raw SPIR-V packed-program validation kernel and GPU regressions for dependent masked registers, coissue, scalar history, partial position exports and borrowed bytecode in either byte order. Shader CI records its initialization/completion timings and gates comparable revisions. This foundation is not linked or selected by the renderer; draw-path compilation and accurate fallback coverage remain unfinished.
+
 - Fix absolute-value modifiers on constant operands in the CPU shader interpreter used for draw-extent estimation, including scalar constant/register instructions. Read selected source lanes from checked borrowed constant views instead of copying whole vectors.
 
 - Fix Linux regression harnesses to link the real DXIL binary deleter, end thread-local log borrows explicitly and quote XMA response-file paths correctly.

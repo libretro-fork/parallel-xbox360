@@ -33,6 +33,7 @@ static struct {
    FN(vkCreateDescriptorSetLayout); FN(vkDestroyDescriptorSetLayout);
    FN(vkCreatePipelineLayout); FN(vkDestroyPipelineLayout);
    FN(vkCreateComputePipelines); FN(vkDestroyPipeline);
+   FN(vkCreatePipelineCache); FN(vkDestroyPipelineCache);
    FN(vkCreateDescriptorPool); FN(vkDestroyDescriptorPool);
    FN(vkAllocateDescriptorSets); FN(vkUpdateDescriptorSets);
    FN(vkCreateCommandPool); FN(vkDestroyCommandPool); FN(vkAllocateCommandBuffers);
