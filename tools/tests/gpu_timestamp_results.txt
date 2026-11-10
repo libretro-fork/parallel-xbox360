@@ -1,0 +1,110 @@
+Test-only Vulkan queue timestamp protocol (2026-11-10)
+====================================================
+
+Purpose and scope
+-----------------
+Elapsed submission/fence time cannot identify GPU execution cost by itself.
+This test infrastructure adds an independent device-timestamp channel around
+the existing raw-program/control workload. No production source, shader emitter,
+rendering path, core option, cache default, frontend pacing or installed core is
+changed. The validation kernel remains unlinked from rendering; draw-path
+compilation/waits and complete accurate ready fallback coverage remain open.
+
+The public harness is used against each revision's own emitter and native
+reference implementation. Existing wall-time children stay uninstrumented.
+Separate GPU children run the same three primary replays and numerical checks
+in mixed/fault and companion valid-work modes. Original context suites still
+run during preparation, outside timed children. No game assets are needed.
+
+Ordered interval and lifetime
+----------------------------
+Only XE_SHADER_COMPILE_BENCH test executables accept XE_ALU_GPU_TIMING_CSV.
+One query pool, two binary semaphores and three reusable command buffers create:
+  start query -> GPU semaphore -> workload -> GPU semaphore -> end query.
+Three VkSubmitInfo batches use one vkQueueSubmit call and the existing final
+fence. The query-only batches use BOTTOM_OF_PIPE timestamps; all-command waits
+and semaphore signal scopes order the whole workload between them. This avoids
+assuming that two nearby pipeline-stage timestamps enclose all relevant work.
+Query readout occurs after the completed fence, with 64-bit results plus
+availability and no query WAIT_BIT. There is no extra CPU fence wait or queue-idle
+call; the32-byte query readback exists only in the test executable. Owners survive submission completion and are released
+through the common test cleanup path. Repetitions reuse storage and PSOs.
+
+The interval includes GPU semaphore handoff, queue scheduling, dispatch and
+memory-visibility work. It is not isolated ALU time and instrumentation may
+perturb GPU behavior. Do not subtract it from a wall interval measured in a
+different child and label the difference host overhead or preemption.
+
+Raw data and measurement controls
+--------------------------------
+Each seconds CSV has three cases. Its .ticks.csv sidecar preserves start/end
+counter values, both availability words, valid-bit width, timestampPeriod and
+a monotonic host interval enclosing submission/fence completion. Integer tick
+subtraction precedes conversion; widths36-64 and modular wrap are handled.
+Unavailable queries, unsupported widths, high invalid bits, nonfinite periods,
+impossible duration/envelope pairs and possible multiple wraps fail explicitly.
+Zero can mean quantization; calibration requires resolvable work. Failed
+decoding leaves the destination unchanged and never substitutes host time.
+
+CI verifies conversion, sample/case counts, timer and queue metadata, numerical
+outputs, exact module hashes and device/driver identities. Missing/duplicated
+records or lost components fail. First dispatch remains an observation without
+a certified cold driver-cache claim. Primed cases1/2 use the existing unchanged
+relative and absolute timing limits, including anchor checks when configured.
+Their absolute floors may not detect smaller GPU regressions; no limit was
+loosened, tightened or automatically promoted by introducing this channel.
+
+Preparation validates the instrument using eight dispatches with compute-write
+dependencies and a separate25ms CPU recording-delay probe. Recorded dispatch
+counts are checked. Warm scaling must be between2x and32x; delayed recording
+must retain a GPU interval between0.125x and8x the ordinary interval. These
+coarse integrity bounds catch gross undercounting or CPU-record-time sampling;
+they are not regression tolerances, linear-scaling claims or game benchmarks.
+Unstable/unresolvable controls remain unverified rather than becoming a pass.
+Calibration module bytes and raw records are retained too.
+
+Observed validation during development
+-------------------------------------
+MSVC C89 decoder and native preparation pass. The ordinary control suite still
+passes6971 GPU cases/6119 native references; standalone arithmetic passes12280.
+The instrumented primary suite passes743 cases/315 control native references.
+Linux C89 ASan/UBSan decoder, full ordinary software Vulkan execution and the
+instrumented primary suite also pass. Software controls with three llvmpipe
+workers scale4.23x and retain0.977x GPU time with the recording pause.
+The comparison/coverage guard suite has53 tests, including unavailable/missing
+ticks, invalid widths/periods, wraps, corrupt conversions, unsupported ordering,
+missing execution counts, loss of warm/anchor gates and bad integrity controls.
+
+On RTX5090 driver32.0.16.2101, a current control calibration measured roughly
+0.825ms per single interval and6.31ms for eight repetitions (7.65x). Inserting
+the CPU recording pause retained roughly0.828ms (1.004x). Raw-program calibration
+scaled4.24x, with fixed handoff overhead included. These are individual integrity
+observations, not paired performance gains. Device/driver/sample-specific paired
+results belong to the generated comparison artifacts, not a universal claim.
+
+An initial same-command timestamp probe measured implausibly short intervals
+(about1.8us) despite much longer batched work. Additional barriers or changing
+the starting stage alone did not establish a trustworthy measurement. Those
+probes are retained as rejected measurement experiments, not evidence that GPU
+work was cheap. The active protocol uses dependencies on both sides and must
+pass the scaling/recording controls. No cause is assigned to a particular
+driver implementation from these observations alone.
+
+Remaining limitations
+---------------------
+This measures Vulkan validation workloads only. D3D12/WARP runs the portable
+decoder unit but does not claim GPU timestamp execution. New-op context work,
+physical register pressure/spills, game shaders, image-equivalent retail work,
+frame-critical compilation counters and cold/warm gameplay tails are not
+established by this channel. Driver disk/internal cache coldness and a pinned
+last-known-good cross-game anchor remain unverified. No visible shader-stutter
+or frame-time improvement is certified. Release builds have no new diagnostics.
+
+Primary API references
+----------------------
+Vulkan timestamp scope and query result/availability layout:
+https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdWriteTimestamp.html
+https://docs.vulkan.org/refpages/latest/refpages/source/vkGetQueryPoolResults.html
+Queue timestamp width and semaphore/execution synchronization scopes:
+https://docs.vulkan.org/refpages/latest/refpages/source/VkQueueFamilyProperties.html
+https://docs.vulkan.org/spec/latest/chapters/synchronization.html

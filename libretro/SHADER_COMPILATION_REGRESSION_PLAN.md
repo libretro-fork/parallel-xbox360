@@ -913,3 +913,15 @@ the prior erroneous unused-source rejection. This repairs the supported subset;
 unsupported addressing, full ALUs/stages/fetch/ROP and resumable execution still
 prevent renderer use. Preserve mixed fault-work and valid-work costs separately;
 fewer source reads alone cannot certify higher GPU throughput or cold play.
+
+Separate test-only timestamp children now measure the raw Vulkan queue workload
+through an explicitly GPU-ordered start/work/end submission chain. Retain ticks,
+availability, width, period, host envelope, module/device identity and positive/
+negative measurement controls. Keep ordinary wall-time samples uninstrumented;
+do not subtract values from separate children to invent a host-overhead result.
+GPU intervals include dependency/dispatch/cache work and remain distinct from
+ALU cost, compiler latency and retail frame tails. First use and unsupported
+D3D12 timestamp coverage stay unverified. Existing gate limits are unchanged;
+passing their absolute floors does not exclude smaller regressions. Runtime
+draw-role creation/wait counters and correct renderer fallback coverage are
+still required; these timestamps do not resolve either architectural failure.

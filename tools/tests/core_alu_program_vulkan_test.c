@@ -10,6 +10,10 @@
 #ifdef XE_ALU_CONTROL_TEST
 #define XE_VK_TEST_UNIFORM
 #endif
+#ifdef XE_SHADER_COMPILE_BENCH
+#define XE_VK_TEST_GPU_TIMING
+#include "gpu_timestamp_measure.h"
+#endif
 #include "vulkan_test_context.h"
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"ALU GPU line %u\n",(unsigned)__LINE__);goto done;}}while(0)
 enum {RECORDS=259,OUTPUT_RECORDS=265,
@@ -230,6 +234,26 @@ static int capture_module(const xe_spv_binary *code) {
  if(fwrite(code->words,4,code->count,file)!=code->count){fclose(file);return 0;}
  return !fclose(file);
 }
+#ifdef XE_SHADER_COMPILE_BENCH
+static int gpu_timing_record(const char *path,const char *stage,unsigned which,
+ const uint64_t ticks[4],unsigned bits,float period,double host_seconds,double seconds) {
+ char raw_path[4096];size_t length=strlen(path);FILE *file;int good;
+ if(length>=sizeof(raw_path)-10)return 0;
+ memcpy(raw_path,path,length);memcpy(raw_path+length,".ticks.csv",11);
+ file=fopen(path,"ab");if(!file)return 0;
+ good=fprintf(file,"%s,%u,%.17g\n",stage,which,seconds)>=0;
+ if(fclose(file))good=0;
+ if(!good)return 0;
+ file=fopen(raw_path,"ab");if(!file)return 0;
+ good=fprintf(file,"%s,%u,%08lx%08lx,%08lx%08lx,%08lx%08lx,%08lx%08lx,%u,%.17g,%.17g\n",stage,which,
+  (unsigned long)(uint32_t)(ticks[0]>>32),(unsigned long)(uint32_t)ticks[0],
+  (unsigned long)(uint32_t)(ticks[2]>>32),(unsigned long)(uint32_t)ticks[2],
+  (unsigned long)(uint32_t)(ticks[1]>>32),(unsigned long)(uint32_t)ticks[1],
+  (unsigned long)(uint32_t)(ticks[3]>>32),(unsigned long)(uint32_t)ticks[3],bits,(double)period,host_seconds)>=0;
+ if(fclose(file))good=0;
+ return good;
+}
+#endif
 int main(void){
 #ifdef _WIN32
  HMODULE loader=LoadLibraryA("vulkan-1.dll");FARPROC entry;
@@ -245,6 +269,13 @@ int main(void){
 #ifdef XE_SHADER_COMPILE_BENCH
  VkPipelineCacheCreateInfo pipeline_cache_info={0};VkPipelineCache pipeline_cache=VK_NULL_HANDLE;
  VkPipeline first_pipeline=VK_NULL_HANDLE;
+ VkQueryPool query_pool=VK_NULL_HANDLE;VkQueryPoolCreateInfo query_info={0};
+ VkSemaphore timestamp_semaphore=VK_NULL_HANDLE;VkSemaphoreCreateInfo semaphore_info={0};
+ VkSemaphore completion_semaphore=VK_NULL_HANDLE;
+ VkCommandBuffer timestamp_command=VK_NULL_HANDLE,completion_command=VK_NULL_HANDLE;VkSubmitInfo gpu_submits[3]={{0},{0},{0}};
+ VkPipelineStageFlags gpu_wait_stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+ uint64_t gpu_ticks[4];double gpu_started=0,gpu_host_seconds=0,gpu_seconds;
+ unsigned gpu_dispatches=0;
 #endif
  VkDescriptorPoolSize pool_size[2]={{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,4},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1}};VkDescriptorPoolCreateInfo pool_info={0};VkDescriptorPool pool=VK_NULL_HANDLE;
  VkDescriptorSetAllocateInfo set_allocate={0};VkDescriptorSet set=VK_NULL_HANDLE;VkDescriptorBufferInfo infos[XE_PROGRAM_BINDINGS];VkWriteDescriptorSet writes[XE_PROGRAM_BINDINGS];
@@ -262,9 +293,19 @@ int main(void){
  unsigned modules=0,pipelines=0,cases=0,inactive=0,context_replays=XE_EXTRA_CASES;float priority=1.0f;int result=1;
  const char *timing_only=getenv("XE_ALU_PROGRAM_TIMING_ONLY");
  const char *valid_mode=getenv("XE_ALU_PROGRAM_VALID_WORK");
+ const char *gpu_path=getenv("XE_ALU_GPU_TIMING_CSV");
+ const char *gpu_repeat=getenv("XE_ALU_GPU_REPEAT"),*gpu_delay=getenv("XE_ALU_GPU_RECORD_DELAY");
+ unsigned gpu_repetitions=1;int gpu_record_delay=0;
+ int gpu_timing=gpu_path && *gpu_path;
  int valid_work=valid_mode && !strcmp(valid_mode,"1");
+ if(gpu_repeat && *gpu_repeat){CHECK(!strcmp(gpu_repeat,"1") || !strcmp(gpu_repeat,"8"));gpu_repetitions=!strcmp(gpu_repeat,"8")?8u:1u;}
+ if(gpu_delay && *gpu_delay){CHECK(!strcmp(gpu_delay,"0") || !strcmp(gpu_delay,"1"));gpu_record_delay=!strcmp(gpu_delay,"1");}
+ CHECK(gpu_timing || (gpu_repetitions==1 && !gpu_record_delay));
  if(timing_only && !strcmp(timing_only,"1"))context_replays=0;
  if(valid_work)context_replays=0;
+#ifndef XE_SHADER_COMPILE_BENCH
+ if(gpu_timing){fprintf(stderr,"GPU timing requires XE_SHADER_COMPILE_BENCH\n");goto done;}
+#endif
  (void)shader;CHECK(loader);XE_COMPILE_BEGIN();CHECK(XE_PROGRAM_BUILD(&code));
  XE_COMPILE_END(XE_PROGRAM_STAGE("emit"),0);
  CHECK(capture_module(&code));
@@ -278,7 +319,7 @@ int main(void){
  instance.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;instance.pApplicationInfo=&app;OK(g.vkCreateInstance(&instance,NULL,&g.instance));
  LOAD(vkDestroyInstance);LOAD(vkEnumeratePhysicalDevices);LOAD(vkGetPhysicalDeviceProperties);LOAD(vkGetPhysicalDeviceMemoryProperties);LOAD(vkGetPhysicalDeviceQueueFamilyProperties);LOAD(vkCreateDevice);
  count=8;OK(g.vkEnumeratePhysicalDevices(g.instance,&count,physical));CHECK(count);g.vkGetPhysicalDeviceProperties(physical[0],&properties);
- fprintf(stderr,"%s%s Vulkan vendor=%u device=%u driver=%u name=%s\n",XE_PROGRAM_DEVICE,valid_work?"_VALID":"",properties.vendorID,properties.deviceID,properties.driverVersion,properties.deviceName);
+ fprintf(stderr,"%s%s%s Vulkan vendor=%u device=%u driver=%u name=%s\n",XE_PROGRAM_DEVICE,gpu_timing?"_GPU":"",valid_work?"_VALID":"",properties.vendorID,properties.deviceID,properties.driverVersion,properties.deviceName);
  g.vkGetPhysicalDeviceMemoryProperties(physical[0],&g.memory);count=32;g.vkGetPhysicalDeviceQueueFamilyProperties(physical[0],&count,families);
  for(family=0;family<count;++family){if(families[family].queueFlags&VK_QUEUE_COMPUTE_BIT)break;}
  CHECK(family<count);
@@ -290,6 +331,19 @@ int main(void){
  LOAD(vkCreateComputePipelines);LOAD(vkDestroyPipeline);LOAD(vkCreateDescriptorPool);LOAD(vkDestroyDescriptorPool);LOAD(vkAllocateDescriptorSets);LOAD(vkUpdateDescriptorSets);
  LOAD(vkCreateCommandPool);LOAD(vkDestroyCommandPool);LOAD(vkAllocateCommandBuffers);LOAD(vkResetCommandPool);LOAD(vkBeginCommandBuffer);LOAD(vkEndCommandBuffer);
  LOAD(vkCmdPipelineBarrier);LOAD(vkCmdBindPipeline);LOAD(vkCmdBindDescriptorSets);LOAD(vkCmdDispatch);LOAD(vkCreateFence);LOAD(vkDestroyFence);LOAD(vkResetFences);LOAD(vkQueueSubmit);LOAD(vkWaitForFences);
+#ifdef XE_SHADER_COMPILE_BENCH
+ if(gpu_timing){
+  CHECK(families[family].timestampValidBits>=36 && families[family].timestampValidBits<=64 && properties.limits.timestampPeriod>0);
+  LOAD(vkCreateQueryPool);LOAD(vkDestroyQueryPool);LOAD(vkGetQueryPoolResults);LOAD(vkCmdResetQueryPool);LOAD(vkCmdWriteTimestamp);
+  LOAD(vkCreateSemaphore);LOAD(vkDestroySemaphore);
+  query_info.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;query_info.queryType=VK_QUERY_TYPE_TIMESTAMP;query_info.queryCount=2;
+  OK(g.vkCreateQueryPool(g.device,&query_info,NULL,&query_pool));
+  semaphore_info.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+  OK(g.vkCreateSemaphore(g.device,&semaphore_info,NULL,&timestamp_semaphore));
+  OK(g.vkCreateSemaphore(g.device,&semaphore_info,NULL,&completion_semaphore));
+  printf("GPU_TIMESTAMP queue=%u bits=%u period_ns=%.17g repetitions=%u record_delay=%u ordering=semaphore_chain3\n",family,families[family].timestampValidBits,(double)properties.limits.timestampPeriod,gpu_repetitions,(unsigned)gpu_record_delay);
+ }
+#endif
  g.vkGetDeviceQueue(g.device,family,0,&queue);CHECK(make_buffer(&input_buffer,INPUT_WORDS*4) && make_buffer(&program_buffer,PROGRAM_WORDS*4) && make_buffer(&constant_buffer,512*16) && make_buffer(&output_buffer,OUTPUT_RECORDS*32));
 #ifdef XE_ALU_CONTROL_TEST
  CHECK(make_buffer(&context_buffer,160));memset(context_buffer.mapped,0,160);
@@ -327,6 +381,16 @@ int main(void){
  set_allocate.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;set_allocate.descriptorPool=pool;set_allocate.descriptorSetCount=1;set_allocate.pSetLayouts=&set_layout;OK(g.vkAllocateDescriptorSets(g.device,&set_allocate,&set));
  command_pool_info.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;command_pool_info.queueFamilyIndex=family;OK(g.vkCreateCommandPool(g.device,&command_pool_info,NULL,&command_pool));
  command_allocate.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;command_allocate.commandPool=command_pool;command_allocate.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;command_allocate.commandBufferCount=1;OK(g.vkAllocateCommandBuffers(g.device,&command_allocate,&command));
+#ifdef XE_SHADER_COMPILE_BENCH
+ if(gpu_timing){
+  OK(g.vkAllocateCommandBuffers(g.device,&command_allocate,&timestamp_command));
+  OK(g.vkAllocateCommandBuffers(g.device,&command_allocate,&completion_command));
+  gpu_submits[0].sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;gpu_submits[0].commandBufferCount=1;gpu_submits[0].pCommandBuffers=&timestamp_command;
+  gpu_submits[0].signalSemaphoreCount=1;gpu_submits[0].pSignalSemaphores=&timestamp_semaphore;
+  gpu_submits[2].sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;gpu_submits[2].commandBufferCount=1;gpu_submits[2].pCommandBuffers=&completion_command;
+  gpu_submits[2].waitSemaphoreCount=1;gpu_submits[2].pWaitSemaphores=&completion_semaphore;gpu_submits[2].pWaitDstStageMask=&gpu_wait_stage;
+ }
+#endif
  fence_info.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;OK(g.vkCreateFence(g.device,&fence_info,NULL,&fence));
  in=(uint32_t*)input_buffer.mapped;out=(uint32_t*)output_buffer.mapped;
  programs=(uint32_t*)program_buffer.mapped;constants=(uint32_t*)constant_buffer.mapped;
@@ -398,16 +462,67 @@ int main(void){
 #endif
   memset(writes,0,sizeof(writes));for(i=0;i<XE_PROGRAM_BINDINGS;++i){writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;writes[i].dstSet=set;writes[i].dstBinding=i;writes[i].descriptorCount=1;writes[i].descriptorType=bindings[i].descriptorType;writes[i].pBufferInfo=&infos[i];}
   g.vkUpdateDescriptorSets(g.device,XE_PROGRAM_BINDINGS,writes,0,NULL);OK(g.vkResetCommandPool(g.device,command_pool,0));
-  begin.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;OK(g.vkBeginCommandBuffer(command,&begin));
+  begin.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+#ifdef XE_SHADER_COMPILE_BENCH
+  if(gpu_timing && round<3){
+   /* GPU dependencies enclose the whole workload, not just a pipeline stage.
+    * Three batches use one queue-submit call and the existing final fence. */
+   OK(g.vkBeginCommandBuffer(timestamp_command,&begin));g.vkCmdResetQueryPool(timestamp_command,query_pool,0,2);
+   g.vkCmdWriteTimestamp(timestamp_command,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,query_pool,0);
+   OK(g.vkEndCommandBuffer(timestamp_command));
+   if(gpu_record_delay){double started=xe_compile_now();while(xe_compile_now()-started<.025){}}
+   OK(g.vkBeginCommandBuffer(completion_command,&begin));
+   g.vkCmdWriteTimestamp(completion_command,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,query_pool,1);
+   OK(g.vkEndCommandBuffer(completion_command));
+  }
+#endif
+  OK(g.vkBeginCommandBuffer(command,&begin));
   barrier.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER;barrier.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_UNIFORM_READ_BIT;
   g.vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&barrier,0,NULL,0,NULL);
-  g.vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);g.vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&set,0,NULL);g.vkCmdDispatch(command,(OUTPUT_RECORDS+63)/64+1,1,1);
+  g.vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);g.vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&set,0,NULL);
+  {unsigned repetition,repetitions=1;
+#ifdef XE_SHADER_COMPILE_BENCH
+   VkMemoryBarrier repeated_write={0};
+   if(gpu_timing && round<3)repetitions=gpu_repetitions;
+   repeated_write.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER;repeated_write.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;repeated_write.dstAccessMask=VK_ACCESS_SHADER_WRITE_BIT;
+#endif
+   for(repetition=0;repetition<repetitions;++repetition){
+    g.vkCmdDispatch(command,(OUTPUT_RECORDS+63)/64+1,1,1);
+#ifdef XE_SHADER_COMPILE_BENCH
+    if(gpu_timing && round<3){++gpu_dispatches;
+     if(repetition+1<repetitions)g.vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&repeated_write,0,NULL,0,NULL);
+    }
+#endif
+   }
+  }
   barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;g.vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,NULL,0,NULL);
   OK(g.vkEndCommandBuffer(command));OK(g.vkResetFences(g.device,1,&fence));submit.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;submit.commandBufferCount=1;submit.pCommandBuffers=&command;
-  if(round<3){XE_COMPILE_BEGIN();}OK(g.vkQueueSubmit(queue,1,&submit,fence));
+#ifdef XE_SHADER_COMPILE_BENCH
+  if(gpu_timing && round<3){
+   gpu_submits[1]=submit;gpu_submits[1].waitSemaphoreCount=1;gpu_submits[1].pWaitSemaphores=&timestamp_semaphore;gpu_submits[1].pWaitDstStageMask=&gpu_wait_stage;
+   gpu_submits[1].signalSemaphoreCount=1;gpu_submits[1].pSignalSemaphores=&completion_semaphore;
+  }
+#endif
+  if(round<3){XE_COMPILE_BEGIN();}
+#ifdef XE_SHADER_COMPILE_BENCH
+  if(gpu_timing && round<3){gpu_started=xe_compile_now();OK(g.vkQueueSubmit(queue,3,gpu_submits,fence));}
+  else
+#endif
+  {OK(g.vkQueueSubmit(queue,1,&submit,fence));}
   completion=g.vkWaitForFences(g.device,1,&fence,VK_TRUE,UINT64_C(5000000000));
   if(completion!=VK_SUCCESS){fprintf(stderr,"GPU completion failed (%d); retaining pending test resources\n",(int)completion);exit(1);}
+#ifdef XE_SHADER_COMPILE_BENCH
+  if(gpu_timing && round<3)gpu_host_seconds=xe_compile_now()-gpu_started;
+#endif
  XE_COMPILE_END(XE_PROGRAM_STAGE("submit_complete"),round);
+#ifdef XE_SHADER_COMPILE_BENCH
+  if(gpu_timing && round<3){
+   memset(gpu_ticks,0,sizeof(gpu_ticks));
+   OK(g.vkGetQueryPoolResults(g.device,query_pool,0,2,sizeof(gpu_ticks),gpu_ticks,2*sizeof(uint64_t),VK_QUERY_RESULT_64_BIT|VK_QUERY_RESULT_WITH_AVAILABILITY_BIT));
+   CHECK(xe_test_gpu_timestamp_seconds(gpu_ticks,families[family].timestampValidBits,properties.limits.timestampPeriod,gpu_host_seconds,&gpu_seconds));
+   CHECK(gpu_timing_record(gpu_path,gpu_repetitions==1?XE_PROGRAM_STAGE("gpu_dispatch"):XE_PROGRAM_STAGE("gpu_dispatch_repeat8"),round,gpu_ticks,families[family].timestampValidBits,properties.limits.timestampPeriod,gpu_host_seconds,gpu_seconds));
+  }
+#endif
   CHECK(cache_buffer(&output_buffer,1) && cache_buffer(&program_buffer,1));
 #if XE_EXTRA_CASES
   if(round>=3){uint32_t expected_bank[40];extra_context(expected_bank,round-3);
@@ -489,10 +604,11 @@ int main(void){
 #endif
  if(valid_work){
   CHECK(cases==743 && inactive>0 && compared+inactive==cases && !context_replays);
-  printf("PROFILE_VALID_WORK active=%u inactive=%u; inactive lanes rejected before program execution\n",compared,inactive);
+  printf("%s active=%u inactive=%u; inactive lanes rejected before program execution\n",gpu_timing?"PROFILE_VALID_WORK_GPU":"PROFILE_VALID_WORK",compared,inactive);
  }
 #ifdef XE_SHADER_COMPILE_BENCH
  CHECK(pipelines==2);
+ if(gpu_timing){CHECK(gpu_dispatches==3*gpu_repetitions);printf("GPU_TIMESTAMP_EXECUTED repetitions=%u dispatches=%u record_delay=%u\n",gpu_repetitions,gpu_dispatches,(unsigned)gpu_record_delay);}
 #else
  CHECK(pipelines==1);
 #endif
@@ -503,6 +619,9 @@ done:
   if(pool)g.vkDestroyDescriptorPool(g.device,pool,NULL);
   if(pipeline)g.vkDestroyPipeline(g.device,pipeline,NULL);
 #ifdef XE_SHADER_COMPILE_BENCH
+  if(query_pool)g.vkDestroyQueryPool(g.device,query_pool,NULL);
+  if(timestamp_semaphore)g.vkDestroySemaphore(g.device,timestamp_semaphore,NULL);
+  if(completion_semaphore)g.vkDestroySemaphore(g.device,completion_semaphore,NULL);
   if(first_pipeline)g.vkDestroyPipeline(g.device,first_pipeline,NULL);
   if(pipeline_cache)g.vkDestroyPipelineCache(g.device,pipeline_cache,NULL);
 #endif

@@ -622,3 +622,11 @@ literal-one export overlap; scalar history and predicate effects still execute
 with an empty destination mask. This fixes erroneous rejection of unused
 relative operands. See `tools/tests/alu_lazy_source_results.txt` for correctness
 and cost limits; rendering integration remains unfinished.
+
+Shader CI now measures separate Vulkan queue intervals around raw-program
+dispatches. Test-only GPU dependencies order both timestamps around the work;
+raw ticks, availability, width, period and a host envelope are retained.
+Work-scaling and CPU-recording-delay controls reject misleading measurements.
+Existing wall-time profiles stay uninstrumented. These queue intervals include
+GPU synchronization overhead and do not establish isolated ALU cost, register
+spills or retail cold-play behavior. See `tools/tests/gpu_timestamp_results.txt`.

@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Add separate test-only Vulkan GPU timestamp profiles beside existing shader wall-time gates. Order timestamps around the workload through GPU semaphore dependencies, retain raw counter/availability data and require work-scaling and recording-delay controls. This adds measurement coverage; it changes no renderer behavior and does not certify cold-play smoothness.
+
 - Fix raw control-kernel validation incorrectly rejecting unused relative operands. Skip unused vector result/operand work and literal-one export inputs while preserving scalar history, predicate effects and checks on used operands. Add exact-parent reproduction and used/unused-source regressions. This kernel remains outside rendering; complete accurate fallback coverage and draw-path compilation removal are unfinished.
 
 - Extend raw control-kernel validation with vector and scalar EQ/GT/GE/NE results, including denormals, signed zero and unordered NaN behavior. Add paired-operand, swizzle, modifier, partial-store, scalar-history and P0-preservation regressions, with executed-case coverage guards. This remains outside rendering; draw-path compilation and complete accurate fallback coverage are unfinished.

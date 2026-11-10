@@ -14,6 +14,69 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_gpu_submission_order_and_positive_negative_controls_are_required(self):
+        meta="GPU_TIMESTAMP queue=0 bits=64 period_ns=1 repetitions=1 record_delay=0 ordering=semaphore_chain3\n"
+        executed="GPU_TIMESTAMP_EXECUTED repetitions=1 dispatches=3 record_delay=0\n"
+        self.assertEqual(ci.gpu_timestamp_log_metadata(meta+executed,1)["bits"],64)
+        for log in ("",meta,executed,meta+meta+executed,meta+executed.replace("dispatches=3","dispatches=2"),
+                    meta.replace("semaphore_chain3","unordered")+executed,meta.replace("bits=64","bits=0")+executed):
+            with self.assertRaises(ValueError):ci.gpu_timestamp_log_metadata(log,1)
+        with self.assertRaises(ValueError):ci.gpu_timestamp_log_metadata(meta+executed+meta.replace("queue=0","queue=1")+executed,2)
+        def data(stage,value):return {("raw_control."+stage,i):[value] for i in range(3)}
+        single=data("gpu_dispatch",.001);repeat=data("gpu_dispatch_repeat8",.008);delay=data("gpu_dispatch",.001)
+        self.assertEqual(ci.validate_gpu_calibration(single,repeat,delay,"raw_control")["work_ratio"],8)
+        for a,b,c in ((data("gpu_dispatch",.000001),repeat,delay),(single,data("gpu_dispatch_repeat8",.001),delay),
+                      (single,repeat,data("gpu_dispatch",.025)),(data("gpu_dispatch",0),repeat,delay)):
+            with self.assertRaises(ValueError):ci.validate_gpu_calibration(a,b,c,"raw_control")
+        missing=dict(single);missing.pop(("raw_control.gpu_dispatch",0))
+        with self.assertRaises(ValueError):ci.validate_gpu_calibration(missing,repeat,delay,"raw_control")
+
+    def test_gpu_dispatch_gate_preserves_first_use_and_anchor(self):
+        data={("raw_control.gpu_dispatch",i):[1e-6]*7 for i in range(3)}
+        candidate={k:list(v) for k,v in data.items()};candidate[("raw_control.gpu_dispatch",0)]=[1]*7
+        result=ci.compare_gpu_dispatch(dict(base=data,candidate=candidate),7,"raw_control")
+        self.assertFalse(result["failure"]);self.assertEqual(result["first_use_observed"]["candidate"]["maximum"],1)
+        self.assertIn("UNVERIFIED",result["first_use_cache_status"])
+        candidate[("raw_control.gpu_dispatch",1)]=[.02]*7
+        result=ci.compare_gpu_dispatch(dict(base=data,candidate=candidate,anchor=data),7,"raw_control")
+        self.assertTrue(result["failure"]);self.assertTrue(any(x["failures"] for x in result["anchor_cases"]))
+        self.assertTrue(ci.compare_gpu_dispatch(dict(base=data),7,"raw_control")["failure"])
+        missing=dict(data);missing.pop(("raw_control.gpu_dispatch",2))
+        with self.assertRaisesRegex(ValueError,"GPU dispatch case/sample"):
+            ci.compare_gpu_dispatch(dict(base=data,candidate=missing),7,"raw_control")
+        with self.assertRaises(ValueError):ci.compare_gpu_dispatch(dict(candidate=data),6,"raw_control")
+
+    def test_gpu_tick_availability_width_period_and_conversion_are_verified(self):
+        raw={("raw_control.gpu_dispatch",i):[250e-9]*7 for i in range(3)}
+        rows=[["raw_control.gpu_dispatch",str(i),"64","c8","1","1","64","2.5",".001"] for _ in range(7) for i in range(3)]
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"ticks.csv"
+            def write(values):path.write_text("".join(",".join(x)+"\n" for x in values))
+            write(rows);self.assertEqual(ci.validate_gpu_ticks(path,raw,7,"raw_control")["bits"],64)
+            for changes in ({4:"0"},{5:"0"},{6:"0"},{6:"35"},{6:"65"},{7:"nan"},{7:"-1"},
+                            {8:"nan"},{8:"-1"},{8:".000000001"},{6:"36",8:"100"},
+                            {6:"36",2:"1000000000"},{0:"raw_program.gpu_dispatch"},{1:"7"}):
+                bad=[list(x) for x in rows]
+                for at,value in changes.items():bad[0][at]=value
+                write(bad)
+                with self.assertRaises(ValueError):ci.validate_gpu_ticks(path,raw,7,"raw_control")
+            for bad in (rows[:-1],rows+[rows[0]],[rows[0]+["extra"]]+rows[1:]):
+                write(bad)
+                with self.assertRaises(ValueError):ci.validate_gpu_ticks(path,raw,7,"raw_control")
+            write(rows);wrong={k:list(v) for k,v in raw.items()};wrong[("raw_control.gpu_dispatch",1)][0]=1
+            with self.assertRaisesRegex(ValueError,"conversion mismatch"):ci.validate_gpu_ticks(path,wrong,7,"raw_control")
+
+    def test_gpu_tick_wrapping_and_ordinary_profile_identity(self):
+        raw={("raw_control.gpu_dispatch",i):[8e-9]*5 for i in range(3)}
+        start=(1<<36)-5
+        rows=[["raw_control.gpu_dispatch",str(i),format(start,"x"),"3","1","1","36","1",".001"] for _ in range(5) for i in range(3)]
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"ticks.csv";path.write_text("".join(",".join(x)+"\n" for x in rows))
+            self.assertTrue(all(x["wrapped"] for x in ci.validate_gpu_ticks(path,raw,5,"raw_control")["samples"]))
+        log="PROFILE_VALID_WORK active=315 inactive=428;\nPROFILE_VALID_WORK_GPU active=315 inactive=428;\n"
+        ci.validate_valid_workload(log,{"raw_control"});ci.validate_valid_workload(log,{"raw_control"},gpu=True)
+        with self.assertRaises(ValueError):ci.validate_valid_workload(log.replace("PROFILE_VALID_WORK_GPU","OTHER"),{"raw_control"},gpu=True)
+
     def test_snapshot_native_and_owner_coverage_are_required(self):
         old=dict(native=True,cases=96,owner_available=True,owner_unit=True)
         self.assertFalse(ci.compare_ucode_coverage(dict(base=old,candidate=old))["failures"])
@@ -335,6 +398,8 @@ class ComparisonTests(unittest.TestCase):
             for i in range(64):
                 (compiled/("shader%03u.spv"%i)).write_bytes(ci.struct.pack("<5I",0x07230203,0x10000,0,1,0))
             def prepare(source_arg,out,results,backend,reuse):
+                (compiled/"gpu-timestamp-math").mkdir(exist_ok=True)
+                (compiled/"gpu-timestamp-math/coverage.json").write_text(json.dumps(dict(unit=True,version=1,synthetic_fixture=True)))
                 (results/(source.name+"-"+compiled.parent.name+"-"+compiled.name+"-raw-control.json")).write_text(
                     json.dumps(dict(available=False,unit=False,vulkan_gpu=False)))
                 for role in ["base","candidate"]:

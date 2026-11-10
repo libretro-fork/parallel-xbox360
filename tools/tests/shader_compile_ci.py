@@ -114,6 +114,7 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
         coverage["reason"]="historical revision has no raw "+("control-flow" if control else "program")+" kernel"
         return coverage
     fixture=env.copy()
+    for flag in ("XE_ALU_GPU_TIMING_CSV","XE_ALU_GPU_REPEAT","XE_ALU_GPU_RECORD_DELAY"):fixture.pop(flag,None)
     fixture.pop("XE_ALU_PROGRAM_TIMING_ONLY",None)
     fixture.pop("XE_ALU_PROGRAM_VALID_WORK",None)
     fixture.update(ALU_PROGRAM_OUT=str(out / ("raw-control" if control else "raw-program")),
@@ -236,12 +237,46 @@ def validate_ucode_snapshot(source, build, out, log, env):
     return directory/("test.exe" if WIN else "test")
 
 
+def validate_gpu_timestamp_math(source,out,log,env):
+    directory=out/"gpu-timestamp-math";directory.mkdir(parents=True,exist_ok=True)
+    unit=directory/("unit.exe" if WIN else "unit")
+    if WIN:
+        command=["cl","/nologo","/TC","/MD","/O2","/W4","/WX",HERE/"gpu_timestamp_measure_test.c","/Fo"+str(directory/"unit.obj"),"/Fe"+str(unit)]
+    else:
+        command=[env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",HERE/"gpu_timestamp_measure_test.c","-o",unit]
+    run(command,source,log,env,60);run([unit],source,log,env,30)
+    (directory/"coverage.json").write_text(json.dumps(dict(unit=True,version=1,
+        header_sha256=file_sha256(HERE/"gpu_timestamp_measure.h"),fixture_sha256=file_sha256(HERE/"gpu_timestamp_measure_test.c")),indent=2))
+
+
+def calibrate_gpu_timestamps(source,out,env,component):
+    directory=out/"gpu-calibration";directory.mkdir(parents=True,exist_ok=True)
+    stem=component.replace("_","-");native=out/stem/"native"/("test.exe" if WIN else "test")
+    module=out/stem/("control.spv" if component=="raw_control" else "program.spv")
+    measurements={};metadata={}
+    for name,repetitions,delay in (("single",1,0),("repeat8",8,0),("record-delay",1,1)):
+        base=directory/(component+"-"+name);e=env.copy();e.pop("XE_ALU_PROGRAM_VALID_WORK",None)
+        e.update(XE_ALU_PROGRAM_TIMING_ONLY="1",XE_ALU_GPU_TIMING_CSV=str(base)+".csv",XE_ALU_GPU_REPEAT=str(repetitions),
+            XE_ALU_GPU_RECORD_DELAY=str(delay),XE_SHADER_BENCH_CSV=str(base)+"-host.csv",XE_SHADER_BENCH_CPU_CSV=str(base)+"-host-cpu.csv",XE_ALU_PROGRAM_DUMP=str(base)+".spv")
+        log=Path(str(base)+".log");run([native],source,log,e,120)
+        if file_sha256(Path(str(base)+".spv"))!=file_sha256(module):raise ValueError("GPU calibration module mismatch")
+        data=read_samples(Path(str(base)+".csv"));measurements[name]=data
+        metadata[name]=validate_gpu_ticks(Path(str(base)+".csv.ticks.csv"),data,1,component,repetitions)
+        described=gpu_timestamp_log_metadata(log.read_text(),1,repetitions,delay)
+        if (described["bits"],described["period_ns"])!=(metadata[name]["bits"],metadata[name]["period_ns"]):raise ValueError("GPU calibration metadata mismatch")
+        metadata[name]["queue"]=described["queue"]
+    if len({(x["queue"],x["bits"],x["period_ns"]) for x in metadata.values()})!=1:raise ValueError("GPU calibration timer/queue changed")
+    result=validate_gpu_calibration(measurements["single"],measurements["repeat8"],measurements["record-delay"],component)
+    result["metadata"]=metadata;(directory/(component+".json")).write_text(json.dumps(result,indent=2))
+
+
 def prepare(source, out, results, backend, reuse_build=None):
     out.mkdir(parents=True,exist_ok=True)
     env = os.environ.copy()
     build = Path(reuse_build).resolve() if reuse_build else source / "build/shader-perf-core"
     log = results / (source.name + "-build.log")
     env.pop("XE_SHADER_BENCH_CPU_CSV",None)
+    for flag in ("XE_ALU_GPU_TIMING_CSV","XE_ALU_GPU_REPEAT","XE_ALU_GPU_RECORD_DELAY"):env.pop(flag,None)
     clock=out/("clock.exe" if WIN else "clock")
     if WIN:
         run(["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/D_CRT_SECURE_NO_WARNINGS",
@@ -250,6 +285,7 @@ def prepare(source, out, results, backend, reuse_build=None):
         run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
              HERE/"core_shader_clock_test.c","-o",clock],source,log,env)
     validate_clock_fixture(clock,results/"clock-checks"/(out.parent.name+"-"+out.name))
+    validate_gpu_timestamp_math(source,out,log,env)
     if not reuse_build:
         if WIN:
             run(["cmake", "-S", source, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
@@ -266,6 +302,9 @@ def prepare(source, out, results, backend, reuse_build=None):
     control_coverage=validate_raw_program(source,build,out,log,env,backend,control=True)
     (results/(source.name+"-"+out.parent.name+"-"+out.name+"-raw-control.json")).write_text(
         json.dumps(control_coverage,indent=2),encoding="utf-8")
+    if backend.startswith("vulkan"):
+        for component,coverage in (("raw_program",program_coverage),("raw_control",control_coverage)):
+            if coverage["vulkan_gpu"]:calibrate_gpu_timestamps(source,out,env,component)
     snapshot=validate_ucode_snapshot(source,build,out,log,env)
     env["XE_SHADER_BENCH_CSV"] = str(out / "prepare.csv")
     env["XE_SHADER_BENCH_NO_DUMP"] = "0"
@@ -563,6 +602,77 @@ def compare_control_coverage(coverage, vulkan):
     return dict(revisions=coverage,failures=failures)
 
 
+def compare_gpu_dispatch(raw,samples,prefix):
+    if samples<5:raise ValueError("GPU dispatch needs at least five pairs")
+    expected={(prefix+".gpu_dispatch",i) for i in range(3)}
+    for version,data in raw.items():
+        if set(data)!=expected or any(len(x)!=samples for x in data.values()):
+            raise ValueError("missing GPU dispatch case/sample: "+version)
+    warm={v:{k:x for k,x in data.items() if k[1]!=0} for v,data in raw.items()}
+    rows=compare(warm["base"],warm["candidate"],samples) if "base" in warm and "candidate" in warm else []
+    anchor=compare(warm["anchor"],warm["candidate"],samples) if "anchor" in warm and "candidate" in warm else []
+    removed=("base" in raw or "anchor" in raw) and "candidate" not in raw
+    return dict(available=bool(raw),cases=rows,anchor_cases=anchor,
+        first_use_observed={v:dict(samples=len(data[(prefix+".gpu_dispatch",0)]),median=statistics.median(data[(prefix+".gpu_dispatch",0)]),
+            p95=percentile(data[(prefix+".gpu_dispatch",0)],.95),p99=percentile(data[(prefix+".gpu_dispatch",0)],.99),maximum=max(data[(prefix+".gpu_dispatch",0)])) for v,data in raw.items()},
+        failure=removed or any(x["failures"] for x in rows+anchor),
+        scope="separate timestamped Vulkan queue interval around dispatch, not isolated ALU or retail work",
+        first_use_cache_status="UNVERIFIED; first dispatch retained but not a cold-cache timing gate")
+
+
+def validate_gpu_ticks(path,raw,samples,prefix,repetitions=1):
+    if repetitions not in (1,8):raise ValueError("unsupported GPU timestamp repetitions")
+    stage=prefix+(".gpu_dispatch" if repetitions==1 else ".gpu_dispatch_repeat8")
+    expected={(stage,i) for i in range(3)}
+    if set(raw)!=expected or any(len(x)!=samples for x in raw.values()):raise ValueError("missing GPU timestamp samples")
+    seen={k:0 for k in expected};metadata=set();observed=[]
+    with path.open(newline="") as stream:
+        for row in csv.reader(stream):
+            if len(row)!=9:raise ValueError("invalid GPU tick record")
+            key=(row[0],int(row[1]))
+            if key not in expected or seen[key]>=samples:raise ValueError("substituted/duplicate GPU tick record")
+            start,end,a,c=(int(x,16) for x in row[2:6]);bits=int(row[6]);period=float(row[7]);host=float(row[8])
+            if bits<36 or bits>64 or not a or not c or any(x<0 or x>=1<<64 for x in (start,end,a,c)):
+                raise ValueError("invalid/unavailable GPU timestamp")
+            if not math.isfinite(period) or not 0<period<=3.4028234663852886e38 or not math.isfinite(host) or host<0:
+                raise ValueError("invalid GPU timestamp period/envelope")
+            mask=(1<<bits)-1
+            if start>mask or end>mask or (1<<bits)*(period*1e-9)<=host:raise ValueError("ambiguous GPU timestamp wrap/width")
+            elapsed=float((end-start)&mask)*(period*1e-9);actual=raw[key][seen[key]]
+            if elapsed>host or not math.isclose(elapsed,actual,rel_tol=1e-12,abs_tol=1e-15):raise ValueError("GPU timestamp conversion mismatch")
+            observed.append(dict(case=key[1],sample=seen[key],start_hex=row[2],end_hex=row[3],seconds=actual,host_envelope_seconds=host,
+                                 wrapped=end<start,zero_quantized=actual==0))
+            seen[key]+=1;metadata.add((bits,period))
+    if any(n!=samples for n in seen.values()) or len(metadata)!=1:raise ValueError("missing or inconsistent GPU tick metadata")
+    bits,period=next(iter(metadata))
+    return dict(bits=bits,period_ns=period,samples=observed)
+
+
+def gpu_timestamp_log_metadata(log,count,repetitions=1,record_delay=0):
+    meta=re.findall(r"^GPU_TIMESTAMP queue=(\d+) bits=(\d+) period_ns=(\S+) repetitions=(\d+) record_delay=(\d+) ordering=semaphore_chain3$",log,re.MULTILINE)
+    executed=re.findall(r"^GPU_TIMESTAMP_EXECUTED repetitions=(\d+) dispatches=(\d+) record_delay=(\d+)$",log,re.MULTILINE)
+    if len(meta)!=count or len(set(meta))!=1 or executed!=[(str(repetitions),str(3*repetitions),str(record_delay))]*count:
+        raise ValueError("missing/inconsistent GPU timestamp submission metadata")
+    queue,bits,period,rep,delay=meta[0];bits=int(bits);period=float(period)
+    if (int(rep),int(delay))!=(repetitions,record_delay) or not 36<=bits<=64 or not math.isfinite(period) or period<=0:
+        raise ValueError("invalid GPU timestamp submission metadata")
+    return dict(queue=int(queue),bits=bits,period_ns=period,ordering="semaphore_chain3")
+
+
+def validate_gpu_calibration(normal,repeated,delayed,prefix):
+    # Coarse measurement-integrity bounds, not relaxed performance thresholds.
+    # Missing start/end ordering greatly undercounts one dispatch but not eight.
+    def warm(data,stage):
+        if set(data)!={(stage,i) for i in range(3)} or any(len(x)!=1 or not math.isfinite(x[0]) or x[0]<0 for x in data.values()):
+            raise ValueError("missing or substituted GPU calibration samples")
+        return statistics.median([data[(stage,i)][0] for i in (1,2)])
+    plain=warm(normal,prefix+".gpu_dispatch");batch=warm(repeated,prefix+".gpu_dispatch_repeat8");delay=warm(delayed,prefix+".gpu_dispatch")
+    if not plain>0 or not 2<=batch/plain<=32:raise ValueError("GPU timestamp work scaling is unverified")
+    if not .125<=delay/plain<=8:raise ValueError("GPU timestamp includes CPU recording delay or is unstable")
+    return dict(repetitions=8,work_ratio=batch/plain,cpu_record_delay_seconds=.025,record_delay_ratio=delay/plain,
+        scope="coarse positive/negative measurement controls; not throughput or regression tolerances")
+
+
 def compare_ucode_snapshot(raw, samples):
     if samples<5:raise ValueError("snapshot workload needs at least five pairs")
     expected={("shader.ucode.snapshot_batch2000",i) for i in range(24)}
@@ -588,10 +698,11 @@ def compare_ucode_coverage(coverage):
     return dict(revisions=coverage,failures=failures)
 
 
-def validate_valid_workload(log, components):
+def validate_valid_workload(log, components, gpu=False):
     counts={"raw_program":(363,380),"raw_control":(315,428)}
     expected=[counts[x] for x in counts if x in components]
-    actual=[tuple(map(int,x)) for x in re.findall(r"^PROFILE_VALID_WORK active=(\d+) inactive=(\d+);",log,re.MULTILINE)]
+    label="PROFILE_VALID_WORK_GPU" if gpu else "PROFILE_VALID_WORK"
+    actual=[tuple(map(int,x)) for x in re.findall(r"^"+label+r" active=(\d+) inactive=(\d+);",log,re.MULTILINE)]
     if sorted(actual)!=sorted(expected):
         raise ValueError("valid-work profile missing or substituted records")
 
@@ -604,6 +715,7 @@ def run_comparison(args):
         raise ValueError("self-check must use equal reference labels")
     env=os.environ.copy()
     env.pop("XE_ALU_PROGRAM_VALID_WORK",None)
+    for flag in ("XE_ALU_GPU_TIMING_CSV","XE_ALU_GPU_REPEAT","XE_ALU_GPU_RECORD_DELAY"):env.pop(flag,None)
     if args.backend=="vulkan-software":
         icds=sorted(Path("/usr/share/vulkan/icd.d").glob("lvp*.json"))
         if not icds:raise ValueError("Lavapipe ICD missing; no silent hardware substitution")
@@ -625,7 +737,8 @@ def run_comparison(args):
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
          "shader_control_program_fixture.h","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
-         "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc"]}
+         "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
+         "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h"]}
     manifest["corpus_contract"]=dict(version=8,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_frac_cases=64 if args.backend=="vulkan-hardware" else 0,
@@ -676,10 +789,18 @@ def run_comparison(args):
     control_coverage={version:json.loads((results/(b["source"].name+"-"+b["out"].parent.name+"-"+b["out"].name+"-raw-control.json")).read_text())
                       for version,b in builds.items()}
     control_coverage_report=compare_control_coverage(control_coverage,args.backend.startswith("vulkan"))
-    manifest["timing_contract"]=dict(version=2,gating="elapsed wall time only",
+    manifest["timing_contract"]=dict(version=3,gating="unchanged elapsed wall gates plus separate primed GPU timestamp gates",
         process_cpu="supplementary per-process user+kernel time; may exceed wall time with parallel workers",
         limits="CPU/wall separation alone does not identify preemption, waits or GPU/service work",
         precision="Windows process CPU accounting may quantize short intervals; zero is not zero work")
+    manifest["gpu_timestamp_contract"]=dict(version=1,scope="separate opt-in children; semaphore-ordered three-batch queue interval around dispatch",
+        results="64-bit ticks plus availability, queue valid-bit width and nanosecond period",
+        limits="not isolated ALU time, certified cold caches or gameplay; timestamp overhead remains; wrap ambiguity fails")
+    manifest["gpu_driver_environment"]={name:env.get(name,"driver/default") for name in ("VK_ICD_FILENAMES","LP_NUM_THREADS")}
+    manifest["gpu_timestamp_math"]={v:json.loads((b["out"]/"gpu-timestamp-math/coverage.json").read_text()) for v,b in builds.items()}
+    if any(not x["unit"] for x in manifest["gpu_timestamp_math"].values()):raise ValueError("GPU timestamp math unit missing")
+    manifest["gpu_timestamp_calibration"]={v:{component:json.loads((b["out"]/"gpu-calibration"/(component+".json")).read_text())
+        for component in ("raw_program","raw_control") if component in b} for v,b in builds.items()}
     manifest["clock_controls"]={version:"clock-checks/"+b["out"].parent.name+"-"+b["out"].name for version,b in builds.items()}
     manifest["prepared_binaries"]={version:{name:dict(sha256=file_sha256(b[name]),bytes=b[name].stat().st_size)
         for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module","raw_control","raw_control_module","ucode_snapshot"] if name in b} for version,b in builds.items()}
@@ -728,6 +849,14 @@ def run_comparison(args):
                 valid_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-"+filename+"-valid-cpu.csv"))
                 valid_env["XE_ALU_PROGRAM_DUMP"]=str(results/(version+"-"+filename+"-valid-sample%d.spv"%sample))
                 run([b[component]],b["source"],log,valid_env,120)
+                # Keep query commands/readout out of the existing wall channel.
+                for suffix,origin in (("",program_env),("-valid",valid_env)):
+                    gpu_env=origin.copy();stem=version+"-"+filename+suffix+"-gpu"
+                    gpu_env["XE_ALU_GPU_TIMING_CSV"]=str(results/(stem+".csv"))
+                    gpu_env["XE_SHADER_BENCH_CSV"]=str(results/(stem+"-host.csv"))
+                    gpu_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(stem+"-host-cpu.csv"))
+                    gpu_env["XE_ALU_PROGRAM_DUMP"]=str(results/(stem+"-sample%d.spv"%sample))
+                    run([b[component]],b["source"],log,gpu_env,120)
             if "ucode_snapshot" in b:
                 snapshot_env=e.copy()
                 snapshot_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-ucode.csv"))
@@ -778,7 +907,17 @@ def run_comparison(args):
         valid_reports[component]=compare_raw_program(valid_raw,args.samples,component+".")
         valid_reports[component]["process_cpu_observed"]=compare_raw_program(valid_cpu,args.samples,component+".")["observed"]
         valid_reports[component]["workload"]="successful primary records unchanged; negative lanes rejected by empty program bounds before VM execution; full mixed gates retained"
-    identities=[]
+    gpu_reports={}
+    for component in ("raw_program","raw_control"):
+        for suffix in ("","-valid"):
+            stems={v:v+"-"+component.replace("_","-")+suffix+"-gpu" for v,b in builds.items() if component in b}
+            gpu_raw={v:read_samples(results/(stem+".csv")) for v,stem in stems.items()}
+            gpu_report=compare_gpu_dispatch(gpu_raw,args.samples,component)
+            gpu_report["tick_validation"]={v:validate_gpu_ticks(results/(stem+".csv.ticks.csv"),gpu_raw[v],args.samples,component) for v,stem in stems.items()}
+            tick_metadata={(x["bits"],x["period_ns"]) for x in gpu_report["tick_validation"].values()}
+            if len(tick_metadata)>1:raise ValueError("different GPU timestamp widths/periods")
+            gpu_reports[component+suffix]=gpu_report
+    identities=[];timestamp_identities=[]
     if args.backend.startswith("vulkan"):
         for version in builds:
             for sample in range(args.samples):
@@ -801,8 +940,26 @@ def run_comparison(args):
                     actual=results/(version+"-"+component.replace("_","-")+"-valid-sample%d.spv"%sample)
                     if file_sha256(actual)!=manifest["prepared_binaries"][version][component+"_module"]["sha256"]:
                         raise ValueError("valid-work profile emitted a different module")
+                    for suffix,label_suffix in (("","_GPU"),("-valid","_GPU_VALID")):
+                        label=device_label+label_suffix
+                        observed=re.findall(r"^"+label+r" Vulkan .+$",log,re.MULTILINE)
+                        if len(observed)!=1 or observed[0].replace(label,"BENCH_DEVICE",1)!=identities[-1]:
+                            raise ValueError("GPU timestamp profile used missing/different device or driver")
+                        actual=results/(version+"-"+component.replace("_","-")+suffix+"-gpu-sample%d.spv"%sample)
+                        if file_sha256(actual)!=manifest["prepared_binaries"][version][component+"_module"]["sha256"]:
+                            raise ValueError("GPU timestamp profile emitted a different module")
+                expected=2*sum(x in builds[version] for x in ("raw_program","raw_control"))
+                timestamp_meta=gpu_timestamp_log_metadata(log,expected) if expected else None
+                if timestamp_meta:timestamp_identities.append((timestamp_meta["queue"],timestamp_meta["bits"],timestamp_meta["period_ns"]))
+                for component in ("raw_program","raw_control"):
+                    if component not in builds[version]:continue
+                    tick=gpu_reports[component]["tick_validation"][version]
+                    if not timestamp_meta or (timestamp_meta["bits"],timestamp_meta["period_ns"])!=(tick["bits"],tick["period_ns"]):
+                        raise ValueError("GPU timestamp log/tick metadata mismatch")
                 validate_valid_workload(log,builds[version])
+                validate_valid_workload(log,builds[version],gpu=True)
         if len(set(identities))!=1:raise ValueError("different benchmark device/driver")
+        if len(set(timestamp_identities))>1:raise ValueError("different GPU timestamp queue/width/period across samples or revisions")
         software=any(x in identities[0].lower() for x in ["llvmpipe","lavapipe"])
         if software != (args.backend=="vulkan-software"):raise ValueError("wrong software/hardware device")
     source_alarms={}
@@ -822,13 +979,15 @@ def run_comparison(args):
                 process_cpu_diagnostics=cpu_rows,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
-                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,ucode_snapshot=snapshot_report,
-                success=not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not snapshot_report["failure"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
+                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,raw_gpu_dispatch=gpu_reports,ucode_snapshot=snapshot_report,
+                success=not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not snapshot_report["failure"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(v["failure"] for v in gpu_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
                 self_check=bool(args.self_check))
     (results/"comparison.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     summary="# Shader compilation comparison\n\n%s -> %s (%s)\n\n"%(args.base,args.head,args.backend)
     summary+="**%s** across %d procedural stage/case metrics.\n\n"%("PASS" if report["success"] else "FAIL / investigate",len(rows))
     summary+="This is NOT cold-play gameplay signoff. Driver-cache status and missing anchor are recorded in environment.json.\n\n"
+    if any(v["available"] for v in gpu_reports.values()):
+        summary+="Separate Vulkan timestamp profiles retain raw ticks/availability/width/period and a host envelope. Existing wall channels stay uninstrumented; primed dispatches use unchanged timing gates. First dispatch is observed without a certified cold-cache claim. Queue interval includes timestamp/dispatch overhead, not isolated ALU cost.\n\n"
     if snapshot_report["available"]:
         summary+="Actual Shader snapshot construction/destruction: 24 paired batch cases with source-mutation/endian correctness checks; CPU ownership cost only, not gameplay fluidity.\n\n"
     if any(v["observed"] for v in valid_reports.values()):

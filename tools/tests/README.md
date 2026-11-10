@@ -1850,3 +1850,30 @@ transactional failures after a private export. CI requires the actual completed
 Historical kernels do not claim these cases; the exact parent rejects the first
 new valid program when run against the extended fixture. See
 `alu_lazy_source_results.txt`; no full renderer or cold-play claim is implied.
+
+Separate GPU timestamp profiles
+------------------------------
+
+With XE_SHADER_COMPILE_BENCH, set `XE_ALU_GPU_TIMING_CSV` when running the raw
+program/control test executable to request GPU timing. It writes a three-case
+seconds CSV and a `.ticks.csv` sidecar containing start/end, availability, valid
+bits, nanosecond period and an enclosing host interval. No unavailable query,
+ambiguous wrap or missing capability becomes a host-time substitute. The
+timestamp pool, two semaphores and extra command buffers are initialized once
+and reused; the existing final fence remains the only CPU wait.
+
+A start-query batch signals the workload batch, which signals the end-query
+batch. All three use one vkQueueSubmit call. The interval includes GPU handoff
+and dispatch overhead, not just shader ALUs. Ordinary wall-time children do not
+record queries or make these submissions. CI runs timestamp profiles separately
+for mixed/fault and companion valid work, retaining identical module/device
+checks and numerical validation. First dispatch is observed without a certified
+cold-cache claim; primed dispatches use the existing unchanged timing gates.
+
+Preparation checks measurement integrity with `XE_ALU_GPU_REPEAT=8` and a
+separate `XE_ALU_GPU_RECORD_DELAY=1` probe (25 ms of CPU recording work before
+submission). Eight repeated dispatches use compute write dependencies. Counts,
+numeric output, raw ticks and submission metadata must match. Coarse scaling
+and delay-ratio bounds validate the instrument; they are not performance-gate
+tolerance changes. D3D12/WARP runs the C89 decoder unit but does not claim these
+Vulkan measurements. See `gpu_timestamp_results.txt` for source links and limits.

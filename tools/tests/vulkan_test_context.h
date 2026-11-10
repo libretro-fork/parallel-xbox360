@@ -41,6 +41,11 @@ static struct {
    FN(vkCmdPipelineBarrier); FN(vkCmdBindPipeline); FN(vkCmdBindDescriptorSets);
    FN(vkCmdPushConstants); FN(vkCmdDispatch); FN(vkCreateFence); FN(vkDestroyFence);
    FN(vkResetFences); FN(vkQueueSubmit); FN(vkWaitForFences);
+#ifdef XE_VK_TEST_GPU_TIMING
+   FN(vkCreateQueryPool); FN(vkDestroyQueryPool); FN(vkGetQueryPoolResults);
+   FN(vkCmdResetQueryPool); FN(vkCmdWriteTimestamp);
+   FN(vkCreateSemaphore); FN(vkDestroySemaphore);
+#endif
 #ifdef XE_VK_TEST_GRAPHICS
    FN(vkGetPhysicalDeviceFeatures2); FN(vkCreateRenderPass); FN(vkDestroyRenderPass);
    FN(vkCreateFramebuffer); FN(vkDestroyFramebuffer); FN(vkCreateGraphicsPipelines);
