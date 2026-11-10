@@ -9,11 +9,7 @@ extern "C" void xe_binding_native_free(void* owner) {
 }
 extern "C" int xe_binding_native_publish(void* owner, const XeDxilTextureLayout* layout) {
   auto* shader = static_cast<xe::gpu::SpirvShader*>(owner);
-  auto& exclusive = shader->resource_bindings_mutex();
-  exclusive.lock();
-  const int result = shader->PublishNativeBindings(*layout);
-  exclusive.unlock();
-  return result;
+  return shader->PublishNativeBindings(*layout);
 }
 extern "C" int xe_binding_native_check(void* owner, const XeDxilTextureLayout* layout,
                                       const void** textures, const void** samplers) {

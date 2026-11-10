@@ -1,0 +1,61 @@
+Immutable shader binding snapshots — 2026-11-10
+
+Production change
+- Remove SPIR-V translation's long-lived binding mutex ownership. Each cold
+  producer fills one final packed C89 owner and publishes an immutable pointer
+  through libretro-common atomics. Consumers borrow the records until joined
+  shader destruction; no publication payload copy or producer wait is added.
+- Equivalent competing owners are disposed without changing the winner.
+  Conflicting completed owners fail publication. A producer starting without
+  bindings must compare its records even if another publisher finishes first.
+- Ready native binding checks allocate nothing. A first snapshot still allocates,
+  including empty bindings. Duplicate native vertex/pixel DXIL generation remains
+  serialized by the explicitly named native-emission mutex; it is separate from
+  binding publication. No persistent key/schema, driver option or cache default
+  changes, and no new release diagnostics, counters, clocks or sleeps.
+
+Verified local checks
+PASS: full MSVC release and separate stats-profile core builds; direct Linux Make
+      core build. Three jobs per build (no more than six combined during overlap).
+PASS: strict MSVC C89 and Linux ASan/UBSan snapshot ownership tests: held producer,
+      32768 racing publications, borrowed identity, mismatched counts/mask/words,
+      overflow/allocation failure and exact joined disposal.
+PASS: same generic owner test under TSan with per-process setarch -R. Initial
+      TSan invocation segfaulted before its result; that log is retained. No
+      assertion about its root cause or whole-core sanitizer coverage is made.
+PASS: real native binding owners with maximum counts, four publishers and four
+      readers, exact contiguous borrowed views, empty/sampler-only sets, mismatch
+      rejection and destruction. Both MSVC and actual GNU Make core objects.
+PASS: 96 actual VS/PS variants across eight concurrent producers, including 2D/3D
+      texture fetches, while the native-emission mutex remains held. Exact match
+      against independent cold/preloaded reference binaries and binding records.
+      Existing preloading assigns SPIR-V IDs earlier; either reference must match
+      byte-for-byte. Both MSVC and actual GNU Make core objects pass.
+PASS: eight deterministic late-publication checks: compatible empty owner succeeds,
+      incompatible mask/texture count/sampler count invalidate the module and
+      preserve the previously published owner. Restoring the bad finish predicate
+      in an isolated translator override object fails this fixture (exit1,line42);
+      ordinary production objects pass again. No production test hook was added.
+PASS: 42 full/quiet analysis and emission identities on MSVC and Linux;704 GPU
+      numerical shaders and384 production sampling cases on RTX5090; native
+      publication, release/stats export isolation and three real failed-content
+      close/deinit/unload cycles on MSVC.
+
+Limits
+No gameplay, sustained content-close, savestate restore, certified-cold driver
+cache or end-to-end first-correct-frame acceptance is established. A first binding
+owner still allocates, and native emission still has its deduplication mutex.
+Draw-side shader translation/module/PSO creation, compilation waits, blocking
+admission and inaccurate stand-ins remain unresolved. This change removes a
+translation serialization dependency; it does not establish stutter-free play.
+
+Matched timing gates
+PASS: seven alternating/reverse-order exact-parent/candidate pairs at identical
+source/build paths and flags. Parent527dd316f production files were restored for
+the baseline build, then the candidate was rebuilt from the saved source hashes.
+80 WARP and768 RTX5090 Vulkan case metrics: zero unchanged-threshold alarms.
+All SPIR-V profiles and eight independent DXIL payloads are byte-identical. Raw
+wall/process-CPU samples, manifests and initial fixture failures are retained.
+The procedural timing harness does not establish cross-game cold-play smoothness
+or measure the speedup from concurrent variants of one shader. Held-mutex
+concurrency tests demonstrate the removed dependency separately.

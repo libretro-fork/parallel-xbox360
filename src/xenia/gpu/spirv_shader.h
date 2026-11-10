@@ -13,7 +13,7 @@
 #include <retro_atomic.h>
 #include <mutex>
 #include <span>
-#include "libretro/core_binding_storage.h"
+#include "libretro/core_binding_snapshot.h"
 
 #include "xenia/gpu/shader.h"
 #include "xenia/gpu/xenos.h"
@@ -51,12 +51,13 @@ class SpirvShader : public Shader {
   };
   // Safe to hash and compare with memcmp for layout hashing.
   std::span<const TextureBinding> GetTextureBindingsAfterTranslation() const {
-    if (!binding_storage_.texture_count) return {};
-    return {static_cast<const TextureBinding*>(binding_storage_.data),
-            binding_storage_.texture_count};
+    const auto* owner = xe_binding_snapshot_get(&bindings_);
+    if (!owner || !owner->texture_count) return {};
+    return {reinterpret_cast<const TextureBinding*>(owner + 1), owner->texture_count};
   }
   const uint32_t GetUsedTextureMaskAfterTranslation() const {
-    return used_texture_mask_;
+    const auto* owner = xe_binding_snapshot_get(&bindings_);
+    return owner ? owner->used_texture_mask : 0;
   }
 
   struct SamplerBinding {
@@ -67,19 +68,21 @@ class SpirvShader : public Shader {
     xenos::AnisoFilter aniso_filter : 3;
   };
   std::span<const SamplerBinding> GetSamplerBindingsAfterTranslation() const {
-    if (!binding_storage_.sampler_count) return {};
-    return {MutableSamplerBindings(), binding_storage_.sampler_count};
+    const auto* owner = xe_binding_snapshot_get(&bindings_);
+    if (!owner || !owner->sampler_count) return {};
+    return {reinterpret_cast<const SamplerBinding*>(
+                reinterpret_cast<const unsigned char*>(owner + 1) + owner->texture_count * sizeof(uint32_t)),
+            owner->sampler_count};
   }
 
-  // True once a translation has gathered the resource bindings above. Set with
-  // release ordering after the binding records are filled (which may happen on
-  // a pipeline creation thread), so a draw-thread reader that sees this true
-  // (acquire) is guaranteed the bindings are fully written and immutable.
+  // Acquires a complete immutable owner; no partially initialized records are
+  // visible. Published records survive every translation until joined teardown.
   bool bindings_ready() const {
-    return retro_atomic_load_acquire_int(&bindings_ready_);
+    return xe_binding_snapshot_get(&bindings_) != nullptr;
   }
-  std::mutex& resource_bindings_mutex() { return resource_bindings_mutex_; }
-  // The caller holds resource_bindings_mutex through generation/publication.
+  // Native emission still serializes duplicate binary generation separately;
+  // binding publication itself is lock-free and does not require this mutex.
+  std::mutex& native_emission_mutex() { return native_emission_mutex_; }
   bool PublishNativeBindings(const XeDxilTextureLayout& layout);
 
  protected:
@@ -88,20 +91,10 @@ class SpirvShader : public Shader {
  private:
   friend class SpirvShaderTranslator;
 
-  retro_atomic_int_t bindings_setup_entered_{0};
-  std::mutex resource_bindings_mutex_;
-  retro_atomic_int_t bindings_ready_{0};
-  bool AllocateBindings(size_t textures, size_t samplers);
-  TextureBinding* MutableTextureBindings() const {
-    return static_cast<TextureBinding*>(binding_storage_.data);
-  }
-  SamplerBinding* MutableSamplerBindings() const {
-    return binding_storage_.data ? reinterpret_cast<SamplerBinding*>(
-        static_cast<unsigned char*>(binding_storage_.data) +
-        binding_storage_.texture_count * sizeof(TextureBinding)) : nullptr;
-  }
-  xe_binding_storage binding_storage_{};
-  uint32_t used_texture_mask_ = 0;
+  std::mutex native_emission_mutex_;
+  retro_atomic_ptr_t bindings_{};
+  static xe_binding_snapshot* AllocateBindings(size_t textures, size_t samplers);
+
 };
 
 }  // namespace gpu

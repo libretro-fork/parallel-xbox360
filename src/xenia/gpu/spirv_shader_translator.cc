@@ -290,7 +290,6 @@ ShaderBinary SpirvShaderTranslator::CreateDepthOnlyFragmentShader(
 }
 
 void SpirvShaderTranslator::Reset() {
-  resource_bindings_lock_ = {};
   preloaded_resource_bindings_ = false;
   var_main_call_stack_ = var_main_call_depth_ = spv::NoResult;
   ShaderTranslator::Reset();
@@ -466,9 +465,6 @@ void SpirvShaderTranslator::BisectOverrideColorOutput() {
 }
 
 void SpirvShaderTranslator::StartTranslation() {
-  if (auto* shader = dynamic_cast<SpirvShader*>(&current_shader())) {
-    resource_bindings_lock_ = std::unique_lock<std::mutex>(shader->resource_bindings_mutex());
-  }
   // TODO(Triang3l): Logger.
   builder_ = std::make_unique<SpirvBuilder>(
       features_.spirv_version, (kSpirvMagicToolId << 16) | 1, nullptr,
@@ -1344,46 +1340,51 @@ ShaderBinary SpirvShaderTranslator::CompleteTranslation() {
 }
 
 void SpirvShaderTranslator::PostTranslation() {
-  auto resource_bindings_lock = std::move(resource_bindings_lock_);
   Shader::Translation& translation = current_translation();
   if (!translation.is_valid()) {
     return;
   }
   SpirvShader* spirv_shader = dynamic_cast<SpirvShader*>(&translation.shader());
-  if (spirv_shader && !retro_atomic_load_acquire_int(&spirv_shader->bindings_setup_entered_)) {
-    if (!spirv_shader->AllocateBindings(texture_bindings_.count, sampler_bindings_.count)) {
+  // A producer that started without a snapshot must validate its own completed
+  // records even if another producer published while this variant translated.
+  if (spirv_shader && !preloaded_resource_bindings_) {
+    auto* owner = SpirvShader::AllocateBindings(texture_bindings_.count, sampler_bindings_.count);
+    if (!owner) {
       translation.MakeInvalid();
       return;
     }
+    auto* textures = reinterpret_cast<SpirvShader::TextureBinding*>(owner + 1);
+    auto* samplers = reinterpret_cast<SpirvShader::SamplerBinding*>(
+        reinterpret_cast<unsigned char*>(owner + 1) + owner->texture_count * sizeof(uint32_t));
     size_t binding_index = 0;
     for(size_t i=0;i<texture_bindings_.count;++i) {
       uint32_t key=TextureBindingAt(i).key;
       SpirvShader::TextureBinding& shader_binding =
-          spirv_shader->MutableTextureBindings()[binding_index++];
+          textures[binding_index++];
       // For a stable hash.
       std::memset(&shader_binding, 0, sizeof(shader_binding));
       shader_binding.fetch_constant = key&31;
       shader_binding.dimension = xenos::FetchOpDimension((key>>5)&3);
       shader_binding.is_signed = (key>>7)&1;
-      spirv_shader->used_texture_mask_ |= UINT32_C(1)
+      owner->used_texture_mask |= UINT32_C(1)
                                           << (key&31);
     }
     binding_index = 0;
     for(size_t i=0;i<sampler_bindings_.count;++i) {
       uint32_t key=SamplerBindingAt(i).key;
       SpirvShader::SamplerBinding& shader_binding =
-          spirv_shader->MutableSamplerBindings()[binding_index++];
+          samplers[binding_index++];
       shader_binding.fetch_constant = key&31;
       shader_binding.mag_filter = xenos::TextureFilter((key>>5)&3);
       shader_binding.min_filter = xenos::TextureFilter((key>>7)&3);
       shader_binding.mip_filter = xenos::TextureFilter((key>>9)&3);
       shader_binding.aniso_filter = xenos::AnisoFilter((key>>11)&7);
     }
-    // Publish the bindings to draw-thread readers (GetGuestShader)
-    // after they are fully written, so a PS translated on a creation thread is
-    // only consulted once its bindings are complete.
-    retro_atomic_store_release_int(&spirv_shader->bindings_setup_entered_, 1);
-    retro_atomic_store_release_int(&spirv_shader->bindings_ready_, 1);
+    // Consume the completed owner. A competing equivalent publisher is harmless;
+    // incompatible records must never make a translated module appear usable.
+    if (!xe_binding_snapshot_publish(&spirv_shader->bindings_, owner)) {
+      translation.MakeInvalid();
+    }
   }
 }
 

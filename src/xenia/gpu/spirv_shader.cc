@@ -28,57 +28,62 @@ Shader::Translation* SpirvShader::CreateTranslationInstance(
     uint64_t modification) {
   return new SpirvTranslation(*this, modification);
 }
-SpirvShader::~SpirvShader() { xe_binding_storage_reset(&binding_storage_); }
+SpirvShader::~SpirvShader() { xe_binding_snapshot_clear(&bindings_); }
 
-bool SpirvShader::AllocateBindings(size_t textures, size_t samplers) {
+xe_binding_snapshot* SpirvShader::AllocateBindings(size_t textures, size_t samplers) {
   static_assert(sizeof(TextureBinding) == sizeof(uint32_t));
   static_assert(sizeof(SamplerBinding) == sizeof(uint32_t));
-  static_assert(alignof(TextureBinding) <= alignof(uint32_t));
-  static_assert(alignof(SamplerBinding) <= alignof(uint32_t));
+  static_assert(alignof(TextureBinding) <= alignof(xe_binding_snapshot));
+  static_assert(alignof(SamplerBinding) <= alignof(xe_binding_snapshot));
   static_assert(std::is_trivial_v<TextureBinding>);
   static_assert(std::is_trivial_v<SamplerBinding>);
-  if (!xe_binding_storage_allocate(&binding_storage_, textures, samplers)) return false;
-  // Start array lifetimes without rewriting calloc's initialized representation.
-  if (textures) new (binding_storage_.data) TextureBinding[textures];
-  if (samplers) new (MutableSamplerBindings()) SamplerBinding[samplers];
-  return true;
+  auto* owner = xe_binding_snapshot_new(textures, samplers);
+  if (!owner) return nullptr;
+  auto* records = static_cast<uint32_t*>(xe_binding_snapshot_records(owner));
+  // Begin native bitfield array lifetimes in the final zero-initialized storage.
+  if (textures) new (records) TextureBinding[textures];
+  if (samplers) new (reinterpret_cast<unsigned char*>(records) + textures * sizeof(uint32_t)) SamplerBinding[samplers];
+  return owner;
 }
 
 bool SpirvShader::PublishNativeBindings(const XeDxilTextureLayout& layout) {
   if (layout.texture_count > XE_DXIL_TEXTURE_BINDINGS_MAX ||
       layout.sampler_count > XE_DXIL_SAMPLER_BINDINGS_MAX) return false;
   if (bindings_ready()) {
-    if (layout.texture_count != binding_storage_.texture_count ||
-        layout.sampler_count != binding_storage_.sampler_count ||
-        layout.used_texture_mask != used_texture_mask_) return false;
+    const auto textures = GetTextureBindingsAfterTranslation();
+    const auto samplers = GetSamplerBindingsAfterTranslation();
+    if (layout.texture_count != textures.size() ||
+        layout.sampler_count != samplers.size() ||
+        layout.used_texture_mask != GetUsedTextureMaskAfterTranslation()) return false;
     for (size_t i = 0; i < layout.texture_count; ++i) {
-      const auto& a = layout.textures[i]; const auto& b = MutableTextureBindings()[i];
+      const auto& a = layout.textures[i]; const auto& b = textures[i];
       if (a.fetch_constant != b.fetch_constant || a.dimension != unsigned(b.dimension) || a.is_signed != b.is_signed) return false;
     }
     for (size_t i = 0; i < layout.sampler_count; ++i) {
-      const auto& a = layout.samplers[i]; const auto& b = MutableSamplerBindings()[i];
+      const auto& a = layout.samplers[i]; const auto& b = samplers[i];
       if (a.fetch_constant != b.fetch_constant || a.mag_filter != unsigned(b.mag_filter) || a.min_filter != unsigned(b.min_filter) ||
           a.mip_filter != unsigned(b.mip_filter) || a.aniso_filter != unsigned(b.aniso_filter)) return false;
     }
     return true;
   }
-  if (retro_atomic_load_acquire_int(&bindings_setup_entered_)) return false;
-  if (!AllocateBindings(layout.texture_count, layout.sampler_count)) return false;
+  auto* owner = AllocateBindings(layout.texture_count, layout.sampler_count);
+  if (!owner) return false;
+  auto* textures = reinterpret_cast<TextureBinding*>(owner + 1);
+  auto* samplers = reinterpret_cast<SamplerBinding*>(
+      reinterpret_cast<unsigned char*>(owner + 1) + owner->texture_count * sizeof(uint32_t));
   for (size_t i = 0; i < layout.texture_count; ++i) {
-    const auto& in = layout.textures[i]; auto& out = MutableTextureBindings()[i];
+    const auto& in = layout.textures[i]; auto& out = textures[i];
     out.fetch_constant = in.fetch_constant;
     out.dimension = xenos::FetchOpDimension(in.dimension); out.is_signed = in.is_signed;
   }
   for (size_t i = 0; i < layout.sampler_count; ++i) {
-    const auto& in = layout.samplers[i]; auto& out = MutableSamplerBindings()[i];
+    const auto& in = layout.samplers[i]; auto& out = samplers[i];
     out.fetch_constant = in.fetch_constant;
     out.mag_filter = xenos::TextureFilter(in.mag_filter); out.min_filter = xenos::TextureFilter(in.min_filter);
     out.mip_filter = xenos::TextureFilter(in.mip_filter); out.aniso_filter = xenos::AnisoFilter(in.aniso_filter);
   }
-  used_texture_mask_ = layout.used_texture_mask;
-  retro_atomic_store_release_int(&bindings_setup_entered_, 1);
-  retro_atomic_store_release_int(&bindings_ready_, 1);
-  return true;
+  owner->used_texture_mask = layout.used_texture_mask;
+  return xe_binding_snapshot_publish(&bindings_, owner) != 0;
 }
 
 }  // namespace gpu

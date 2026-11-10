@@ -752,3 +752,15 @@ procedural shader timing. This does not move geometry emission off the draw path
 remove cold allocation, change vertex/pixel binding locks or implement accurate
 nonblocking fallback rendering. Those remain architectural failures to fix.
 See tools/tests/geometry_ready_results.txt for exact coverage and timing limits.
+
+
+## Immutable binding snapshots (2026-11-10)
+
+SPIR-V translation no longer holds a per-shader mutex for the whole emitter.
+Producers construct complete packed C89 owners in final storage, publish one
+immutable pointer and dispose equivalent/conflicting losers without modifying
+the winner. Native emission keeps its existing serialization against duplicate
+DXIL jobs. Real concurrent translation under that held mutex, exact reference
+bytes, publication races and joined disposal are checked. A first owner still
+allocates; compilation/admission waits and missing accurate fallbacks remain
+unresolved. See tools/tests/binding_snapshot_results.txt for measured limits.

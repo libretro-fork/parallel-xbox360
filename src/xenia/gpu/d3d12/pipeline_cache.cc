@@ -666,7 +666,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
   if (cached.ready) return static_cast<const XeDxilShaderBinary*>(cached.binary);
   // Every translation is created by this cache's D3D12Shader owner.
   auto* binding_shader = static_cast<SpirvShader*>(&translation.shader());
-  std::unique_lock<std::mutex> bindings_lock(binding_shader->resource_bindings_mutex());
+  std::unique_lock<std::mutex> native_emission_lock(binding_shader->native_emission_mutex());
   cached = native.native_snapshot();
   if (cached.ready) return static_cast<const XeDxilShaderBinary*>(cached.binary);
   XeDxilTextureLayout texture_layout = {};
@@ -723,7 +723,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
   static_assert(XE_DXIL_BLEND_INVERSE_SOURCE_COLOR == uint32_t(xenos::BlendFactor::kOneMinusSrcColor));
   // Every translation is created by this cache's D3D12Shader owner.
   auto* binding_shader = static_cast<SpirvShader*>(&translation.shader());
-  std::unique_lock<std::mutex> bindings_lock(binding_shader->resource_bindings_mutex());
+  std::unique_lock<std::mutex> native_emission_lock(binding_shader->native_emission_mutex());
   cached = native.native_snapshot();
   if (cached.ready) return static_cast<const XeDxilShaderBinary*>(cached.binary);
   XeDxilTextureLayout texture_layout = {};

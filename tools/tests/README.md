@@ -1578,3 +1578,17 @@ borrowed hits, cached failure and exact binary destruction. `READY_OWNED_BUILD`
 selects the MSVC library build. Cache-file tests additionally cover unaligned and
 3662-byte diagnostic payloads with short writes and EINTR, preserving byte length.
 These are component/ownership checks, not gameplay cold-stutter acceptance.
+
+
+`run_binding_snapshot_tests.cmd` / `.sh` check immutable C89 binding publication,
+held producers, exact borrowed identity, 32768 racing publications, mismatched
+counts/mask/records, allocation failure, overflow and joined release. The shell
+suite defaults to ASan/UBSan and also supports TSan through `SANITIZER`.
+`run_binding_translate_tests.cmd` / `.sh` exercise 96 real VS/PS variants across
+eight producers against independent cold/preloaded reference translations,
+including two texture fetches. Those forms assign different SPIR-V IDs; each
+result must match one reference byte-for-byte and publish identical binding records. The
+native-emission mutex remains held until all SPIR-V work finishes, rejecting
+accidental coupling to that lock. The native-binding fixture also races four
+publishers against four readers without an external lock, including maximum
+packed records, empty/sampler-only sets and mismatched republish rejection.

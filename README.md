@@ -546,3 +546,14 @@ teardown. A cold key still allocates metadata and emits DXIL. Vertex/pixel
 binding locks, draw-side compilation and accurate ready fallback coverage remain
 unfinished. Optional geometry dumps use VFS and preserve the exact binary length,
 which need not be divisible by four. See [ownership checks](tools/tests/geometry_ready_results.txt).
+
+
+SPIR-V variants no longer serialize translation behind the shader binding mutex.
+Each producer fills a final packed C89 binding owner and atomically publishes it;
+readers borrow that allocation until joined shader destruction. Equivalent racing
+publishers free only their own unpublished owner. Publication never copies a
+binding payload or waits for a producer; conflicting completed owners are rejected.
+A first publication still allocates its owner, including an empty binding set.
+Native vertex/pixel DXIL emission retains a separate mutex against duplicate
+binary generation. Draw-side compilation, queue waits and accurate generic
+fallbacks remain unfinished; this is not cold-play acceptance.

@@ -22,11 +22,16 @@ static void read_bindings(void *owner)
       else CHECK(cpu_features_get_time_usec() - start < 5000000);
    }
 }
+static void publish_bindings(void *owner)
+{
+   unsigned i;
+   for(i=0;i<1000;++i) CHECK(xe_binding_native_publish(owner,&layout));
+}
 int main(void)
 {
    void *owner;
    const void *textures, *samplers, *t, *s;
-   sthread_t *threads[4];
+   sthread_t *threads[8];
    unsigned i;
    owner = xe_binding_native_new(); CHECK(owner);
    layout.texture_count = XE_DXIL_TEXTURE_BINDINGS_MAX;
@@ -50,8 +55,8 @@ int main(void)
    CHECK(!xe_binding_native_check(owner, &layout, NULL, NULL));
    layout.texture_count = XE_DXIL_TEXTURE_BINDINGS_MAX;
    for (i = 0; i < 4; ++i) { threads[i] = sthread_create(read_bindings, owner); CHECK(threads[i]); }
-   CHECK(xe_binding_native_publish(owner, &layout));
-   for (i = 0; i < 4; ++i) sthread_join(threads[i]);
+   for (i = 4; i < 8; ++i) { threads[i] = sthread_create(publish_bindings, owner); CHECK(threads[i]); }
+   for (i = 0; i < 8; ++i) sthread_join(threads[i]);
    CHECK(xe_binding_native_check(owner, &layout, &textures, &samplers) == 1);
    CHECK(textures && (const unsigned char *)samplers == (const unsigned char *)textures + layout.texture_count * 4);
    for (i = 0; i < 100; ++i) CHECK(xe_binding_native_publish(owner, &layout));

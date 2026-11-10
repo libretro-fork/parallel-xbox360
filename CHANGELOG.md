@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Stop holding a binding mutex across SPIR-V translation. Each producer fills one final packed binding allocation and publishes it atomically; readers borrow immutable records and losing producers release only their own storage. Concurrent equivalent publication is accepted and conflicting records are rejected. Native DXIL emission still serializes duplicate work separately; draw-path compilation remains unresolved.
+
 - Remove the D3D12 native geometry-cache mutex and mutable map. Ready lookups borrow immutable DXIL through a C89 owner cache; failed generation remains cached, publication losers release their binaries and joined shutdown releases published owners. Optional geometry dumps write exact borrowed bytes through VFS, including non-word-sized containers. Cold generation and remaining draw-path compilation waits are not eliminated.
 
 - Fix package-type probing with position-returning VFS seeks. Accept the requested nonzero position or legacy zero success, while rejecting seek failures and inconsistent positive positions.

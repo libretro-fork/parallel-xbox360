@@ -13,7 +13,6 @@
 #include <array>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1133,7 +1132,6 @@ class SpirvShaderTranslator : public ShaderTranslator {
   spv::InstructionArena instruction_arena_{
       2048, sizeof(spv::Block), sizeof(spv::Function)};
   std::unique_ptr<SpirvBuilder> builder_;
-  std::unique_lock<std::mutex> resource_bindings_lock_;
   bool preloaded_resource_bindings_ = false;
 
   static void ScratchPush(xe_spv_scratch* scratch, uint32_t word) {
