@@ -1686,3 +1686,28 @@ the comparison before timing. Fixtures cover signed steps within initialized
 register bounds, repeat inheritance, all four nesting levels, root repeat and
 slot reuse. They preserve the shader's CF and add only Xfb annotations.
 See `shader_repeat_loop_results.txt` for evidence and remaining limits.
+
+Raw packed control flow
+----------------------
+
+Set `ALU_CONTROL_TEST=1` for `run_alu_program_tests.cmd` / `.sh`. Unit checks then
+also emit `control.spv`, validate three structured loops and rebuild the same
+owner1000 times without further allocation. With `GPU_TESTS=1`, the same C89
+Vulkan driver selects the control-flow entry and the procedural data in
+`shader_control_program_fixture.h`. Three data replays retain one active PSO;
+profiling creates two initialization PSOs for the existing primed-cache test.
+No pipeline/module is created during the data replays.
+
+The suite checks743 invocations and315 native CPU-reference results, plus literal
+goldens for clause dependencies, four nested calls, returns, jumps, partial
+exports, constant windows and zero inputs. Negative data covers cycle budgeting,
+call-depth exhaustion, invalid PCs/ALU ranges, unsupported/late failures and
+preserved output guards. Unsupported/cyclic data is not sent to the CPU oracle.
+Native/big/mixed endian views share the same program payload across invocations.
+See `alu_control_results.txt`; this is not a ready accurate renderer fallback.
+
+CI runs the new entry separately from the existing kernel, with pinned fixtures
+and explicit historical/backend coverage. Comparable kernels use independent
+`raw_control.*` timing/module-growth gates and identical device/module checks.
+Initial creation/completion keep UNVERIFIED driver-cache observations. A new
+component has no fabricated parent timing; removal/missing samples fail.

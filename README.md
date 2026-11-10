@@ -564,13 +564,17 @@ Compiler job notification uses a registered per-worker libretro-common eventcoun
 
 
 The C89 raw SPIR-V interpreter foundation in `libretro/core_alu_spv.c` is built
-only by validation tools, not linked or selected by the core. One fixed compute
+only by validation tools, not linked or selected by the core. Each fixed compute
 module consumes shared packed bytecode and constant views across repeated data
-submissions, including GPU-side endian correction. It currently handles one
-EXEC_END clause, three vector arithmetic opcodes, three scalar forms, direct
-registers/constants, masks and position exports. Other cases return explicit
-failure status without committing a position. This is not a rendering fallback:
-fetches, general control flow, pixel RNE arithmetic, other stages/exports and ROP
-are missing. Private per-invocation register storage may spill; rendering
+submissions, including GPU-side endian correction. The original entry handles
+one EXEC_END clause, three vector arithmetic opcodes, three scalar forms, direct
+registers/constants, masks and position exports. A separate control-flow entry
+also executes multiple clauses, unconditional jumps/calls and returns, retaining
+four return addresses instead of copying register frames. Unsupported work fails
+without committing a position. Its 4096-step work limit requires continuation
+support before general rendering use. This is not a rendering fallback: loops,
+predicates, fetches, pixel RNE arithmetic, other stages/exports and ROP are missing.
+Private per-invocation register storage may spill; rendering
 throughput and cold-play fluidity are unverified. See
-`tools/tests/alu_program_results.txt` for coverage and initialization costs.
+`tools/tests/alu_program_results.txt` and `tools/tests/alu_control_results.txt`
+for coverage and initialization costs.

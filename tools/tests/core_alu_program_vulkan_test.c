@@ -26,6 +26,7 @@ static void alu(uint32_t *p,unsigned destination,unsigned vm,unsigned sm,
  p[2]=(a<<16)|(b<<8)|c|(vop<<24)|((temporary&1)?0x80000000u:0)|
   ((temporary&2)?0x40000000u:0)|((temporary&4)?0x20000000u:0);
 }
+#ifndef XE_ALU_CONTROL_TEST
 static void program(uint32_t *p,unsigned group) {
  unsigned kind=group%32,i,j,count=1;uint32_t *q=p+3;
  memset(p,0,21*4);alu(q,62,15,0,50,0,0,1,2,0);q[0]|=1u<<15;
@@ -77,6 +78,18 @@ static unsigned expected_status(unsigned kind) {
  if(kind>=22)return 3;
  return 1;
 }
+#else
+#include "shader_control_program_fixture.h"
+#endif
+#ifdef XE_ALU_CONTROL_TEST
+#define XE_PROGRAM_BUILD xe_alu_control_spv_build
+#define XE_PROGRAM_STAGE(x) "raw_control." x
+#define XE_PROGRAM_DEVICE "RAW_CONTROL_DEVICE"
+#else
+#define XE_PROGRAM_BUILD xe_alu_program_spv_build
+#define XE_PROGRAM_STAGE(x) "raw_program." x
+#define XE_PROGRAM_DEVICE "RAW_PROGRAM_DEVICE"
+#endif
 static uint32_t next(uint32_t *state){*state=*state*1664525u+1013904223u;return *state;}
 static int same(uint32_t a,uint32_t b){return a==b || ((a&0x7fffffffu)>0x7f800000u && (b&0x7fffffffu)>0x7f800000u);}
 static uint32_t reverse(uint32_t x){return (x<<24)|((x&0xff00u)<<8)|((x>>8)&0xff00u)|(x>>24);}
@@ -107,11 +120,12 @@ int main(void){
  VkDescriptorSetAllocateInfo set_allocate={0};VkDescriptorSet set=VK_NULL_HANDLE;VkDescriptorBufferInfo infos[4];VkWriteDescriptorSet writes[4];
  VkCommandPoolCreateInfo command_pool_info={0};VkCommandPool command_pool=VK_NULL_HANDLE;VkCommandBufferAllocateInfo command_allocate={0};
  VkCommandBuffer command;VkCommandBufferBeginInfo begin={0};VkMemoryBarrier barrier={0};VkFenceCreateInfo fence_info={0};VkFence fence=VK_NULL_HANDLE;VkSubmitInfo submit={0};
+ VkResult completion;
  xe_spv_binary code={0};uint32_t count,family,i,lane,round,limit,output_limit,*in,*out,*programs,*constants,*descriptor,*temporary,reference[7],reference_code[21],seed=0x81732019u;
  unsigned kind,group,status,compared=0;
  unsigned modules=0,pipelines=0,cases=0;float priority=1.0f;int result=1;
- (void)shader;CHECK(loader);XE_COMPILE_BEGIN();CHECK(xe_alu_program_spv_build(&code));
- XE_COMPILE_END("raw_program.emit",0);
+ (void)shader;CHECK(loader);XE_COMPILE_BEGIN();CHECK(XE_PROGRAM_BUILD(&code));
+ XE_COMPILE_END(XE_PROGRAM_STAGE("emit"),0);
  CHECK(capture_module(&code));
 #ifdef _WIN32
  entry=GetProcAddress(loader,"vkGetInstanceProcAddr");
@@ -123,7 +137,7 @@ int main(void){
  instance.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;instance.pApplicationInfo=&app;OK(g.vkCreateInstance(&instance,NULL,&g.instance));
  LOAD(vkDestroyInstance);LOAD(vkEnumeratePhysicalDevices);LOAD(vkGetPhysicalDeviceProperties);LOAD(vkGetPhysicalDeviceMemoryProperties);LOAD(vkGetPhysicalDeviceQueueFamilyProperties);LOAD(vkCreateDevice);
  count=8;OK(g.vkEnumeratePhysicalDevices(g.instance,&count,physical));CHECK(count);g.vkGetPhysicalDeviceProperties(physical[0],&properties);
- fprintf(stderr,"RAW_PROGRAM_DEVICE Vulkan vendor=%u device=%u driver=%u name=%s\n",properties.vendorID,properties.deviceID,properties.driverVersion,properties.deviceName);
+ fprintf(stderr,XE_PROGRAM_DEVICE " Vulkan vendor=%u device=%u driver=%u name=%s\n",properties.vendorID,properties.deviceID,properties.driverVersion,properties.deviceName);
  g.vkGetPhysicalDeviceMemoryProperties(physical[0],&g.memory);count=32;g.vkGetPhysicalDeviceQueueFamilyProperties(physical[0],&count,families);
  for(family=0;family<count;++family){if(families[family].queueFlags&VK_QUEUE_COMPUTE_BIT)break;}
  CHECK(family<count);
@@ -140,7 +154,7 @@ int main(void){
  set_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;set_info.bindingCount=4;set_info.pBindings=bindings;OK(g.vkCreateDescriptorSetLayout(g.device,&set_info,NULL,&set_layout));
  layout_info.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;layout_info.setLayoutCount=1;layout_info.pSetLayouts=&set_layout;OK(g.vkCreatePipelineLayout(g.device,&layout_info,NULL,&layout));
  module_info.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;module_info.codeSize=code.count*4;module_info.pCode=code.words;++modules;
- XE_COMPILE_BEGIN();OK(g.vkCreateShaderModule(g.device,&module_info,NULL,&module));XE_COMPILE_END("raw_program.module",0);
+ XE_COMPILE_BEGIN();OK(g.vkCreateShaderModule(g.device,&module_info,NULL,&module));XE_COMPILE_END(XE_PROGRAM_STAGE("module"),0);
  pipeline_info.sType=VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;pipeline_info.stage.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
  pipeline_info.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;pipeline_info.stage.module=module;pipeline_info.stage.pName="main";pipeline_info.layout=layout;
 #ifdef XE_SHADER_COMPILE_BENCH
@@ -154,7 +168,7 @@ int main(void){
 #else
  OK(g.vkCreateComputePipelines(g.device,VK_NULL_HANDLE,1,&pipeline_info,NULL,&pipeline));
 #endif
- XE_COMPILE_END("raw_program.compute_pso",0);
+ XE_COMPILE_END(XE_PROGRAM_STAGE("compute_pso"),0);
 #ifdef XE_SHADER_COMPILE_BENCH
  /* Retain the first PSO and its explicit private cache for the warm condition.
   * First creation is observed separately: application-cache emptiness does not
@@ -162,7 +176,7 @@ int main(void){
   * the fixture makes no cache serialization calls. */
  first_pipeline=pipeline;pipeline=VK_NULL_HANDLE;
  XE_COMPILE_BEGIN();OK(g.vkCreateComputePipelines(g.device,pipeline_cache,1,&pipeline_info,NULL,&pipeline));++pipelines;
- XE_COMPILE_END("raw_program.compute_pso_warm",0);
+ XE_COMPILE_END(XE_PROGRAM_STAGE("compute_pso_warm"),0);
 #endif
  xe_spv_binary_close(&code);
  pool_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;pool_info.maxSets=1;pool_info.poolSizeCount=1;pool_info.pPoolSizes=&pool_size;OK(g.vkCreateDescriptorPool(g.device,&pool_info,NULL,&pool));
@@ -212,8 +226,10 @@ int main(void){
   g.vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);g.vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&set,0,NULL);g.vkCmdDispatch(command,(OUTPUT_RECORDS+63)/64+1,1,1);
   barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;g.vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,NULL,0,NULL);
   OK(g.vkEndCommandBuffer(command));OK(g.vkResetFences(g.device,1,&fence));submit.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;submit.commandBufferCount=1;submit.pCommandBuffers=&command;
-  XE_COMPILE_BEGIN();OK(g.vkQueueSubmit(queue,1,&submit,fence));OK(g.vkWaitForFences(g.device,1,&fence,VK_TRUE,UINT64_C(5000000000)));
-  XE_COMPILE_END("raw_program.submit_complete",round);
+  XE_COMPILE_BEGIN();OK(g.vkQueueSubmit(queue,1,&submit,fence));
+  completion=g.vkWaitForFences(g.device,1,&fence,VK_TRUE,UINT64_C(5000000000));
+  if(completion!=VK_SUCCESS){fprintf(stderr,"GPU completion failed (%d); retaining pending test resources\n",(int)completion);exit(1);}
+ XE_COMPILE_END(XE_PROGRAM_STAGE("submit_complete"),round);
   CHECK(cache_buffer(&output_buffer,1) && cache_buffer(&program_buffer,1));
   for(i=0;i<(RECORDS+1)/2;++i){
    program(reference_code,i);
@@ -230,6 +246,7 @@ int main(void){
     CHECK(xe_alu_program_reference(reference_code,in+descriptor[2],descriptor[3],constants+descriptor[4],descriptor[5],descriptor[6],descriptor[7],reference)==1);
     for(lane=0;lane<7;++lane){if(lane==4)continue;
      if(!same(out[i*8+lane],reference[lane])){fprintf(stderr,"round %u invocation %u kind %u word %u: %08x != %08x\n",round,i,kind,lane,out[i*8+lane],reference[lane]);goto done;}}
+#ifndef XE_ALU_CONTROL_TEST
     if(group==0)for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==0x40400000u);
     if(group==2)for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==0xc0000000u);
     if(group==4)for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==0xc1300000u);
@@ -238,6 +255,9 @@ int main(void){
     if(group==9)for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==0x3f800000u);
     if(group==10)for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==0);
     if(group==11)for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==0xc1000000u);
+#else
+    CHECK(control_golden(group,out+i*8));
+#endif
     ++compared;
    }else{for(lane=0;lane<7;++lane)if(lane!=4)CHECK(out[i*8+lane]==0x6d6d6d6du);}
    CHECK(out[i*8+7]==0x6d6d6d6du);++cases;
@@ -249,7 +269,7 @@ int main(void){
 #else
  CHECK(pipelines==1);
 #endif
- printf("PASS: %u packed program invocations (%u native CPU-reference comparisons); dependent masked temps, coissue, scalar previous, shared bytecode/constants, transactional failure/bounds; one active module/PSO across three replays (%u initialization PSO creates)\n",cases,compared,pipelines);result=0;
+ printf("PASS: %u packed program invocations (%u native CPU-reference comparisons); shared bytecode/constants, transactional failure/bounds; one active module/PSO across three replays (%u initialization PSO creates)\n",cases,compared,pipelines);result=0;
 done:
  if(g.device){if(fence)g.vkDestroyFence(g.device,fence,NULL);
   if(command_pool)g.vkDestroyCommandPool(g.device,command_pool,NULL);

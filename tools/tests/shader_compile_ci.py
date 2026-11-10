@@ -92,23 +92,27 @@ def cpu_build(source, build, out, logs, env):
     return out / "cpu"
 
 
-def validate_raw_program(source, build, out, log, env, backend):
+def validate_raw_program(source, build, out, log, env, backend, control=False):
     """New component coverage; absent historical code is not a passing fixture."""
     script=source / "tools/tests" / ("run_alu_program_tests.cmd" if WIN else "run_alu_program_tests.sh")
-    coverage=dict(available=script.is_file(),unit=False,vulkan_gpu=False,
+    header=source / "libretro/core_alu_spv.h"
+    available=script.is_file() and (not control or
+        (header.is_file() and "xe_alu_control_spv_build(" in header.read_text()))
+    coverage=dict(available=available,unit=False,vulkan_gpu=False,
                   renderer_integration=False,full_guest_shader_coverage=False)
     if not coverage["available"]:
-        coverage["reason"]="historical revision has no raw program kernel"
+        coverage["reason"]="historical revision has no raw "+("control-flow" if control else "program")+" kernel"
         return coverage
     fixture=env.copy()
-    fixture.update(ALU_PROGRAM_OUT=str(out / "raw-program"),
+    fixture.update(ALU_PROGRAM_OUT=str(out / ("raw-control" if control else "raw-program")),
                    ALU_PROGRAM_FIXTURE=str(HERE / "core_alu_program_vulkan_test.c"),
                    ALU_PROGRAM_BRIDGE=str(HERE / "alu_program_bridge.cc"),
                    GPU_TESTS="1" if backend.startswith("vulkan") else "0")
+    fixture["ALU_CONTROL_TEST"]="1" if control else "0"
     if fixture["GPU_TESTS"]=="1":
         fixture["ALU_PROGRAM_FLAGS"]="/DXE_SHADER_COMPILE_BENCH" if WIN else "-DXE_SHADER_COMPILE_BENCH"
-        fixture["XE_SHADER_BENCH_CSV"]=str(out / "raw-program-prepare.csv")
-        fixture["XE_SHADER_BENCH_CPU_CSV"]=str(out / "raw-program-prepare-cpu.csv")
+        fixture["XE_SHADER_BENCH_CSV"]=str(out / ("raw-control-prepare.csv" if control else "raw-program-prepare.csv"))
+        fixture["XE_SHADER_BENCH_CPU_CSV"]=str(out / ("raw-control-prepare-cpu.csv" if control else "raw-program-prepare-cpu.csv"))
     if WIN:
         fixture["ALU_PROGRAM_BUILD"]=str(build)
         fixture["FORWARD_FLOW_LINK_FLAGS"]="/CGTHREADS:"+str(JOBS)
@@ -119,6 +123,9 @@ def validate_raw_program(source, build, out, log, env, backend):
     coverage.update(unit=True,vulkan_gpu=fixture["GPU_TESTS"]=="1",corpus_version=1,timing_profile_version=2,
                     pinned_fixture_sha256=file_sha256(HERE/"core_alu_program_vulkan_test.c"),
                     pinned_bridge_sha256=file_sha256(HERE/"alu_program_bridge.cc"))
+    if control:
+        coverage.update(control_flow_version=1,cf_step_limit=4096,call_depth_limit=4,
+                        pinned_control_fixture_sha256=file_sha256(HERE/"shader_control_program_fixture.h"))
     return coverage
 
 
@@ -199,6 +206,9 @@ def prepare(source, out, results, backend, reuse_build=None):
     program_coverage=validate_raw_program(source,build,out,log,env,backend)
     (results/(source.name+"-"+out.parent.name+"-"+out.name+"-raw-program.json")).write_text(
         json.dumps(program_coverage,indent=2),encoding="utf-8")
+    control_coverage=validate_raw_program(source,build,out,log,env,backend,control=True)
+    (results/(source.name+"-"+out.parent.name+"-"+out.name+"-raw-control.json")).write_text(
+        json.dumps(control_coverage,indent=2),encoding="utf-8")
     env["XE_SHADER_BENCH_CSV"] = str(out / "prepare.csv")
     env["XE_SHADER_BENCH_NO_DUMP"] = "0"
     cpu = cpu_build(source, build, out, log, env)
@@ -270,6 +280,11 @@ def prepare(source, out, results, backend, reuse_build=None):
             result["raw_program"]=out / "raw-program/native" / ("test.exe" if WIN else "test")
             result["raw_program_module"]=out / "raw-program/program.spv"
             if not result["raw_program"].is_file():raise ValueError("raw program executable missing")
+        if control_coverage["vulkan_gpu"]:
+            result["raw_control"]=out / "raw-control/native" / ("test.exe" if WIN else "test")
+            result["raw_control_module"]=out / "raw-control/control.spv"
+            if not result["raw_control"].is_file() or not result["raw_control_module"].is_file():
+                raise ValueError("raw control executable/module missing")
         if backend == "vulkan-hardware":
             for profile in ["rtz","dot","frac","mad","softfrac","partialmad","softdot"]:
                 result[profile]=out / profile
@@ -446,11 +461,11 @@ def spirv_manifest(directory):
     return result
 
 
-def compare_raw_program(raw, samples):
+def compare_raw_program(raw, samples, prefix="raw_program."):
     """Gate comparable program kernels; a newly added kernel has no old timing."""
     if samples<5:raise ValueError("raw program needs at least five process pairs")
-    expected={("raw_program."+stage,0) for stage in ("emit","module","compute_pso","compute_pso_warm")}
-    expected.update(("raw_program.submit_complete",i) for i in range(3))
+    expected={(prefix+stage,0) for stage in ("emit","module","compute_pso","compute_pso_warm")}
+    expected.update((prefix+"submit_complete",i) for i in range(3))
     observed={}
     for version,data in raw.items():
         if set(data)!=expected or any(len(x)!=samples for x in data.values()):
@@ -459,7 +474,7 @@ def compare_raw_program(raw, samples):
             median=statistics.median(v),p95=percentile(v,.95),p99=percentile(v,.99),
             maximum=max(v),outliers=sorted(enumerate(v),key=lambda x:x[1],reverse=True)[:5])
             for k,v in sorted(data.items())]
-    first_use={("raw_program.compute_pso",0),("raw_program.submit_complete",0)}
+    first_use={(prefix+"compute_pso",0),(prefix+"submit_complete",0)}
     controlled={v:{k:x for k,x in data.items() if k not in first_use} for v,data in raw.items()}
     rows=compare(controlled["base"],controlled["candidate"],samples) if "base" in raw and "candidate" in raw else []
     anchor=compare(controlled["anchor"],controlled["candidate"],samples) if "anchor" in raw and "candidate" in raw else []
@@ -499,7 +514,8 @@ def run_comparison(args):
          "shader_compile_vulkan_test.c","shader_compile_bench.h","shader_compile_ci.py",
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
-         "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc"]}
+         "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
+         "shader_control_program_fixture.h"]}
     manifest["corpus_contract"]=dict(version=8,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_frac_cases=64 if args.backend=="vulkan-hardware" else 0,
@@ -551,7 +567,7 @@ def run_comparison(args):
         precision="Windows process CPU accounting may quantize short intervals; zero is not zero work")
     manifest["clock_controls"]={version:"clock-checks/"+b["out"].parent.name+"-"+b["out"].name for version,b in builds.items()}
     manifest["prepared_binaries"]={version:{name:dict(sha256=file_sha256(b[name]),bytes=b[name].stat().st_size)
-        for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module"] if name in b} for version,b in builds.items()}
+        for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module","raw_control","raw_control_module"] if name in b} for version,b in builds.items()}
     (results/"environment.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     ir={version:spirv_manifest(b["out"]) for version,b in builds.items()}
     for version,b in builds.items():
@@ -583,12 +599,14 @@ def run_comparison(args):
                     module=b["out"]/("vertex%d.dxil"%case)
                     run([b["dxil"],module,case],b["source"],log,e,60)
                     run([b["warp"],module,case,0,0,0,0],b["source"],log,e,60)
-            if "raw_program" in b:
+            for component in ("raw_program","raw_control"):
+                if component not in b:continue
+                filename=component.replace("_","-")
                 program_env=e.copy()
-                program_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-raw-program.csv"))
-                program_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-raw-program-cpu.csv"))
-                program_env["XE_ALU_PROGRAM_DUMP"]=str(results/(version+"-raw-program-sample%d.spv"%sample))
-                run([b["raw_program"]],b["source"],log,program_env,120)
+                program_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-"+filename+".csv"))
+                program_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-"+filename+"-cpu.csv"))
+                program_env["XE_ALU_PROGRAM_DUMP"]=str(results/(version+"-"+filename+"-sample%d.spv"%sample))
+                run([b[component]],b["source"],log,program_env,120)
     raw={version:read_samples(results/(version+".csv")) for version in builds}
     for version,measurements in raw.items():
         if set(measurements)!=expected_keys(args.backend):
@@ -607,6 +625,18 @@ def run_comparison(args):
             old_bytes=manifest["prepared_binaries"][version]["raw_program_module"]["bytes"]
             if new_bytes-old_bytes>max(4096,old_bytes*.10):program_report["module_growth_failures"].append(version)
         program_report["failure"]|=bool(program_report["module_growth_failures"])
+    control_raw={v:read_samples(results/(v+"-raw-control.csv")) for v,b in builds.items() if "raw_control" in b}
+    control_report=compare_raw_program(control_raw,args.samples,"raw_control.")
+    control_cpu={v:read_samples(results/(v+"-raw-control-cpu.csv")) for v in control_raw}
+    control_report["process_cpu_observed"]=compare_raw_program(control_cpu,args.samples,"raw_control.")["observed"]
+    control_report["module_growth_failures"]=[]
+    if "candidate" in control_raw:
+        new_bytes=manifest["prepared_binaries"]["candidate"]["raw_control_module"]["bytes"]
+        for version in ("base","anchor"):
+            if version not in control_raw:continue
+            old_bytes=manifest["prepared_binaries"][version]["raw_control_module"]["bytes"]
+            if new_bytes-old_bytes>max(4096,old_bytes*.10):control_report["module_growth_failures"].append(version)
+        control_report["failure"]|=bool(control_report["module_growth_failures"])
     identities=[]
     if args.backend.startswith("vulkan"):
         for version in builds:
@@ -614,12 +644,14 @@ def run_comparison(args):
                 log=(results/(version+"-sample%d.log"%sample)).read_text(encoding="utf-8",errors="replace")
                 expected_reports=1+sum(profile in builds[version] for profile in ["rtz","dot","frac","mad","softfrac","partialmad","softdot"])
                 identities.append(vulkan_device_identity(log,expected_reports))
-                if "raw_program" in builds[version]:
-                    program_id=re.findall(r"^RAW_PROGRAM_DEVICE Vulkan .+$",log,re.MULTILINE)
-                    if len(program_id)!=1 or program_id[0].replace("RAW_PROGRAM_DEVICE","BENCH_DEVICE",1)!=identities[-1]:
+                for component in ("raw_program","raw_control"):
+                    if component not in builds[version]:continue
+                    device_label=component.upper()+"_DEVICE"
+                    program_id=re.findall(r"^"+device_label+r" Vulkan .+$",log,re.MULTILINE)
+                    if len(program_id)!=1 or program_id[0].replace(device_label,"BENCH_DEVICE",1)!=identities[-1]:
                         raise ValueError("raw program used missing/different device or driver")
-                    actual=results/(version+"-raw-program-sample%d.spv"%sample)
-                    if file_sha256(actual)!=manifest["prepared_binaries"][version]["raw_program_module"]["sha256"]:
+                    actual=results/(version+"-"+component.replace("_","-")+"-sample%d.spv"%sample)
+                    if file_sha256(actual)!=manifest["prepared_binaries"][version][component+"_module"]["sha256"]:
                         raise ValueError("raw program emitted a different module during timing")
         if len(set(identities))!=1:raise ValueError("different benchmark device/driver")
         software=any(x in identities[0].lower() for x in ["llvmpipe","lavapipe"])
@@ -641,8 +673,8 @@ def run_comparison(args):
                 process_cpu_diagnostics=cpu_rows,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
-                raw_program=program_report,
-                success=not ir_failures and not alarm_failures and not program_report["failure"] and not any(x["failures"] for x in rows+anchor_rows),
+                raw_program=program_report,raw_control=control_report,
+                success=not ir_failures and not alarm_failures and not program_report["failure"] and not control_report["failure"] and not any(x["failures"] for x in rows+anchor_rows),
                 self_check=bool(args.self_check))
     (results/"comparison.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     summary="# Shader compilation comparison\n\n%s -> %s (%s)\n\n"%(args.base,args.head,args.backend)
@@ -652,6 +684,10 @@ def run_comparison(args):
         status="paired primed-cache/warm-execution timing gates apply" if program_report["comparable"] else "no historical parent implementation; timing is UNCOMPARED"
         if program_report["missing_candidate"]:status="candidate kernel removed: FAIL"
         summary+="Raw program prototype: "+status+". First-use cache conditions remain UNVERIFIED; all first-use samples are retained. Rendering integration and full shader coverage remain absent.\n\n"
+    if control_report["observed"]:
+        status="comparable primed-cache/warm-execution gates apply" if control_report["comparable"] else "new component; no historical parent timing"
+        if control_report["missing_candidate"]:status="candidate kernel removed: FAIL"
+        summary+="Raw control-flow prototype: "+status+". First-use cache conditions remain UNVERIFIED. Bounded execution and missing stages/fetch do not qualify as a renderer fallback.\n\n"
     summary+="Process CPU samples are supplementary diagnostics; elapsed-time thresholds remain authoritative.\n\n"
     summary+="Parallel workers can consume more process CPU than elapsed time; short Windows CPU intervals may quantize to zero.\n\n"
     summary+="|Stage|Case|Parent wall ms|Candidate wall ms|Parent CPU ms|Candidate CPU ms|Result|\n|---|---:|---:|---:|---:|---:|---|\n"

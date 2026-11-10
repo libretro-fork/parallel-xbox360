@@ -831,3 +831,14 @@ historical absence and separately reported backend coverage. This repairs the
 draw-extent interpreter and its use as an oracle, not the missing ready renderer
 fallback. Out-of-window GPU addressing, zero-count loop stack effects and full
 hardware equivalence remain separate unresolved validation work.
+
+A separate raw control-flow validation entry now interprets native packed CF and
+ALU words through a fixed PSO: multiple EXEC clauses, unconditional jumps/calls,
+four return addresses and RET, retaining register/scalar/position state between
+clauses. Cyclic work is bounded and failures commit only a status. The current
+4096-step cap is a validation limit, not permission to abandon a valid draw;
+continuations or equivalent full valid-program coverage are required before
+rendering. Conditional CF, loops, fetches, pixel arithmetic and stages/ROP remain.
+Both existing and new kernels have separate CI correctness, payload/device
+identity and comparable cost gates. No renderer call site or synchronous fallback
+is changed by this addition. See `tools/tests/alu_control_results.txt`.

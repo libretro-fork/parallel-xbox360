@@ -382,13 +382,66 @@ static void register_write(alu_builder *b,uint32_t registers,uint32_t at,uint32_
  local_store(b,pointer,choose(b,mask_predicate(b,mask),value,old));
  emit(b,SpvOpBranch,0,0,1,joined,0,0,0);emit(b,SpvOpLabel,0,joined,0,0,0,0,0);
 }
-static void program_entry(alu_builder *b) {
+/* Fixed per-invocation PC, return stack and work budget. Leave the build point
+ * at the EXEC case; every other supported case rejoins the outer continuation. */
+static void control_dispatch(alu_builder *b,uint32_t flow[9],uint32_t base,
+ uint32_t swap,uint32_t available,uint32_t output,uint32_t *cf0,uint32_t *cf1) {
+ uint32_t body=id(b),exec=id(b),skip=id(b),call_block=id(b),ret=id(b),jump=id(b),bad=id(b),joined=id(b);
+ uint32_t pc,steps,pair,at,w0,w1,w2,odd,depth,stack,next,inserted,result,valid,ops[16];
+ flow[4]=id(b);flow[5]=id(b);flow[6]=id(b);
+ emit(b,SpvOpBranch,0,0,1,flow[4],0,0,0);
+ emit(b,SpvOpLabel,0,flow[4],0,0,0,0,0);
+ emit(b,SpvOpLoopMerge,0,0,3,flow[6],flow[5],0,0);
+ emit(b,SpvOpBranch,0,0,1,body,0,0,0);
+ emit(b,SpvOpLabel,0,body,0,0,0,0,0);
+ steps=local_load(b,T_UINT,flow[3]);
+ guard(b,operation(b,SpvOpULessThan,T_BOOL,steps,scalar(b,4096)),output,5);
+ local_store(b,flow[3],offset(b,steps,1));pc=local_load(b,T_UINT,flow[0]);
+ pair=operation(b,SpvOpShiftRightLogical,T_UINT,pc,scalar(b,1));
+ guard(b,operation(b,SpvOpULessThan,T_BOOL,pair,available),output,2);
+ at=operation(b,SpvOpIAdd,T_UINT,base,operation(b,SpvOpIMul,T_UINT,pair,scalar(b,3)));
+ w0=program_word(b,at,swap);w1=program_word(b,offset(b,at,1),swap);w2=program_word(b,offset(b,at,2),swap);
+ odd=yes(b,field(b,pc,0,1));
+ *cf0=select_word(b,odd,operation(b,SpvOpBitwiseOr,T_UINT,
+  operation(b,SpvOpShiftRightLogical,T_UINT,w1,scalar(b,16)),
+  operation(b,SpvOpShiftLeftLogical,T_UINT,w2,scalar(b,16))),w0);
+ *cf1=select_word(b,odd,operation(b,SpvOpShiftRightLogical,T_UINT,w2,scalar(b,16)),field(b,w1,0,65535));
+ flow[7]=field(b,*cf1,12,15);next=offset(b,pc,1);local_store(b,flow[0],next);
+ emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
+ ops[0]=flow[7];ops[1]=bad;ops[2]=0;ops[3]=skip;ops[4]=1;ops[5]=exec;
+ ops[6]=2;ops[7]=exec;ops[8]=9;ops[9]=call_block;ops[10]=10;ops[11]=ret;ops[12]=11;ops[13]=jump;
+ xe_spv_binary_instruction(b->out,SpvOpSwitch,0,0,ops,14);
+ emit(b,SpvOpLabel,0,bad,0,0,0,0,0);store_word(b,offset(b,output,4),scalar(b,3));
+ emit(b,SpvOpReturn,0,0,0,0,0,0,0);
+ emit(b,SpvOpLabel,0,skip,0,0,0,0,0);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ emit(b,SpvOpLabel,0,call_block,0,0,0,0,0);
+ guard(b,yes(b,field(b,*cf0,13,1)),output,3);depth=local_load(b,T_UINT,flow[1]);
+ guard(b,operation(b,SpvOpULessThan,T_BOOL,depth,scalar(b,4)),output,3);
+ stack=local_load(b,T_U4,flow[2]);inserted=id(b);
+ emit(b,SpvOpVectorInsertDynamic,T_U4,inserted,3,stack,next,depth,0);
+ local_store(b,flow[2],inserted);local_store(b,flow[1],offset(b,depth,1));
+ local_store(b,flow[0],field(b,*cf0,0,8191));emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ emit(b,SpvOpLabel,0,ret,0,0,0,0,0);depth=local_load(b,T_UINT,flow[1]);valid=yes(b,depth);
+ at=select_word(b,valid,operation(b,SpvOpISub,T_UINT,depth,scalar(b,1)),scalar(b,0));
+ stack=local_load(b,T_U4,flow[2]);result=id(b);emit(b,SpvOpVectorExtractDynamic,T_UINT,result,2,stack,at,0,0);
+ local_store(b,flow[1],at);local_store(b,flow[0],select_word(b,valid,result,next));
+ emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ emit(b,SpvOpLabel,0,jump,0,0,0,0,0);guard(b,yes(b,field(b,*cf0,13,1)),output,3);
+ local_store(b,flow[0],field(b,*cf0,0,8191));emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ /* Keep the switch merge for the EXEC tail, which may exit the outer loop. */
+ /* The caller emits the merge after the EXEC tail. */
+ flow[8]=joined;
+ emit(b,SpvOpLabel,0,exec,0,0,0,0,0);
+}
+static void program_entry(alu_builder *b,int control) {
  uint32_t start=id(b),registers=id(b),previous=id(b),position=id(b),exports=id(b),written=id(b),iterator=id(b);
  uint32_t invocation,x,length,output_length,descriptor_count,record,output,desc[8],constants[4],swap;
  uint32_t h,body,advance,end,index,predicate,cf0,cf1,count,address,sequence,available,word0,word1,word2;
  uint32_t opcode,scalar_opcode,mask_v,mask_s,is_export,valid,a,c,d,value,scalar_value,at;
  uint32_t store_export,store_temp,stored,overlap,union_mask,zero_mask;
+ uint32_t flow[9];
  unsigned i;
+ cf0=cf1=count=address=sequence=0;
  emit(b,SpvOpFunction,T_VOID,F_MAIN,2,0,T_MAIN_FN,0,0);
  emit(b,SpvOpLabel,0,start,0,0,0,0,0);
  emit(b,SpvOpVariable,T_PREG_ARRAY,registers,2,SpvStorageClassFunction,C_NULL_REG,0,0);
@@ -397,6 +450,13 @@ static void program_entry(alu_builder *b) {
  emit(b,SpvOpVariable,T_PLOCAL_UINT,exports,2,SpvStorageClassFunction,scalar(b,0),0,0);
  emit(b,SpvOpVariable,T_PLOCAL_UINT,written,2,SpvStorageClassFunction,scalar(b,0),0,0);
  emit(b,SpvOpVariable,T_PLOCAL_UINT,iterator,2,SpvStorageClassFunction,scalar(b,0),0,0);
+ if(control){
+  for(i=0;i<4;++i)flow[i]=id(b);
+  emit(b,SpvOpVariable,T_PLOCAL_UINT,flow[0],2,SpvStorageClassFunction,scalar(b,0),0,0);
+  emit(b,SpvOpVariable,T_PLOCAL_UINT,flow[1],2,SpvStorageClassFunction,scalar(b,0),0,0);
+  emit(b,SpvOpVariable,T_PREG,flow[2],2,SpvStorageClassFunction,vector(b,0),0,0);
+  emit(b,SpvOpVariable,T_PLOCAL_UINT,flow[3],2,SpvStorageClassFunction,scalar(b,0),0,0);
+ }
  invocation=local_load(b,T_U3,V_INVOCATION);x=id(b);emit(b,SpvOpCompositeExtract,T_UINT,x,2,invocation,0,0,0);
  length=array_length(b,V_INPUT);output_length=array_length(b,V_OUTPUT);
  guard(b,yes(b,length),0,0);descriptor_count=load_word(b,V_INPUT,scalar(b,0));
@@ -416,6 +476,7 @@ static void program_entry(alu_builder *b) {
      fits(b,desc[4],operation(b,SpvOpIMul,T_UINT,desc[5],scalar(b,4)),array_length(b,V_CONSTANT))))));
  valid=both(b,valid,operation(b,SpvOpUGreaterThanEqual,T_BOOL,desc[1],scalar(b,3)));
  guard(b,valid,output,2);
+ if(!control){
  cf0=program_word(b,desc[0],swap);cf1=program_word(b,offset(b,desc[0],1),swap);
  count=field(b,cf0,12,7);address=field(b,cf0,0,4095);sequence=field(b,cf0,16,4095);
  available=operation(b,SpvOpUDiv,T_UINT,desc[1],scalar(b,3));
@@ -427,6 +488,7 @@ static void program_entry(alu_builder *b) {
   operation(b,SpvOpBitwiseAnd,T_UINT,sequence,at),scalar(b,0x555)),scalar(b,0)));
  predicate=both(b,predicate,operation(b,SpvOpULessThanEqual,T_BOOL,count,scalar(b,6)));
  guard(b,predicate,output,3);
+ }else available=operation(b,SpvOpUDiv,T_UINT,desc[1],scalar(b,3));
  for(i=0;i<4;++i)constants[i]=desc[i+4];
  /* Initialize only the supplied input registers; remaining locals start zero. */
  h=id(b);body=id(b);advance=id(b);end=id(b);emit(b,SpvOpBranch,0,0,1,h,0,0,0);
@@ -438,6 +500,16 @@ static void program_entry(alu_builder *b) {
  local_store(b,reg_pointer(b,registers,index),value);emit(b,SpvOpBranch,0,0,1,advance,0,0,0);
  emit(b,SpvOpLabel,0,advance,0,0,0,0,0);local_store(b,iterator,offset(b,index,1));emit(b,SpvOpBranch,0,0,1,h,0,0,0);
  emit(b,SpvOpLabel,0,end,0,0,0,0,0);local_store(b,iterator,scalar(b,0));
+ if(control){
+  control_dispatch(b,flow,desc[0],swap,available,output,&cf0,&cf1);
+  count=field(b,cf0,12,7);address=field(b,cf0,0,4095);sequence=field(b,cf0,16,4095);
+  valid=either(b,equal(b,count,scalar(b,0)),fits(b,address,count,available));guard(b,valid,output,2);
+  at=operation(b,SpvOpISub,T_UINT,operation(b,SpvOpShiftLeftLogical,T_UINT,scalar(b,1),
+   operation(b,SpvOpIMul,T_UINT,count,scalar(b,2))),scalar(b,1));
+  valid=both(b,operation(b,SpvOpULessThanEqual,T_BOOL,count,scalar(b,6)),
+   equal(b,operation(b,SpvOpBitwiseAnd,T_UINT,operation(b,SpvOpBitwiseAnd,T_UINT,sequence,at),scalar(b,0x555)),scalar(b,0)));
+  guard(b,valid,output,3);local_store(b,iterator,scalar(b,0));
+ }
  h=id(b);body=id(b);advance=id(b);end=id(b);emit(b,SpvOpBranch,0,0,1,h,0,0,0);
  emit(b,SpvOpLabel,0,h,0,0,0,0,0);index=local_load(b,T_UINT,iterator);
  predicate=operation(b,SpvOpULessThan,T_BOOL,index,count);
@@ -450,10 +522,13 @@ static void program_entry(alu_builder *b) {
  is_export=yes(b,field(b,word0,15,1));mask_v=field(b,word0,16,15);mask_s=field(b,word0,20,15);
  valid=both(b,either(b,equal(b,opcode,scalar(b,0)),either(b,equal(b,opcode,scalar(b,1)),equal(b,opcode,scalar(b,11)))),
   either(b,equal(b,scalar_opcode,scalar(b,0)),either(b,equal(b,scalar_opcode,scalar(b,44)),equal(b,scalar_opcode,scalar(b,50)))));
- valid=both(b,valid,both(b,equal(b,field(b,word0,24,3),scalar(b,0)),
-  both(b,equal(b,field(b,word0,6,1),scalar(b,0)),
-   both(b,either(b,is_export,equal(b,field(b,word0,14,1),scalar(b,0))),
-    both(b,equal(b,field(b,word1,28,1),scalar(b,0)),equal(b,field(b,word1,30,3),scalar(b,0)))))));
+ /* Sequence emitter side effects explicitly; C argument evaluation order must
+  * not change the established module when adding a separate entry point. */
+ a=equal(b,field(b,word1,28,1),scalar(b,0));
+ c=equal(b,field(b,word1,30,3),scalar(b,0));d=both(b,a,c);
+ a=either(b,is_export,equal(b,field(b,word0,14,1),scalar(b,0)));d=both(b,a,d);
+ a=equal(b,field(b,word0,6,1),scalar(b,0));d=both(b,a,d);
+ a=equal(b,field(b,word0,24,3),scalar(b,0));d=both(b,a,d);valid=both(b,valid,d);
  valid=both(b,valid,either(b,equal(b,field(b,word0,15,1),scalar(b,0)),equal(b,field(b,word0,0,63),scalar(b,62))));
  for(i=0;i<3;++i)valid=both(b,valid,equal(b,
   operation(b,SpvOpBitwiseAnd,T_UINT,field(b,word2,31-i,1),field(b,word2,22-i*8,1)),scalar(b,0)));
@@ -485,6 +560,12 @@ static void program_entry(alu_builder *b) {
  emit(b,SpvOpLabel,0,stored,0,0,0,0,0);emit(b,SpvOpBranch,0,0,1,advance,0,0,0);
  emit(b,SpvOpLabel,0,advance,0,0,0,0,0);local_store(b,iterator,offset(b,index,1));emit(b,SpvOpBranch,0,0,1,h,0,0,0);
  emit(b,SpvOpLabel,0,end,0,0,0,0,0);
+ if(control){
+  emit(b,SpvOpBranchConditional,0,0,3,equal(b,flow[7],scalar(b,2)),flow[6],flow[8],0);
+  emit(b,SpvOpLabel,0,flow[8],0,0,0,0,0);emit(b,SpvOpBranch,0,0,1,flow[5],0,0,0);
+  emit(b,SpvOpLabel,0,flow[5],0,0,0,0,0);emit(b,SpvOpBranch,0,0,1,flow[4],0,0,0);
+  emit(b,SpvOpLabel,0,flow[6],0,0,0,0,0);
+ }
  guard(b,equal(b,local_load(b,T_UINT,written),scalar(b,15)),output,4);
  value=local_load(b,T_U4,position);
  for(i=0;i<4;++i){at=id(b);emit(b,SpvOpCompositeExtract,T_UINT,at,2,value,i,0,0);store_word(b,offset(b,output,i),at);}
@@ -546,6 +627,14 @@ static int build(xe_spv_binary *out,int program) {
   emit(&b,SpvOpConstant,T_UINT,c->scalar,1,c->literal,0,0,0);
   emit(&b,SpvOpConstantComposite,T_U4,c->vector,4,c->scalar,c->scalar,c->scalar,c->scalar);
  }
+ if(program==2){
+  static const uint32_t extra[3]={4096,8191,65535};
+  for(i=0;i<3;++i){
+   alu_constant *c=&b.constant[b.constants++];c->literal=extra[i];c->scalar=id(&b);c->vector=id(&b);
+   emit(&b,SpvOpConstant,T_UINT,c->scalar,1,c->literal,0,0,0);
+   emit(&b,SpvOpConstantComposite,T_U4,c->vector,4,c->scalar,c->scalar,c->scalar,c->scalar);
+  }
+ }
  if(program){
   emit(&b,SpvOpTypeArray,0,T_REG_ARRAY,2,T_U4,scalar(&b,64),0,0);
   emit(&b,SpvOpTypePointer,0,T_PREG_ARRAY,2,SpvStorageClassFunction,T_REG_ARRAY,0,0);
@@ -558,9 +647,10 @@ static int build(xe_spv_binary *out,int program) {
  emit(&b,SpvOpVariable,T_PBUFFER,V_INPUT,1,SpvStorageClassUniform,0,0,0);
  emit(&b,SpvOpVariable,T_PBUFFER,V_OUTPUT,1,SpvStorageClassUniform,0,0,0);
  emit(&b,SpvOpVariable,T_PINPUT,V_INVOCATION,1,SpvStorageClassInput,0,0,0);
- math_function(&b,0);math_function(&b,1);if(program)program_entry(&b);else entry(&b);
+ math_function(&b,0);math_function(&b,1);if(program)program_entry(&b,program==2);else entry(&b);
  if(out->failed){out->count=0;return 0;}out->words[3]=b.next;return 1;
 }
 
 int xe_alu_spv_build(xe_spv_binary *out){return build(out,0);}
 int xe_alu_program_spv_build(xe_spv_binary *out){return build(out,1);}
+int xe_alu_control_spv_build(xe_spv_binary *out){return build(out,2);}

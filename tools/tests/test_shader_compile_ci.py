@@ -14,6 +14,42 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_control_program_historical_absence_is_explicit(self):
+        with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run") as run:
+            root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True)
+            (tests/("run_alu_program_tests.cmd" if ci.WIN else "run_alu_program_tests.sh")).touch()
+            result=ci.validate_raw_program(root,root,root,root/"log",{},"vulkan-software",control=True)
+            self.assertFalse(result["available"]);self.assertFalse(result["unit"])
+            run.assert_not_called()
+
+    def test_control_program_modes_and_pinned_inputs(self):
+        for windows,backend,gpu in [(False,"vulkan-software",True),(True,"d3d12-warp",False)]:
+            with tempfile.TemporaryDirectory() as folder,patch.object(ci,"WIN",windows),patch.object(ci,"run") as run:
+                root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True);(root/"libretro").mkdir()
+                (root/"libretro/core_alu_spv.h").write_text("xe_alu_control_spv_build(")
+                (tests/("run_alu_program_tests.cmd" if windows else "run_alu_program_tests.sh")).touch()
+                result=ci.validate_raw_program(root,root/"build",root/"out",root/"log",{},backend,control=True)
+                fixture=run.call_args.args[3]
+                self.assertTrue(result["unit"]);self.assertEqual(result["vulkan_gpu"],gpu)
+                self.assertEqual(fixture["ALU_CONTROL_TEST"],"1")
+                self.assertEqual(fixture["ALU_PROGRAM_OUT"],str(root/"out/raw-control"))
+                self.assertEqual(result["cf_step_limit"],4096)
+                self.assertEqual(result["call_depth_limit"],4)
+                self.assertEqual(result["pinned_control_fixture_sha256"],ci.file_sha256(ci.HERE/"shader_control_program_fixture.h"))
+                self.assertFalse(result["renderer_integration"])
+
+    def test_control_program_uses_separate_timing_channel_and_gates(self):
+        raw={k:(v[:]) for k,v in self.raw_program_samples().items()}
+        control={(stage.replace("raw_program.","raw_control."),case):values for (stage,case),values in raw.items()}
+        intro=ci.compare_raw_program({"candidate":control},7,"raw_control.")
+        self.assertTrue(intro["new_component_without_parent"])
+        self.assertFalse(intro["comparable"])
+        self.assertTrue(ci.compare_raw_program({"base":control},7,"raw_control.")["missing_candidate"])
+        worse={key:values[:] for key,values in control.items()};worse[("raw_control.compute_pso_warm",0)]=[.1]*7
+        report=ci.compare_raw_program({"base":control,"candidate":worse,"anchor":control},7,"raw_control.")
+        self.assertTrue(report["failure"]);self.assertTrue(report["anchor_cases"])
+        with self.assertRaises(ValueError):ci.compare_raw_program({"candidate":control},7)
+
     def test_loop_reference_historical_absence_is_explicit(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(ci,"run") as run:
             root=Path(folder)

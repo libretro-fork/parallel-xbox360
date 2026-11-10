@@ -37,6 +37,15 @@ int xe_alu_spv_build(xe_spv_binary *out);
  * must outlive that completion. Private register snapshots remain necessary.
  * This validation kernel is not wired into rendering and is not a fallback. */
 int xe_alu_program_spv_build(xe_spv_binary *out);
+/* Experimental control-flow entry, same descriptor ABI/ownership as above.
+ * Supports EXEC/EXEC_END, NOP, unconditional JMP/CALL and RET, with four fixed
+ * return addresses. A RET with an empty stack falls through. Unsupported CF,
+ * including conditional execution and loops, fails with status3. Out-of-bounds
+ * instruction/target reads fail with status2. At most4096 CF steps are executed;
+ * status5 reports exhausted work without committing output. This limit requires
+ * resumable execution before renderer use; no valid-draw fallback is claimed.
+ * The original entry remains separately available for matched comparisons. */
+int xe_alu_control_spv_build(xe_spv_binary *out);
 #ifdef __cplusplus
 }
 #endif

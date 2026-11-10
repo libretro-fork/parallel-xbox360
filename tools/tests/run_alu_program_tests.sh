@@ -7,10 +7,16 @@ mkdir -p "$out"
 ${CC:-cc} ${ALU_PROGRAM_FLAGS:-} -std=c89 -pedantic -Wno-long-long -Wall -Wextra -Werror -O2 \
  ${SANITIZER--fsanitize=address,undefined} -I. -isystem third_party/SPIRV-Headers/include \
  libretro/core_alu_spv.c tools/tests/core_alu_spv_build_test.c -o "$out/build"
-"$out/build" "$out/arithmetic.spv" "$out/program.spv"
+if test "${ALU_CONTROL_TEST:-0}" = 1; then
+ "$out/build" "$out/arithmetic.spv" "$out/program.spv" "$out/control.spv"
+ "${SPIRV_VALIDATOR:-spirv-val}" --target-env vulkan1.0 "$out/control.spv"
+else
+ "$out/build" "$out/arithmetic.spv" "$out/program.spv"
+fi
 "${SPIRV_VALIDATOR:-spirv-val}" --target-env vulkan1.0 "$out/arithmetic.spv"
 "${SPIRV_VALIDATOR:-spirv-val}" --target-env vulkan1.0 "$out/program.spv"
 if test "${GPU_TESTS:-0}" != 1; then exit 0; fi
+if test "${ALU_CONTROL_TEST:-0}" = 1; then ALU_PROGRAM_FLAGS="${ALU_PROGRAM_FLAGS:-} -DXE_ALU_CONTROL_TEST"; fi
 ${CC:-cc} ${ALU_PROGRAM_FLAGS:-} -std=c89 -pedantic -Wno-long-long -Wall -Wextra -Werror -O2 \
  ${SANITIZER--fsanitize=address,undefined} -I. -isystem third_party/SPIRV-Headers/include \
  -c libretro/core_alu_spv.c -o "$out/emitter.o"

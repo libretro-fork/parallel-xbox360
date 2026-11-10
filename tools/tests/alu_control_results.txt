@@ -1,0 +1,109 @@
+Raw packed control-flow interpreter foundation (2026-11-10)
+==========================================================
+First parent: d0720caa9815b3e67e467c530346c53ed0ce629f.
+
+xe_alu_control_spv_build emits one fixed SPIR-V1.0 compute module,6770 words,
+with Shader capability,32-bit integer types, three functions and three structured
+loops. It imports no GLSL instruction set and uses no GLSL parser, float/64-bit
+shader types, per-program code generation or second module allocation.
+The earlier arithmetic2875-word and EXEC_END6171-word entries remain available.
+Sequencing predicate-emitter side effects explicitly retains byte-identical
+original modules on the measured MSVC toolchain; arbitrary host argument-order
+choices are not part of the portable semantic contract.
+
+The control entry consumes the existing8-word descriptor ABI. Shared immutable
+packed code and constants remain borrowed through GPU completion; endian
+correction is performed by loads, with no host-normalized program copy. One
+invocation keeps private registers, scalar history and position state across
+multiple EXEC clauses. A uint4 stores four return addresses rather than copying
+register frames. PC/depth/work counters plus that vector add28 private bytes.
+Supported CF is NOP, EXEC/EXEC_END, unconditional CALL/JMP and RET. Empty-stack
+RET falls through, and EXEC_END terminates even within a called routine.
+Position commits only after a complete successful execution. Bounds failures,
+unsupported work and call-depth exhaustion commit only status, preserving the
+payload and guard. A4096-CF-step limit returns status5 on cyclic/excessive work.
+This is a validation limit: continuations or equivalent full valid-program
+coverage are required before selecting it for rendering.
+
+Missing: predicates/conditional CF, loops, fetches, relative addressing, remaining
+ALUs, pixel RNE arithmetic, other stages/exports and ROP. The64-vec4 private
+register file can spill; retail throughput is not established. None of these
+modules is linked or selected by the core's Make/CMake source lists. The actual
+Vulkan/D3D12 draw-path translation, PSO creation and compilation-wait violations
+remain unresolved. This does not certify correct first draws or cold-play fluidity.
+
+C89 procedural corpus and ownership
+----------------------------------
+shader_control_program_fixture.h adds743 actual GPU invocations over three data
+replays,315 of them checked against the real CPU ShaderInterpreter. The existing
+>300 reference-comparison floor is retained. Literal four-lane goldens separately
+anchor clause dependencies, four nested calls, forward/backward jumps, CALL-next,
+empty RET, termination inside a callee, partial export accumulation, zero inputs
+and constant windows. Shared descriptors exercise native, big and mixed endian
+views of the same packed program records. Later groups vary modifiers/swizzles.
+Malformed/cyclic programs are not run through the unbounded CPU oracle.
+
+Negative data exercises depth exhaustion, cycles, invalid CF targets, invalid
+ALU spans/counts, unsupported conditional CF/fetches and failures after an earlier
+position export. All output guards/failure payloads and input program bytes are
+checked. One active module/PSO is retained across the data replays. Normal tests
+create one PSO; profiling creates two during initialization, retaining the first
+and its explicit private cache for the primed-cache comparison. The test driver
+exits without destroying potentially pending resources on failed completion,
+following the existing vertex-fixture ownership policy. This is test-only code.
+
+Verification
+------------
+- MSVC /TC /O2 /W4 /WX, C89 reuse/failure/overflow/close checks: PASS. Each module
+  rebuilds1000 times with identical bytes, same owner and no further allocation.
+- GCC strict C89 with ASan/UBSan, same ownership checks: PASS.
+- Official spirv-val Vulkan1.0 for all three modules: PASS.
+- RTX5090 driver32.0.16.2101 and llvmpipe LLVM20.1.2: PASS743/315 control results,
+  original12280 arithmetic records and the original EXEC_END regressions.
+- A deliberate wrong-RET kernel falls through instead of loading the saved PC.
+  The actual RTX5090 run fails invocation2/kind1 (status3 instead of1), exit1;
+  the failure is semantic, not a build failure. No intentionally unbounded GPU
+  program is dispatched without the work guard.
+- CI's actual Windows unit/emitter-only and Vulkan hardware/software hooks pass;
+  Windows WARP does not establish GPU execution of this SPIR-V kernel.
+- All41 Python guardrail tests pass, including historical absence, separate
+  channels, missing samples, removal, anchored regression and pinned inputs.
+
+First-parent and harness comparisons
+-----------------------------------
+The standalone emitter/header and tests are the only executable changes; the
+full production core inputs are unchanged. Local native comparison reuses the
+same verified MSVC no-LTO full-core archives for both exact source revisions,
+while compiling each emitter against its actual revision and the same pinned
+harness. Source-list exclusion and unchanged interpreter/binary-helper inputs
+are recorded. This is not a new full-core rebuild or retail validation claim.
+
+Seven idle-host alternating process pairs retain byte-identical512-module main
+corpora and pass all768 main translation/module/PSO metrics plus five controlled
+existing raw-program metrics under unchanged thresholds. No control kernel
+exists in the parent, so its new cost is explicitly UNCOMPARED. All seven
+initialization/completion observations and actual per-process module captures
+are retained, with initial driver internal/disk-cache status UNVERIFIED.
+An independent identical-binary run through the complete CI runner passes768
+main +5 original raw +5 control-flow controlled metrics. That is a harness
+control, not first-parent or gameplay acceptance.
+
+Candidate control observations (seven processes, ms, median/max):
+  emit                  0.0474 /0.0604
+  module                0.0155 /0.0163
+  initial PSO           4.0845 /4.1811   driver cache NOT certified cold
+  primed-cache PSO      0.0145 /0.0172
+  first completion      2.4786 /2.7412   first-use work remains UNVERIFIED
+  warmed completion1    0.7984 /0.9897
+  warmed completion2    0.8225 /0.9842
+Completion includes host/queue service and intentionally heterogeneous/invalid
+control-flow data; it is not pure GPU time or a representative game workload.
+GPU-invocation/reference checks run outside timed completion intervals.
+
+CI keeps independent raw_control.* metrics, module/device identities, growth
+checks and coverage manifests. Comparable revisions and a pinned anchor use the
+existing limits; missing/removal/ABI/device/data failures are not passing results.
+Private raw evidence: C:/git/accurate-shader-fallback/control-program, particularly
+paired-final-v3/results and harness-control/results. Preparation superseded before
+timing is retained separately. No installed DLL, game or live emulator cache was
+changed, and no cache default or accepted threshold was changed.
