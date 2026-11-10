@@ -11,7 +11,6 @@
 #define XENIA_GPU_SHADER_INTERPRETER_H_
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -115,7 +114,7 @@ class ShaderInterpreter {
   float* GetTempRegister(uint32_t address, bool is_relative) {
     return temp_registers_[GetTempRegisterIndex(address, is_relative)];
   }
-  const std::array<float, 4> GetFloatConstant(
+  const uint32_t* GetFloatConstantBits(
       uint32_t address, bool is_relative, bool relative_address_is_a0) const;
 
   static float ReduceFloatPrecision(float value, uint32_t mantissa_bits);

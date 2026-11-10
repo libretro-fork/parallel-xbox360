@@ -8,6 +8,7 @@
  */
 
 #include "xenia/gpu/shader_interpreter.h"
+#include "libretro/core_alu_operand.h"
 
 #include <cfloat>
 #include <cmath>
@@ -242,31 +243,18 @@ void ShaderInterpreter::Execute() {
   }
 }
 
-const std::array<float, 4> ShaderInterpreter::GetFloatConstant(
+const uint32_t* ShaderInterpreter::GetFloatConstantBits(
     uint32_t address, bool is_relative, bool relative_address_is_a0) const {
-  int32_t index = int32_t(address);
-  if (is_relative) {
-    index += relative_address_is_a0 ? state_.address_register
-                                    : state_.GetLoopAddress();
-  }
-  if (index < 0) {
-    return std::array<float, 4>();
-  }
-  auto base_and_size_minus_1 = register_file_.Get<reg::SQ_VS_CONST>(
+  static const uint32_t zero[4] = {};
+  const int32_t relative_offset = !is_relative ? 0
+      : relative_address_is_a0 ? state_.address_register : state_.GetLoopAddress();
+  auto window = register_file_.Get<reg::SQ_VS_CONST>(
       shader_type_ == xenos::ShaderType::kVertex ? XE_GPU_REG_SQ_VS_CONST
-                                                 : XE_GPU_REG_SQ_PS_CONST);
-  if (uint32_t(index) > base_and_size_minus_1.size) {
-    return std::array<float, 4>();
-  }
-  index += base_and_size_minus_1.base;
-  if (index >= 512) {
-    return std::array<float, 4>();
-  }
-  std::array<float, 4> value;
-  std::memcpy(value.data(),
-              &register_file_[XE_GPU_REG_SHADER_CONSTANT_000_X + 4 * index],
-              sizeof(float) * 4);
-  return value;
+                                               : XE_GPU_REG_SQ_PS_CONST);
+  const uint32_t* view = xe_alu_constant_view(
+      &register_file_[XE_GPU_REG_SHADER_CONSTANT_000_X], address, is_relative,
+      relative_offset, window.base, window.size);
+  return view ? view : zero;
 }
 
 float ShaderInterpreter::ReduceFloatPrecision(float value,
@@ -312,10 +300,9 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       if (!vector_opcode_info.operand_components_used[i]) {
         continue;
       }
-      const float* vector_src_ptr;
+      const void* vector_src_ptr;
       uint32_t vector_src_register = instr.src_reg(1 + i);
-      bool vector_src_absolute = false;
-      std::array<float, 4> vector_src_float_constant;
+      bool vector_src_absolute;
       if (instr.src_is_temp(1 + i)) {
         vector_src_ptr = GetTempRegister(
             ucode::AluInstruction::src_temp_reg(vector_src_register),
@@ -323,25 +310,13 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         vector_src_absolute = ucode::AluInstruction::is_src_temp_value_absolute(
             vector_src_register);
       } else {
-        vector_src_float_constant = GetFloatConstant(
+        vector_src_ptr = GetFloatConstantBits(
             vector_src_register, instr.src_const_is_addressed(1 + i),
             instr.is_const_address_register_relative());
-        vector_src_ptr = vector_src_float_constant.data();
+        vector_src_absolute = instr.abs_constants();
       }
-      uint32_t vector_src_absolute_mask =
-          ~(uint32_t(vector_src_absolute) << 31);
-      uint32_t vector_src_negate_bit = uint32_t(instr.src_negate(1 + i)) << 31;
-      uint32_t vector_src_swizzle = instr.src_swizzle(1 + i);
-      for (uint32_t j = 0; j < 4; ++j) {
-        uint32_t vector_src_bits;
-        float vector_src_component = FlushDenormal(
-            vector_src_ptr[ucode::AluInstruction::GetSwizzledComponentIndex(
-                vector_src_swizzle, j)]);
-        std::memcpy(&vector_src_bits,&vector_src_component,sizeof(vector_src_bits));
-        vector_src_bits = (vector_src_bits & vector_src_absolute_mask) ^ vector_src_negate_bit;
-        std::memcpy(&vector_src_component,&vector_src_bits,sizeof(vector_src_component));
-        vector_operands[i][j] = vector_src_component;
-      }
+      xe_alu_source_vector(vector_operands[i], vector_src_ptr,
+          instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
     }
 
     bool replicate_vector_result_x = false;
@@ -637,15 +612,11 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
   const ucode::AluScalarOpcodeInfo& scalar_opcode_info =
       ucode::GetAluScalarOpcodeInfo(scalar_opcode);
   float scalar_operands[2];
-  uint32_t scalar_operand_component_count = 0;
-  bool scalar_src_absolute = false;
   switch (scalar_opcode_info.operand_count) {
     case 1: {
-      // r#/c#.w, or r#/c#.wx unless the paired vector opcode has three
-      // operands, in which case r#/c#.wz.
-      const float* scalar_src_ptr;
+      const void* scalar_src_ptr;
       uint32_t scalar_src_register = instr.src_reg(3);
-      std::array<float, 4> scalar_src_float_constant;
+      bool scalar_src_absolute;
       if (instr.src_is_temp(3)) {
         scalar_src_ptr = GetTempRegister(
             ucode::AluInstruction::src_temp_reg(scalar_src_register),
@@ -653,52 +624,27 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         scalar_src_absolute = ucode::AluInstruction::is_src_temp_value_absolute(
             scalar_src_register);
       } else {
-        scalar_src_float_constant = GetFloatConstant(
+        scalar_src_ptr = GetFloatConstantBits(
             scalar_src_register, instr.src_const_is_addressed(3),
             instr.is_const_address_register_relative());
-        scalar_src_ptr = scalar_src_float_constant.data();
+        scalar_src_absolute = instr.abs_constants();
       }
-      uint32_t scalar_src_swizzle = instr.src_swizzle(3);
-      scalar_operand_component_count =
-          scalar_opcode_info.single_operand_is_two_component ? 2 : 1;
-      for (uint32_t i = 0; i < scalar_operand_component_count; ++i) {
-        uint32_t source_component =
-            i == 0 ? 3 : (vector_opcode_info.GetOperandCount() == 3 ? 2 : 0);
-        scalar_operands[i] =
-            scalar_src_ptr[ucode::AluInstruction::GetSwizzledComponentIndex(
-                scalar_src_swizzle, source_component)];
+      const uint32_t count = scalar_opcode_info.single_operand_is_two_component ? 2 : 1;
+      for (uint32_t i = 0; i < count; ++i) {
+        uint32_t component = i == 0 ? 3 : (vector_opcode_info.GetOperandCount() == 3 ? 2 : 0);
+        scalar_operands[i] = xe_alu_source_value(scalar_src_ptr,
+            instr.src_swizzle(3), component, scalar_src_absolute, instr.src_negate(3));
       }
     } break;
     case 2: {
-      scalar_operand_component_count = 2;
-      uint32_t scalar_src_absolute_mask =
-          ~(uint32_t(instr.abs_constants()) << 31);
-      uint32_t scalar_src_negate_bit = uint32_t(instr.src_negate(3)) << 31;
-      uint32_t scalar_src_swizzle = instr.src_swizzle(3);
-      // c#.w.
-      scalar_operands[0] =
-          GetFloatConstant(instr.src_reg(3), instr.src_const_is_addressed(3),
-                           instr.is_const_address_register_relative())
-              [ucode::AluInstruction::GetSwizzledComponentIndex(
-                  scalar_src_swizzle, 3)];
-      // r#.x.
-      scalar_operands[1] = GetTempRegister(
-          instr.scalar_const_reg_op_src_temp_reg(),
-          false)[ucode::AluInstruction::GetSwizzledComponentIndex(
-          scalar_src_swizzle, 0)];
+      scalar_operands[0] = xe_alu_source_value(
+          GetFloatConstantBits(instr.src_reg(3), instr.src_const_is_addressed(3),
+              instr.is_const_address_register_relative()),
+          instr.src_swizzle(3), 3, instr.abs_constants(), instr.src_negate(3));
+      scalar_operands[1] = xe_alu_source_value(
+          GetTempRegister(instr.scalar_const_reg_op_src_temp_reg(), false),
+          instr.src_swizzle(3), 0, instr.abs_constants(), instr.src_negate(3));
     } break;
-  }
-  if (scalar_operand_component_count) {
-    uint32_t scalar_src_absolute_mask = ~(uint32_t(scalar_src_absolute) << 31);
-    uint32_t scalar_src_negate_bit = uint32_t(instr.src_negate(3)) << 31;
-    for (uint32_t i = 0; i < scalar_operand_component_count; ++i) {
-      uint32_t scalar_bits;
-      float scalar_operand = FlushDenormal(scalar_operands[i]);
-      std::memcpy(&scalar_bits,&scalar_operand,sizeof(scalar_bits));
-      scalar_bits = (scalar_bits & scalar_src_absolute_mask) ^ scalar_src_negate_bit;
-      std::memcpy(&scalar_operand,&scalar_bits,sizeof(scalar_operand));
-      scalar_operands[i] = scalar_operand;
-    }
   }
   switch (scalar_opcode) {
     case ucode::AluScalarOpcode::kAdds:

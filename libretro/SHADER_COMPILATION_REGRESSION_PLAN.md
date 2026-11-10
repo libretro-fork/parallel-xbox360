@@ -780,3 +780,17 @@ lifetimes. This removes a notification blocking edge, not blocking queue admissi
 draw-path compilation, compilation waits or the missing accurate ready fallback.
 Procedural component/driver timing cannot certify retail cold-play fluidity.
 See tools/tests/job_wake_results.txt.
+
+
+## CPU operand reference accuracy (2026-11-10)
+
+The draw-extent interpreter now honors constant absolute-value flags in vector,
+single-source scalar and scalar constant/register forms. Its source reader uses
+checked borrowed constant-bank views and alias-safe selected-lane loads. Packed
+VS/PS goldens fail on the previous implementation and pass with this correction;
+C89 sanitizer tests cover bit modifiers and bounds. Coissued operands still
+snapshot their used values before register writes. This improves a CPU reference
+used by rendering, but does not provide a ready accurate GPU fallback or remove
+any known draw-path compilation/wait violation. Component timings and unchanged
+shader/PSO comparisons are recorded in `tools/tests/alu_operand_results.txt`;
+retail image and cold-play acceptance remain unverified for this change.

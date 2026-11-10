@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fix absolute-value modifiers on constant operands in the CPU shader interpreter used for draw-extent estimation, including scalar constant/register instructions. Read selected source lanes from checked borrowed constant views instead of copying whole vectors.
+
 - Fix Linux regression harnesses to link the real DXIL binary deleter, end thread-local log borrows explicitly and quote XMA response-file paths correctly.
 
 - Reject inconsistent positive VFS seek positions before reading data. Preserve legacy zero-success and exact position-returning seeks; the SVOD regression suite now exercises both with mapped and cursor-backed reads.

@@ -1608,3 +1608,21 @@ The ordinary shell runner uses ASan/UBSan. A separate TSan build uses
 `SANITIZER="-fsanitize=thread -Wno-error=tsan"`: GCC's unsupported fence-model
 warning is retained. Test-only hooks and wait deadlines do not enter the core.
 See `job_wake_results.txt` for negative controls, measurements and missing coverage.
+
+
+## CPU shader operand accuracy and borrowed views
+
+`run_alu_operand_tests.cmd` / `.sh` test the production C89 source reader:
+512 constant pointer identities, relative/window/bank/overflow rejection, and
+40960 bit-exact swizzle/absolute/negate/denormal cases including signed zero,
+infinities and NaN payloads. The shell runner defaults to ASan/UBSan.
+`run_alu_operand_native_tests.cmd` / `.sh` link the actual CPU interpreter and
+execute 24 packed VS/PS programs with independent literal output goldens.
+They exercise vector ADD, single-source scalar ADD and scalar constant/register
+ADD across both modifier bits. The unchanged parent fails the absolute-value
+case. `ALU_OPERAND_BUILD` selects the Windows core library directory; the shell
+runner uses the normal static-Make test link. Both are in core CI.
+Only typed interpreter setup/export ownership is C++; packed programs, goldens
+and runtime source reading are C89. See `alu_operand_results.txt` for measured
+limits. These fixtures do not certify generic GPU fallback coverage or smooth
+cold gameplay.

@@ -1,0 +1,81 @@
+CPU shader operand accuracy and source borrowing, 2026-11-10
+Parent: e71342f021f12faedeb5c10206174acb962823db
+
+Correctness:
+- Actual packed VS/PS programs cover vector ADD, single-source scalar ADD and
+  constant/register scalar ADD, abs/negate combinations: 24 literal goldens.
+  The exact old implementation produces -3 instead of +3 for vector abs.
+- C89 source-reader tests cover 512 borrowed pointer identities, relative/window/
+  bank/overflow bounds, eight literal rotation/broadcast anchors, and 40960
+  swizzle/modifier/FTZ cases for scalar and vector readers. Include signed zeros,
+  denormals, infinities and NaN payloads. Linux ASan/UBSan and MSVC /TC /W4 /WX.
+- Minimal typed C++ glue sets up the actual interpreter; runtime source reading,
+  packed programs, output goldens and private timing driver are C89.
+
+Implementation and limits:
+- Constant-bank ownership stays on the interpreter owner. Views are checked,
+  read-only and instruction-scoped; invalid constant windows produce zero.
+- Scalar reads load only their selected word. Vector reads hoist shared masks
+  once into their existing decoded-operand destination. Alias-safe 4-byte bit
+  loads retain all modifiers and signed FTZ behavior. No new allocations,
+  locks, caches, release clocks, instrumentation or logging.
+- The old std::array return may already have been optimized away in some paths.
+  Removing its materialization contract does not prove 16 bytes less physical
+  memory traffic. Required decoded coissue snapshots/export copies remain.
+- This is a CPU reference/draw-extent correction, not GPU shader optimization
+  or a ready generic renderer. Full CF/fetch/stage/ROP fallback coverage and
+  zero frame-critical compilation/wait counts remain unresolved.
+
+Matched native interpreter component comparison:
+- Ryzen 9950X3D 16C/32T; MSVC Release /MD /O2. Same source/build paths,
+  full exact-parent and candidate libraries; no mixed-header object override.
+- Persistent owner outside timing; actual SetShader/Execute for 1 or 6 ALU
+  instructions. Each case has 7 alternating/reverse-order process pairs,
+  128 batches of 1024 executions/process; 896 raw batches/variant/case.
+- CPU affinity logical CPU4 when permitted, otherwise first permitted CPU.
+  QPC elapsed time; direct output checksum equality. No game or disk caches.
+- Predeclared relative + absolute ns/execute gates (both must be exceeded):
+  median 10%/2ns, p95 and p99 25%/5ns, maximum 50%/10ns. Unchanged after failures.
+  First per-lane vector-reader experiment failed p95 and was rejected. Its
+  code, complete raw samples and alarms remain in attempt1-source and
+  bench-measurements. Hoisting vector modifiers resolves that regression.
+- Revised reader has zero component threshold alarms. Some short-case p95
+  values still rise within the declared gates; no universal speedup is claimed.
+
+Nanoseconds per actual interpreter Execute (parent -> revised candidate):
+case       median           p95              p99              maximum
+1inst/0    36.72->36.52  44.02->46.97  47.46->48.34  55.76->53.32
+1inst/1    22.36->19.73  28.81->25.59  29.39->25.79  33.89->30.66
+1inst/2    48.54->45.12  53.86->57.74  62.70->59.77  69.34->68.16
+6inst/0    214.84->213.77  218.09->216.70  264.37->225.18  283.59->279.39
+6inst/1    122.17->112.21  130.66->116.80  159.67->147.17  175.29->152.64
+6inst/2    284.33->263.38  292.50->266.33  306.41->282.41  370.51->341.31
+
+Forms: 0 vector ADD; 1 scalar ADD; 2 coissued vector/scalar constant-register.
+Raw CSVs retain every batch ID/duration; JSON retains process totals, sample
+counts, checksum, median/p95/p99/max and worst batch IDs. The vectors staying
+level and scalar/mixed gains are component measurements, not FPS or cold-play
+acceptance. Host and GPU manifests and full source hashes are retained privately.
+
+Final shader/PSO comparison and builds:
+- MSVC Release and profiling core builds, Linux static Make build: PASS (-j3).
+- C89 units, actual interpreter goldens, native RTZ and loop/aL regressions: PASS
+  on both Windows/MSVC and Linux/GCC. Linux source-reader ASan/UBSan: PASS.
+- 7 alternating/reverse-order parent/candidate pairs: 80 WARP and 768 physical
+  RTX5090 Vulkan timing metrics, zero alarms under the existing unchanged
+  shader median/p95/max gates. Raw per-case timing/CPU samples, outliers,
+  environment/cache manifests and the complete comparison JSON are retained.
+- All 1320 generated modules (1248 SPIR-V, 72 DXIL) are byte-identical.
+- RTX5090 driver 32.0.16.2101; fresh processes/private fixture directories, no
+  application caches. Driver disk/internal caches are NOT certified cold.
+- Idle-window snapshots exclude other observed compiler/test/game workloads.
+  New tests are wired into Windows/Linux core CI; hosted results are separate.
+- No retail-game image comparison, sustained cross-game cold-play acceptance,
+  general fallback correctness or zero draw-side compile/wait counts established.
+  No installed core, user save or live cache was replaced/cleared for testing.
+
+Private evidence root: C:/git/alu-operand-borrow
+bench-measurements and attempt1-source retain the rejected experiment;
+bench-measurements-v2 is the revised result; shader-comparison-v2 contains the
+unchanged-gate shader comparison. Native timing source, exact-parent/candidate
+build recipes/source hashes and replay controls accompany the mailbox artifact.
