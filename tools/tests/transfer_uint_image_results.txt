@@ -1,0 +1,59 @@
+Actual integer image transfer constructors,2026-11-10
+
+Shared C89 packet/address/codec recipes feed raw SPIR-V and native DXIL fragment
+programs. Non-array unsigned2D SS/MS images, target locations0..3 and single/
+builtin/explicit-constant physical destination sample interfaces. SPV set0/b0
+sampled image plus112-byte push constants; DXIL t0/space0 plus b1/space31.
+
+CPU validates the complete23-word address metadata, actual integer-format masks,
+source image SS/MS identity, destination sample interface/physical index and
+attachment location before publishing the final packet. Asserted92/100/108-byte
+field offsets preserve the112-byte ABI. Enabled GPU features and actual backend
+integer attachment views remain the caller's responsibility. Guest format alone
+does not establish compatible views.
+
+Shaders borrow native IR IDs and fetch actual typed images. A structured uniform
+branch fetches the adjacent source pixel only for32-bit sources writing64-bit
+destinations. The merge selects the high word or narrow destination half before
+packing directly to fragment output. No copied CPU pixel payload, standalone
+source compiler, GLSL or generic expression container is introduced. Existing
+native emitter/output arenas allocate during construction; call only at init.
+
+Completed:
+- 7776 interface packets on MSVC/GCC strictC89; invalid-format/width/sample/type/
+  null checks and unchanged-output failures. GCC ASan/UBSan passes packet and
+  all SPV constructors with reused output storage.
+- 24 rawSPV fragment interfaces and25 nativeDXIL programs (24fragment+vertex)
+  pass Vulkan1.0/strict Microsoft SDK validation. All25 rawSPV modules including
+  the rectangle vertex module are byte-identical under MSVC and GCC.
+- Actual target0/single-sample raster images:216 cases EACH RTX5090 Vulkan,
+  llvmpipe Vulkan and D3D12 WARP. All36 raw format pairs, six legal scale classes,
+  both32/64-bit directions, NaN/signed-minimum encodings and destination tails.
+  WARP also checks placed-footprint row padding. Four PSOs and two modules are
+  prepared before case0; input/output images change without pipeline creation.
+- A valid low-half selection mutation passes binary validation but both GPU
+  oracles fail sf5/df4 scale0 pixel1,0 lane1:0000ffff versus00005ccf expected.
+- Full root MSVC core build with3jobs passes. StaticMake and CMake source lists
+  include the constructors; native source glob already owns new C sources.
+- Public run_transfer_uint_image_tests.sh/.cmd pass. Linux requires spirv-val;
+  GPU_TESTS=1 enables Vulkan. Windows always runs strictDXIL validation and WARP.
+  Transfer helper CI runs these beside address/codec/geometry checks.
+
+Default SS target0 SPV:1670words/6680bytes SHA256
+ dd92d997650d61e1ef9bfb246a1d1c6c70247521458bc8fbaf539879eb73dc33
+Native DXIL:4534bytes SHA256
+ ae94524bd7e38288097baf19f08d21ba88b025d0bbcaaa6870b75a0bcaa4089f
+
+Initial failures retained privately: MSVC signed/unsigned boolean comparisons,
+missing Flat decoration on SPV SampleId, GCC cleanup indentation. Fixed without
+relaxed warnings/validators/oracles. A sanitizer wrapper initially lost a shell
+argument before invoking any sanitizer; a file-based runner then passed.
+
+LIMITS: Constructors remain outside live rendering. MSAA source/destination
+sample images and builtin/manual coverage masks are NOT yet raster-validated.
+Other target locations have binary validation only. Normalized/gamma/depth/
+stencil/host-depth, runtime prepared tables, compatible render-pass identity,
+GPU/CPU lifetime and no-draw-compilation gates remain required. These are
+correctness checks, not GPU timing or cross-game cold-play acceptance. No games,
+installed DLL or live cache were modified. Shader output scratch and module/
+PSO driver construction remain initialization work, not eliminated operations.

@@ -508,6 +508,8 @@ The generic transfer foundation also has a shared integer-view color codec. Two 
 
 Physical EDRAM routing now uses a shared 92-byte CPU-prepared metadata packet, borrowed native IR IDs and exact reciprocal division. Tests cover tile wrapping, pitch, MSAA, scaled/native conversion, 32/64-bit word selection and color/depth column swaps across 186,607 changing records per backend. The kernel retains destination coordinates for host-depth reuse but performs no image access and is not yet connected to rendering. See [physical-address coverage](tools/tests/transfer_address_results.txt).
 
+The integer transfer foundation now constructs complete raw SPIR-V/native DXIL fragment programs that fetch typed images, select 32-bit halves and write integer attachments. All 24 image/sample/target interfaces validate; actual single-sample raster tests cover all 36 format pairs and six scale classes on Vulkan and WARP using four pipelines prepared before drawing. A checked 112-byte packet feeds the shared recipe. These constructors are not connected to rendering yet: MSAA raster coverage, prepared renderer tables and the remaining format/depth families are still required. See [integer image coverage](tools/tests/transfer_uint_image_results.txt).
+
 ### Draw-path contract instrumentation
 
 Developer builds can enable `XENIA_ENABLE_DRAW_STATS=ON` with CMake, or

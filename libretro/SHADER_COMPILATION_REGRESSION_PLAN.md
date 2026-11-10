@@ -992,3 +992,22 @@ not accurate color/depth image coverage or runtime lookup-only integration.
 Still implement typed image access/word routing, all conversion families,
 raster/sample/stencil/depth comparisons, ready initialization PSO tables and
 CPU/GPU lifetime handling before marking utility compilation violations fixed.
+
+
+Integer transfer image construction (2026-11-10): initialization-only raw SPIR-V
+and native DXIL fragment constructors combine the shared physical route with
+actual unsigned image fetches, conditional adjacent source fetch, word selection
+and raw output packing. Both APIs use the same checked112-byte packet with
+asserted offsets; invalid SS/MS interface/width keys leave it untouched.
+Three sample interfaces (single, builtin and explicit physical index), two
+source image types and four target locations pass strict binary validation.
+Actual raster evidence is narrower: target0, single-sample, all36 format pairs
+and six scale classes, with216 cases each on RTX5090, llvmpipe and WARP.
+A valid low-half selection mutation must fail the actual texture/output oracle.
+No claim is made yet for MSAA raster, other locations, normalized/depth/stencil
+or host-depth families, runtime renderer ownership or ready-pipeline lookup.
+The actual Vulkan utility pass uses a single color attachment at location0
+(vulkan_render_target_cache.cc transfer_render_pass_key); do not multiply its
+prepared bank by unused MRT target permutations. Preserve real sample masks,
+integer views, compatible render passes and reset/unload lifetimes when wiring
+the prepared bank. Existing inline compilation remains unresolved elsewhere.
