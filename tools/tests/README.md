@@ -1766,3 +1766,23 @@ still-unsupported ALLOC/MARK_VFETCH cases on both pinned revisions. The primary
 743/315 workload and three data replays remain equal across the comparison;
 new predicate correctness never runs inside the timed child. See
 `alu_predicate_results.txt` for measured costs, semantic mutants and limitations.
+
+Companion valid-work timing
+--------------------------
+
+After building/running the full suite, run its existing executable with
+`XE_ALU_PROGRAM_VALID_WORK=1` for the companion profile. It keeps the same three
+primary replays, program/constant buffers and successful-record inputs. Only
+negative descriptors get a zero program length, causing status 2 before VM work;
+their payload/redzones must remain unchanged. Nothing is compacted or copied
+into an intermediate program/sample array. Control mode checks 315 active and
+428 inactive invocations; original program mode checks 363 active and 380 inactive.
+
+CI preparation clears inherited timing/valid-work flags and runs full applicable
+correctness. Every timed component then runs mixed and companion profiles in
+separate fresh processes. Independent CSVs, CPU observations, captures and device
+labels are retained; missing/substituted counts, samples, identities or modules
+fail. Both reports use existing unchanged timing gates, and neither replaces the
+mixed fault/cycle gates. The active set covers primary arithmetic and clause/
+call/jump cases; loop/predicate context suites remain separate correctness tests.
+See `alu_valid_work_results.txt`; neither profile establishes gameplay acceptance.

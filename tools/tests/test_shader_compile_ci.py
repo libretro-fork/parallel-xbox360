@@ -14,6 +14,17 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_valid_workload_profile_cannot_be_missing_or_substituted(self):
+        program="PROFILE_VALID_WORK active=363 inactive=380; inactive lanes\n"
+        control="PROFILE_VALID_WORK active=315 inactive=428; inactive lanes\n"
+        ci.validate_valid_workload(program+control,{"raw_program","raw_control"})
+        ci.validate_valid_workload(control,{"raw_control"})
+        ci.validate_valid_workload("",set())
+        for log in ("",program,program+program,program+control+control,
+                    program+control.replace("315","314")):
+            with self.assertRaisesRegex(ValueError,"missing or substituted"):
+                ci.validate_valid_workload(log,{"raw_program","raw_control"})
+
     def test_control_feature_coverage_cannot_be_removed_or_skipped(self):
         old=dict(available=True,unit=True,vulkan_gpu=True,boolean_cf_supported=True,
                  nonempty_loops_supported=True,predicate_cf_supported=True,
@@ -33,8 +44,9 @@ class ComparisonTests(unittest.TestCase):
                 root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True);(root/"libretro").mkdir()
                 (root/"libretro/core_alu_spv.h").write_text("xe_alu_control_spv_build(\n#define XE_ALU_CONTROL_BOOL 1\n#define XE_ALU_CONTROL_LOOPS 1\n#define XE_ALU_CONTROL_PREDICATE 1\n")
                 (tests/("run_alu_program_tests.cmd" if ci.WIN else "run_alu_program_tests.sh")).touch()
-                result=ci.validate_raw_program(root,root,root,root/"log",{"XE_ALU_PROGRAM_TIMING_ONLY":"1"},backend,control=True)
+                result=ci.validate_raw_program(root,root,root,root/"log",{"XE_ALU_PROGRAM_TIMING_ONLY":"1","XE_ALU_PROGRAM_VALID_WORK":"1"},backend,control=True)
                 self.assertNotIn("XE_ALU_PROGRAM_TIMING_ONLY",run.call_args.args[3])
+                self.assertNotIn("XE_ALU_PROGRAM_VALID_WORK",run.call_args.args[3])
                 self.assertEqual(result["control_flow_version"],4)
                 self.assertTrue(result["predicate_cf_supported"])
                 self.assertEqual(result["predicate_context_cases"],1254 if backend.startswith("vulkan") else 0)

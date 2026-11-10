@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Add separate valid-work shader CI profiles alongside the unchanged mixed/fault workload. Retain successful payloads and reference checks, reject inactive negative-test lanes before VM execution, and check counts, module/device identity and paired timing independently. This changes test infrastructure, not rendering or cache defaults.
+
 - Extend raw shader validation with scalar predicate comparisons, predicate-controlled execution/calls/jumps and predicated ALUs. Preserve prior-instruction predicate/scalar state and partial-export ownership; skipped ALUs avoid validation and operand reads. Add nonfinite, divergence and side-effect regressions. This remains outside rendering; accurate fallback coverage and draw-path compilation removal are unfinished.
 
 - Keep loop-address loads and adjusted-index checks off direct temporary reads in the raw shader validation kernel. Add high/negative loop-address regressions for direct reads. This path remains outside rendering; full fallback coverage and draw-path compilation removal are unfinished.

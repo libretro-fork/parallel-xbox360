@@ -1,0 +1,90 @@
+Companion valid-work measurements (2026-11-10)
+============================================
+First parent: 1b56ac6b9bcffea534864bd846c474eeb8b3019b.
+This commit changes tests/reporting only. Production sources, raw emitters,
+shader ABI, cache formats/defaults and renderer call sites are unchanged.
+
+Why separate the workloads
+-------------------------
+The mixed raw-control corpus intentionally includes programs that execute the
+4096-CF-step guard. Its completion time is useful for fault-budget behavior,
+but cannot stand in for successful shader throughput. Keep it unchanged and
+add a separate profile, rather than removing negatives or relabeling their cost.
+
+XE_ALU_PROGRAM_VALID_WORK=1 retains every successful primary descriptor's data,
+program bytes, constants, swizzles, endian mode and native-reference checks.
+Only negative descriptors receive a zero program length. They must return
+status 2 before temporary loads/VM execution, retaining payload/redzones.
+No instruction/sample array is compacted or copied, no new buffer is allocated,
+and the same module/active PSO executes all three primary data replays.
+
+Original program mode has 363 active and 380 inactive invocations; control mode
+has 315 active and 428 inactive, each totaling 743. Inactive lanes still incur
+dispatch/entry/bounds costs; this is not a pure active-lane or GPU timestamp
+benchmark. Successful control records cover primary arithmetic and clause/call/
+jump cases, not the additional loop/predicate contexts. Full correctness still
+checks 3771 control invocations and 2947 native references separately.
+
+CI contract
+-----------
+Preparation clears inherited timing-only and valid-work flags and runs full
+applicable correctness. Every timed component runs both profiles in separate
+fresh processes with independent elapsed/CPU CSVs, device labels and module
+captures. JSON retains per-case samples, medians/tails/maxima and outliers.
+Missing/substituted active counts, samples, modules or devices fail. Both profiles
+use the existing unchanged timing gates; neither replaces mixed/fault coverage.
+The environment manifest records profile version 1 and the pinned driver/bridge.
+First-creation and initial-completion driver-cache observations remain UNVERIFIED.
+
+MSVC /TC /O2 /W4 /WX and GCC strict C89/ASan/UBSan checks pass. RTX 5090 driver
+32.0.16.2101 and llvmpipe LLVM 20.1.2 pass original full suites and both companion
+modes, with all active native comparisons retained. Emitters pass same-owner
+allocation/failure/overflow checks and official spirv-val Vulkan 1.0 validation.
+All 44 Python guard tests pass, including profile count/duplication/substitution
+and inherited-environment checks. A deliberate companion driver rejecting every
+record fails on RTX at round 0/invocation 0: status 2 instead of 1. Skipping valid
+work therefore cannot manufacture a successful faster result.
+
+Current-commit verification
+---------------------------
+Seven actual first-parent alternating idle-host pairs pass 768 main plus twenty
+raw controlled metrics: five per component in each of the two profiles. Both
+raw modules and all 512 main-corpus modules are byte-identical across actual
+source revisions. The production no-LTO archives are reused because every
+changed executable source is test-only; standalone emitters are compiled from
+each actual revision. This is not a new full-core build.
+
+All 56 raw captures match their prepared modules; device identities, exact
+profile counts, frozen source hashes, coverage, growth and unchanged source-wait
+alarms pass. The actual CI runner's seven-pair identical-binary self-check also
+passes its added CSV/device/module/count/report paths. That self-check is a
+harness control, not a substitute for the actual first-parent comparison.
+
+Historical diagnosis using the same pinned harness
+-------------------------------------------------
+Separately compare actual 74fef36f8 and 1b56ac6b9 kernels in seven alternating
+fresh-process pairs, running both workloads with identical active data. The
+modules contain 7558 and 7866 words, respectively. All 28 captures and device
+identities match; historical source/binary hashes and raw samples are retained.
+Warm completion medians in milliseconds (74 -> 1b):
+
+  mixed replay 1       1.0131 -> 1.1797
+  mixed replay 2       0.9064 -> 1.1802
+  companion replay 1   0.1296 -> 0.1273
+  companion replay 2   0.1282 -> 0.1223
+
+The timing increase is concentrated in the mixed negative-work corpus; it is
+not reproduced in this unchanged successful primary subset. This narrows the
+diagnosis and prevents optimizing a synthetic fault loop as though it were
+representative gameplay. It does not erase earlier mixed-work cost debt or prove
+new predicate operations, valid long loops, spills/occupancy or full stages/ROP
+are fast. The companion does not exercise those additional context workloads.
+Host/queue time and early-rejected inactive lanes remain in both measurements;
+small differences here are not a retail throughput/FPS improvement claim.
+
+Evidence: C:/git/accurate-shader-fallback/valid-work, particularly
+paired-first-parent/results, harness-control/results, history-comparison,
+linux-control.log, linux-program.log and wrong-profile/run.log.
+No installed core, game, live cache, release logging or release clocks changed.
+Ready accurate renderer fallbacks, full shader coverage, dynamic critical-thread
+zero-compile/wait proof and cold-play gameplay acceptance remain unfinished.

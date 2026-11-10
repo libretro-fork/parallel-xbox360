@@ -868,3 +868,12 @@ predicate pushes, predicate counter operations or group-wide loop breaks, and
 does not remove an actual renderer compilation/wait site. Retain first-parent
 runtime costs and missing stage/ROP/continuation coverage explicitly; see
 `tools/tests/alu_predicate_results.txt`.
+
+Keep mixed/fault-budget and companion valid-work measurements separate. The
+companion preserves all successful primary records while negative lanes reject
+before VM execution; it never weakens full correctness, budget, payload or lifetime
+coverage. Gate its counts, sample sets, device and identical module captures in
+addition to existing gates, retaining first-use/cache uncertainty and the existing
+noise floors. A smaller companion time does not erase mixed-work cost debt or
+prove loop/predicate/stage/ROP performance or retail smoothness. This protocol
+applies to tests only and cannot authorize dropping or skipping guest draws.

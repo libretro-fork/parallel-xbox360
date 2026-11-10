@@ -591,3 +591,11 @@ throughput and cold-play fluidity are unverified. See
 `tools/tests/alu_context_results.txt`, `tools/tests/alu_direct_results.txt` and
 `tools/tests/alu_predicate_results.txt`
 for coverage and initialization costs.
+
+Shader CI also compares a companion valid-work profile. Successful primary
+records retain their bytecode, input data and native-reference checks; inactive
+negative-test lanes are rejected at the bounds check before VM execution.
+The full mixed/cycle workload and all fault coverage remain separate gates.
+This helps distinguish valid arithmetic/clause/call/jump work from deliberate
+work-budget exhaustion; it is not a pure GPU timestamp or retail shader replay.
+See `tools/tests/alu_valid_work_results.txt` for scope and measurements.

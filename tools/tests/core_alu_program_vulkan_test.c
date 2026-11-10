@@ -213,9 +213,12 @@ int main(void){
  VkResult completion;
  xe_spv_binary code={0};uint32_t count,family,i,lane,round,limit,output_limit,*in,*out,*programs,*constants,*descriptor,*temporary,reference[7],reference_code[21],seed=0x81732019u;
  unsigned kind,group,status,compared=0;
- unsigned modules=0,pipelines=0,cases=0,context_replays=XE_EXTRA_CASES;float priority=1.0f;int result=1;
+ unsigned modules=0,pipelines=0,cases=0,inactive=0,context_replays=XE_EXTRA_CASES;float priority=1.0f;int result=1;
  const char *timing_only=getenv("XE_ALU_PROGRAM_TIMING_ONLY");
+ const char *valid_mode=getenv("XE_ALU_PROGRAM_VALID_WORK");
+ int valid_work=valid_mode && !strcmp(valid_mode,"1");
  if(timing_only && !strcmp(timing_only,"1"))context_replays=0;
+ if(valid_work)context_replays=0;
  (void)shader;CHECK(loader);XE_COMPILE_BEGIN();CHECK(XE_PROGRAM_BUILD(&code));
  XE_COMPILE_END(XE_PROGRAM_STAGE("emit"),0);
  CHECK(capture_module(&code));
@@ -229,7 +232,7 @@ int main(void){
  instance.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;instance.pApplicationInfo=&app;OK(g.vkCreateInstance(&instance,NULL,&g.instance));
  LOAD(vkDestroyInstance);LOAD(vkEnumeratePhysicalDevices);LOAD(vkGetPhysicalDeviceProperties);LOAD(vkGetPhysicalDeviceMemoryProperties);LOAD(vkGetPhysicalDeviceQueueFamilyProperties);LOAD(vkCreateDevice);
  count=8;OK(g.vkEnumeratePhysicalDevices(g.instance,&count,physical));CHECK(count);g.vkGetPhysicalDeviceProperties(physical[0],&properties);
- fprintf(stderr,XE_PROGRAM_DEVICE " Vulkan vendor=%u device=%u driver=%u name=%s\n",properties.vendorID,properties.deviceID,properties.driverVersion,properties.deviceName);
+ fprintf(stderr,"%s%s Vulkan vendor=%u device=%u driver=%u name=%s\n",XE_PROGRAM_DEVICE,valid_work?"_VALID":"",properties.vendorID,properties.deviceID,properties.driverVersion,properties.deviceName);
  g.vkGetPhysicalDeviceMemoryProperties(physical[0],&g.memory);count=32;g.vkGetPhysicalDeviceQueueFamilyProperties(physical[0],&count,families);
  for(family=0;family<count;++family){if(families[family].queueFlags&VK_QUEUE_COMPUTE_BIT)break;}
  CHECK(family<count);
@@ -321,6 +324,10 @@ int main(void){
    if(kind==19)descriptor[5]=513;
    if(kind==20)descriptor[4]=UINT32_MAX;
    if(kind==21)descriptor[2]=UINT32_MAX;
+   /* Companion timing profile: retain every successful record unchanged, but
+    * reject inactive negative records before their temporary loads/CF budget.
+    * No program/sample payload is compacted or copied. Full mode is unchanged. */
+   if(valid_work && expected_status(kind)!=1)descriptor[1]=0;
   }
   memset(out,0x6d,OUTPUT_RECORDS*32);
   CHECK(cache_buffer(&input_buffer,0) && cache_buffer(&program_buffer,0) && cache_buffer(&constant_buffer,0) && cache_buffer(&output_buffer,0));
@@ -362,6 +369,7 @@ int main(void){
 #if XE_EXTRA_CASES
    if(round>=3)status=extra_status(extra_which(round-3,i));
 #endif
+   if(valid_work && status!=1){status=2;++inactive;}
    if(out[i*8+4]!=status){fprintf(stderr,"round %u invocation %u kind %u status %u != %u\n",round,i,kind,out[i*8+4],status);goto done;}
    if(status==1){
     descriptor=in+1+i*8;
@@ -401,6 +409,10 @@ int main(void){
   }
  }
  CHECK(modules==1 && compared>300);
+ if(valid_work){
+  CHECK(cases==743 && inactive>0 && compared+inactive==cases && !context_replays);
+  printf("PROFILE_VALID_WORK active=%u inactive=%u; inactive lanes rejected before program execution\n",compared,inactive);
+ }
 #ifdef XE_SHADER_COMPILE_BENCH
  CHECK(pipelines==2);
 #else

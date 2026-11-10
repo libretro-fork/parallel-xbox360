@@ -105,6 +105,7 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
         return coverage
     fixture=env.copy()
     fixture.pop("XE_ALU_PROGRAM_TIMING_ONLY",None)
+    fixture.pop("XE_ALU_PROGRAM_VALID_WORK",None)
     fixture.update(ALU_PROGRAM_OUT=str(out / ("raw-control" if control else "raw-program")),
                    ALU_PROGRAM_FIXTURE=str(HERE / "core_alu_program_vulkan_test.c"),
                    ALU_PROGRAM_BRIDGE=str(HERE / "alu_program_bridge.cc"),
@@ -516,6 +517,14 @@ def compare_control_coverage(coverage, vulkan):
     return dict(revisions=coverage,failures=failures)
 
 
+def validate_valid_workload(log, components):
+    counts={"raw_program":(363,380),"raw_control":(315,428)}
+    expected=[counts[x] for x in counts if x in components]
+    actual=[tuple(map(int,x)) for x in re.findall(r"^PROFILE_VALID_WORK active=(\d+) inactive=(\d+);",log,re.MULTILINE)]
+    if sorted(actual)!=sorted(expected):
+        raise ValueError("valid-work profile missing or substituted records")
+
+
 def run_comparison(args):
     work=Path(args.out).resolve();results=work/"results";results.mkdir(parents=True,exist_ok=True)
     if any(results.glob("*.csv")):
@@ -523,6 +532,7 @@ def run_comparison(args):
     if args.self_check and args.base!=args.head:
         raise ValueError("self-check must use equal reference labels")
     env=os.environ.copy()
+    env.pop("XE_ALU_PROGRAM_VALID_WORK",None)
     if args.backend=="vulkan-software":
         icds=sorted(Path("/usr/share/vulkan/icd.d").glob("lvp*.json"))
         if not icds:raise ValueError("Lavapipe ICD missing; no silent hardware substitution")
@@ -543,7 +553,7 @@ def run_comparison(args):
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
-         "shader_control_program_fixture.h"]}
+         "shader_control_program_fixture.h","core_alu_program_vulkan_test.c","alu_program_bridge.cc"]}
     manifest["corpus_contract"]=dict(version=8,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_frac_cases=64 if args.backend=="vulkan-hardware" else 0,
@@ -553,6 +563,8 @@ def run_comparison(args):
                                     software_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_alu_cases=704 if args.backend=="vulkan-hardware" else 0,alu_additions=[32,96,256],
                                     profiles="VS/PS, native/portable swizzle,1x/4x",batch=4)
+    manifest["raw_valid_work_profile"]=dict(version=1,active_program=363,active_control=315,
+        inactive="early bounds rejection; no payload compaction; mixed fault coverage retained")
     for name,command in [("compiler",["cl","/Bv"] if WIN else [env.get("CC","cc"),"--version"]),
                          ("cmake",["cmake","--version"])]:
         tool=subprocess.run(command,capture_output=True,text=True,errors="replace")
@@ -639,6 +651,11 @@ def run_comparison(args):
                 program_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-"+filename+"-cpu.csv"))
                 program_env["XE_ALU_PROGRAM_DUMP"]=str(results/(version+"-"+filename+"-sample%d.spv"%sample))
                 run([b[component]],b["source"],log,program_env,120)
+                valid_env=program_env.copy();valid_env["XE_ALU_PROGRAM_VALID_WORK"]="1"
+                valid_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-"+filename+"-valid.csv"))
+                valid_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-"+filename+"-valid-cpu.csv"))
+                valid_env["XE_ALU_PROGRAM_DUMP"]=str(results/(version+"-"+filename+"-valid-sample%d.spv"%sample))
+                run([b[component]],b["source"],log,valid_env,120)
     raw={version:read_samples(results/(version+".csv")) for version in builds}
     for version,measurements in raw.items():
         if set(measurements)!=expected_keys(args.backend):
@@ -669,6 +686,14 @@ def run_comparison(args):
             old_bytes=manifest["prepared_binaries"][version]["raw_control_module"]["bytes"]
             if new_bytes-old_bytes>max(4096,old_bytes*.10):control_report["module_growth_failures"].append(version)
         control_report["failure"]|=bool(control_report["module_growth_failures"])
+    valid_reports={}
+    for component in ("raw_program","raw_control"):
+        filename=component.replace("_","-")+"-valid"
+        valid_raw={v:read_samples(results/(v+"-"+filename+".csv")) for v,b in builds.items() if component in b}
+        valid_cpu={v:read_samples(results/(v+"-"+filename+"-cpu.csv")) for v in valid_raw}
+        valid_reports[component]=compare_raw_program(valid_raw,args.samples,component+".")
+        valid_reports[component]["process_cpu_observed"]=compare_raw_program(valid_cpu,args.samples,component+".")["observed"]
+        valid_reports[component]["workload"]="successful primary records unchanged; negative lanes rejected by empty program bounds before VM execution; full mixed gates retained"
     identities=[]
     if args.backend.startswith("vulkan"):
         for version in builds:
@@ -685,6 +710,14 @@ def run_comparison(args):
                     actual=results/(version+"-"+component.replace("_","-")+"-sample%d.spv"%sample)
                     if file_sha256(actual)!=manifest["prepared_binaries"][version][component+"_module"]["sha256"]:
                         raise ValueError("raw program emitted a different module during timing")
+                    valid_label=device_label+"_VALID"
+                    valid_id=re.findall(r"^"+valid_label+r" Vulkan .+$",log,re.MULTILINE)
+                    if len(valid_id)!=1 or valid_id[0].replace(valid_label,"BENCH_DEVICE",1)!=identities[-1]:
+                        raise ValueError("valid-work profile used missing/different device or driver")
+                    actual=results/(version+"-"+component.replace("_","-")+"-valid-sample%d.spv"%sample)
+                    if file_sha256(actual)!=manifest["prepared_binaries"][version][component+"_module"]["sha256"]:
+                        raise ValueError("valid-work profile emitted a different module")
+                validate_valid_workload(log,builds[version])
         if len(set(identities))!=1:raise ValueError("different benchmark device/driver")
         software=any(x in identities[0].lower() for x in ["llvmpipe","lavapipe"])
         if software != (args.backend=="vulkan-software"):raise ValueError("wrong software/hardware device")
@@ -705,13 +738,15 @@ def run_comparison(args):
                 process_cpu_diagnostics=cpu_rows,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
-                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,
-                success=not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not program_report["failure"] and not control_report["failure"] and not any(x["failures"] for x in rows+anchor_rows),
+                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,
+                success=not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
                 self_check=bool(args.self_check))
     (results/"comparison.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     summary="# Shader compilation comparison\n\n%s -> %s (%s)\n\n"%(args.base,args.head,args.backend)
     summary+="**%s** across %d procedural stage/case metrics.\n\n"%("PASS" if report["success"] else "FAIL / investigate",len(rows))
     summary+="This is NOT cold-play gameplay signoff. Driver-cache status and missing anchor are recorded in environment.json.\n\n"
+    if any(v["observed"] for v in valid_reports.values()):
+        summary+="Companion valid-work profiles keep successful records unchanged and reject inactive negative lanes before VM execution. Separate elapsed/CPU samples, identity checks and unchanged timing gates supplement the full mixed-corpus gates; they do not replace fault coverage or establish pure GPU time.\n\n"
     if program_report["observed"]:
         status="paired primed-cache/warm-execution timing gates apply" if program_report["comparable"] else "no historical parent implementation; timing is UNCOMPARED"
         if program_report["missing_candidate"]:status="candidate kernel removed: FAIL"
