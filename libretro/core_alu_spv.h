@@ -5,6 +5,7 @@
 #define XE_ALU_PROGRAM_ABI 1
 #define XE_ALU_CONTROL_BOOL 1
 #define XE_ALU_CONTROL_LOOPS 1
+#define XE_ALU_CONTROL_PREDICATE 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -43,10 +44,13 @@ int xe_alu_program_spv_build(xe_spv_binary *out);
  * Binding4 borrows a160-byte uniform view: eight bool words followed by32 loop
  * words, matching the existing bool/loop constant layout. It is immutable and
  * lives through completion; no per-invocation context copy is needed.
- * Supports EXEC/EXEC_END, bool COND_EXEC/COND_EXEC_END, NOP, bool/unconditional
- * JMP/CALL and RET, with four fixed return addresses. Nonempty counted/repeat
+ * Supports EXEC/EXEC_END, bool/predicate conditional EXEC/END (including bool
+ * clean hints), NOP, bool/predicate/unconditional JMP/CALL and RET, with four
+ * fixed return addresses. Scalar SETP_EQ/NE/GT/GE update one private predicate;
+ * predicated ALUs test its prior value before validation, reads and side effects.
+ * Nonempty counted/repeat
  * loops have four fixed count/address entries; temp-relative reads must stay
- * within the64-register window. Empty loops, predicated breaks/conditions,
+ * within the64-register window. Empty loops, predicated group-wide breaks,
  * relative constants/destinations and other unsupported CF fail with status3.
  * A RET with an empty stack falls through. Out-of-bounds
  * instruction/target reads fail with status2. At most4096 CF steps are executed;

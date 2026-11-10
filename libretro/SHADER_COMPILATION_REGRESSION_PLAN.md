@@ -858,3 +858,13 @@ byte orders have literal regressions with high/negative loop addresses, alongsid
 relative-window failure tests. Measure this component against its first parent;
 it does not establish renderer throughput or resolve the remaining runtime-cost
 debt from extending the generic control kernel. See `tools/tests/alu_direct_results.txt`.
+
+The validation kernel now implements scalar SETP_EQ/NE/GT/GE, predicate ALUs and
+predicate-controlled EXEC/END/CALL/JMP, with bool clean-hint semantics. Predicate
+state has one private word, independent of existing partial-export bits.
+Literal/nonfinite, coissue/history, divergent-invocation and skipped-invalid-work
+regressions supplement the native reference. This still does not cover vector
+predicate pushes, predicate counter operations or group-wide loop breaks, and
+does not remove an actual renderer compilation/wait site. Retain first-parent
+runtime costs and missing stage/ROP/continuation coverage explicitly; see
+`tools/tests/alu_predicate_results.txt`.

@@ -106,9 +106,15 @@ static unsigned expected_status(unsigned kind) {
 #ifndef XE_LOOP_CASES
 #define XE_LOOP_CASES 0
 #endif
-#define XE_EXTRA_CASES (XE_BOOL_CASES+XE_LOOP_CASES)
+#ifndef XE_PRED_CASES
+#define XE_PRED_CASES 0
+#endif
+#define XE_EXTRA_CASES (XE_BOOL_CASES+XE_LOOP_CASES+XE_PRED_CASES)
 static void round_program(uint32_t *p,unsigned group,unsigned round) {
  (void)round;
+#if XE_PRED_CASES
+ if(round>=3+XE_BOOL_CASES+XE_LOOP_CASES){pred_program(p,pred_case(round-3-XE_BOOL_CASES-XE_LOOP_CASES,0));return;}
+#endif
 #if XE_LOOP_CASES
  if(round>=3+XE_BOOL_CASES){loop_program(p,round-3-XE_BOOL_CASES);return;}
 #endif
@@ -118,7 +124,18 @@ static void round_program(uint32_t *p,unsigned group,unsigned round) {
  program(p,group);
 }
 #if XE_EXTRA_CASES
+static unsigned extra_which(unsigned which,unsigned invocation) {
+ (void)invocation;
+#if XE_PRED_CASES
+ if(which>=XE_BOOL_CASES+XE_LOOP_CASES)
+  return XE_BOOL_CASES+XE_LOOP_CASES+pred_case(which-XE_BOOL_CASES-XE_LOOP_CASES,invocation);
+#endif
+ return which;
+}
 static void extra_context(uint32_t *bank,unsigned which) {
+#if XE_PRED_CASES
+ if(which>=XE_BOOL_CASES+XE_LOOP_CASES){pred_context(bank,pred_case(which-XE_BOOL_CASES-XE_LOOP_CASES,0));return;}
+#endif
 #if XE_LOOP_CASES
  if(which>=XE_BOOL_CASES){loop_context(bank,which-XE_BOOL_CASES);return;}
 #endif
@@ -127,6 +144,9 @@ static void extra_context(uint32_t *bank,unsigned which) {
 #endif
 }
 static unsigned extra_status(unsigned which) {
+#if XE_PRED_CASES
+ if(which>=XE_BOOL_CASES+XE_LOOP_CASES)return pred_status(which-XE_BOOL_CASES-XE_LOOP_CASES);
+#endif
 #if XE_LOOP_CASES
  if(which>=XE_BOOL_CASES)return loop_status(which-XE_BOOL_CASES);
 #endif
@@ -138,6 +158,9 @@ static unsigned extra_status(unsigned which) {
 }
 static uint32_t extra_golden(unsigned which,unsigned lane) {
  (void)lane;
+#if XE_PRED_CASES
+ if(which>=XE_BOOL_CASES+XE_LOOP_CASES)return pred_golden(which-XE_BOOL_CASES-XE_LOOP_CASES,lane);
+#endif
 #if XE_LOOP_CASES
  if(which>=XE_BOOL_CASES)return loop_golden(which-XE_BOOL_CASES,lane);
 #endif
@@ -149,6 +172,9 @@ static uint32_t extra_golden(unsigned which,unsigned lane) {
 }
 #endif
 static int round_swap(unsigned round,unsigned group) {
+#if XE_PRED_CASES
+ if(round>=3+XE_BOOL_CASES+XE_LOOP_CASES)return (round-3-XE_BOOL_CASES-XE_LOOP_CASES)&1;
+#endif
 #if XE_LOOP_CASES
  if(round>=3+XE_BOOL_CASES)return (round-3-XE_BOOL_CASES)&1;
 #endif
@@ -282,6 +308,9 @@ int main(void){
 #endif
     temporary[lane]=next(&seed);
    }
+#if XE_PRED_CASES
+   if(round>=3+XE_BOOL_CASES+XE_LOOP_CASES)pred_temporary(temporary,pred_case(round-3-XE_BOOL_CASES-XE_LOOP_CASES,i));
+#endif
    if(kind==4)for(lane=0;lane<4;++lane)temporary[lane]=0xc0e00000u;
    if(group==5){temporary[0]=0xbf800000u;temporary[1]=0x40000000u;temporary[2]=0xc0400000u;temporary[3]=0x40800000u;}
    if(group==8){static const uint32_t initial[8]={0x3f800000u,0x40000000u,0x40400000u,0x40800000u,0x40a00000u,0x40c00000u,0x40e00000u,0x41000000u};memcpy(temporary,initial,sizeof(initial));}
@@ -331,7 +360,7 @@ int main(void){
    if(i>=limit || i>=output_limit){for(lane=0;lane<8;++lane)CHECK(out[i*8+lane]==0x6d6d6d6du);continue;}
    group=i/2;kind=group%32;status=expected_status(kind);
 #if XE_EXTRA_CASES
-   if(round>=3)status=extra_status(round-3);
+   if(round>=3)status=extra_status(extra_which(round-3,i));
 #endif
    if(out[i*8+4]!=status){fprintf(stderr,"round %u invocation %u kind %u status %u != %u\n",round,i,kind,out[i*8+4],status);goto done;}
    if(status==1){
@@ -355,12 +384,15 @@ int main(void){
     if(group==11)for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==0xc1000000u);
 #else
 #if XE_EXTRA_CASES
-    if(round>=3){for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==extra_golden(round-3,lane));}
+    if(round>=3){for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==extra_golden(extra_which(round-3,i),lane));}
     else
 #endif
     CHECK(control_golden(group,out+i*8));
 #if XE_LOOP_CASES
-    if(round>=3+XE_BOOL_CASES)CHECK(out[i*8+5]==loop_exports(round-3-XE_BOOL_CASES));
+    if(round>=3+XE_BOOL_CASES && round<3+XE_BOOL_CASES+XE_LOOP_CASES)CHECK(out[i*8+5]==loop_exports(round-3-XE_BOOL_CASES));
+#endif
+#if XE_PRED_CASES
+    if(round>=3+XE_BOOL_CASES+XE_LOOP_CASES)CHECK(out[i*8+5]==pred_exports(pred_case(round-3-XE_BOOL_CASES-XE_LOOP_CASES,i)));
 #endif
 #endif
     ++compared;

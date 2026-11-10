@@ -57,13 +57,13 @@ static void program(uint32_t *p,unsigned group)
   if(kind==29){control_alu(p,6,62,0,1,15,0,&slots);p[20]|=31u<<24;}
  }else if(kind==14 || kind==24){control_cf(p,0,1u<<13,kind==14?0xb000:0x9000);
  }else if(kind==15){control_cf(p,0,6,0x2000);
- }else if(kind==22 || kind==23){control_cf(p,0,2,kind==22?0x5000:0x6000);
+ }else if(kind==22 || kind==23){control_cf(p,0,2,kind==22?0xc000:0xf000);
  }else if(kind==25){control_cf(p,0,0,0xc000);
  }else if(kind==26){control_cf(p,0,8191|(1u<<13),0xb000);
  }else if(kind==27){control_cf(p,0,4095|(1u<<12),0x2000);
  }else if(kind==28){control_cf(p,0,6|(1u<<12)|(1u<<16),0x2000);
  }else if(kind==30){control_cf(p,0,7u<<12,0x2000);
- }else {control_cf(p,0,6|(1u<<12),0xd000);}
+ }else {control_cf(p,0,6|(1u<<12),0xf000);}
  if(group>=32 && kind<14)for(i=0;i<7;++i)if(slots&(1u<<i)){
   p[i*3]|=((group>>5)&1)<<7;
   p[i*3+1]|=(group*0x71b359u)&0xffffffu;p[i*3+1]|=((group>>5)&7)<<24;
@@ -205,6 +205,100 @@ static void loop_program(uint32_t *p,unsigned which)
  }else{
   control_cf(p,0,2|(1u<<13),0x9000);control_cf(p,1,6,0x2000);control_cf(p,2,5,0x7000);
   control_cf(p,3,6|(1u<<12),0x1000);control_cf(p,4,3,0x8000);control_cf(p,5,0,0xa000);
+ }
+}
+#endif
+#ifdef XE_ALU_CONTROL_PREDICATE
+#define XE_PRED_CASES 1254
+/* Last two replays share one program but give adjacent invocations opposite p0. */
+static unsigned pred_case(unsigned which,unsigned invocation)
+{return which<1250?which:which<1252?96+(invocation?8:0)+(which&1):14*96+(which&1);}
+static unsigned pred_scenario(unsigned which){return which/96;}
+static unsigned pred_opcode(unsigned which){return (which%96)/24;}
+static unsigned pred_input(unsigned which){return (which/2)%12;}
+static uint32_t pred_bits(unsigned which)
+{
+ static const uint32_t values[12]={0,0x80000000u,1,0x80000001u,0x3f800000u,0xbf800000u,
+  0x00800000u,0x80800000u,0x7f800000u,0xff800000u,0x7fc12345u,0xffc12345u};
+ return values[pred_input(which)];
+}
+static unsigned pred_value(unsigned which)
+{
+ static const unsigned values[4][12]={
+  {1,1,1,1,0,0,0,0,0,0,0,0},{0,0,0,0,1,1,1,1,1,1,1,1},
+  {0,0,0,0,1,0,1,0,1,0,0,0},{1,1,1,1,1,0,1,0,1,0,0,0}};
+ return pred_scenario(which)==13?0:values[pred_opcode(which)][pred_input(which)];
+}
+static void pred_context(uint32_t *bank,unsigned which)
+{
+ memset(bank,0,160);if(!pred_value(which))bank[7]=0x80000000u;
+}
+static void pred_temporary(uint32_t *temporary,unsigned which)
+{
+ unsigned lane,selected=(which/2)&3,op=pred_opcode(which),value=pred_value(which);
+ uint32_t wrong=op==0?(value?0x3f800000u:0):op==1?(value?0:0x3f800000u):(value?0:0x3f800000u);
+ if(op==3 && value)wrong=0xbf800000u;
+ for(lane=0;lane<4;++lane){temporary[lane]=0x40000000u;temporary[8+lane]=wrong;}
+ temporary[8+selected]=pred_bits(which);
+}
+static unsigned pred_status(unsigned which)
+{
+ unsigned scenario=pred_scenario(which),value=pred_value(which);
+ return (scenario==7 || scenario==9) && value?3:scenario==8 && !value?2:1;
+}
+static uint32_t pred_golden(unsigned which,unsigned lane)
+{
+ unsigned scenario=pred_scenario(which),value=pred_value(which);
+ if(scenario==14)return lane&1?0x40000000u:0x40400000u;
+ if(scenario==0 || scenario==12)return value?0:0x3f800000u;
+ if(scenario==1 || scenario==3 || scenario==5)return value?0x40400000u:0x40000000u;
+ if(scenario==2 || scenario==4 || scenario==6 || scenario==10 || scenario==11)
+  return value?0x40000000u:0x40400000u;
+ return 0x40000000u;
+}
+static unsigned pred_exports(unsigned which)
+{return pred_scenario(which)==14 || (pred_scenario(which)==10 && pred_value(which))?2:1;}
+static void pred_program(uint32_t *p,unsigned which)
+{
+ unsigned scenario=pred_scenario(which),selected=(which/2)&3;uint32_t slots=0;
+ memset(p,0,21*4);
+ control_cf(p,0,4|(1u<<12),0x1000);control_cf(p,2,6|(1u<<12),0x2000);
+ alu(p+12,0,0,0,27+pred_opcode(which),0,0,3,2,4);p[13]=((selected+1)&3)<<6;
+ control_alu(p,5,0,0,1,15,0,&slots);control_alu(p,6,62,0,3,15,1,&slots);
+ if(scenario==14){
+  control_cf(p,0,5|(1u<<12),0x1000);control_cf(p,1,4|(1u<<12),0x1000);
+  control_alu(p,5,62,0,1,5,0,&slots);control_alu(p,6,62,0,3,10,1,&slots);
+ }else if(scenario==0 || scenario==12){
+  if(scenario==0)control_cf(p,1,6|(1u<<12),0x2000);
+  else{
+   control_cf(p,1,5|(1u<<12),0x1000);
+   p[15]=(p[15]&0x03ffffffu);p[17]=(p[17]&~255u);
+   p[16]|=(1u<<28)|((1u-pred_value(which))<<27);
+  }
+  p[18]&=~(15u<<16);p[18]|=15u<<20;
+ }else if(scenario==1 || scenario==2 || scenario==9 || scenario==13){
+  control_cf(p,1,5|(1u<<12),(scenario==1 || scenario==13?0x5000u:0x6000u)|
+   (scenario==2?0u:1u<<10));
+  if(scenario==2 || scenario==9)control_alu(p,5,62,0,1,15,0,&slots);
+  if(scenario==9)p[17]|=31u<<24;
+  if(scenario==13){p[0]=0;p[1]&=0xffff0000u;}
+ }else if(scenario==3){
+  control_cf(p,1,4|(1u<<14),0x9000|(1u<<10));
+  control_cf(p,4,5|(1u<<12),0x1000);control_cf(p,5,0,0xa000);
+ }else if(scenario==4 || scenario==8){
+  control_cf(p,1,(scenario==8?8191u:3u)|(1u<<14),0xb000);
+  control_cf(p,3,5|(1u<<12),0x2000);control_alu(p,5,62,0,1,15,0,&slots);
+ }else if(scenario==5 || scenario==6 || scenario==7){
+  control_cf(p,1,5|(1u<<12),0x1000);p[16]|=(1u<<28)|(scenario==6?0u:1u<<27);
+  if(scenario==6){
+   p[15]=(p[15]&0x03ffffffu)|(27u<<26);p[17]=(p[17]&~255u)|3;
+   control_cf(p,2,6|(1u<<12),0x6000|(1u<<10));control_cf(p,3,4|(1u<<12),0x2000);
+  }
+  if(scenario==7)p[17]|=31u<<24;
+ }else{
+  control_cf(p,1,5|(1u<<12),(255u<<2)|(1u<<10)|(scenario==10?0xd000u:0xe000u));
+  if(scenario==11)control_alu(p,5,62,0,1,15,0,&slots);
+  else{control_cf(p,2,6|(1u<<12),0x5000|(1u<<10));control_cf(p,3,6|(1u<<12),0x2000);}
  }
 }
 #endif

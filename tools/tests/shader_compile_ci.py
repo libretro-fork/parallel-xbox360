@@ -128,10 +128,13 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
         content=header.read_text()
         boolean="#define XE_ALU_CONTROL_BOOL 1" in content
         loops="#define XE_ALU_CONTROL_LOOPS 1" in content
-        coverage.update(control_flow_version=3 if loops else 2 if boolean else 1,
+        predicate="#define XE_ALU_CONTROL_PREDICATE 1" in content
+        coverage.update(control_flow_version=4 if predicate else 3 if loops else 2 if boolean else 1,
                         boolean_cf_supported=boolean,nonempty_loops_supported=loops,
-                        timed_corpus_version=2,boolean_context_cases=224 if boolean and coverage["vulkan_gpu"] else 0,
+                        predicate_cf_supported=predicate,
+                        timed_corpus_version=3,boolean_context_cases=224 if boolean and coverage["vulkan_gpu"] else 0,
                         loop_context_cases=36 if loops and coverage["vulkan_gpu"] else 0,
+                        predicate_context_cases=1254 if predicate and coverage["vulkan_gpu"] else 0,
                         context_cases_untimed=True,timed_child_context_replays=0,
                         cf_step_limit=4096,call_depth_limit=4,
                         pinned_control_fixture_sha256=file_sha256(HERE/"shader_control_program_fixture.h"))
@@ -505,10 +508,10 @@ def compare_control_coverage(coverage, vulkan):
     for version in ("base","anchor"):
         if version not in coverage:continue
         previous=coverage[version]
-        for feature in ("available","boolean_cf_supported","nonempty_loops_supported"):
+        for feature in ("available","boolean_cf_supported","nonempty_loops_supported","predicate_cf_supported"):
             if previous.get(feature,False) and not candidate.get(feature,False):
                 failures.append(version+": removed "+feature)
-        for feature in ("boolean_context_cases","loop_context_cases"):
+        for feature in ("boolean_context_cases","loop_context_cases","predicate_context_cases"):
             if previous.get(feature,0)>candidate.get(feature,0):failures.append(version+": reduced "+feature)
     return dict(revisions=coverage,failures=failures)
 

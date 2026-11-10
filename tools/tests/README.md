@@ -1742,3 +1742,27 @@ unit/GPU execution is absent. WARP reports source/unit support without pretendin
 to have run these Vulkan cases. See `alu_context_results.txt`.
 The direct-read fast-path comparison and its semantic negative are recorded in
 `alu_direct_results.txt`; this remains an unlinked validation kernel.
+
+Predicate control and scalar comparisons
+---------------------------------------
+
+The control entry supports scalar SETP_EQ/NE/GT/GE, predicate EXEC/END, predicate
+CALL/JMP and predicated ALUs. P0 has one private word; the existing partial-export
+mask retains output ownership independently through predicate updates.
+An untaken ALU skips opcode/address validation and operand access, retaining
+scalar history and registers. Bool clean variants preserve the same numerical
+execution; group-wide predicated loop breaks remain unsupported.
+
+An additional 1254 untimed replays check four comparisons over twelve binary32
+classes, scalar swizzles, conditional termination/transfers, coissued writes,
+skipped unsupported work, prior scalar state, clean-hint predicate preservation,
+initial state, opposite outcomes in adjacent invocations and predicate changes
+between partial exports. Both byte orders run literal value/export-count goldens
+and native CPU comparisons. Full coverage is 3771 GPU invocations and 2947 native
+references. Source feature/case loss is gated separately from the timed corpus.
+
+Timed corpus version 3 replaces three newly supported negative CF opcodes with
+still-unsupported ALLOC/MARK_VFETCH cases on both pinned revisions. The primary
+743/315 workload and three data replays remain equal across the comparison;
+new predicate correctness never runs inside the timed child. See
+`alu_predicate_results.txt` for measured costs, semantic mutants and limitations.

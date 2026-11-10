@@ -1,0 +1,135 @@
+Predicate control validation (2026-11-10)
+========================================
+First parent: 74fef36f8380d7d1779dfc0c2e42ce28e234e143.
+
+The raw control validation kernel now handles scalar SETP_EQ/NE/GT/GE, predicate
+EXEC/EXEC_END, predicate CALL/JMP and predicated ALUs. Bool clean EXEC/END forms
+retain ordinary bool-conditional numerical semantics. One private uint word
+retains P0 across clauses, calls and loops; it resets per invocation. No register
+frame or context payload is copied. The existing descriptor ABI and shared
+160-byte bool/loop view are unchanged.
+
+Scalar comparisons use integer binary32 fields: denormals compare as signed
+zero, EQ treats both zero signs equally, NE is true for NaN, and GT/GE reject
+NaN. Source swizzles/modifiers precede comparison. SETP writes exact 0/1 scalar
+results and retains scalar history even when its destination mask is empty.
+An instruction's execution predicate is sampled before its vector/scalar side
+effects. An untaken ALU skips opcode/address validation and operand access,
+retaining P0, scalar history and registers. An untaken conditional transfer
+skips target/stack checks; conditional END terminates only when taken.
+
+The predicate has an independent four-byte word. A packed-word prototype was
+correct but slower in measurements and was rejected; static storage density is
+not a throughput argument. Independent state preserves partial-export bits
+without adding shifts/masks to their existing loads/stores. The selected module
+is 7866 words, up from 7558. Arithmetic remains byte-identical at 2855 words;
+the original program module remains 6051 words with two independent-operation
+reorderings described below. Three functions and three structural loops remain, using only
+32-bit integer SPIR-V 1.0 with Shader capability. No GLSL parser, new capability,
+per-program module/pipeline or production source-list entry is introduced.
+
+Correctness and semantic negatives
+---------------------------------
+An additional 1254 untimed predicate replays exercise four comparisons over
+twelve binary32 classes: positive/negative zero, smallest positive/negative
+subnormal, positive/negative one, positive/negative minimum normal, infinities
+and quiet NaNs. Literal truth tables and values accompany native interpreter
+comparisons. Scalar swizzles deliberately select among lanes with opposing
+predicate outcomes. Both program byte orders are covered.
+
+Cases cover scalar result/history, predicate EXEC and END, CALL/JMP, old-predicate
+coissue, skipped unsupported work, untaken invalid targets, clean-hint predicate
+preservation and initial state. Adjacent invocations share the same program and
+constants but take opposite branches. Predicate changes between partial position
+exports must preserve the earlier components and write mask. Export counts are
+anchored independently, including the clean-hint case's conditional extra export.
+
+Full coverage: 3771 GPU invocations, 2947 native-reference comparisons, 224 bool,
+36 loop and 1254 predicate context replays. Inputs/context remain immutable;
+unsupported execution changes only status and preserves output payload/redzones.
+The same active pipeline/module and reusable buffers execute every replay.
+
+Deliberately ordered NE fails at round 307, invocation 0 (1 instead of 0 for
+NaN). Ignoring ALU predication fails at round 751 (3 instead of 2). A mask-clearing
+mutant of the rejected packed prototype fails the new partial-export case at
+round 1515 (incomplete output status 4 instead of 1). These are semantic RTX
+failures, not compilation/device errors; private mutants are not production code.
+
+MSVC /TC /O2 /W4 /WX, GCC strict C89/ASan/UBSan and official spirv-val Vulkan 1.0
+pass. The emitter passes 1000 exact same-owner builds with no additional
+allocation and failure/recovery/overflow/close checks. RTX 5090 driver
+32.0.16.2101 and llvmpipe LLVM 20.1.2 pass the full selected suite and original
+12280 arithmetic/743-program/363-reference suites. All 43 Python guard tests
+pass. WARP establishes emitter/unit coverage only, not Vulkan execution.
+
+Comparison scope
+----------------
+Preparation runs full applicable correctness; timed children run only the same
+three primary replays, 743 invocations and 315 references. Pinned timed corpus
+version 3 replaces three newly supported negative CF opcodes with unsupported
+ALLOC/MARK_VFETCH cases on both actual revisions. Predicate cases are untimed.
+Coverage gates detect removed predicate support, reduced cases or missing GPU
+execution. No acceptance threshold or cache default is changed.
+
+Compare actual first-parent source with candidate source using the same pinned
+harness, device/driver, no-LTO options and matching private application-cache
+conditions. Identical production archives are reused because all changed runtime
+files are excluded standalone emitters; each emitter is compiled from its own
+revision. This is not a new full-core build or a retail gameplay comparison.
+
+Seven final alternating idle-host pairs pass the unchanged 768 main, five raw
+program and five control controlled metric gates. Median/maximum milliseconds
+(parent -> selected candidate):
+
+  emission                 0.0511/0.0668 -> 0.0531/0.0689
+  module creation          0.0152/0.0156 -> 0.0153/0.0167
+  retained-first PSO       3.9705/4.1464 -> 4.4095/4.5775  [UNVERIFIED cold state]
+  explicit-cache warm PSO  0.0128/0.0149 -> 0.0135/0.0162
+  completion 0             2.6313/2.7899 -> 3.4414/4.7572  [UNVERIFIED first use]
+  warm completion 1        1.0137/1.4701 -> 1.2848/1.4518
+  warm completion 2        1.0057/1.1844 -> 1.2735/1.2950
+
+The roughly 27% warmed increase is real cost debt from added functionality,
+despite remaining below the existing 2 ms absolute noise floor. This kernel is
+unlinked from rendering; these numbers are neither a gameplay regression claim
+nor permission to select it before runtime-cost/coverage work is complete.
+All 512 main modules and the arithmetic module remain byte-identical.
+The original program module has two equivalent independent-operation reorderings:
+the opcode==1/opcode==11 comparisons exchange emission order, and its private
+write-mask load moves after an independent integer OR. Their operands/uses are
+renumbered consistently; operation counts and numerical behavior are unchanged.
+Raw-id disassemblies are retained as base-program.txt/candidate-program.txt.
+This is not byte identity, and no production emitter or cache format is changed.
+All 28 raw module captures match preparation; all 14 device groups agree.
+Frozen hashes, coverage retention, growth and source-wait alarms pass. Removing
+an extra trailing blank line after preparation produced all three identical
+MSVC modules; the normalization and exact module check are recorded explicitly.
+
+A separate seven-pair direct comparison uses the two actual prototype binaries,
+the identical timed harness/workload and alternating order. Warm medians for
+packed -> independent state are 1.5203 -> 1.1894 ms and 1.5205 -> 1.1873 ms.
+All 14 module captures and device identities match. This supports rejecting the
+packed prototype; it is not a substitute for the actual first-parent comparison.
+The rejected packed module has 7925 words; its complete paired results remain.
+
+Limits
+------
+The extension is functionality work on an unlinked prototype, not a throughput
+improvement or a cold-play fix. Driver disk/internal caches are not certified
+cold; first-creation and first-use observations remain UNVERIFIED. Completion
+includes host/queue service and heterogeneous/cyclic data, not pure GPU time.
+Retain runtime-cost debt, register/spill/occupancy uncertainty and all failed or
+rejected prototype results rather than treating a passing broad noise floor as
+proof of equal performance.
+
+Group-wide predicated loop breaks remain unsupported; per-invocation CPU
+behavior alone does not establish their sequencer semantics. Empty-loop effects,
+vector predicate pushes, scalar predicate counters, other addressing/ALUs,
+fetches, pixel RNE, remaining stages/exports, ROP and valid-work continuations
+also remain incomplete. No inaccurate fallback is selected. Actual draw-path
+translation, PSO creation and compilation waits remain unresolved.
+
+No installed core, game, live cache, production logging or release clocks were
+changed. Private evidence is C:/git/accurate-shader-fallback/predicate-control.
+The final selected comparison is paired-final-unpacked/results; paired-final
+and paired-packed retain the earlier independent/packed prototypes separately.
