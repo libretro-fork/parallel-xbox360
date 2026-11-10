@@ -41,6 +41,10 @@ using namespace ucode;
 // and dumps of d3dcompiler and games: https://pastebin.com/i4kAv7bB
 
 void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
+  AnalyzeUcode(cvars::dump_shaders.empty() ? nullptr : &ucode_disasm_buffer);
+}
+
+void Shader::AnalyzeUcode(StringBuffer* ucode_disasm_buffer) {
   if (is_ucode_analyzed_) {
     return;
   }
@@ -98,8 +102,8 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
     }
   }
 
-  // Disassemble and gather information.
-  ucode_disasm_buffer.Reset();
+  // Gather semantic metadata; text is optional diagnostic output.
+  if (ucode_disasm_buffer) ucode_disasm_buffer->Reset();
   VertexFetchInstruction previous_vfetch_full;
   std::memset(&previous_vfetch_full, 0, sizeof(previous_vfetch_full));
   uint32_t unique_texture_bindings = 0;
@@ -109,17 +113,19 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
     UnpackControlFlowInstructions(ucode_data_.data() + i * 3, cf_ab);
     for (uint32_t j = 0; j < 2; ++j) {
       uint32_t cf_index = i * 2 + j;
-      if (label_addresses_.find(cf_index) != label_addresses_.end()) {
-        ucode_disasm_buffer.AppendFormat("                label L{}\n",
+      if (ucode_disasm_buffer &&
+          label_addresses_.find(cf_index) != label_addresses_.end()) {
+        ucode_disasm_buffer->AppendFormat("                label L{}\n",
                                          cf_index);
       }
-      ucode_disasm_buffer.AppendFormat("/* {:4d}.{} */ ", i, j);
+      if (ucode_disasm_buffer)
+        ucode_disasm_buffer->AppendFormat("/* {:4d}.{} */ ", i, j);
 
       const ControlFlowInstruction& cf = cf_ab[j];
       uint32_t bool_constant_index = UINT32_MAX;
       switch (cf.opcode()) {
         case ControlFlowOpcode::kNop:
-          ucode_disasm_buffer.Append("      cnop\n");
+          if (ucode_disasm_buffer) ucode_disasm_buffer->Append("      cnop\n");
           break;
         case ControlFlowOpcode::kExec:
         case ControlFlowOpcode::kExecEnd: {
@@ -148,21 +154,21 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
         case ControlFlowOpcode::kLoopStart: {
           ParsedLoopStartInstruction instr;
           ParseControlFlowLoopStart(cf.loop_start, cf_index, instr);
-          instr.Disassemble(&ucode_disasm_buffer);
+          if (ucode_disasm_buffer) instr.Disassemble(ucode_disasm_buffer);
           constant_register_map_.loop_bitmap |= uint32_t(1)
                                                 << instr.loop_constant_index;
         } break;
         case ControlFlowOpcode::kLoopEnd: {
           ParsedLoopEndInstruction instr;
           ParseControlFlowLoopEnd(cf.loop_end, cf_index, instr);
-          instr.Disassemble(&ucode_disasm_buffer);
+          if (ucode_disasm_buffer) instr.Disassemble(ucode_disasm_buffer);
           constant_register_map_.loop_bitmap |= uint32_t(1)
                                                 << instr.loop_constant_index;
         } break;
         case ControlFlowOpcode::kCondCall: {
           ParsedCallInstruction instr;
           ParseControlFlowCondCall(cf.cond_call, cf_index, instr);
-          instr.Disassemble(&ucode_disasm_buffer);
+          if (ucode_disasm_buffer) instr.Disassemble(ucode_disasm_buffer);
           if (instr.type == ParsedCallInstruction::Type::kConditional) {
             bool_constant_index = instr.bool_constant_index;
           }
@@ -170,12 +176,12 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
         case ControlFlowOpcode::kReturn: {
           ParsedReturnInstruction instr;
           ParseControlFlowReturn(cf.ret, cf_index, instr);
-          instr.Disassemble(&ucode_disasm_buffer);
+          if (ucode_disasm_buffer) instr.Disassemble(ucode_disasm_buffer);
         } break;
         case ControlFlowOpcode::kCondJmp: {
           ParsedJumpInstruction instr;
           ParseControlFlowCondJmp(cf.cond_jmp, cf_index, instr);
-          instr.Disassemble(&ucode_disasm_buffer);
+          if (ucode_disasm_buffer) instr.Disassemble(ucode_disasm_buffer);
           if (instr.type == ParsedJumpInstruction::Type::kConditional &&
               instr.target_address != instr.dword_index + 1) {
             bool_constant_index = instr.bool_constant_index;
@@ -185,7 +191,7 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
           ParsedAllocInstruction instr;
           ParseControlFlowAlloc(cf.alloc, cf_index,
                                 type() == xenos::ShaderType::kVertex, instr);
-          instr.Disassemble(&ucode_disasm_buffer);
+          if (ucode_disasm_buffer) instr.Disassemble(ucode_disasm_buffer);
         } break;
         case ControlFlowOpcode::kMarkVsFetchDone:
           break;
@@ -199,7 +205,7 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
       }
     }
   }
-  ucode_disassembly_ = ucode_disasm_buffer.to_string();
+  if (ucode_disasm_buffer) ucode_disassembly_ = ucode_disasm_buffer->to_string();
 
   // A label jumped back to may be reentered after anything within the span of
   // the jumps back overlapping it. With subroutines, anything may be executed
@@ -415,15 +421,16 @@ uint32_t Shader::GetInterpolatorInputMask(reg::SQ_PROGRAM_CNTL sq_program_cntl,
 void Shader::GatherExecInformation(
     const ParsedExecInstruction& instr,
     ucode::VertexFetchInstruction& previous_vfetch_full,
-    uint32_t& unique_texture_bindings, StringBuffer& ucode_disasm_buffer) {
-  instr.Disassemble(&ucode_disasm_buffer);
+    uint32_t& unique_texture_bindings, StringBuffer* ucode_disasm_buffer) {
+  if (ucode_disasm_buffer) instr.Disassemble(ucode_disasm_buffer);
   uint32_t sequence = instr.sequence;
   for (uint32_t instr_offset = instr.instruction_address;
        instr_offset < instr.instruction_address + instr.instruction_count;
        ++instr_offset, sequence >>= 2) {
-    ucode_disasm_buffer.AppendFormat("/* {:4d}   */ ", instr_offset);
-    if (sequence & 0b10) {
-      ucode_disasm_buffer.Append("         serialize\n             ");
+    if (ucode_disasm_buffer)
+      ucode_disasm_buffer->AppendFormat("/* {:4d}   */ ", instr_offset);
+    if (ucode_disasm_buffer && (sequence & 0b10)) {
+      ucode_disasm_buffer->Append("         serialize\n             ");
     }
     const uint32_t* op_ptr = ucode_data_.data() + instr_offset * 3;
     if (sequence & 0b01) {
@@ -447,12 +454,12 @@ void Shader::GatherExecInformation(
 void Shader::GatherVertexFetchInformation(
     const VertexFetchInstruction& op, uint32_t exec_cf_index,
     VertexFetchInstruction& previous_vfetch_full,
-    StringBuffer& ucode_disasm_buffer) {
+    StringBuffer* ucode_disasm_buffer) {
   ParsedVertexFetchInstruction fetch_instr;
   if (ParseVertexFetchInstruction(op, previous_vfetch_full, fetch_instr)) {
     previous_vfetch_full = op;
   }
-  fetch_instr.Disassemble(&ucode_disasm_buffer);
+  if (ucode_disasm_buffer) fetch_instr.Disassemble(ucode_disasm_buffer);
 
   GatherFetchResultInformation(fetch_instr.result, exec_cf_index);
 
@@ -502,10 +509,10 @@ void Shader::GatherVertexFetchInformation(
 void Shader::GatherTextureFetchInformation(const TextureFetchInstruction& op,
                                            uint32_t exec_cf_index,
                                            uint32_t& unique_texture_bindings,
-                                           StringBuffer& ucode_disasm_buffer) {
+                                           StringBuffer* ucode_disasm_buffer) {
   TextureBinding binding;
   ParseTextureFetchInstruction(op, binding.fetch_instr);
-  binding.fetch_instr.Disassemble(&ucode_disasm_buffer);
+  if (ucode_disasm_buffer) binding.fetch_instr.Disassemble(ucode_disasm_buffer);
 
   GatherFetchResultInformation(binding.fetch_instr.result, exec_cf_index);
   for (size_t i = 0; i < binding.fetch_instr.operand_count; ++i) {
@@ -558,10 +565,10 @@ void Shader::GatherTextureFetchInformation(const TextureFetchInstruction& op,
 
 void Shader::GatherAluInstructionInformation(
     const AluInstruction& op, uint32_t exec_cf_index,
-    StringBuffer& ucode_disasm_buffer) {
+    StringBuffer* ucode_disasm_buffer) {
   ParsedAluInstruction instr;
   ParseAluInstruction(op, type(), instr);
-  instr.Disassemble(&ucode_disasm_buffer);
+  if (ucode_disasm_buffer) instr.Disassemble(ucode_disasm_buffer);
 
   kills_pixels_ =
       kills_pixels_ ||

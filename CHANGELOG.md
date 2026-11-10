@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Stop formatting and retaining microcode disassembly during normal shader analysis. Gather the same semantic metadata without a text sink; explicit shader dumping still captures disassembly. This removes diagnostic formatting and a full-text copy from cold shader work, but does not remove driver compilation or its remaining draw-side waits.
+
 - Fix standalone Linux queue tests after the draw-counter changes: resolve the sibling accounting header without requiring the repository root on the include path.
 
 - Add test-only Vulkan/D3D12 compilation and blocking-admission counters, instrumented translator tests and CI profile/export checks. Add nonblocking specialization admission that preserves request ownership on rejection. Normal builds omit the counters; renderer compilation waits and inaccurate stand-ins remain unresolved.

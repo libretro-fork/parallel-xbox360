@@ -1547,3 +1547,10 @@ AUDIO_STATE_ALLOC_TEST=1 adds GNU test-only linked malloc/calloc/realloc/free
 wrappers. All operations after driver initialization through checkpoint/replay
 and stop must leave the counters unchanged; construction/destruction are outside
 the measured interval. This is not whole-process/OS allocation tracing.
+
+`run_shader_analysis_text_tests.cmd` / `.sh` compare explicit full-text analysis
+with the normal quiet path on42 VS/PS call/control-flow and ALU-size fixtures.
+They check public analysis metadata, untouched caller scratch, empty quiet text,
+exact emitted SPIR-V and shader-dump opt-in. `ANALYSIS_TEXT_BUILD` selects the
+MSVC core build; shell tests reuse the normal Make link inputs. These checks
+do not certify runtime fallback accuracy or gameplay frame-time tails.

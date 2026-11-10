@@ -1,0 +1,58 @@
+Quiet guest-shader analysis -- 2026-11-10
+Parent b27cfdfda3f5d472dc0a8051717e388bc03b6699
+
+Remove unconditional diagnostic text work from analysis. The normal reference
+entry point selects a null sink unless dump_shaders is enabled before analysis.
+Semantic gathering still runs. Instruction Disassemble calls, formatted labels,
+per-instruction prefixes, scratch writes and the final full-string copy do not
+run without a sink. Explicit non-null sinks retain existing text generation.
+No new queue, lock, timer, output buffer, code generator or shader-key change.
+The narrow C++ changes only route the diagnostic sink through existing semantic
+gathering; packed fixture decisions and test orchestration are MSVC C89.
+
+Validation
+----------
+Full MSVC Release core rebuilt with three jobs.42 VS/PS fixtures cover nested
+calls, conditional calls and ALU streams1/32/96/256 instructions. Full-text and
+quiet paths have matching public metadata, labels/reentry information and exact
+SPIR-V bytes. Quiet analysis leaves caller scratch and its backing pointer
+unchanged, with an empty retained disassembly. The fixtures avoid157993 bytes
+of diagnostic text and its retained copy; this is not an allocator/RSS count.
+The normal entry point still captures text when dump_shaders is enabled.
+
+MSVC /TC /W4 /WX tests pass. Linux GCC C89/pedantic driver compilation and shell
+syntax pass; the new full native Linux/ARM tests are delegated to hosted CI.
+MSVC AddressSanitizer passes on the changed analysis translation unit, driver
+and typed bridge. Existing linked libraries are not instrumented; STL container
+annotations are disabled to match those existing libraries. This is not a full
+core sanitizer build. Initial mixed-annotation link failure is retained locally.
+
+704 physical Vulkan numerical guest shaders,384 sampler cases, current forward/
+backward/call-flow checks, draw-contract negative gates and actual instrumented
+translation pass. Three real failed-content opens/closes/deinit/unloads pass.
+No user frontend or game was launched and no installed core/cache was replaced.
+
+Seven alternating/reverse-order release pairs use unchanged corpus8 gates:
+80 WARP and768 physical Vulkan per-case stage metrics; zero threshold alarms.
+All512 Vulkan module profiles, WARP preparation SPIR-V and eight native DXIL
+binaries are byte-identical. Median of per-case candidate/base median ratios:
+Vulkan512 translation cases0.8872163; WARP72 translation cases0.8870914.
+These are combined fresh analysis/translation measurements, not analysis-only
+or whole-game speedups. Driver PSO time has no claimed improvement. Raw per-case
+wall/process CPU samples, tails, identities and environment are retained.
+The frozen baseline was prepared from b297 source; parent b27 changes only the
+sibling header include and changelog. Preserve that original manifest rather
+than relabeling its build. Hosted CI compares actual parent/candidate revisions.
+
+Remaining limitations
+---------------------
+No certified empty driver internal/disk cache or loaded-game equal-image/guest-
+progress replay. No first-correct-frame or gameplay cadence acceptance. No full
+macOS/Android build for this change locally. Analysis still owns microcode and
+metadata containers; those can allocate. Existing reusable StringBuffer objects
+still reserve their old storage. This patch does not establish zero allocation.
+Draw-side translation, inline guest/utility PSO creation, compilation/admission
+waits and inaccurate stand-ins still require ready accurate fallback coverage.
+Do not substitute TryPush rejection or missing draws for that implementation.
+
+Evidence: C:/git/shader-analysis-text and the delivered mailbox/evidence bundle.

@@ -717,3 +717,13 @@ renderer integration, or restore coverage is established. Queue `TryPush` is
 nonblocking but not yet adopted by renderer callers. Do not exchange a blocked
 job for an omitted draw. Existing inline creation and waits remain failures.
 Keep the original performance/correctness gates and defaults unchanged.
+
+## Quiet analysis (2026-11-10)
+
+Guest analysis now skips diagnostic disassembly formatting and its retained
+string copy unless explicitly requested.42 full/quiet metadata and emitted-byte
+fixtures,704 GPU numerical cases and384 sampler cases pass. Seven unchanged-
+threshold pairs show no regression and identical shader bytes; per-case median
+analysis/translation ratios are about0.887. This removes avoidable cold-path CPU
+work, not driver compilation or waits. No loaded-game/cold-frame acceptance or
+accurate ready fallback is claimed. See tools/tests/shader_analysis_text_results.txt.

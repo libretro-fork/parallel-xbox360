@@ -910,14 +910,16 @@ class Shader {
   size_t ucode_dword_count() const { return ucode_data_.size(); }
 
   bool is_ucode_analyzed() const { return is_ucode_analyzed_; }
-  // ucode_disasm_buffer is temporary storage for disassembly (provided
-  // externally so it won't need to be reallocated for every shader).
+  // The reference overload captures text only when shader dumping is enabled.
+  // An explicit nullable sink supports analysis without formatting or copying
+  // disassembly. A supplied sink borrows reusable scratch through this call.
   void AnalyzeUcode(StringBuffer& ucode_disasm_buffer);
+  void AnalyzeUcode(StringBuffer* ucode_disasm_buffer);
 
   // The following parameters, until the translation, are valid if ucode
   // information has been gathered.
 
-  // Microcode disassembly in D3D format.
+  // Microcode disassembly in D3D format, empty unless explicitly captured.
   const std::string& ucode_disassembly() const { return ucode_disassembly_; }
 
   // All vertex bindings used in the shader.
@@ -1160,18 +1162,18 @@ class Shader {
   void GatherExecInformation(
       const ParsedExecInstruction& instr,
       ucode::VertexFetchInstruction& previous_vfetch_full,
-      uint32_t& unique_texture_bindings, StringBuffer& ucode_disasm_buffer);
+      uint32_t& unique_texture_bindings, StringBuffer* ucode_disasm_buffer);
   void GatherVertexFetchInformation(
       const ucode::VertexFetchInstruction& op, uint32_t exec_cf_index,
       ucode::VertexFetchInstruction& previous_vfetch_full,
-      StringBuffer& ucode_disasm_buffer);
+      StringBuffer* ucode_disasm_buffer);
   void GatherTextureFetchInformation(const ucode::TextureFetchInstruction& op,
                                      uint32_t exec_cf_index,
                                      uint32_t& unique_texture_bindings,
-                                     StringBuffer& ucode_disasm_buffer);
+                                     StringBuffer* ucode_disasm_buffer);
   void GatherAluInstructionInformation(const ucode::AluInstruction& op,
                                        uint32_t exec_cf_index,
-                                       StringBuffer& ucode_disasm_buffer);
+                                       StringBuffer* ucode_disasm_buffer);
   void GatherOperandInformation(const InstructionOperand& operand);
   void GatherFetchResultInformation(const InstructionResult& result,
                                     uint32_t exec_cf_index);

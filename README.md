@@ -516,3 +516,10 @@ ready accurate fallback first. Existing inline compilation, compilation waits,
 no-op pixel stand-ins and skipped draws remain defects. These tests do not
 establish cold-play smoothness or correct fallback coverage. See
 [component coverage](tools/tests/draw_contract_results.txt).
+
+Normal guest-microcode analysis gathers semantic metadata without formatting
+instruction disassembly or copying it into a retained string. An explicit
+nullable diagnostic sink preserves disassembly when requested; the existing
+shader-dump setting opts in before analysis. This avoids diagnostic text work
+on the cold shader path. Analysis containers and shader/driver compilation
+still allocate, and accurate nonblocking fallback coverage remains unfinished.
