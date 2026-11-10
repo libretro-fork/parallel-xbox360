@@ -978,3 +978,17 @@ invalid programs; WARP accepting a pipeline alone is insufficient validation.
 Still required: complete physical tile/word routing, source/destination scale
 conversion, actual image loads/stores, normalized/gamma/depth/stencil/host-depth
 families, raster comparisons and prepared lookup-only renderer integration.
+
+
+Physical transfer routing foundation (2026-11-10): one shared C89 recipe consumes
+a checked 23-word packet and lends ten result IDs, including original destination
+coordinates, without an intermediate copied payload. An independent legacy route
+rescales before canonicalization; the new route canonicalizes once and replaces
+only changed-axis subpixel remainders. CPU and Vulkan/WARP checks cover tile
+wrap, pitch, signed base delta, native2 policy, legal scale classes, both sample
+widths, adjacent fetch coordinates and color/depth column swapping. A valid
+tile-mask mutation must fail the independent GPU oracle. This is address math,
+not accurate color/depth image coverage or runtime lookup-only integration.
+Still implement typed image access/word routing, all conversion families,
+raster/sample/stencil/depth comparisons, ready initialization PSO tables and
+CPU/GPU lifetime handling before marking utility compilation violations fixed.

@@ -1,9 +1,14 @@
 /* One native compute PSO, changing runtime sample layouts. BSD; C89. */
 
-#ifdef XE_TRANSFER_UINT_COLOR_TEST
+#ifdef XE_TRANSFER_ADDRESS_TEST
+#include "transfer_address_cases.h"
+#elif defined(XE_TRANSFER_UINT_COLOR_TEST)
 #include "transfer_uint_color_cases.h"
 #else
 #include "transfer_sample_cases.h"
+#endif
+#ifndef XE_SAMPLE_LANES
+#define XE_SAMPLE_LANES 7
 #endif
 enum { INPUT_BYTES=XE_SAMPLE_CASES*128, OUTPUT_BYTES=XE_SAMPLE_OUTPUT_CASES*64 };
 #define COBJMACROS
@@ -58,7 +63,7 @@ int main(int argc,char **argv) {
  D3D12_COMPUTE_PIPELINE_STATE_DESC desc;D3D12_COMMAND_QUEUE_DESC queue_desc;
  D3D12_RANGE range;HANDLE event=NULL;void *code=NULL;size_t code_size=0;
  uint32_t *input_data=NULL,*initial_data=NULL,*readback_data=NULL;
- uint32_t limits[4],wanted[7];unsigned round,i,lane,cases=0;
+ uint32_t limits[4],wanted[XE_SAMPLE_LANES];unsigned round,i,lane,cases=0;
  HRESULT status=E_FAIL;
  if(argc!=2)return 1;
  code=read_binary(argv[1],&code_size);if(!code)goto done;
@@ -116,7 +121,7 @@ int main(int argc,char **argv) {
   for(i=0;i<XE_SAMPLE_OUTPUT_CASES;++i) {
    if(i<limits[0])xe_sample_expected(input_data+i*32,wanted);
    for(lane=0;lane<16;++lane) {
-    uint32_t expected=i<limits[0] && lane<7?wanted[lane]:0x6d6d6d6du;
+    uint32_t expected=i<limits[0] && lane<XE_SAMPLE_LANES?wanted[lane]:0x6d6d6d6du;
     if(readback_data[i*16+lane]!=expected){
      fprintf(stderr,"WARP round%u case%u lane%u: %08x != %08x\n",round,i,lane,readback_data[i*16+lane],expected);status=E_FAIL;goto done;
     }
@@ -125,7 +130,9 @@ int main(int argc,char **argv) {
   }
   range.Begin=range.End=0;ID3D12Resource_Unmap(readback,0,&range);readback_data=NULL;
  }
-#ifdef XE_TRANSFER_UINT_COLOR_TEST
+#ifdef XE_TRANSFER_ADDRESS_TEST
+ printf("PASS: %u physical address records, independent legacy routes, ten result words and guards; one module and PSO\n",cases);
+#elif defined(XE_TRANSFER_UINT_COLOR_TEST)
  printf("PASS: WARP %u dynamic integer color records, independent payloads, guards, one module and PSO\n",cases);
 #else
  printf("PASS: WARP %u dynamic sample records, bounds/padding guards, one module and PSO\n",cases);

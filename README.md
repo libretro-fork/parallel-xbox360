@@ -506,6 +506,8 @@ Generic transfer-shader work now includes a shared C89 runtime sample-address em
 
 The generic transfer foundation also has a shared integer-view color codec. Two metadata masks select 16/32-bit components and 32/64-bit samples without floating-point conversion or copied payloads. Procedural tests cover all 36 source/destination format pairs with one PSO, preserving raw NaN and signed-minimum encodings. The codec remains outside rendering and does not cover normalized/gamma/depth transfer semantics. See [integer codec coverage](tools/tests/transfer_uint_color_results.txt).
 
+Physical EDRAM routing now uses a shared 92-byte CPU-prepared metadata packet, borrowed native IR IDs and exact reciprocal division. Tests cover tile wrapping, pitch, MSAA, scaled/native conversion, 32/64-bit word selection and color/depth column swaps across 186,607 changing records per backend. The kernel retains destination coordinates for host-depth reuse but performs no image access and is not yet connected to rendering. See [physical-address coverage](tools/tests/transfer_address_results.txt).
+
 ### Draw-path contract instrumentation
 
 Developer builds can enable `XENIA_ENABLE_DRAW_STATS=ON` with CMake, or

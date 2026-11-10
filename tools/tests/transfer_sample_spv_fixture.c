@@ -1,6 +1,8 @@
 /* Single-PSO dynamic addressing fixture. Raw SPIR-V1.0; BSD; C89. */
 #include "libretro/core_transfer_sample_spv.h"
-#ifdef XE_TRANSFER_UINT_COLOR_TEST
+#ifdef XE_TRANSFER_ADDRESS_TEST
+#include "libretro/core_transfer_address.h"
+#elif defined(XE_TRANSFER_UINT_COLOR_TEST)
 #include "libretro/core_transfer_uint_color.h"
 #endif
 #include <string.h>
@@ -30,7 +32,9 @@ static void store(fixture *f,uint32_t base,unsigned field,uintptr_t value) {
 }
 int xe_test_transfer_sample_spv(xe_spv_binary *out) {
  fixture f;xe_transfer_sample_spv adapter;xe_transfer_sample_emitter emitter;
-#ifdef XE_TRANSFER_UINT_COLOR_TEST
+#ifdef XE_TRANSFER_ADDRESS_TEST
+ xe_transfer_address_parameters p;xe_transfer_address_result result;
+#elif defined(XE_TRANSFER_UINT_COLOR_TEST)
  xe_transfer_uint_color_parameters p;uintptr_t source[4],packed[2],result[4];
 #else
  xe_transfer_sample_parameters p;xe_transfer_sample_coordinates canonical,inverse,result;
@@ -72,6 +76,9 @@ int xe_test_transfer_sample_spv(xe_spv_binary *out) {
  put(&f,SpvOpConstant,TU,constant(34),1,0xfffffffdu,0,0);
  put(&f,SpvOpConstant,TU,constant(35),1,0xfffffffcu,0,0);
  put(&f,SpvOpConstant,TU,constant(36),1,0xffffffffu,0,0);
+#ifdef XE_TRANSFER_ADDRESS_TEST
+ put(&f,SpvOpConstant,TU,constant(37),1,2047,0,0);
+#endif
  put(&f,SpvOpVariable,PB,INPUT,1,SpvStorageClassUniform,0,0);
  put(&f,SpvOpVariable,PB,OUTPUT,1,SpvStorageClassUniform,0,0);
  put(&f,SpvOpVariable,PI,INVOCATION,1,SpvStorageClassInput,0,0);
@@ -89,7 +96,7 @@ int xe_test_transfer_sample_spv(xe_spv_binary *out) {
  put(&f,SpvOpBranchConditional,0,0,3,valid,WORK,END);put(&f,SpvOpLabel,0,WORK,0,0,0,0);
  base=bin(&f,SpvOpIMul,TU,index,constant(32));
  dest=bin(&f,SpvOpIMul,TU,index,constant(16));
-#ifndef XE_TRANSFER_UINT_COLOR_TEST
+#if !defined(XE_TRANSFER_UINT_COLOR_TEST) && !defined(XE_TRANSFER_ADDRESS_TEST)
  p.msaa=load(&f,base,3);p.native2=load(&f,base,4);
  p.scale_x=load(&f,base,5);p.scale_y=load(&f,base,6);
  p.reciprocal_x=load(&f,base,7);p.reciprocal_y=load(&f,base,8);
@@ -99,8 +106,19 @@ int xe_test_transfer_sample_spv(xe_spv_binary *out) {
  adapter.zero=constant(0);adapter.one=constant(1);adapter.two=constant(2);
  adapter.not_one=constant(33);adapter.not_two=constant(34);adapter.not_three=constant(35);
  adapter.all=constant(36);
+#ifdef XE_TRANSFER_ADDRESS_TEST
+ adapter.tile_mask=constant(37);
+#endif
  emitter.emit=xe_transfer_sample_spv_emit;emitter.context=&adapter;
-#ifdef XE_TRANSFER_UINT_COLOR_TEST
+#ifdef XE_TRANSFER_ADDRESS_TEST
+ for(i=0;i<XE_ADDR_WORDS;++i)p.word[i]=load(&f,base,3+i);
+ a=load(&f,base,0);b=load(&f,base,1);c=load(&f,base,2);
+ if(!xe_transfer_address_emit(&emitter,&p,a,b,c,&result))goto fail;
+ store(&f,dest,0,result.x);store(&f,dest,1,result.y);store(&f,dest,2,result.sample);
+ store(&f,dest,3,result.second_x);store(&f,dest,4,result.half);store(&f,dest,5,result.two_loads);
+ store(&f,dest,6,result.tile);store(&f,dest,7,result.dest_tile);
+ store(&f,dest,8,result.dest_x);store(&f,dest,9,result.dest_y);
+#elif defined(XE_TRANSFER_UINT_COLOR_TEST)
  p.halves=load(&f,base,6);p.wide=load(&f,base,7);p.shift16=constant(16);
  for(i=0;i<4;++i)source[i]=load(&f,base,i);
  if(!xe_transfer_uint_color_pack(&emitter,&p,source,packed))goto fail;

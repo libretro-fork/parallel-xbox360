@@ -8,7 +8,7 @@ typedef struct xe_transfer_sample_spv {
  xe_spv_binary *out;
  uint32_t *next;
  uint32_t uint_type,bool_type,pair_type;
- uint32_t zero,one,two,not_one,not_two,not_three,all;
+ uint32_t zero,one,two,not_one,not_two,not_three,all,tile_mask;
 } xe_transfer_sample_spv;
 static INLINE uintptr_t xe_transfer_sample_spv_emit(void *context,
  enum xe_transfer_sample_op op,uintptr_t a,uintptr_t b,uintptr_t c) {
@@ -23,6 +23,8 @@ static INLINE uintptr_t xe_transfer_sample_spv_emit(void *context,
    case 0xfffffffdu:return s->not_two;
    case 0xfffffffcu:return s->not_three;
    case 0xffffffffu:return s->all;
+   case 2047:if(s->tile_mask)return s->tile_mask;
+    s->out->failed=1;return 0;
    default:s->out->failed=1;return 0;
   }
  }

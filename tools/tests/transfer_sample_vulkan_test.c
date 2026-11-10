@@ -3,10 +3,15 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "vulkan_test_context.h"
-#ifdef XE_TRANSFER_UINT_COLOR_TEST
+#ifdef XE_TRANSFER_ADDRESS_TEST
+#include "transfer_address_cases.h"
+#elif defined(XE_TRANSFER_UINT_COLOR_TEST)
 #include "transfer_uint_color_cases.h"
 #else
 #include "transfer_sample_cases.h"
+#endif
+#ifndef XE_SAMPLE_LANES
+#define XE_SAMPLE_LANES 7
 #endif
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"Sample GPU line %u\n",(unsigned)__LINE__);goto done;}}while(0)
 enum {RECORDS=XE_SAMPLE_CASES,OUTPUT_RECORDS=XE_SAMPLE_OUTPUT_CASES};
@@ -27,7 +32,7 @@ int main(int argc,char **argv){
  VkDescriptorSetAllocateInfo set_allocate={0};VkDescriptorSet set=VK_NULL_HANDLE;VkDescriptorBufferInfo infos[2];VkWriteDescriptorSet writes[2];
  VkCommandPoolCreateInfo command_pool_info={0};VkCommandPool command_pool=VK_NULL_HANDLE;VkCommandBufferAllocateInfo command_allocate={0};
  VkCommandBuffer command;VkCommandBufferBeginInfo begin={0};VkMemoryBarrier barrier={0};VkFenceCreateInfo fence_info={0};VkFence fence=VK_NULL_HANDLE;VkSubmitInfo submit={0};
- uint32_t count,family,i,lane,round,limit,*in,*out,wanted[7];
+ uint32_t count,family,i,lane,round,limit,*in,*out,wanted[XE_SAMPLE_LANES];
  unsigned modules=0,pipelines=0,cases=0;float priority=1.0f;int result=1;
  CHECK(loader && argc==2);
 #ifdef _WIN32
@@ -82,15 +87,17 @@ int main(int argc,char **argv){
   for(i=0;i<OUTPUT_RECORDS;++i) {
    if(i>=limit) {for(lane=0;lane<16;++lane)CHECK(out[i*16+lane]==0x6d6d6d6du);continue;}
    xe_sample_expected(in+i*32,wanted);
-   for(lane=0;lane<7;++lane)if(out[i*16+lane]!=wanted[lane]) {
+   for(lane=0;lane<XE_SAMPLE_LANES;++lane)if(out[i*16+lane]!=wanted[lane]) {
     fprintf(stderr,"Sample round %u case %u lane %u: %08x != %08x\n",round,i,lane,out[i*16+lane],wanted[lane]);goto done;
    }
-   for(lane=7;lane<16;++lane)CHECK(out[i*16+lane]==0x6d6d6d6du);
+   for(lane=XE_SAMPLE_LANES;lane<16;++lane)CHECK(out[i*16+lane]==0x6d6d6d6du);
    ++cases;
   }
  }
  CHECK(modules==1 && pipelines==1);
-#ifdef XE_TRANSFER_UINT_COLOR_TEST
+#ifdef XE_TRANSFER_ADDRESS_TEST
+ printf("PASS: %u physical address records, independent legacy routes, ten result words and guards; one module and PSO\n",cases);
+#elif defined(XE_TRANSFER_UINT_COLOR_TEST)
  printf("PASS: %u dynamic integer color records, all source/destination pairs, independent inverse payloads, guards; one module and PSO\n",cases);
 #else
  printf("PASS: %u dynamic sample records, all scale/MSAA layouts, independent inverse inputs, bounds/padding guards; one module and PSO\n",cases);

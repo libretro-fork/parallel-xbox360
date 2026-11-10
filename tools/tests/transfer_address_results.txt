@@ -1,0 +1,44 @@
+Physical EDRAM routing foundation, 2026-11-10
+
+Shared MSVC C89 header, no heap storage or image access. CPU prepares the final
+23-word (92-byte) packet directly after complete key validation. Emission borrows
+native IDs and publishes all ten output IDs only after success. Original dest
+coordinates are lent for host-depth reuse; source XY/sample, adjacent source X,
+word-half selection, two-load flag and wrapped tile are emitted once.
+
+Accepted configuration domain mirrors the current renderer: global native2
+policy, MSAA enums0..2, 32/64-bit colors or32-bit depth, pitch1..1023,
+signed tile delta[-2047,2047], identical resolution scale pairs or one native
+pair. Reject unrelated scale classes and overflow before writing metadata.
+
+The independent legacy oracle rescales coordinates before canonicalization.
+The new route canonicalizes in destination scale, then replaces changed-axis
+subpixel remainders. It preserves tile wrap, color/depth40-column swapping,
+native2/physical4 sample placement and adjacent32-bit halves for64-bit outputs.
+This does not establish depth value conversion, stencil or host-depth semantics.
+
+Completed correctness checks:
+- 62208 independent MSVC C89 and strict GCC C89 ASan/UBSan CPU cases,
+  invalid configuration and164 emitter failure points/output preservation.
+- 186607 records each on RTX5090 Vulkan, llvmpipe Vulkan and D3D12 WARP,
+  across three changing input replays and one module/PSO per execution.
+  All ten result words, incomplete input range, deliberate over-dispatch and
+  untouched output padding/tails are checked.
+- Raw SPIRV1.0 validation:1619words; MSVC/GCC byte identity SHA256
+  407420ea4e6f98d26722cf6063191bc5b1c1b759c46a0b7308960ad887d9c1c7.
+- Strict Microsoft DXIL validation:3232bytes, no HLSL/source compiler.
+- A2047->2046 tile-mask mutation remains binary-valid but both GPU APIs fail
+  case1 lane0:00000001 versus00000051 expected.
+- Existing sample-address147448 and color-codec110584 GPU record suites still
+  pass on RTX5090 Vulkan and WARP; strict DXIL validation also passes.
+
+Repeat with TRANSFER_ADDRESS_TEST=1 using run_transfer_sample_tests.sh/.cmd;
+GPU_TESTS=1 enables Vulkan execution. Windows always validates DXIL and runs
+WARP. Linux requires spirv-val. Transfer helper CI runs this third suite and
+retains artifacts beside the sample-address and integer-codec suites.
+
+These are correctness checks, not timing measurements or cold-play acceptance.
+No release readbacks, clocks, logging, waits or allocations are introduced.
+Actual typed image fetch/output and bit routing between two fetched samples,
+remaining format families, raster comparisons and prepared lookup-only renderer
+integration remain required. Existing inline shader/PSO creation remains debt.

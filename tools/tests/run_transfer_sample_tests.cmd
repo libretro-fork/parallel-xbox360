@@ -10,6 +10,11 @@ if "%TRANSFER_UINT_COLOR_TEST%"=="1" (
  set TEST_UNIT=tools\tests\core_transfer_uint_color_test.c
  set TEST_FLAGS=/DXE_TRANSFER_UINT_COLOR_TEST
 )
+if "%TRANSFER_ADDRESS_TEST%"=="1" (
+ set TEST_KIND=transfer-address-msvc
+ set TEST_UNIT=tools\tests\core_transfer_address_test.c
+ set TEST_FLAGS=/DXE_TRANSFER_ADDRESS_TEST
+)
 if not defined SAMPLE_OUT set SAMPLE_OUT=build\tests\%TEST_KIND%
 if not defined SAMPLE_BUILD set SAMPLE_BUILD=build\windows-native
 set OUT=%SAMPLE_OUT%
