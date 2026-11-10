@@ -1,0 +1,122 @@
+Ordinary ALU comparisons in the raw control foundation (2026-11-10)
+================================================================
+First parent: a3ac015d2151ac93e8b255d0da64a3f0be49db38.
+
+Implemented semantics
+---------------------
+The C89 control emitter adds vector SETE/SETGT/SETGTE/SETNE (opcodes4-7) and
+scalar SETEs/SETGTs/SETGTEs/SETNEs (opcodes7-10). Vector inputs use the existing
+source swizzles/modifiers. Scalar instructions compare the selected W operand
+against zero. Results are exact binary32 1/0, unlike predicate setters, whose
+existing result convention is unchanged. Ordinary comparisons never update P0.
+Scalar results update previous-scalar state even without a destination write;
+predication is still sampled before either coissued instruction's effects.
+
+The algorithm uses uint32 binary32 fields and SPIR-V integer/boolean operations:
+denormal magnitudes normalize to zero for comparison, opposite zero signs are
+equal, and sign/magnitude ordering reverses for negatives. Ordered comparisons
+reject either NaN; NE returns true for unordered inputs. No host float mode,
+device float-control extension, GLSL source, parser or per-program module is
+required. No payload normalization/copy, context bank copy, register-frame copy,
+new lock, production diagnostic or per-invocation allocation is introduced.
+
+This modifies the unlinked validation kernel, not rendering. The original raw
+arithmetic module remains2855 words and the single-clause program6051 words,
+byte-identical to the parent. The control module grows7866 ->8424 words
+(+558 words/2232 bytes, about7.1%). Its structural unit-test bound expands for
+the new instruction coverage; existing relative/absolute timing and IR-growth
+gates are unchanged. Existing C89 output ownership grows during initialization
+if needed; 1000 subsequent same-owner builds retain exact bytes without any
+allocation. This does not eliminate first-time initialization allocation.
+
+Correctness evidence
+--------------------
+1536 added untimed replays, two invocations each, exercise:
+- Four vector comparisons over all144 pairs of twelve binary32 classes,
+  both byte orders and four output/modifier forms. Classes include signed
+  zeros, signed denormals, signed one, signed minimum normal, signed infinity
+  and signed quiet NaN payloads. Forms include full/partial exports, dependent
+  temporary output and independently modified/swizzled sources.
+- Four scalar comparisons across these classes, both byte orders, selected
+  source lanes, empty destination followed by RETAIN_PREV, and predicated
+  execution with P0 preserved across a subsequent conditional EXEC_END.
+  Alternative source lanes contain values with different expected answers
+  where possible, preventing an ignored swizzle from passing by accident.
+- Independent scalar integer goldens as well as the actual native interpreter;
+  exact one/zero results, export counts, unchanged source/context and output
+  redzones. Existing numerical, predicate, bool/loop, budget and bounds cases
+  remain in the same suite. Earlier fixture bugs in context-index routing and
+  zero-mask export counting were corrected; failed development logs remain.
+
+The complete control suite passes6843 GPU invocations/6019 native references
+and3050 additional context replays. A test counter verifies3072 completed new
+invocations and emits COMPARE_CONTEXT replays=1536 invocations=3072. CI requires
+that marker exactly once when support and Vulkan execution are claimed;
+missing/reduced/substituted/duplicate markers and feature coverage loss fail.
+Historical parents do not claim execution of unsupported instructions; WARP
+reports C89 module/unit coverage, not execution of this Vulkan kernel.
+
+MSVC /TC /W4 /WX and Linux C89 ASan/UBSan suites pass. Actual execution passes
+on RTX5090 driver32.0.16.2101 and software llvmpipe LLVM20.1.2. Existing12280
+standalone arithmetic invocations still pass. Deliberate private no-denormal-
+flush and ordered-NE mutants fail native-reference comparisons in new cases.
+The comparison/coverage guard suite now has48 passing tests.
+
+Measurements and retained exceptions
+-----------------------------------
+Full paired preparation uses the exact parent and identical native core
+archives: no production core source/ABI changed, and each raw emitter is built
+from its revision's own C source. All512 production procedural modules are
+byte-identical. The CPU translator and PSO test executables have identical PE
+.text sections across these revisions. Driver disk/internal cache coldness and
+a pinned last-known-good retail baseline remain unverified.
+
+An initial seven-pair run before the final executed-case marker passes all
+existing gates. With the marker added, the final seven-pair run flags one
+unchanged production translator metric: softdot_translate_batch4 case18,
+median11.0177 ->13.1825ms (>10% plus its absolute noise floor). The raw-control,
+raw-program, valid-work and snapshot gates pass. Retain that failed report;
+identical machine code does not justify silently overriding its timing gate
+or asserting an identified cause for the observed difference.
+
+The predeclared full-workload repeat and pooled results are recorded separately
+with all original samples retained. No cases, samples or thresholds are dropped
+or relaxed. These are procedural component comparisons, not retail acceptance.
+All21 repeat pairs and the pooled28 pairs pass the unchanged gates. The private
+repeat script initially passed a seven-sample count to two report comparators;
+that postprocessing error was corrected against the existing21 samples, without
+rerunning or removing any measurement. Its original exception log is retained.
+Pooled illustrative batch/dispatch medians, parent -> candidate:
+  control emission:             0.0554 ->0.0688ms
+  control module creation:      0.0163 ->0.0206ms
+  primed control PSO creation:  0.0179 ->0.0163ms
+  mixed completion replay1:     1.2825 ->0.8002ms
+  mixed completion replay2:     1.2920 ->0.8115ms
+  valid completion replay1:     0.2273 ->0.2269ms
+  valid completion replay2:     0.2241 ->0.2299ms
+Emission/module medians increase as coverage grows; passing the existing
+absolute noise floors is not proof of zero cost. The mixed completion decrease
+is dominated by deliberate negative/budget work and is not a game-speed gain.
+These elapsed values include host scheduling, not isolated GPU timestamps.
+
+Remaining architectural work
+-----------------------------
+Comparison context replays are correctness work outside timed children. They
+do not establish throughput for newly supported opcodes. The same old primary
+timing workload remains comparable; mixed fault-budget execution costs must not
+be mistaken for normal shader execution. Additional initialization/emission
+cost is real and must remain visible when evaluating a ready interpreter.
+
+Draw-path translation/module/PSO creation and waits remain unresolved. Missing
+stage/fetch/ROP behavior, group-wide break semantics, empty-loop proof, other
+ALUs/addressing and resumable valid-work continuation prevent renderer use.
+The current program entry also loads operand slots before per-op consumption
+is known; unused relative-source handling and unnecessary reads need further
+work before full semantic coverage can be claimed. No accurate ready-renderer
+fallback, cold-play smoothness or gameplay/frame-time improvement is certified.
+
+Private procedural evidence: accurate-shader-fallback/alu-compare, including
+paired/results (initial), paired-final/results (final seven-pair exception),
+paired-repeat21/results (predeclared repeat), final Linux sanitizer logs and
+private semantic-mutant reports. User games, live caches and installed core
+were not touched; no extracted assets are included in public fixtures.

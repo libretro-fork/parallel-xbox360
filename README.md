@@ -607,3 +607,11 @@ The snapshot copy remains necessary because guest or file scratch can change
 before asynchronous consumers finish. First-seen allocation remains. See
 `tools/tests/shader_ucode_results.txt` for ownership checks, timing outliers and
 limits; this does not eliminate draw-path compilation or certify cold play.
+
+The raw control validation kernel also supports ordinary vector and scalar
+EQ/GT/GE/NE results using binary32 integer fields. It distinguishes these 1/0
+results from predicate setters, preserves P0 and scalar history, and checks
+denormals, signed zeros and unordered comparisons independently of host float
+modes. CI verifies execution of the additional comparison cases. This kernel
+still lacks full shader/stage/ROP coverage and is not selected for rendering.
+See `tools/tests/alu_compare_results.txt` for scope and measured costs.

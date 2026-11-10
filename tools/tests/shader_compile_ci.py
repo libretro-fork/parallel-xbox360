@@ -92,6 +92,11 @@ def cpu_build(source, build, out, logs, env):
     return out / "cpu"
 
 
+def validate_comparison_workload(log):
+    observed=re.findall(r"^COMPARE_CONTEXT replays=(\d+) invocations=(\d+)$",log,re.MULTILINE)
+    if observed!=[("1536","3072")]:raise ValueError("missing or substituted comparison context execution")
+
+
 def validate_raw_program(source, build, out, log, env, backend, control=False):
     """New component coverage; absent historical code is not a passing fixture."""
     script=source / "tools/tests" / ("run_alu_program_tests.cmd" if WIN else "run_alu_program_tests.sh")
@@ -130,12 +135,16 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
         boolean="#define XE_ALU_CONTROL_BOOL 1" in content
         loops="#define XE_ALU_CONTROL_LOOPS 1" in content
         predicate="#define XE_ALU_CONTROL_PREDICATE 1" in content
-        coverage.update(control_flow_version=4 if predicate else 3 if loops else 2 if boolean else 1,
+        comparison="#define XE_ALU_CONTROL_COMPARE 1" in content
+        if comparison and coverage["vulkan_gpu"]:validate_comparison_workload(log.read_text())
+        coverage.update(control_flow_version=5 if comparison else 4 if predicate else 3 if loops else 2 if boolean else 1,
                         boolean_cf_supported=boolean,nonempty_loops_supported=loops,
                         predicate_cf_supported=predicate,
+                        comparison_alu_supported=comparison,
                         timed_corpus_version=3,boolean_context_cases=224 if boolean and coverage["vulkan_gpu"] else 0,
                         loop_context_cases=36 if loops and coverage["vulkan_gpu"] else 0,
                         predicate_context_cases=1254 if predicate and coverage["vulkan_gpu"] else 0,
+                        comparison_context_cases=1536 if comparison and coverage["vulkan_gpu"] else 0,
                         context_cases_untimed=True,timed_child_context_replays=0,
                         cf_step_limit=4096,call_depth_limit=4,
                         pinned_control_fixture_sha256=file_sha256(HERE/"shader_control_program_fixture.h"))
@@ -537,10 +546,10 @@ def compare_control_coverage(coverage, vulkan):
     for version in ("base","anchor"):
         if version not in coverage:continue
         previous=coverage[version]
-        for feature in ("available","boolean_cf_supported","nonempty_loops_supported","predicate_cf_supported"):
+        for feature in ("available","boolean_cf_supported","nonempty_loops_supported","predicate_cf_supported","comparison_alu_supported"):
             if previous.get(feature,False) and not candidate.get(feature,False):
                 failures.append(version+": removed "+feature)
-        for feature in ("boolean_context_cases","loop_context_cases","predicate_context_cases"):
+        for feature in ("boolean_context_cases","loop_context_cases","predicate_context_cases","comparison_context_cases"):
             if previous.get(feature,0)>candidate.get(feature,0):failures.append(version+": reduced "+feature)
     return dict(revisions=coverage,failures=failures)
 

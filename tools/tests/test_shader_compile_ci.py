@@ -47,10 +47,12 @@ class ComparisonTests(unittest.TestCase):
     def test_control_feature_coverage_cannot_be_removed_or_skipped(self):
         old=dict(available=True,unit=True,vulkan_gpu=True,boolean_cf_supported=True,
                  nonempty_loops_supported=True,predicate_cf_supported=True,
+                 comparison_alu_supported=True,comparison_context_cases=1536,
                  boolean_context_cases=224,loop_context_cases=32,predicate_context_cases=1254)
         for field,value in [("available",False),("unit",False),("vulkan_gpu",False),
                             ("boolean_cf_supported",False),("nonempty_loops_supported",False),
                             ("predicate_cf_supported",False),("predicate_context_cases",0),
+                            ("comparison_alu_supported",False),("comparison_context_cases",0),
                             ("boolean_context_cases",0),("loop_context_cases",0)]:
             candidate=dict(old);candidate[field]=value
             self.assertTrue(ci.compare_control_coverage(dict(base=old,candidate=candidate),True)["failures"],field)
@@ -71,6 +73,25 @@ class ComparisonTests(unittest.TestCase):
                 self.assertEqual(result["predicate_context_cases"],1254 if backend.startswith("vulkan") else 0)
                 self.assertEqual(result["boolean_context_cases"],224 if backend.startswith("vulkan") else 0)
                 self.assertEqual(result["loop_context_cases"],36 if backend.startswith("vulkan") else 0)
+
+    def test_comparison_context_support_is_explicit_and_not_a_warp_execution_claim(self):
+        for backend in ("vulkan-software","d3d12-warp"):
+            with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run"):
+                root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True);(root/"libretro").mkdir()
+                (root/"libretro/core_alu_spv.h").write_text("xe_alu_control_spv_build(\n#define XE_ALU_CONTROL_COMPARE 1\n")
+                (tests/("run_alu_program_tests.cmd" if ci.WIN else "run_alu_program_tests.sh")).touch()
+                (root/"log").write_text("COMPARE_CONTEXT replays=1536 invocations=3072\n")
+                result=ci.validate_raw_program(root,root,root,root/"log",{},backend,control=True)
+                self.assertEqual(result["control_flow_version"],5)
+                self.assertTrue(result["comparison_alu_supported"])
+                self.assertEqual(result["comparison_context_cases"],1536 if backend.startswith("vulkan") else 0)
+
+    def test_comparison_context_execution_cannot_be_missing_or_substituted(self):
+        marker="COMPARE_CONTEXT replays=1536 invocations=3072\n"
+        ci.validate_comparison_workload(marker)
+        for log in ("",marker.replace("1536","0"),marker.replace("3072","2"),marker+marker):
+            with self.assertRaisesRegex(ValueError,"comparison context execution"):
+                ci.validate_comparison_workload(log)
 
     def test_control_program_historical_absence_is_explicit(self):
         with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run") as run:

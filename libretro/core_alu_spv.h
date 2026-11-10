@@ -6,6 +6,7 @@
 #define XE_ALU_CONTROL_BOOL 1
 #define XE_ALU_CONTROL_LOOPS 1
 #define XE_ALU_CONTROL_PREDICATE 1
+#define XE_ALU_CONTROL_COMPARE 1
 #ifdef __cplusplus
 extern "C" {
 #endif

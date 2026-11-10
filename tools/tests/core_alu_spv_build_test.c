@@ -22,7 +22,7 @@ int main(int argc,char **argv){
   CHECK(!builders[mode](&module));CHECK(!module.words && !module.count && module.failed);
   CHECK(builders[mode](&module));CHECK(builders[mode](&reference));
   owner=module.words;words=module.count;warm=allocations;
-  CHECK(words>5 && words<(mode?8192:4096) && owner[0]==0x07230203 && owner[1]==0x10000);
+  CHECK(words>5 && words<(mode==2?12288:mode?8192:4096) && owner[0]==0x07230203 && owner[1]==0x10000);
   functions=0;loops=0;
   for(at=5;at<words;at+=n){
    unsigned op=owner[at]&65535u;n=owner[at]>>16;CHECK(n && n<=words-at);

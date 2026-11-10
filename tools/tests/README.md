@@ -1805,3 +1805,27 @@ elapsed and process-CPU CSVs use existing unchanged timing thresholds. These
 are CPU ownership costs, not translation, GPU execution or gameplay acceptance.
 See `shader_ucode_results.txt`, including the rejected alignment experiment and
 the initial tail alert retained alongside repeat and pooled samples.
+
+Ordinary ALU comparison results
+-------------------------------
+
+The raw control entry supports vector SETE/SETGT/SETGTE/SETNE and scalar
+SETEs/SETGTs/SETGTEs/SETNEs. Ordered comparisons reject NaN; NE accepts it.
+Operands compare after denormal flushing, with equal positive/negative zeros.
+Results are exact binary32 one/zero, with no P0 update. Scalar results still
+update previous-scalar state even when their destination mask is empty.
+
+`shader_control_program_fixture.h` adds 1536 untimed replays, two invocations
+each, across all pairs of twelve binary32 classes, both byte orders, source
+modifiers/swizzles, partial exports, dependent temporaries and scalar-history/
+predicate preservation. A scalar integer oracle checks literal result bits
+beside the actual native interpreter. Source lanes with different expected
+answers prevent swizzle checks from passing by accident. Output guards,
+immutable program/context checks and failure transactional checks remain.
+
+The test counts completed comparison invocations and emits a test-only marker.
+CI rejects missing, reduced, substituted or duplicate execution markers and
+loss of feature coverage. Timed children still execute only the same primary
+three replays; these new tests do not make historical unsupported operations
+look comparable or establish new-operation GPU throughput. See
+`alu_compare_results.txt`; the kernel remains outside rendering.

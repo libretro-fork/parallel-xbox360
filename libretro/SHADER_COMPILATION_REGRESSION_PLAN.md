@@ -894,3 +894,13 @@ misses. Borrow immutable snapshot bytes for comparison where safe. A local
 LoadShader check alone cannot repair hash-only downstream recipe lookup. This
 ownership change does not fix collisions or make frame-critical compilation
 and waits compliant.
+
+Raw control validation now covers ordinary vector/scalar EQ/GT/GE/NE results,
+with integer binary32 ordering, zero/denormal rules and unordered NE. These
+operations do not change P0; scalar results retain previous-scalar behavior.
+CI requires actual execution of the added context cases. This removes another
+semantic gap in the validation foundation, not a rendering compilation wait:
+complete addressing/ALUs, group-wide control semantics, fetch, stage linkage and
+ROP remain necessary before selecting a ready accurate renderer path. Keep
+its broader VM/initialization cost visible beside unchanged production metrics;
+do not label the additional opcode coverage a cold-play optimization.

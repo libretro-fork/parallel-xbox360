@@ -109,9 +109,17 @@ static unsigned expected_status(unsigned kind) {
 #ifndef XE_PRED_CASES
 #define XE_PRED_CASES 0
 #endif
-#define XE_EXTRA_CASES (XE_BOOL_CASES+XE_LOOP_CASES+XE_PRED_CASES)
+#ifndef XE_COMPARE_CASES
+#define XE_COMPARE_CASES 0
+#endif
+#define XE_COMPARE_FIRST (XE_BOOL_CASES+XE_LOOP_CASES+XE_PRED_CASES)
+#define XE_COMPARE_GOLDEN_FIRST 4096
+#define XE_EXTRA_CASES (XE_COMPARE_FIRST+XE_COMPARE_CASES)
 static void round_program(uint32_t *p,unsigned group,unsigned round) {
  (void)round;
+#if XE_COMPARE_CASES
+ if(round>=3+XE_COMPARE_FIRST){compare_program(p,round-3-XE_COMPARE_FIRST);return;}
+#endif
 #if XE_PRED_CASES
  if(round>=3+XE_BOOL_CASES+XE_LOOP_CASES){pred_program(p,pred_case(round-3-XE_BOOL_CASES-XE_LOOP_CASES,0));return;}
 #endif
@@ -126,6 +134,9 @@ static void round_program(uint32_t *p,unsigned group,unsigned round) {
 #if XE_EXTRA_CASES
 static unsigned extra_which(unsigned which,unsigned invocation) {
  (void)invocation;
+#if XE_COMPARE_CASES
+ if(which>=XE_COMPARE_FIRST)return XE_COMPARE_GOLDEN_FIRST+which-XE_COMPARE_FIRST;
+#endif
 #if XE_PRED_CASES
  if(which>=XE_BOOL_CASES+XE_LOOP_CASES)
   return XE_BOOL_CASES+XE_LOOP_CASES+pred_case(which-XE_BOOL_CASES-XE_LOOP_CASES,invocation);
@@ -133,6 +144,9 @@ static unsigned extra_which(unsigned which,unsigned invocation) {
  return which;
 }
 static void extra_context(uint32_t *bank,unsigned which) {
+#if XE_COMPARE_CASES
+ if(which>=XE_COMPARE_FIRST){memset(bank,0,160);return;}
+#endif
 #if XE_PRED_CASES
  if(which>=XE_BOOL_CASES+XE_LOOP_CASES){pred_context(bank,pred_case(which-XE_BOOL_CASES-XE_LOOP_CASES,0));return;}
 #endif
@@ -144,6 +158,9 @@ static void extra_context(uint32_t *bank,unsigned which) {
 #endif
 }
 static unsigned extra_status(unsigned which) {
+#if XE_COMPARE_CASES
+ if(which>=XE_COMPARE_GOLDEN_FIRST)return 1;
+#endif
 #if XE_PRED_CASES
  if(which>=XE_BOOL_CASES+XE_LOOP_CASES)return pred_status(which-XE_BOOL_CASES-XE_LOOP_CASES);
 #endif
@@ -158,6 +175,9 @@ static unsigned extra_status(unsigned which) {
 }
 static uint32_t extra_golden(unsigned which,unsigned lane) {
  (void)lane;
+#if XE_COMPARE_CASES
+ if(which>=XE_COMPARE_GOLDEN_FIRST)return compare_golden(which-XE_COMPARE_GOLDEN_FIRST,lane);
+#endif
 #if XE_PRED_CASES
  if(which>=XE_BOOL_CASES+XE_LOOP_CASES)return pred_golden(which-XE_BOOL_CASES-XE_LOOP_CASES,lane);
 #endif
@@ -213,6 +233,9 @@ int main(void){
  VkResult completion;
  xe_spv_binary code={0};uint32_t count,family,i,lane,round,limit,output_limit,*in,*out,*programs,*constants,*descriptor,*temporary,reference[7],reference_code[21],seed=0x81732019u;
  unsigned kind,group,status,compared=0;
+#if XE_COMPARE_CASES
+ unsigned comparison_invocations=0;
+#endif
  unsigned modules=0,pipelines=0,cases=0,inactive=0,context_replays=XE_EXTRA_CASES;float priority=1.0f;int result=1;
  const char *timing_only=getenv("XE_ALU_PROGRAM_TIMING_ONLY");
  const char *valid_mode=getenv("XE_ALU_PROGRAM_VALID_WORK");
@@ -312,7 +335,10 @@ int main(void){
     temporary[lane]=next(&seed);
    }
 #if XE_PRED_CASES
-   if(round>=3+XE_BOOL_CASES+XE_LOOP_CASES)pred_temporary(temporary,pred_case(round-3-XE_BOOL_CASES-XE_LOOP_CASES,i));
+   if(round>=3+XE_BOOL_CASES+XE_LOOP_CASES && round<3+XE_COMPARE_FIRST)pred_temporary(temporary,pred_case(round-3-XE_BOOL_CASES-XE_LOOP_CASES,i));
+#endif
+#if XE_COMPARE_CASES
+   if(round>=3+XE_COMPARE_FIRST)compare_temporary(temporary,round-3-XE_COMPARE_FIRST);
 #endif
    if(kind==4)for(lane=0;lane<4;++lane)temporary[lane]=0xc0e00000u;
    if(group==5){temporary[0]=0xbf800000u;temporary[1]=0x40000000u;temporary[2]=0xc0400000u;temporary[3]=0x40800000u;}
@@ -392,7 +418,8 @@ int main(void){
     if(group==11)for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==0xc1000000u);
 #else
 #if XE_EXTRA_CASES
-    if(round>=3){for(lane=0;lane<4;++lane)CHECK(out[i*8+lane]==extra_golden(extra_which(round-3,i),lane));}
+    if(round>=3){for(lane=0;lane<4;++lane){uint32_t golden=extra_golden(extra_which(round-3,i),lane);
+     if(out[i*8+lane]!=golden){fprintf(stderr,"context round %u invocation %u lane %u: %08x != golden %08x\n",round,i,lane,out[i*8+lane],golden);goto done;}}}
     else
 #endif
     CHECK(control_golden(group,out+i*8));
@@ -400,15 +427,27 @@ int main(void){
     if(round>=3+XE_BOOL_CASES && round<3+XE_BOOL_CASES+XE_LOOP_CASES)CHECK(out[i*8+5]==loop_exports(round-3-XE_BOOL_CASES));
 #endif
 #if XE_PRED_CASES
-    if(round>=3+XE_BOOL_CASES+XE_LOOP_CASES)CHECK(out[i*8+5]==pred_exports(pred_case(round-3-XE_BOOL_CASES-XE_LOOP_CASES,i)));
+    if(round>=3+XE_BOOL_CASES+XE_LOOP_CASES && round<3+XE_COMPARE_FIRST)CHECK(out[i*8+5]==pred_exports(pred_case(round-3-XE_BOOL_CASES-XE_LOOP_CASES,i)));
+#endif
+#if XE_COMPARE_CASES
+    if(round>=3+XE_COMPARE_FIRST)CHECK(out[i*8+5]==1);
 #endif
 #endif
     ++compared;
    }else{for(lane=0;lane<7;++lane)if(lane!=4)CHECK(out[i*8+lane]==0x6d6d6d6du);}
    CHECK(out[i*8+7]==0x6d6d6d6du);++cases;
+#if XE_COMPARE_CASES
+   if(round>=3+XE_COMPARE_FIRST)++comparison_invocations;
+#endif
   }
  }
  CHECK(modules==1 && compared>300);
+#if XE_COMPARE_CASES
+ if(context_replays){
+  CHECK(comparison_invocations==2*XE_COMPARE_CASES);
+  printf("COMPARE_CONTEXT replays=%u invocations=%u\n",comparison_invocations/2,comparison_invocations);
+ }
+#endif
  if(valid_work){
   CHECK(cases==743 && inactive>0 && compared+inactive==cases && !context_replays);
   printf("PROFILE_VALID_WORK active=%u inactive=%u; inactive lanes rejected before program execution\n",compared,inactive);

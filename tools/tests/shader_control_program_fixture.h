@@ -302,6 +302,88 @@ static void pred_program(uint32_t *p,unsigned which)
  }
 }
 #endif
+#ifdef XE_ALU_CONTROL_COMPARE
+#define XE_COMPARE_CASES 1536
+/* Four vector relations over every pair of twelve binary32 classes, four
+ * store/modifier forms and two byte orders. Scalar forms cover the same classes,
+ * source swizzles, empty destination/history and P0 preservation across EXEC. */
+static uint32_t compare_bits(unsigned at) {
+ static const uint32_t bits[12]={0,0x80000000u,1,0x80000001u,0x3f800000u,0xbf800000u,
+  0x00800000u,0x80800000u,0x7f800000u,0xff800000u,0x7fc12345u,0xffc12345u};
+ return bits[at%12];
+}
+/* Independent scalar bit oracle: no native floating-point comparisons. */
+static uint32_t compare_golden_bits(uint32_t a,uint32_t b,unsigned op) {
+ uint32_t ma=a&0x7fffffffu,mb=b&0x7fffffffu;unsigned equal,greater;
+ if(ma>0x7f800000u || mb>0x7f800000u)return op==3?0x3f800000u:0;
+ if(ma<0x800000u)ma=0;
+ if(mb<0x800000u)mb=0;
+ equal=ma==mb && (!ma || (a>>31)==(b>>31));greater=0;
+ if(!equal){
+  if((a>>31)!=(b>>31))greater=(a>>31)==0;
+  else greater=(a>>31)?ma<mb:ma>mb;
+ }
+ return (op==0?equal:op==1?greater:op==2?greater||equal:!equal)?0x3f800000u:0;
+}
+static void compare_temporary(uint32_t *temporary,unsigned which) {
+ unsigned q=which/2,quad=q%36,lane,mode,op,selected;uint32_t value,wrong,expected;
+ memset(temporary,0,256*4);
+ for(lane=0;lane<4;++lane){
+  temporary[lane]=compare_bits((quad*4+lane)/12);
+  temporary[4+lane]=compare_bits(quad*4+lane);
+  temporary[8+lane]=compare_bits(q%12);
+ }
+ if(q>=576){
+  q-=576;mode=q/48;op=(q/12)%4;selected=(q%12)&3;value=compare_bits(q%12);
+  expected=compare_golden_bits(mode==3?(value&0x7fffffffu)|0x80000000u:value,0,op);
+  wrong=0;
+  if(compare_golden_bits(0,0,op)==expected)wrong=0x3f800000u;
+  if(compare_golden_bits(wrong,0,op)==expected)wrong=0xbf800000u;
+  for(lane=0;lane<4;++lane)temporary[8+lane]=lane==selected?value:wrong;
+ }
+}
+static uint32_t compare_golden(unsigned which,unsigned lane) {
+ unsigned q=which/2,mode,op,quad;uint32_t a,b;
+ if(q<576){
+  mode=q/144;op=(q/36)%4;quad=q%36;
+  a=compare_bits((quad*4+lane)/12);b=compare_bits(quad*4+lane);
+  if(mode==1 && (lane&1))return 0;
+  if(mode==3){a&=0x7fffffffu;b=compare_bits(quad*4+((lane+1)&3))^0x80000000u;}
+  return compare_golden_bits(a,b,op);
+ }
+ q-=576;mode=q/48;op=(q/12)%4;a=compare_bits(q%12);
+ if(mode==3)a=(a&0x7fffffffu)|0x80000000u;
+ return compare_golden_bits(a,0,op);
+}
+static void compare_program(uint32_t *p,unsigned which) {
+ unsigned q=which/2,mode,op,selected=(q%12)&3;
+ memset(p,0,21*4);
+ if(q<576){
+  mode=q/144;op=(q/36)%4;
+  control_cf(p,0,4|((mode==2?2u:1u)<<12),0x2000);
+  alu(p+12,mode==2?4u:62u,mode==1?5u:15u,mode==1?10u:0u,50,4+op,0,1,3,3);
+  if(mode!=2)p[12]|=1u<<15;
+  else{alu(p+15,62,15,0,50,0,4,3,3,1);p[15]|=1u<<15;}
+  if(mode==3){p[14]|=1u<<23;p[13]|=(1u<<25)|(0x55u<<8);}
+ }else{
+  q-=576;mode=q/48;op=(q/12)%4;
+  control_cf(p,0,4|((mode==1?2u:1u)<<12),0x2000);
+  alu(p+12,mode==1?0u:62u,0,mode==1?0u:15u,7+op,0,3,3,2,4);
+  if(mode!=1)p[12]|=1u<<15;
+  p[13]=((selected+1)&3)<<6;
+  if(mode==1){alu(p+15,62,0,15,50,0,3,3,3,0);p[15]|=1u<<15;}
+  if(mode==2){
+   control_cf(p,0,4|(2u<<12),0x1000);
+   control_cf(p,1,6|(1u<<12),0x6000|(1u<<10));control_cf(p,2,3|(1u<<12),0x2000);
+   alu(p+12,0,0,0,27,0,3,3,3,0); /* P0=true from constant zero. */
+   alu(p+15,0,0,0,7+op,0,3,3,2,4);p[16]=(((selected+1)&3)<<6)|(1u<<28)|(1u<<27);
+   alu(p+18,62,0,15,50,0,3,3,3,0);p[18]|=1u<<15;
+   alu(p+9,62,15,0,50,0,1,3,3,0);p[9]|=1u<<15;
+  }
+  if(mode==3){p[14]|=1u<<7;p[13]|=1u<<24;}
+ }
+}
+#endif
 static unsigned expected_status(unsigned kind)
 {
  if(kind==14)return 5;

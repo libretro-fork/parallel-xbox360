@@ -342,17 +342,55 @@ static uint32_t program_source(alu_builder *b,uint32_t registers,uint32_t consta
  xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,4);
  return source(b,result,index,word0,word1,word2);
 }
-static uint32_t vector_alu(alu_builder *b,uint32_t opcode,uint32_t a,uint32_t c,uint32_t d) {
- uint32_t add=id(b),mul=id(b),mad=id(b),joined=id(b),av,mv,dv,result=id(b),ops[6];
+/* Binary32 comparisons without host/device floating-point mode dependencies.
+ * Flush only comparison operands; sign-magnitude order reverses for negatives.
+ * Both zero signs are equal. Ordered relations reject NaN; NE accepts it. */
+static uint32_t compare_alu(alu_builder *b,uint32_t opcode,uint32_t a,uint32_t c,unsigned first) {
+ uint32_t ma,mc,sa,sc,ordered,eq,gt,ne,same_sign,selected;
+ ma=operation(b,SpvOpBitwiseAnd,T_U4,a,vector(b,UINT32_C(0x7fffffff)));
+ mc=operation(b,SpvOpBitwiseAnd,T_U4,c,vector(b,UINT32_C(0x7fffffff)));
+ ma=choose(b,operation(b,SpvOpULessThan,T_B4,ma,vector(b,UINT32_C(0x800000))),vector(b,0),ma);
+ mc=choose(b,operation(b,SpvOpULessThan,T_B4,mc,vector(b,UINT32_C(0x800000))),vector(b,0),mc);
+ sa=operation(b,SpvOpBitwiseAnd,T_U4,a,vector(b,UINT32_C(0x80000000)));
+ sc=operation(b,SpvOpBitwiseAnd,T_U4,c,vector(b,UINT32_C(0x80000000)));
+ ordered=operation(b,SpvOpLogicalAnd,T_B4,
+  operation(b,SpvOpULessThanEqual,T_B4,ma,vector(b,UINT32_C(0x7f800000))),
+  operation(b,SpvOpULessThanEqual,T_B4,mc,vector(b,UINT32_C(0x7f800000))));
+ same_sign=operation(b,SpvOpIEqual,T_B4,sa,sc);
+ eq=operation(b,SpvOpLogicalAnd,T_B4,ordered,
+  operation(b,SpvOpLogicalAnd,T_B4,operation(b,SpvOpIEqual,T_B4,ma,mc),
+   operation(b,SpvOpLogicalOr,T_B4,same_sign,operation(b,SpvOpIEqual,T_B4,ma,vector(b,0)))));
+ ne=id(b);emit(b,SpvOpLogicalNot,T_B4,ne,1,eq,0,0,0);
+ selected=choose(b,operation(b,SpvOpIEqual,T_B4,sa,vector(b,0)),
+  choose(b,operation(b,SpvOpUGreaterThan,T_B4,ma,mc),vector(b,1),vector(b,0)),
+  choose(b,operation(b,SpvOpULessThan,T_B4,ma,mc),vector(b,1),vector(b,0)));
+ selected=choose(b,same_sign,selected,
+  choose(b,operation(b,SpvOpIEqual,T_B4,sa,vector(b,0)),vector(b,1),vector(b,0)));
+ gt=operation(b,SpvOpLogicalAnd,T_B4,ordered,operation(b,SpvOpLogicalAnd,T_B4,ne,
+  operation(b,SpvOpINotEqual,T_B4,selected,vector(b,0))));
+ /* Compare opcode is uniform, so select the already computed lane predicates. */
+ selected=choose(b,eq,vector(b,UINT32_C(0x3f800000)),vector(b,0));
+ selected=choose(b,operation(b,SpvOpIEqual,T_B4,splat(b,opcode),vector(b,first+1)),
+  choose(b,gt,vector(b,UINT32_C(0x3f800000)),vector(b,0)),selected);
+ selected=choose(b,operation(b,SpvOpIEqual,T_B4,splat(b,opcode),vector(b,first+2)),
+  choose(b,operation(b,SpvOpLogicalOr,T_B4,gt,eq),vector(b,UINT32_C(0x3f800000)),vector(b,0)),selected);
+ return choose(b,operation(b,SpvOpIEqual,T_B4,splat(b,opcode),vector(b,first+3)),
+  choose(b,ne,vector(b,UINT32_C(0x3f800000)),vector(b,0)),selected);
+}
+static uint32_t vector_alu(alu_builder *b,uint32_t opcode,uint32_t a,uint32_t c,uint32_t d,int control) {
+ uint32_t add=id(b),mul=id(b),mad=id(b),joined=id(b),av,mv,dv,result=id(b),ops[14],cmp=0,cv=0;
  emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
  ops[0]=opcode;ops[1]=add;ops[2]=1;ops[3]=mul;ops[4]=11;ops[5]=mad;
- xe_spv_binary_instruction(b->out,SpvOpSwitch,0,0,ops,6);
+ if(control){unsigned i;cmp=id(b);for(i=0;i<4;++i){ops[6+i*2]=4+i;ops[7+i*2]=cmp;}}
+ xe_spv_binary_instruction(b->out,SpvOpSwitch,0,0,ops,control?14:6);
  emit(b,SpvOpLabel,0,add,0,0,0,0,0);av=call(b,F_ADD,a,c);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,mul,0,0,0,0,0);mv=call(b,F_MUL,a,c);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,mad,0,0,0,0,0);dv=call(b,F_ADD,call(b,F_MUL,a,c),d);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ if(control){emit(b,SpvOpLabel,0,cmp,0,0,0,0,0);cv=compare_alu(b,opcode,a,c,4);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);}
  emit(b,SpvOpLabel,0,joined,0,0,0,0,0);
  ops[0]=av;ops[1]=add;ops[2]=mv;ops[3]=mul;ops[4]=dv;ops[5]=mad;
- xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,6);return result;
+ if(control){ops[6]=cv;ops[7]=cmp;}
+ xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,control?8:6);return result;
 }
 static uint32_t lane_splat(alu_builder *b,uint32_t value,uint32_t component) {
  uint32_t word=id(b);emit(b,SpvOpVectorExtractDynamic,T_UINT,word,2,value,component,0,0);return splat(b,word);
@@ -360,15 +398,16 @@ static uint32_t lane_splat(alu_builder *b,uint32_t value,uint32_t component) {
 static uint32_t scalar_alu(alu_builder *b,uint32_t opcode,uint32_t vector_opcode,
  uint32_t d,uint32_t previous,uint32_t registers,uint32_t constants[4],
  uint32_t word0,uint32_t word1,uint32_t word2,uint32_t predicate_state) {
- uint32_t add=id(b),con=id(b),retain=id(b),joined=id(b),av,cv,rv,result=id(b),con_end,ops[14];
- uint32_t setp=0,pv=0;
+ uint32_t add=id(b),con=id(b),retain=id(b),joined=id(b),av,cv,rv,result=id(b),con_end,ops[22];
+ uint32_t setp=0,pv=0,cmp=0,comparison=0;
  uint32_t first,second,swizzle,absolute,negate,at;
  emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
  ops[0]=opcode;ops[1]=retain;ops[2]=0;ops[3]=add;ops[4]=44;ops[5]=con;
  if(predicate_state){
   unsigned i;setp=id(b);for(i=0;i<4;++i){ops[6+i*2]=27+i;ops[7+i*2]=setp;}
+  cmp=id(b);for(i=0;i<4;++i){ops[14+i*2]=7+i;ops[15+i*2]=cmp;}
  }
- xe_spv_binary_instruction(b->out,SpvOpSwitch,0,0,ops,predicate_state?14:6);
+ xe_spv_binary_instruction(b->out,SpvOpSwitch,0,0,ops,predicate_state?22:6);
  emit(b,SpvOpLabel,0,add,0,0,0,0,0);
  av=call(b,F_ADD,lane_splat(b,d,scalar(b,3)),lane_splat(b,d,
   select_word(b,equal(b,vector_opcode,scalar(b,11)),scalar(b,2),scalar(b,0))));
@@ -405,10 +444,15 @@ static uint32_t scalar_alu(alu_builder *b,uint32_t opcode,uint32_t vector_opcode
   selected=select_word(b,predicate,scalar(b,0),scalar(b,UINT32_C(0x3f800000)));pv=splat(b,selected);
   emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  }
+ if(predicate_state){
+  emit(b,SpvOpLabel,0,cmp,0,0,0,0,0);
+  comparison=compare_alu(b,opcode,lane_splat(b,d,scalar(b,3)),vector(b,0),7);
+  emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ }
  emit(b,SpvOpLabel,0,joined,0,0,0,0,0);
  ops[0]=av;ops[1]=add;ops[2]=cv;ops[3]=con_end;ops[4]=rv;ops[5]=retain;
- if(predicate_state){ops[6]=pv;ops[7]=setp;}
- xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,predicate_state?8:6);
+ if(predicate_state){ops[6]=pv;ops[7]=setp;ops[8]=comparison;ops[9]=cmp;}
+ xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,predicate_state?10:6);
  at=id(b);emit(b,SpvOpCompositeExtract,T_UINT,at,2,result,0,0,0);local_store(b,previous,at);
  return result;
 }
@@ -674,7 +718,11 @@ static void program_entry(alu_builder *b,int control) {
    either(b,equal(b,scalar_opcode,scalar(b,44)),equal(b,scalar_opcode,scalar(b,50))));
   scalar_valid=either(b,scalar_valid,both(b,operation(b,SpvOpUGreaterThanEqual,T_BOOL,scalar_opcode,scalar(b,27)),
    operation(b,SpvOpULessThanEqual,T_BOOL,scalar_opcode,scalar(b,30))));
-  valid=both(b,either(b,equal(b,opcode,scalar(b,0)),either(b,equal(b,opcode,scalar(b,1)),equal(b,opcode,scalar(b,11)))),scalar_valid);
+  scalar_valid=either(b,scalar_valid,both(b,operation(b,SpvOpUGreaterThanEqual,T_BOOL,scalar_opcode,scalar(b,7)),
+   operation(b,SpvOpULessThanEqual,T_BOOL,scalar_opcode,scalar(b,10))));
+  valid=either(b,equal(b,opcode,scalar(b,0)),either(b,equal(b,opcode,scalar(b,1)),equal(b,opcode,scalar(b,11))));
+  valid=either(b,valid,both(b,operation(b,SpvOpUGreaterThanEqual,T_BOOL,opcode,scalar(b,4)),
+   operation(b,SpvOpULessThanEqual,T_BOOL,opcode,scalar(b,7))));valid=both(b,valid,scalar_valid);
  }
  /* Sequence emitter side effects explicitly; C argument evaluation order must
   * not change the established module when adding a separate entry point. */
@@ -693,7 +741,7 @@ static void program_entry(alu_builder *b,int control) {
  a=program_source(b,registers,constants,0,word0,word1,word2,control?flow[11]:0,output);
  c=program_source(b,registers,constants,1,word0,word1,word2,control?flow[11]:0,output);
  d=program_source(b,registers,constants,2,word0,word1,word2,control?flow[11]:0,output);
- value=vector_alu(b,opcode,a,c,d);
+ value=vector_alu(b,opcode,a,c,d,control);
  scalar_value=scalar_alu(b,scalar_opcode,opcode,d,previous,registers,constants,word0,word1,word2,control?flow[12]:0);
  store_export=id(b);store_temp=id(b);stored=id(b);
  emit(b,SpvOpSelectionMerge,0,0,2,stored,0,0,0);emit(b,SpvOpBranchConditional,0,0,3,is_export,store_export,store_temp,0);
