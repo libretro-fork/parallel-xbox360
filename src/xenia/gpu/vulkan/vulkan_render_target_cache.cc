@@ -8,6 +8,7 @@
  */
 
 #include "libretro/core_draw_stats.h"
+#include "libretro/core_transfer_geometry.h"
 #include "xenia/gpu/vulkan/vulkan_render_target_cache.h"
 #include <new>
 #include "libretro/core_gpu_divide.h"
@@ -48,7 +49,6 @@ namespace shaders {
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/host_depth_store_1xmsaa_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/host_depth_store_2xmsaa_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/host_depth_store_4xmsaa_cs.h"
-#include "xenia/gpu/shaders/bytecode/vulkan_spirv/passthrough_position_xy_vs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/resolve_clear_32bpp_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/resolve_clear_32bpp_scaled_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/resolve_clear_64bpp_cs.h"
@@ -595,19 +595,23 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
       host_depth_store_pipelines_[i] = host_depth_store_pipeline;
     }
 
-    // Transfer and clear vertex buffer, for quads of up to tile granularity.
+    // One float4 instance per transfer rectangle; vertices select its corners.
     transfer_vertex_buffer_pool_ =
         std::make_unique<ui::vulkan::VulkanUploadBufferPool>(
             vulkan_device, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             std::max(ui::vulkan::VulkanUploadBufferPool::kDefaultPageSize,
-                     sizeof(float) * 2 * 6 *
+                     sizeof(xe_transfer_rectangle) *
                          Transfer::kMaxCutoutBorderRectangles *
                          xenos::kEdramTileCount));
 
     // Transfer vertex shader.
-    transfer_passthrough_vertex_shader_ = ui::vulkan::util::CreateShaderModule(
-        vulkan_device, shaders::passthrough_position_xy_vs,
-        sizeof(shaders::passthrough_position_xy_vs));
+    xe_spv_binary transfer_vertex_code = {};
+    if (xe_transfer_rectangle_spv(&transfer_vertex_code)) {
+      transfer_passthrough_vertex_shader_ = ui::vulkan::util::CreateShaderModule(
+          vulkan_device, transfer_vertex_code.words,
+          transfer_vertex_code.count * sizeof(uint32_t));
+    }
+    xe_spv_binary_close(&transfer_vertex_code);
     if (transfer_passthrough_vertex_shader_ == VK_NULL_HANDLE) {
       XELOGE(
           "VulkanRenderTargetCache: Failed to create the render target "
@@ -2580,12 +2584,12 @@ VkPipeline const* VulkanRenderTargetCache::GetTransferPipelines(
 
   VkVertexInputBindingDescription vertex_input_binding;
   vertex_input_binding.binding = 0;
-  vertex_input_binding.stride = sizeof(float) * 2;
-  vertex_input_binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  vertex_input_binding.stride = sizeof(xe_transfer_rectangle);
+  vertex_input_binding.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
   VkVertexInputAttributeDescription vertex_input_attribute;
   vertex_input_attribute.location = 0;
   vertex_input_attribute.binding = 0;
-  vertex_input_attribute.format = VK_FORMAT_R32G32_SFLOAT;
+  vertex_input_attribute.format = VK_FORMAT_R32G32B32A32_SFLOAT;
   vertex_input_attribute.offset = 0;
   VkPipelineVertexInputStateCreateInfo vertex_input_state;
   vertex_input_state.sType =
@@ -3451,12 +3455,17 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
             (transfer_pipeline_layout_info.used_push_constant_dwords &
              kEdramTransferUsedPushConstantDwordStencilMaskBit) != 0;
 
-        uint32_t transfer_vertex_count = 6 * transfer_rectangle_count;
+        uint32_t transfer_instance_bytes;
+        if (!xe_transfer_rectangle_bytes(transfer_rectangle_count,
+                                         &transfer_instance_bytes)) {
+          assert_always();
+          continue;
+        }
         VkBuffer transfer_vertex_buffer;
         VkDeviceSize transfer_vertex_buffer_offset;
         float* transfer_rectangle_write_ptr =
             reinterpret_cast<float*>(transfer_vertex_buffer_pool_->Request(
-                current_submission, sizeof(float) * 2 * transfer_vertex_count,
+                current_submission, transfer_instance_bytes,
                 sizeof(float), transfer_vertex_buffer,
                 transfer_vertex_buffer_offset));
         if (!transfer_rectangle_write_ptr) {
@@ -3485,36 +3494,10 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
             float transfer_rectangle_y1 =
                 transfer_rectangle_y0 +
                 transfer_rectangle.height_pixels * pixels_to_ndc_y;
-            // O-*
-            // |/
-            // *
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x0;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y0;
-            // *-*
-            // |/
-            // O
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x0;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y1;
-            // *-O
-            // |/
-            // *
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x1;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y0;
-            //   O
-            //  /|
-            // *-*
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x1;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y0;
-            //   *
-            //  /|
-            // O-*
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x0;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y1;
-            //   *
-            //  /|
-            // *-O
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x1;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y1;
+            xe_transfer_rectangle_store(transfer_rectangle_write_ptr,
+                                        transfer_rectangle_x0, transfer_rectangle_y0,
+                                        transfer_rectangle_x1, transfer_rectangle_y1);
+            transfer_rectangle_write_ptr += 4;
           }
         }
         command_buffer.CmdVkBindVertexBuffers(0, 1, &transfer_vertex_buffer,
@@ -3705,7 +3688,8 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
               command_buffer.CmdVkSetStencilWriteMask(
                   VK_STENCIL_FACE_FRONT_AND_BACK, transfer_stencil_bit);
             }
-            command_buffer.CmdVkDraw(transfer_vertex_count, 1, 0, 0);
+            command_buffer.CmdVkDraw(XE_TRANSFER_RECTANGLE_VERTICES,
+                                     transfer_rectangle_count, 0, 0);
           }
         }
       }

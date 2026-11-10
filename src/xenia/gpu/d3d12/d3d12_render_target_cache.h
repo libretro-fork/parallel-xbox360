@@ -30,6 +30,7 @@
 #include "xenia/gpu/d3d12/d3d12_shared_memory.h"
 #include "xenia/gpu/d3d12/d3d12_texture_cache.h"
 #include "xenia/gpu/draw_util.h"
+#include "xenia/gpu/dxil/transfer_rectangle.h"
 #include "xenia/gpu/edram_dump_shader.h"
 #include "xenia/gpu/edram_transfer_shader.h"
 #include "xenia/gpu/render_target_cache.h"
@@ -667,6 +668,8 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
 
   std::unique_ptr<ui::d3d12::D3D12UploadBufferPool>
       transfer_vertex_buffer_pool_;
+
+  XeDxilShaderBinary transfer_vertex_shader_ = {};
 
   // One per transfer mode - the mode is what fixes the shader's bindings.
   ID3D12RootSignature*

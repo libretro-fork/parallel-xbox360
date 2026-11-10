@@ -500,6 +500,8 @@ Shader type and debug-type groups use a retained C89 registry in the exclusive c
 
 Shader loop, switch and debug-scope stacks use retained C89 frame pages instead of three default-allocated C++ deques. Each page has 64 stable slots in a 64-byte-aligned frame area; growth never relocates live frames. Loop frames are constructed directly in their final slots, preserving references returned across nested loops without a temporary frame copy. Stack views follow their module owner in declaration order; builder/module cleanup retires trivial frames before IR cleanup. Compiler startup reserves one page per stack, and deeper stacks retain checked growth until shutdown. This reserves capacity; it does not guarantee physical prefaulting of every payload page. ASan checks popped/reset frames as well as instruction lifetime. Measurements and limits are in tools/tests/spv_stack_bench_results.txt.
 
+Transfer geometry uses one float4 rectangle instance (16 bytes) instead of six expanded float2 vertices (48 bytes), with six procedural vertices per instance in both Vulkan and D3D12. The existing CPU coordinate calculations and each backend's triangle order are preserved. Initialization builds the raw SPIR-V/native DXIL helper; no shader-language compiler is added. Final upload storage, pool growth and utility pipeline cache misses remain. See [transfer geometry checks and limits](tools/tests/transfer_geometry_results.txt); this is not evidence of eliminated shader stutter or faster gameplay.
+
 ### Draw-path contract instrumentation
 
 Developer builds can enable `XENIA_ENABLE_DRAW_STATS=ON` with CMake, or

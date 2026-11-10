@@ -8,6 +8,7 @@
  */
 
 #include "libretro/core_draw_stats.h"
+#include "libretro/core_transfer_geometry.h"
 #include "xenia/gpu/d3d12/d3d12_render_target_cache.h"
 #include <new>
 #include "libretro/core_gpu_divide.h"
@@ -55,7 +56,6 @@ namespace shaders {
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/host_depth_store_1xmsaa_cs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/host_depth_store_2xmsaa_cs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/host_depth_store_4xmsaa_cs.h"
-#include "xenia/gpu/shaders/bytecode/d3d12_dxil/passthrough_position_xy_vs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/resolve_clear_32bpp_cs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/resolve_clear_32bpp_scaled_cs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_dxil/resolve_clear_64bpp_cs.h"
@@ -611,12 +611,18 @@ bool D3D12RenderTargetCache::Initialize() {
     host_depth_store_pipelines_[size_t(xenos::MsaaSamples::k4X)]->SetName(
         L"Host Depth Store 4xMSAA");
 
-    // Transfer and clear vertex buffer, for quads of up to tile granularity.
+    if (!xe_dxil_build_transfer_rectangle(&transfer_vertex_shader_)) {
+      XELOGE("D3D12RenderTargetCache: Failed to create transfer vertex shader");
+      Shutdown();
+      return false;
+    }
+
+    // One float4 instance per transfer rectangle; vertices select its corners.
     transfer_vertex_buffer_pool_ =
         std::make_unique<ui::d3d12::D3D12UploadBufferPool>(
             provider,
             std::max(ui::d3d12::D3D12UploadBufferPool::kDefaultPageSize,
-                     sizeof(float) * 2 * 6 *
+                     sizeof(xe_transfer_rectangle) *
                          Transfer::kMaxCutoutBorderRectangles *
                          xenos::kEdramTileCount));
 
@@ -1045,6 +1051,7 @@ void D3D12RenderTargetCache::Shutdown(bool from_destructor) {
   }
 
   transfer_vertex_buffer_pool_.reset();
+  xe_dxil_shader_binary_free(&transfer_vertex_shader_);
 
   for (size_t i = 0; i < xe::countof(host_depth_store_pipelines_); ++i) {
     ui::d3d12::util::ReleaseAndNull(host_depth_store_pipelines_[i]);
@@ -2177,16 +2184,16 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(
   D3D12_INPUT_ELEMENT_DESC pipeline_input_element_desc;
   pipeline_input_element_desc.SemanticName = "POSITION";
   pipeline_input_element_desc.SemanticIndex = 0;
-  pipeline_input_element_desc.Format = DXGI_FORMAT_R32G32_FLOAT;
+  pipeline_input_element_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
   pipeline_input_element_desc.InputSlot = 0;
   pipeline_input_element_desc.AlignedByteOffset = 0;
   pipeline_input_element_desc.InputSlotClass =
-      D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
-  pipeline_input_element_desc.InstanceDataStepRate = 0;
+      D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA;
+  pipeline_input_element_desc.InstanceDataStepRate = 1;
   D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline_desc = {};
   pipeline_desc.pRootSignature = transfer_root_signatures_[size_t(key.mode)];
-  pipeline_desc.VS.pShaderBytecode = shaders::passthrough_position_xy_vs;
-  pipeline_desc.VS.BytecodeLength = sizeof(shaders::passthrough_position_xy_vs);
+  pipeline_desc.VS.pShaderBytecode = transfer_vertex_shader_.data;
+  pipeline_desc.VS.BytecodeLength = transfer_vertex_shader_.size;
   pipeline_desc.PS.pShaderBytecode = pixel_shader_dxil.data;
   pipeline_desc.PS.BytecodeLength = UINT(pixel_shader_dxil.size);
   if (key.dest_msaa_samples == xenos::MsaaSamples::k2X && !msaa_2x_supported_) {
@@ -2974,12 +2981,15 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
           }
         }
 
-        uint32_t transfer_vertex_count = 6 * transfer_rectangle_count;
+        uint32_t transfer_instance_bytes;
+        if (!xe_transfer_rectangle_bytes(transfer_rectangle_count,
+                                         &transfer_instance_bytes)) {
+          assert_always();
+          continue;
+        }
         D3D12_VERTEX_BUFFER_VIEW transfer_rectangle_buffer_view;
-        transfer_rectangle_buffer_view.StrideInBytes = sizeof(float) * 2;
-        transfer_rectangle_buffer_view.SizeInBytes =
-            transfer_rectangle_buffer_view.StrideInBytes *
-            transfer_vertex_count;
+        transfer_rectangle_buffer_view.StrideInBytes = sizeof(xe_transfer_rectangle);
+        transfer_rectangle_buffer_view.SizeInBytes = transfer_instance_bytes;
         float* transfer_rectangle_write_ptr =
             reinterpret_cast<float*>(transfer_vertex_buffer_pool_->Request(
                 current_submission, transfer_rectangle_buffer_view.SizeInBytes,
@@ -3011,36 +3021,10 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
             float transfer_rectangle_y1 =
                 transfer_rectangle_y0 -
                 transfer_rectangle.height_pixels * pixels_to_ndc_y;
-            // O-*
-            // |/
-            // *
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x0;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y0;
-            // *-O
-            // |/
-            // *
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x1;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y0;
-            // *-*
-            // |/
-            // O
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x0;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y1;
-            //   *
-            //  /|
-            // O-*
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x0;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y1;
-            //   O
-            //  /|
-            // *-*
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x1;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y0;
-            //   *
-            //  /|
-            // *-O
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_x1;
-            *(transfer_rectangle_write_ptr++) = transfer_rectangle_y1;
+            xe_transfer_rectangle_store(transfer_rectangle_write_ptr,
+                                        transfer_rectangle_x0, transfer_rectangle_y0,
+                                        transfer_rectangle_x1, transfer_rectangle_y1);
+            transfer_rectangle_write_ptr += 4;
           }
         }
         command_processor_.SetPrimitiveTopology(
@@ -3231,7 +3215,8 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
                     kEdramTransferUsedPushConstantDwordStencilMaskBit));
           }
           command_processor_.SetExternalPipeline(transfer_pipelines[j]);
-          command_list.D3DDrawInstanced(transfer_vertex_count, 1, 0, 0);
+          command_list.D3DDrawInstanced(XE_TRANSFER_RECTANGLE_VERTICES,
+                                       transfer_rectangle_count, 0, 0);
         }
       }
     }

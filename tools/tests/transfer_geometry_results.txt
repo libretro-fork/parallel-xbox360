@@ -1,0 +1,55 @@
+Transfer rectangle instance candidate, 2026-11-10
+
+Logical mapped payload per rectangle: 48 ->16 bytes. CPU NDC calculations are
+unchanged. Six vertices are reconstructed by selecting coordinates, without
+floating-point coordinate arithmetic. Draw count and vertex invocation count
+are unchanged. Merged groups can exceed a small push-constant array: no array
+limit or extra batch draw is introduced. The final upload pool remains and can
+grow; this is not a fully zero-copy path or elimination of mid-game allocation.
+Retirement, write flushing, sample masks, stencil loops and fragment programs
+retain their existing paths. No draw-path compilation fix is claimed.
+
+Checks completed:
+- MSVC /TC /W4 /WX (SDK anonymous-union diagnostic excluded), GCC strict C89.
+- GCC ASan/UBSan helper/storage test.
+- spirv-val Vulkan1.0: production740-byte shader and test-only XFB annotations.
+- Microsoft DXIL validator: native1521-byte helper.
+- Actual ordered output of257 instances /1542 vertices matched on NVIDIA RTX5090
+  Vulkan, llvmpipe Vulkan and D3D12 WARP. CPU coordinate bits include signed zero,
+  smallest subnormal and adjacent noninteger values. Byte-size overflow leaves
+  the destination untouched. Repeated module generation reuses owned storage.
+- Both renderer libraries compile with MSVC at three parallel jobs.
+
+Local diagnostic GPU comparison: same257 rectangles,256 repeated XFB draws,
+seven alternating old/new process pairs, eight primed intervals per process.
+Legacy is the actual old passthrough SPIR-V, with XFB annotations only. Candidate
+is the production helper with the same annotations. Three semaphore-ordered
+submissions bracket each workload; raw ticks and availability retained privately.
+Old/new median milliseconds per pair:
+0 .341952 .342512
+1 .340432 .338624
+2 .340704 .338768
+3 .340432 .339024
+4 .341680 .340288
+5 .341584 .340240
+6 .341552 .339840
+These results are effectively flat, not evidence of a renderer/game speedup.
+The diagnostic threshold (+5% and0.05ms) is not the existing shader gate and does
+not replace it. XFB cost, synchronization and cache behavior are included. This
+is not raster color/depth/stencil/MSAA timing; D3D12 timing remains unverified.
+The fixture uses a bounded fence deadline as a conservative timestamp envelope,
+not separately measured elapsed host time; retain that measurement limitation.
+
+Repeat correctness:
+ GPU_TESTS=1 sh tools/tests/run_transfer_geometry_tests.sh
+ MSVC developer prompt, built native emitter archive:
+ set TRANSFER_BUILD=build\native-msvc
+ set GPU_TESTS=1
+ call tools\tests\run_transfer_geometry_tests.cmd
+Windows GPU_TESTS controls Vulkan; WARP always executes. Linux requires
+spirv-val and GPU_TESTS=1 for actual Vulkan execution. Dedicated push CI covers
+software Vulkan and WARP; hardware driver/gameplay signoff is separate.
+
+Exact-parent shader/PSO comparisons are published separately by the mandatory
+comparison workflow; these component checks do not replace its acceptance gates.
+No full transfer image or gameplay smoothness acceptance has been performed.

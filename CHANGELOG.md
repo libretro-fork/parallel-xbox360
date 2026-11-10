@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Compact Vulkan and D3D12 EDRAM transfer rectangles into one 16-byte instance instead of six duplicated float2 vertices (48 bytes). Preserve each backend's exact coordinates and winding, draw count, sample/stencil passes and upload retirement. Construct the small raw SPIR-V/native DXIL vertex helpers at initialization. Add C89, binary-validation and exact GPU vertex-output regressions. This reduces logical upload writes; it does not eliminate the upload pool or the remaining draw-path compilation debt.
+
 - Extend the raw control interpreter with shared vector/scalar MAX/MIN, preserving signed-zero ties, unordered selection, scalar history and predicate state. Add5136 untimed opcode replays, differential failure/mutation checks and one-request cold module construction without intermediate buffer growth. This prototype remains outside rendering; complete accurate fallback coverage and draw-path compilation removal remain unfinished.
 
 - Remove the raw control interpreter's eager register snapshot and zero-fill loop. Borrow immutable input registers until written, track private ownership with fixed dirty words and preserve zero tails, partial writes and coissue inputs. Add boundary/ownership regressions. This validation kernel remains outside rendering; draw-path compilation and complete accurate fallback coverage remain unfinished.

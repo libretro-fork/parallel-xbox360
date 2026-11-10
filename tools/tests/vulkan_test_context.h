@@ -51,6 +51,9 @@ static struct {
    FN(vkCreateFramebuffer); FN(vkDestroyFramebuffer); FN(vkCreateGraphicsPipelines);
    FN(vkCmdBeginRenderPass); FN(vkCmdEndRenderPass); FN(vkCmdDraw);
    FN(vkCmdBindTransformFeedbackBuffersEXT); FN(vkCmdBeginTransformFeedbackEXT); FN(vkCmdEndTransformFeedbackEXT);
+#ifdef XE_VK_TEST_VERTEX_INPUT
+   FN(vkCmdBindVertexBuffers);
+#endif
 #endif
    VkInstance instance;
    VkDevice device;
@@ -68,6 +71,9 @@ static int make_buffer(struct buffer *b, size_t bytes)
    uint32_t type, pass;
    info.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
    info.size=bytes; info.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+#ifdef XE_VK_TEST_VERTEX_INPUT
+   info.usage|=VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+#endif
 #ifdef XE_VK_TEST_UNIFORM
     info.usage|=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 #endif

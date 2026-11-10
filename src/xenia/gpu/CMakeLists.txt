@@ -5,13 +5,15 @@ add_library(xenia-spirv-writer STATIC
   spirv/InReadableOrder.cpp
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_packet.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_binary.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_transfer_geometry.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_image_sink.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_arena.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_size.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_probe.c"
 )
 target_include_directories(xenia-spirv-writer PUBLIC
-  "${PROJECT_SOURCE_DIR}/third_party/libretro-common/include")
+  "${PROJECT_SOURCE_DIR}/third_party/libretro-common/include"
+  "${PROJECT_SOURCE_DIR}/third_party/SPIRV-Headers/include")
 
 add_library(xenia-gpu STATIC)
 xe_platform_sources(xenia-gpu ${CMAKE_CURRENT_SOURCE_DIR})
@@ -26,7 +28,8 @@ if(WIN32)
     "${CMAKE_CURRENT_SOURCE_DIR}/dxil/bytecode/*.c")
   add_library(xenia-native-dxil STATIC ${_native_dxil_sources})
   target_include_directories(xenia-native-dxil PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/dxil/bytecode")
+    "${CMAKE_CURRENT_SOURCE_DIR}/dxil/bytecode"
+    "${PROJECT_SOURCE_DIR}/third_party/libretro-common/include")
   target_link_libraries(xenia-gpu PUBLIC dxbc xenia-native-dxil)
 endif()
 xe_target_defaults(xenia-gpu)

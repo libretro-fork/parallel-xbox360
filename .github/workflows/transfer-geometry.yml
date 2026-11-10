@@ -1,0 +1,46 @@
+name: Transfer geometry correctness
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  vulkan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validation tools and software Vulkan
+        run: sudo apt-get update -qq && sudo apt-get install -y gcc spirv-tools libvulkan1 mesa-vulkan-drivers
+      - name: Validate binary and execute exact vertex oracle
+        run: |
+          export VK_ICD_FILENAMES=$(find /usr/share/vulkan/icd.d -name 'lvp*.json' -print -quit)
+          test -n "$VK_ICD_FILENAMES"
+          GPU_TESTS=1 sh tools/tests/run_transfer_geometry_tests.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transfer-vulkan-attempt-${{ github.run_attempt }}
+          path: build/tests/transfer-geometry/
+          if-no-files-found: error
+  d3d12:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Build native emitter and execute WARP oracle
+        shell: cmd
+        run: |
+          cmake -S . -B build/windows-native -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+          if errorlevel 1 exit /b 1
+          cmake --build build/windows-native --target xenia-native-dxil --parallel 3
+          if errorlevel 1 exit /b 1
+          call tools\tests\run_transfer_geometry_tests.cmd
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transfer-d3d12-attempt-${{ github.run_attempt }}
+          path: build/tests/transfer-geometry-msvc/
+          if-no-files-found: error

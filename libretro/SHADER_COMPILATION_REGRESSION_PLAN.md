@@ -944,3 +944,12 @@ and the actual parent's unsupported-opcode rejection must remain observable.
 Current bounded module output is reserved once at cold construction, with request
 counts checked separately from timing. The prototype still lacks full guest
 coverage and renderer integration; draw-path compilation/waits remain unresolved.
+
+Transfer rectangle coverage (2026-11-10): Vulkan and D3D12 use one float4 instance
+per rectangle, preserving the old six ordered positions exactly. The C89 helper
+shaders are constructed only at initialization. Procedural fixtures check257
+instances (1542 vertices) using actual per-instance vertex bindings, plus binary
+validation, coordinate-bit preservation and checked byte counts. This covers
+vertex equivalence, not complete transfer color/depth/stencil/MSAA images or
+retail frame tails. Remaining utility PSO/module misses on the command path are
+still violations; smaller uploads do not waive the ready accurate pipeline rule.
