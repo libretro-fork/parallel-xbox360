@@ -153,6 +153,10 @@ static int validation_test(const char *path) {
    size_t valid;
    RFILE *file;
    xe_file_records *records;
+   xe_file *direct;
+   unsigned char selected[5];
+   size_t transferred;
+   int direct_ok;
    for (r = 0; r < 3; ++r) {
       for (i = 8; i < 48; ++i) rows[r][i] = (uint8_t)(r * 13 + i * 37);
       hash = xxh3_64(rows[r] + 8, 40, 0); memcpy(rows[r], &hash, sizeof(hash));
@@ -161,6 +165,13 @@ static int validation_test(const char *path) {
    if (!file || !xe_cache_file_repair(file, 0) || xe_cache_file_write(prefix, 1, 3, file) != 3 ||
        xe_cache_file_write(rows, 48, 3, file) != 3 || filestream_flush(file)) return 0;
    filestream_close(file);
+   /* VFS seek succeeds with a positive new position, not only zero. */
+   direct = xe_file_open(path);
+   direct_ok = direct && xe_file_read_transfer(direct, 3 + 48 + 7,
+         selected, sizeof(selected), &transferred) && transferred == sizeof(selected) &&
+         !memcmp(selected, rows[1] + 7, sizeof(selected));
+   xe_file_close(direct);
+   if (!direct_ok) return 0;
    records = xe_file_records_open(path, 3, 48); if (!records) return 0;
    sink_calls = 0; sink_reject = 0;
    if (!xe_cache_records_validate(records, 48, 0, 8, 40, accept_row, NULL, &valid) || valid != 3 || sink_calls != 3) return 0;

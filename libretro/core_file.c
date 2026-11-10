@@ -58,7 +58,7 @@ int xe_file_read_transfer(xe_file *file, uint64_t offset, void *out, size_t size
   }
   if (file->position != (int64_t)offset) {
     if (filestream_seek(file->stream, (int64_t)offset,
-        RETRO_VFS_SEEK_POSITION_START) != 0) {
+        RETRO_VFS_SEEK_POSITION_START) < 0) {
       file->position = -1; return 0;
     }
     file->position = (int64_t)offset;
