@@ -9,6 +9,7 @@
 #define XE_ALU_CONTROL_COMPARE 1
 #define XE_ALU_CONTROL_LAZY_SOURCE 1
 #define XE_ALU_CONTROL_BORROW_REGISTERS 1
+#define XE_ALU_CONTROL_MINMAX 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,6 +53,12 @@ int xe_alu_program_spv_build(xe_spv_binary *out);
  * fixed return addresses. Scalar SETP_EQ/NE/GT/GE update one private predicate;
  * predicated ALUs test its prior value before validation, reads and side effects.
  * Ordinary vector/scalar EQ/GT/GE/NE produce exact1/0 without changing P0.
+ * Vector/scalar MAX/MIN use one integer selection helper after signed source
+ * denormal flushing. MAX takes the first operand on a tie, MIN the second;
+ * unordered comparisons select the second. Selected bits are not quantized.
+ * Scalar MAX/MIN update history even without a destination and preserve P0.
+ * Construction reserves current bounded control-module storage up front;
+ * successful cold construction needs one allocation request, warm reuse none.
  * Current vector operations skip unused result/operand work, including literal
  * export-one overlap. Scalar history and P0 still update without a destination.
  * Unused source slots are not read or checked as relative temporary addresses.

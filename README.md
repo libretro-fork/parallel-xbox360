@@ -641,3 +641,12 @@ untimed tests cover both dirty-word boundaries, zero tails, overlapping writes
 and original coissue inputs. This prototype is still unlinked from rendering;
 these component changes do not establish improved retail frame times or remove
 draw-path compilation. See `tools/tests/register_borrow_results.txt`.
+
+The raw control prototype also supports vector/scalar MAX/MIN through a shared
+integer-only SPIR-V helper. It preserves ordered ties, unordered selection and
+selected operand bits after the existing source-denormal policy, with no host
+GLSL compilation or per-record code generation. Scalar history, predicate state
+and unused-source checks remain covered. Cold construction requests final bounded
+module storage directly instead of growing it midway. These are prototype
+coverage/ownership changes, not renderer integration or retail cold-play signoff.
+See `tools/tests/minmax_results.txt` for measured costs and missing coverage.

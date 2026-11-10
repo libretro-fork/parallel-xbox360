@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Extend the raw control interpreter with shared vector/scalar MAX/MIN, preserving signed-zero ties, unordered selection, scalar history and predicate state. Add5136 untimed opcode replays, differential failure/mutation checks and one-request cold module construction without intermediate buffer growth. This prototype remains outside rendering; complete accurate fallback coverage and draw-path compilation removal remain unfinished.
+
 - Remove the raw control interpreter's eager register snapshot and zero-fill loop. Borrow immutable input registers until written, track private ownership with fixed dirty words and preserve zero tails, partial writes and coissue inputs. Add boundary/ownership regressions. This validation kernel remains outside rendering; draw-path compilation and complete accurate fallback coverage remain unfinished.
 
 - Add separate test-only Vulkan GPU timestamp profiles beside existing shader wall-time gates. Order timestamps around the workload through GPU semaphore dependencies, retain raw counter/availability data and require work-scaling and recording-delay controls. This adds measurement coverage; it changes no renderer behavior and does not certify cold-play smoothness.

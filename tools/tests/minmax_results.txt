@@ -1,0 +1,65 @@
+Ordered vector/scalar MAX/MIN foundation (2026-11-10)
+===================================================
+
+The raw control prototype adds vector MAX/MIN (2/3) and scalar MAX/MIN (5/6).
+A shared integer-only SPIR-V function compares sign/magnitude and selects the
+flushed source bits. Signed zeros compare equal: MAX selects A on a tie, MIN B.
+Any unordered comparison selects B. Selected values are not converted through
+native floating-point arithmetic, NMin/FMin or a host GLSL compiler. Source
+absolute/negate/swizzle and signed-denormal policy follow the existing reference.
+NaN payload bits are retained internally, not claimed as hardware-defined.
+Scalar operations retain W/X versus W/Z selection for MAD, write scalar history
+even with an empty destination and do not change P0. This is vertex-prototype
+coverage, not a newly validated Xbox360 hardware specification or complete stage
+implementation. Empty loops, resumability, fetches, other ALUs/stages/ROP and
+actual correct ready fallback rendering remain unfinished.
+
+The control module is9726 words versus9510 (+216 words/864bytes,~2.3%). The shared
+function prevents duplicating its selection code in the vector/scalar cases.
+The original program remains6051 words and arithmetic2855. Module identities
+are captured per revision; equal word counts do not imply identical bytes.
+No cache defaults, driver requirements, draw path or frontend pacing change.
+
+Cold construction now reserves bounded output capacity directly. Actual parent
+instrumentation records two allocation requests for control capacity16384words;
+current instrumentation records one, with the same final capacity. This avoids
+the intermediate8192-word growth request. Physical copied bytes are unmeasured:
+realloc may grow in place.1000 exact same-owner warm builds allocate nothing;
+first-allocation failure, overflow failure, recovery and balanced release pass.
+
+Correctness evidence
+--------------------
+Strict MSVC C89 and GCC C89 ASan/UBSan tests pass. SPIR-V validation and full
+NVIDIA5090/llvmpipe20.1.2 execution pass19035 GPU invocations /18175 native
+references. The new5136 untimed replays/10272 invocations cover all pairs of16
+binary32 classes, four vector/scalar forms, modifiers, masks, temp stores,
+coissue history/P0 and both byte orders. Edge replays include invalid consumed
+versus ignored relative source addresses. Independent integer goldens require
+correct signed-zero and selected-bit output, while native C++ interpretation
+provides a separate reference. Original896 register-ownership,64 lazy-source and
+1536 comparison replays remain executed. Timed children have no new contexts.
+
+The exact parent15157e8d9 reproduces its byte-identical9510-word module and fails
+round4013 with status3 instead of1 on the first new MAX case. Independently
+validated mutants fail numerical checks for signed-zero ties, unordered NaN
+selection and wrong MAD scalar source lane. Reintroducing buffer growth fails
+the cold-allocation test before GPU execution.55 Python guards check missing,
+duplicate/substituted context/storage markers and feature loss. WARP unit runs
+verify construction but do not claim Vulkan/new-op GPU execution.
+
+Precommit observations and acceptance limits
+-------------------------------------------
+A private seven-pair component diagnostic, with explicitly reused native reference
+archives, retained original mixed/valid payloads and separate timestamped GPU
+children. On NVIDIA5090 driver32.0.16.2101, mixed warm GPU medians were roughly
+0.475/0.482ms ->0.474/0.476ms; valid0.0305/0.0344ms ->0.0304/0.0293ms. This
+includes semaphore/queue/dispatch/visibility cost, not isolated ALU execution.
+Mixed elapsed completion case1 rose0.650->0.799ms; case2 was0.615->0.626ms.
+The higher wall observation is retained; a GPU interval measured in a separate
+child must not be subtracted to assign a host cause. Existing thresholds remain
+unchanged. New-op throughput is unpaired, because the parent rejects those ops.
+
+Those observations are not whole-commit acceptance. Exact-ref matched fresh-build
+comparison status belongs to generated artifacts. No driver-cache coldness,
+pinned smooth cross-game anchor, retail FPS/latency/image equivalence or stutter
+fix is certified. The raw kernel is still unlinked from actual rendering.

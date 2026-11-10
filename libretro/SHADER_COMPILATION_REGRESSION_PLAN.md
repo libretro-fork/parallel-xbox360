@@ -935,3 +935,12 @@ renderer; actual ready fallback integration, stages/fetch/ROP coverage and
 critical-thread compilation/wait removal remain unresolved. Retain historical
 mixed/fault GPU cost debt and all rejected alternatives when interpreting
 paired GPU intervals; do not substitute this test for retail cold-play signoff.
+
+MAX/MIN coverage (2026-11-10): the raw control prototype adds one shared integer
+selection function for vector/scalar MAX/MIN with5136 untimed replays, independent
+bit goldens and native references. Original timed records are unchanged; new-op
+throughput is not a parent-comparable metric. Signed-zero/NaN/coissue mutations
+and the actual parent's unsupported-opcode rejection must remain observable.
+Current bounded module output is reserved once at cold construction, with request
+counts checked separately from timing. The prototype still lacks full guest
+coverage and renderer integration; draw-path compilation/waits remain unresolved.

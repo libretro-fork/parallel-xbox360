@@ -111,7 +111,7 @@ class ComparisonTests(unittest.TestCase):
         old=dict(available=True,unit=True,vulkan_gpu=True,boolean_cf_supported=True,
                  nonempty_loops_supported=True,predicate_cf_supported=True,
                  comparison_alu_supported=True,comparison_context_cases=1536,
-                 lazy_source_supported=True,lazy_source_context_cases=64,register_borrow_supported=True,register_context_cases=896,
+                 lazy_source_supported=True,lazy_source_context_cases=64,register_borrow_supported=True,register_context_cases=896,minmax_supported=True,minmax_context_cases=5136,
                  boolean_context_cases=224,loop_context_cases=32,predicate_context_cases=1254)
         for field,value in [("available",False),("unit",False),("vulkan_gpu",False),
                             ("boolean_cf_supported",False),("nonempty_loops_supported",False),
@@ -119,6 +119,7 @@ class ComparisonTests(unittest.TestCase):
                             ("comparison_alu_supported",False),("comparison_context_cases",0),
                             ("lazy_source_supported",False),("lazy_source_context_cases",0),
                             ("register_borrow_supported",False),("register_context_cases",0),
+                            ("minmax_supported",False),("minmax_context_cases",0),
                             ("boolean_context_cases",0),("loop_context_cases",0)]:
             candidate=dict(old);candidate[field]=value
             self.assertTrue(ci.compare_control_coverage(dict(base=old,candidate=candidate),True)["failures"],field)
@@ -195,6 +196,34 @@ class ComparisonTests(unittest.TestCase):
                 if backend.startswith("vulkan"):
                     with self.assertRaisesRegex(ValueError,"register ownership"):
                         ci.validate_raw_program(root,root,root,root/"log",{},backend,control=True)
+
+    def test_minmax_and_cold_storage_execution_guards(self):
+        marker="MINMAX_CONTEXT replays=5136 invocations=10272\n"
+        storage="CONTROL_COLD_STORAGE allocations=1 capacity_words=16384\n"
+        ci.validate_minmax_workload(marker);ci.validate_control_cold_storage(storage)
+        for text in ("",marker+marker,marker.replace("5136","0"),marker.replace("10272","2")):
+            with self.assertRaisesRegex(ValueError,"minmax context"):
+                ci.validate_minmax_workload(text)
+        for text in ("",storage+storage,storage.replace("=1 ","=2 "),storage.replace("16384","8192")):
+            with self.assertRaisesRegex(ValueError,"cold control allocation"):
+                ci.validate_control_cold_storage(text)
+        for backend in ("vulkan-software","d3d12-warp"):
+            with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run"):
+                root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True);(root/"libretro").mkdir()
+                (root/"libretro/core_alu_spv.h").write_text("xe_alu_control_spv_build(\n#define XE_ALU_CONTROL_MINMAX 1\n")
+                (tests/("run_alu_program_tests.cmd" if ci.WIN else "run_alu_program_tests.sh")).touch()
+                (root/"log").write_text(marker+storage)
+                value=ci.validate_raw_program(root,root,root,root/"log",{},backend,control=True)
+                self.assertTrue(value["minmax_supported"])
+                self.assertEqual(value["minmax_context_cases"],5136 if backend.startswith("vulkan") else 0)
+                self.assertEqual(value["cold_control_allocations"],1)
+                (root/"log").write_text(storage)
+                if backend.startswith("vulkan"):
+                    with self.assertRaisesRegex(ValueError,"minmax context"):
+                        ci.validate_raw_program(root,root,root,root/"log",{},backend,control=True)
+                (root/"log").write_text(marker)
+                with self.assertRaisesRegex(ValueError,"cold control allocation"):
+                    ci.validate_raw_program(root,root,root,root/"log",{},backend,control=True)
 
     def test_control_program_historical_absence_is_explicit(self):
         with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run") as run:

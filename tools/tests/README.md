@@ -1895,3 +1895,21 @@ The full suite requires `REGISTER_CONTEXT replays=896 invocations=1792`; timed
 children retain the original three replays and no context execution. See
 `register_borrow_results.txt` for measurements, lifetime limits and remaining
 renderer work. No full audio/video or cold-play claim follows from this suite.
+
+Ordered MAX/MIN and cold storage
+-------------------------------
+
+The new5136 untimed replays cover vector/scalar MAX/MIN over every pair of16
+binary32 classes, vector masks/temp stores/modifiers, scalar history/P0/coissue
+source selection, both byte orders and consumed/unused relative operands. Literal
+bit goldens are independent of the SPIR-V implementation and native references
+run for valid records. Both zero signs compare equal; MAX takes A on ties, MIN B;
+unordered inputs take B. Source denormals flush with their sign before selection.
+Selected NaN payload bits are retained internally without claiming Xenos payload
+semantics. Other operations and stage/fetch/ROP behavior remain incomplete.
+
+CI requires `MINMAX_CONTEXT replays=5136 invocations=10272`. Cold construction
+requires `CONTROL_COLD_STORAGE allocations=1 capacity_words=16384`, including
+non-Vulkan unit runs. The allocation hook counts requests, not physical copied
+bytes: realloc can grow in place. Timed primary payloads stay unchanged and all
+existing gates remain. See `minmax_results.txt`; no retail fluidity is certified.

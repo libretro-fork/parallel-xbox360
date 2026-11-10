@@ -17,6 +17,11 @@ static void release(void *p){if(p)++frees;free(p);}
 #else
 #define XE_TEST_CONTROL_LOOPS 3u
 #endif
+#ifdef XE_ALU_CONTROL_MINMAX
+#define XE_TEST_CONTROL_FUNCTIONS 4u
+#else
+#define XE_TEST_CONTROL_FUNCTIONS 3u
+#endif
 int main(int argc,char **argv){
  int (*builders[3])(xe_spv_binary*)={xe_alu_spv_build,xe_alu_program_spv_build,xe_alu_control_spv_build};
  xe_spv_binary module={0},reference={0};uint32_t *owner;
@@ -25,7 +30,12 @@ int main(int argc,char **argv){
  for(mode=0;mode<(unsigned)argc-1;++mode){
   CHECK(!builders[mode](NULL));fail_next=1;
   CHECK(!builders[mode](&module));CHECK(!module.words && !module.count && module.failed);
-  CHECK(builders[mode](&module));CHECK(builders[mode](&reference));
+  before=allocations;CHECK(builders[mode](&module));
+#ifdef XE_ALU_CONTROL_MINMAX
+  CHECK(allocations==before+1);
+  if(mode==2)printf("CONTROL_COLD_STORAGE allocations=%u capacity_words=%lu\n",allocations-before,(unsigned long)module.capacity);
+#endif
+  CHECK(builders[mode](&reference));
   owner=module.words;words=module.count;warm=allocations;
   CHECK(words>5 && words<(mode==2?12288:mode?8192:4096) && owner[0]==0x07230203 && owner[1]==0x10000);
   functions=0;loops=0;
@@ -37,7 +47,7 @@ int main(int argc,char **argv){
    if(op==54)++functions;
    if(op==246)++loops;
   }
-  CHECK(at==words && functions==3 && loops==(mode==2?XE_TEST_CONTROL_LOOPS:mode?2u:0u));
+  CHECK(at==words && functions==(mode==2?XE_TEST_CONTROL_FUNCTIONS:3u) && loops==(mode==2?XE_TEST_CONTROL_LOOPS:mode?2u:0u));
   for(builds=0;builds<1000;++builds){
    CHECK(builders[mode](&module));CHECK(module.words==owner && module.count==words);
    CHECK(reference.count==words && !memcmp(module.words,reference.words,words*4));
