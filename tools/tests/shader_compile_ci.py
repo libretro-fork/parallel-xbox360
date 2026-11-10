@@ -122,6 +122,56 @@ def validate_raw_program(source, build, out, log, env, backend):
     return coverage
 
 
+def validate_loop_reference(source, build, out, log, env, backend):
+    """Keep the packed-program oracle's loop semantics under literal goldens."""
+    header=source / "libretro/core_shader_loop.h"
+    coverage=dict(available=header.is_file() and "xe_shader_loop_advance(" in header.read_text(),
+                  unit=False,native=False,vulkan_gpu=False)
+    if not coverage["available"]:
+        coverage["reason"]="historical interpreter predates corrected repeat-loop state"
+        return coverage
+    directory=out / "loop-correctness"
+    directory.mkdir(parents=True,exist_ok=True)
+    unit=directory / ("unit.exe" if WIN else "unit")
+    if WIN:
+        run(["cl","/nologo","/TC","/MD","/O2","/W4","/WX",
+             "/I"+str(source),"/I"+str(source / "third_party/libretro-common/include"),
+             HERE / "core_shader_loop_test.c","/Fo"+str(directory / "unit.obj"),"/Fe"+str(unit)],source,log,env)
+    else:
+        run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+             "-I"+str(source),"-I"+str(source / "third_party/libretro-common/include"),
+             HERE / "core_shader_loop_test.c","-o",unit],source,log,env)
+    run([unit],source,log,env,30)
+    fixture=env.copy()
+    fixture.update(FORWARD_FLOW_SOURCE=str(HERE / "core_shader_loop_gpu_fixture.c"),
+                   FORWARD_FLOW_BRIDGE=str(HERE / "shader_loop_accuracy_bridge.cc"),
+                   FORWARD_FLOW_OUT=str(directory))
+    if WIN:
+        fixture.update(FORWARD_FLOW_BUILD=str(build),FORWARD_FLOW_LINK_FLAGS="/CGTHREADS:"+str(JOBS))
+        run([os.environ.get("COMSPEC","cmd.exe"),"/d","/c",source / "tools/tests/run_forward_flow_tests.cmd"],source,log,fixture,240)
+    else:
+        fixture["CXX"]=env.get("CXX","c++")+" -Wl,--strip-debug"
+        fixture["SPIRV_VALIDATOR"]=shutil.which("spirv-val") or "spirv-val"
+        run(["sh",source / "tools/tests/run_forward_flow_tests.sh"],source,log,fixture,240)
+    coverage.update(unit=True,native=True,cases=7,
+                    pinned_fixture_sha256=file_sha256(HERE / "core_shader_loop_gpu_fixture.c"),
+                    pinned_bridge_sha256=file_sha256(HERE / "shader_loop_accuracy_bridge.cc"))
+    if backend.startswith("vulkan"):
+        runtime=directory / ("vulkan.exe" if WIN else "vulkan")
+        if WIN:
+            run(["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/D_CRT_SECURE_NO_WARNINGS",
+                 "/DXE_LOOP_ACCURACY_GPU_TEST","/DXE_VERTEX_TEST_CASES=7",
+                 "/I"+str(source / "third_party/Vulkan-Headers/include"),HERE / "core_shader_call_vulkan_test.c",
+                 "/Fo"+str(directory / "vulkan.obj"),"/Fe"+str(runtime)],source,log,env)
+        else:
+            run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+                 "-DXE_LOOP_ACCURACY_GPU_TEST","-DXE_VERTEX_TEST_CASES=7","-isystem",source / "third_party/Vulkan-Headers/include",
+                 HERE / "core_shader_call_vulkan_test.c","-ldl","-o",runtime],source,log,env)
+        run([runtime,directory],source,log,env,120)
+        coverage["vulkan_gpu"]=True
+    return coverage
+
+
 def prepare(source, out, results, backend, reuse_build=None):
     out.mkdir(parents=True,exist_ok=True)
     env = os.environ.copy()
@@ -143,6 +193,9 @@ def prepare(source, out, results, backend, reuse_build=None):
             run(["cmake", "--build", build, "--target", "xenia-libretro", "--parallel", JOBS], source, log, env)
         else:
             run(["make", "-j" + str(JOBS)], source, log, env)
+    loop_coverage=validate_loop_reference(source,build,out,log,env,backend)
+    (results/(source.name+"-"+out.parent.name+"-"+out.name+"-loops.json")).write_text(
+        json.dumps(loop_coverage,indent=2),encoding="utf-8")
     program_coverage=validate_raw_program(source,build,out,log,env,backend)
     (results/(source.name+"-"+out.parent.name+"-"+out.name+"-raw-program.json")).write_text(
         json.dumps(program_coverage,indent=2),encoding="utf-8")
@@ -445,7 +498,8 @@ def run_comparison(args):
         ["core_shader_compile_fixture.c","shader_call_fixture.h","shader_compile_bridge.cc",
          "shader_compile_vulkan_test.c","shader_compile_bench.h","shader_compile_ci.py",
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
-         "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c"]}
+         "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
+         "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc"]}
     manifest["corpus_contract"]=dict(version=8,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_frac_cases=64 if args.backend=="vulkan-hardware" else 0,

@@ -14,6 +14,38 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_loop_reference_historical_absence_is_explicit(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(ci,"run") as run:
+            root=Path(folder)
+            result=ci.validate_loop_reference(root,root,root,root/"log",{},"vulkan-software")
+            self.assertFalse(result["available"])
+            self.assertFalse(result["native"])
+            self.assertFalse(result["vulkan_gpu"])
+            run.assert_not_called()
+
+    def test_loop_reference_backend_and_pinned_inputs(self):
+        for windows,backend,gpu in [(False,"vulkan-software",True),(True,"d3d12-warp",False),(True,"vulkan-hardware",True)]:
+            with tempfile.TemporaryDirectory() as folder,patch.object(ci,"WIN",windows),patch.object(ci,"run") as run:
+                root=Path(folder);(root/"libretro").mkdir()
+                (root/"libretro/core_shader_loop.h").write_text("xe_shader_loop_advance(")
+                result=ci.validate_loop_reference(root,root/"build",root/"out",root/"log",{},backend)
+                self.assertTrue(result["unit"]);self.assertTrue(result["native"])
+                self.assertEqual(result["vulkan_gpu"],gpu)
+                fixture_calls=[call for call in run.call_args_list if len(call.args)>3 and
+                               "FORWARD_FLOW_SOURCE" in call.args[3]]
+                self.assertEqual(len(fixture_calls),1)
+                fixture=fixture_calls[0].args[3]
+                self.assertEqual(fixture["FORWARD_FLOW_SOURCE"],str(ci.HERE/"core_shader_loop_gpu_fixture.c"))
+                self.assertEqual(fixture["FORWARD_FLOW_BRIDGE"],str(ci.HERE/"shader_loop_accuracy_bridge.cc"))
+                if windows:self.assertEqual(fixture["FORWARD_FLOW_BUILD"],str(root/"build"))
+
+    def test_loop_reference_execution_failure_is_not_a_pass(self):
+        with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run",side_effect=subprocess.CalledProcessError(1,"unit")):
+            root=Path(folder);(root/"libretro").mkdir()
+            (root/"libretro/core_shader_loop.h").write_text("xe_shader_loop_advance(")
+            with self.assertRaises(subprocess.CalledProcessError):
+                ci.validate_loop_reference(root,root/"build",root/"out",root/"log",{},"vulkan-software")
+
     def raw_program_samples(self):
         keys={("raw_program."+x,0) for x in ("emit","module","compute_pso","compute_pso_warm")}
         keys.update(("raw_program.submit_complete",i) for i in range(3))

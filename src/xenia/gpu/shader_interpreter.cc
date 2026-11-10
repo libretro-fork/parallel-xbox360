@@ -133,7 +133,8 @@ void ShaderInterpreter::Execute() {
             register_file_[XE_GPU_REG_SHADER_CONSTANT_LOOP_00 +
                            cf_loop_start.loop_id()];
         if (!xe_shader_loop_enter(&state_.loop_stack_depth, state_.loop_constants,
-                                  state_.loop_iterators, loop_constant,
+                                  state_.loop_remaining, state_.loop_addresses,
+                                  loop_constant,
                                   cf_loop_start.is_repeat())) {
           cf_index_next = cf_loop_start.address();
         }
@@ -158,15 +159,14 @@ void ShaderInterpreter::Execute() {
                         &register_file_[XE_GPU_REG_SHADER_CONSTANT_LOOP_00 +
                                         cf_loop_end.loop_id()],
                         sizeof(loop_constant)));
-        uint32_t loop_iterator =
-            ++state_.loop_iterators[state_.loop_stack_depth - 1];
-        if (loop_iterator < loop_constant.count &&
-            (!cf_loop_end.is_predicated_break() ||
-             cf_loop_end.condition() != state_.predicate)) {
+        if (xe_shader_loop_advance(&state_.loop_stack_depth,
+                                  state_.loop_constants, state_.loop_remaining,
+                                  state_.loop_addresses,
+                                  cf_loop_end.is_predicated_break() &&
+                                      cf_loop_end.condition() == state_.predicate)) {
           cf_index_next = cf_loop_end.address();
           continue;
         }
-        --state_.loop_stack_depth;
       } break;
 
       case ucode::ControlFlowOpcode::kCondCall: {

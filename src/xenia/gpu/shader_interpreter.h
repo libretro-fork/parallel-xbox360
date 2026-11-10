@@ -76,7 +76,8 @@ class ShaderInterpreter {
     uint32_t call_return_addresses[4];
     uint32_t loop_stack_depth;
     uint32_t loop_constants[4];
-    uint32_t loop_iterators[4];
+    uint32_t loop_remaining[4];
+    int32_t loop_addresses[4];
     int32_t address_register;
     bool predicate;
 
@@ -85,8 +86,7 @@ class ShaderInterpreter {
     int32_t GetLoopAddress() const {
       assert_true(loop_stack_depth && loop_stack_depth <= 4);
       // aL is the innermost live entry; the fifth entry is never accessible.
-      return xe_shader_loop_address(loop_stack_depth, loop_constants,
-                                    loop_iterators);
+      return xe_shader_loop_address(loop_stack_depth, loop_addresses);
     }
   };
 

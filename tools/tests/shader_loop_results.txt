@@ -1,5 +1,10 @@
 Shader interpreter loop stack (0178)
 ===================================
+Historical report: the retained-iterator repeat policy described below was
+incorrect. It is superseded by shader_repeat_loop_results.txt and explicit
+current-address/remaining-count state. The existing +/-256 CPU clamp and
+empty-loop no-push policy remain, pending separate hardware verification.
+
 Behavior reference: has207 Edge commit 990bfd85948abe6ec1066c71a5ff54601ce25d0c,
 reviewed through WizzardSK/xenia-libretro. Independent bounded C89 adaptation;
 no upstream history cherry-pick and no renderer/shader-cache format change.

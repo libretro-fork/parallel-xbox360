@@ -1665,3 +1665,24 @@ counts, devices or a removed candidate fail. The introducing revision has no
 historical kernel: its initial cost is explicitly uncompared, not a fabricated
 parent pass. Retail cold-play, renderer integration and full semantics remain
 unverified. See `alu_program_results.txt`.
+
+Repeat-loop reference correctness
+-------------------------------
+
+`core_shader_loop_test.c` checks bounded C89 stack ownership and every address
+in all 256 starts * 256 signed steps * 255 iterations, retaining the existing
+CPU address clamp. `run_shader_loop_native_tests.cmd` / `.sh` also execute
+actual packed microcode through the CPU interpreter. No GPU-addressing claim
+is made for out-of-window temporary references.
+
+Shader comparison CI additionally runs seven literal packed-program goldens
+from `core_shader_loop_gpu_fixture.c` through the actual CPU interpreter and
+Vulkan vertex translator, then transform-feedback execution on Vulkan jobs.
+Windows WARP jobs run the CPU/emitter part; these new cases are not D3D12
+execution coverage. The same harness fixture and typed bridge are pinned for
+each supported revision. Earlier revisions explicitly report missing corrected
+repeat-loop coverage, rather than fabricate a pass. Unit/CPU/GPU failures stop
+the comparison before timing. Fixtures cover signed steps within initialized
+register bounds, repeat inheritance, all four nesting levels, root repeat and
+slot reuse. They preserve the shader's CF and add only Xfb annotations.
+See `shader_repeat_loop_results.txt` for evidence and remaining limits.

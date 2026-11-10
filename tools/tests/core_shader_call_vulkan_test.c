@@ -171,6 +171,14 @@ int main(int argc,char **argv) {
  barrier.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER;
  for(which=0;which<XE_VERTEX_TEST_CASES;++which){
   ((uint32_t*)((unsigned char*)buffers[0].mapped+2048))[0]=(which>=5 && which<10)?1u:0u;
+#ifdef XE_LOOP_ACCURACY_GPU_TEST
+  sprintf(path,"%s/call%u.input",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
+  i=(uint32_t)fread((unsigned char*)buffers[0].mapped+1024,1,96,file);
+  j=(uint32_t)fgetc(file);fclose(file);if(i!=96 || j!=(uint32_t)EOF)goto done;
+  sprintf(path,"%s/call%u.loops",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
+  i=(uint32_t)fread((unsigned char*)buffers[0].mapped+2080,1,128,file);
+  j=(uint32_t)fgetc(file);fclose(file);if(i!=128 || j!=(uint32_t)EOF)goto done;
+#endif
 #ifdef XE_FLOAT_RTZ_GPU_TEST
   sprintf(path,"%s/call%u.input",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
   i=(uint32_t)fread((unsigned char*)buffers[0].mapped+1024,1,48,file);

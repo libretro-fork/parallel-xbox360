@@ -1,0 +1,94 @@
+Repeat-loop reference and control-flow validation (2026-11-10)
+============================================================
+Parent: 7f99808312b4d307d20a5856d6166f4a3fa9eb42.
+
+The CPU ShaderInterpreter is used by DrawExtentEstimator, and also supplies
+reference results for the raw packed-program validation kernel. Its LOOP_START
+helper previously treated REPEAT as permission to retain an iterator in the
+new stack slot. That both selected the new constant's start rather than the
+enclosing current aL, and skipped a later repeat after a reused slot had already
+completed its count. The existing SPIR-V and native DXIL emitters instead inherit
+the enclosing current address and initialize a new count.
+
+Keep four fixed entries, each with its original packed constant, remaining
+iterations and explicit current address. Enter initializes a private slot before
+publishing depth. LOOP_END updates only the current entry or pops it. Each aL
+read now borrows the stored address instead of multiplying an iterator by step.
+There is no allocation, shader payload copy, lock, timer or GPU synchronization.
+The CPU state adds sixteen fixed bytes; no dynamic capacity is introduced.
+This is a correctness repair, not a measured draw-extent throughput claim.
+
+Independent literal fixture:
+  Outer count2/start5/step2, inner REPEAT count3/start99/step-1.
+  With an export after the inner loop, expected X values are
+  5.25,4.25,3.25,5.25,7.25,6.25,5.25,7.25.
+  The inner start99 is ignored and a reused inner slot restarts its own count.
+
+The seven additional packed vertex shaders use explicit float and loop banks,
+initialized temporary-register windows and independent literal four-lane
+expected values/export counts. They cover signed steps, root repeat, nested
+repeat, all four stack levels and sequential reuse of a repeat slot. The typed
+bridge only supplies Memory/RegisterFile/ExportSink interfaces. Packing, scenarios
+and goldens are C89; fixture writes use libretro-common VFS. The production
+translator receives the actual packed shader, with Xfb annotations added afterward
+without altering its CF. Vulkan execution checks all four output words plus
+feedback-buffer redzones. No retail shader or game asset is in the fixtures.
+
+Do not overextend the oracle:
+- The existing CPU +/-256 aL clamp is retained. An initial unclamped experiment
+  failed the parent trace but does not prove a parent hardware defect, so it was
+  rejected. Preliminary sequencer comments and GPU register-window policy are
+  not conclusive hardware proof for out-of-window relative references.
+- Existing Vulkan temporary-window bounds differ from the CPU's index wrapping
+  outside that window. An exploratory out-of-window fixture exposed this; it is
+  not silently treated as equivalent or changed here. GPU goldens only address
+  initialized in-range temporaries.
+- Existing CPU empty-loop no-push and fifth-level rejection are retained.
+  Zero-count GPU stack effects and full Xenos hardware conformance need separate
+  evidence. No nested-empty shader that might hang a GPU is dispatched.
+- Native DXIL loop emission was inspected, not modified. These new seven cases
+  have CPU/SPIR-V/Vulkan execution coverage, not D3D12 execution coverage.
+
+CI pins the current C89 fixture and typed bridge while compiling against each
+actual revision. It runs bounded C89 unit checks and native packed goldens before
+timing; Vulkan jobs also execute the seven shaders. WARP jobs retain explicit
+CPU/emitter-only coverage for this suite. Historical absence of corrected state
+is reported unavailable, not passed. Unit/fixture/GPU errors propagate, source
+hashes and coverage reports are retained, and existing performance thresholds
+are unchanged. The corrected CPU is still not a ready accurate GPU fallback.
+Draw-path translation, module/PSO creation and compilation waits remain unresolved.
+
+Validation (frozen source; no installed core, game or live cache touched):
+- MSVC Release no-LTO full core, --parallel3: PASS.
+- GNU static Makefile Release full core, make -j3: PASS.
+- MSVC /TC /O2 /W4 /WX and GCC strict C89 helper/native fixtures: PASS.
+- GCC ASan+UBSan helper checks: PASS, including 16,711,680 legal addresses,
+  bounded entry/exit/break ownership and corrupted-address overflow guards.
+- Full exact parent, separately built with both LTO on and off, plus the same
+  current packed fixture/public typed bridge: runtime FAIL at case3, 3 exports
+  instead of6. This is a semantic failure, not a compile or link failure.
+- Corrected CPU and seven real translated VS outputs/redzones on RTX5090
+  driver32.0.16.2101 and llvmpipe LLVM20.1.2: PASS. Official spirv-val Vulkan1.1
+  validates the Linux-generated original and Xfb-annotated modules.
+- CI hook actual execution: Windows CPU/emitter coverage and RTX5090 Vulkan,
+  plus Linux/llvmpipe Vulkan: PASS. All38 Python guardrail tests: PASS.
+- Standard CI preparation against full matching no-LTO parent/candidate builds
+  also passes existing subroutine, 704 numeric-GPU and raw packed-program checks.
+- Generated modules in the eight-profile procedural corpus are byte-identical
+  between actual parent and candidate. Seven fresh alternating process pairs on
+  the idle host pass all768 main shader/PSO metrics and five controlled raw-kernel
+  metrics under the existing thresholds, with no tolerance changes. All seven raw
+  initialization/completion observations remain retained; their initial driver
+  cache condition remains UNVERIFIED. Fourteen per-process raw module captures
+  match the prepared module. Wall/CPU samples and source hashes are retained.
+- An initial parent CMake setup enabled LTO while the existing candidate disabled
+  it. Preparation was cancelled before timing, and retained as rejected evidence.
+  Acceptance uses rebuilt parent/candidate with XENIA_ENABLE_LTO=OFF on both.
+
+Private evidence: C:/git/accurate-shader-fallback/loop-reference, especially
+paired-matched/results. The report has frozen hashes for runtime and fixture
+sources, actual first-parent identity, per-case samples/tails and failures.
+CI continues the first-parent comparisons; remote completion is tracked separately.
+No retail-game accuracy/smoothness, FPS improvement, full-hardware conformance,
+D3D12 execution coverage for the new seven cases, or draw-path compliance is
+claimed. The broad renderer goal remains active.

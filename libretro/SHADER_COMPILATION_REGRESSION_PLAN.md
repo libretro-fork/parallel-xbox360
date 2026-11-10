@@ -822,3 +822,12 @@ Deletion, missing samples/metrics, mismatched devices and ABI failures are not
 passes. No initialization or microkernel result certifies correct first draws,
 frame tails or the zero critical-thread compilation/wait requirement. Existing
 renderer violations remain unresolved; see `tools/tests/alu_program_results.txt`.
+
+Before expanding generic control flow, the CPU reference must match independent
+literal packed-program goldens. Repeat loops now inherit the enclosing current
+aL and restart their own count; bounded C89 state replaces stale slot iterators.
+CI runs seven CPU/real translated-Vulkan loop cases before timing, with explicit
+historical absence and separately reported backend coverage. This repairs the
+draw-extent interpreter and its use as an oracle, not the missing ready renderer
+fallback. Out-of-window GPU addressing, zero-count loop stack effects and full
+hardware equivalence remain separate unresolved validation work.

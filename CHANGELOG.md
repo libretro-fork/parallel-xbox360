@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fix repeat-loop addressing in the CPU shader interpreter used for draw-extent estimation. Repeated inner loops now inherit the enclosing current address and restart their own iteration count, including reused stack slots. Add literal packed-program and real Vulkan execution regressions to shader CI; accurate ready rendering fallbacks remain unfinished.
+
 - Add a C89 raw SPIR-V packed-program validation kernel and GPU regressions for dependent masked registers, coissue, scalar history, partial position exports and borrowed bytecode in either byte order. Shader CI records its initialization/completion timings and gates comparable revisions. This foundation is not linked or selected by the renderer; draw-path compilation and accurate fallback coverage remain unfinished.
 
 - Fix absolute-value modifiers on constant operands in the CPU shader interpreter used for draw-extent estimation, including scalar constant/register instructions. Read selected source lanes from checked borrowed constant views instead of copying whole vectors.
