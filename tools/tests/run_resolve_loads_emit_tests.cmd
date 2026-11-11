@@ -26,7 +26,7 @@ cl %RESOLVE_EMIT_FLAGS% /nologo /MD %OUT%\test.obj %OUT%\static_emitters.obj %OU
 if errorlevel 1 goto fail
 %OUT%\spv-test.exe %OUT%/spv
 if errorlevel 1 goto fail
-set DXINC=/I. /Itools/tests /Isrc/xenia/gpu/dxil /Isrc/xenia/gpu/dxil/bytecode
+set DXINC=/I. /Itools/tests /Ithird_party/libretro-common/include /Isrc/xenia/gpu/dxil /Isrc/xenia/gpu/dxil/bytecode
 for %%S in (src\xenia\gpu\dxil\*.c src\xenia\gpu\dxil\bytecode\*.c) do (
  if not "%%~nxS"=="edram_dump.c" (
   cl %RESOLVE_EMIT_FLAGS% /nologo /TC /MD /O2 /DNDEBUG %DXINC% /c %%S /Fd%OUT%\dxil-objects\%%~nS.pdb /Fo%OUT%\dxil-objects\%%~nS.obj
