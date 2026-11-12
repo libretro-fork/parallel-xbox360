@@ -20,7 +20,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "libretro/core_primitive_builtin.h"
+#include "libretro/core_primitive_ranges.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/math.h"
@@ -673,26 +673,17 @@ class PrimitiveProcessor {
   // post-conversion index count and the actual conversion if the game for some
   // reason modifies the index buffer between the two and adds or removes reset
   // indices in it.
-  struct SinglePrimitiveRange {
-    SinglePrimitiveRange(uint32_t guest_offset, uint32_t guest_index_count,
-                         uint32_t host_index_count)
-        : guest_offset(guest_offset),
-          guest_index_count(guest_index_count),
-          host_index_count(host_index_count) {}
-    uint32_t guest_offset;
-    uint32_t guest_index_count;
-    uint32_t host_index_count;
-  };
+  using SinglePrimitiveRange = xe_primitive_range;
   static uint32_t GetMultiPrimitiveHostIndexCountAndRanges(
       xe_primitive_index_count single_primitive_guest_to_host_count,
       const uint16_t* source, uint32_t source_index_count,
       uint16_t reset_index_guest_endian,
-      std::deque<SinglePrimitiveRange>& ranges_append_out);
+      xe_primitive_ranges& ranges_append_out);
   static uint32_t GetMultiPrimitiveHostIndexCountAndRanges(
       xe_primitive_index_count single_primitive_guest_to_host_count,
       const uint32_t* source, uint32_t source_index_count,
       uint32_t reset_index_guest_endian, uint32_t low_bits_mask_guest_endian,
-      std::deque<SinglePrimitiveRange>& ranges_append_out);
+      xe_primitive_ranges& ranges_append_out);
 
   template <typename Index, typename IndexTransform,
             typename PrimitiveRangeIterator>
@@ -760,7 +751,7 @@ class PrimitiveProcessor {
   size_t builtin_ib_offset_quad_lists_to_triangle_lists_ = SIZE_MAX;
   size_t builtin_ib_offset_triangle_strips_to_lists_ = SIZE_MAX;
 
-  std::deque<SinglePrimitiveRange> single_primitive_ranges_;
+  xe_primitive_ranges single_primitive_ranges_ = {};
 
   // Caching for reuse of converted indices within a frame.
 

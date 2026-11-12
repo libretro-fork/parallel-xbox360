@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Reuse bounded primitive-restart metadata storage instead of allocating deque blocks while processing draws. Retain each draw's segmentation snapshot and borrow the original index payload; neither renderer gains a staging copy. Allocate 262,140 bytes once per primitive processor and release it even when initialization fails. Add capacity, lifetime, allocation-failure and repeated-reuse tests, plus an exact-parent CPU comparison harness. This does not remove other draw-path allocations or compilation.
+
 - Flush Vulkan built-in primitive indices through their mapped upload allocation and propagate noncoherent flush failures before publishing the buffer. Remove primitive-processing `std::function` wrappers: built-in patterns fill the final mapped storage with a checked C89 writer, and topology counts use plain function pointers. Preserve the existing index patterns, required upload copy and completion lifetimes.
 
 - Fix signed overflow in CPU shader-interpreter vertex-fetch addresses. Signed instruction offsets now use defined 32-bit wrapping addition before the existing buffer bounds and physical-mirror checks. Add literal/random address checks and packed full/mini-fetch regression programs, including production-interpreter UBSan coverage in Linux CI. This does not change float-to-index conversion or establish accurate GPU fallback coverage.

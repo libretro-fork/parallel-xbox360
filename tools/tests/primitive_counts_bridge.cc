@@ -1,5 +1,7 @@
 /* Existing primitive-range implementations through a typed test ABI only. */
 #include "xenia/gpu/primitive_processor.h"
+#include "primitive_counts_protocol.h"
+#include <new>
 DECLARE_bool(force_convert_triangle_fans_to_lists);
 DECLARE_bool(force_convert_line_loops_to_strips);
 DECLARE_bool(force_convert_quad_lists_to_triangle_lists);
@@ -8,21 +10,47 @@ namespace xe {
 namespace gpu {
 class PrimitiveProcessorTestAccess : public PrimitiveProcessor {
  public:
-  static uint32_t Run(unsigned topology,unsigned width,const void* source,
+  struct Context {
+#ifdef XE_PRIMITIVE_FIXED_RANGES
+    xe_primitive_ranges ranges={};
+    bool valid;
+    Context():valid(xe_primitive_ranges_init(&ranges)!=0) {}
+    ~Context() { xe_primitive_ranges_close(&ranges); }
+#else
+    std::deque<SinglePrimitiveRange> ranges;
+    bool valid=true;
+#endif
+  };
+  static uint32_t Run(Context& context,unsigned topology,unsigned width,const void* source,
       unsigned count,uint32_t reset,uint32_t mask,uint32_t* output,
       unsigned capacity,unsigned* used) {
     const xe_primitive_index_count getters[4]={GetTriangleFanListIndexCount,
         GetLineLoopStripIndexCount,GetQuadListTriangleListIndexCount,
         GetTriangleStripListIndexCount};
-    if(topology>=4 || (width!=2 && width!=4))return UINT32_MAX;
-    std::deque<SinglePrimitiveRange> ranges;
+    if(!context.valid || !used || topology>=4 || (width!=2 && width!=4) ||
+       count>65535 || (count && (!source || (uintptr_t(source)&(width-1)))))return UINT32_MAX;
+    auto& ranges=context.ranges;
+#ifdef XE_PRIMITIVE_FIXED_RANGES
+    xe_primitive_ranges_clear(&ranges);
+#else
+    ranges.clear();
+#endif
     uint32_t total=width==2?GetMultiPrimitiveHostIndexCountAndRanges(
         getters[topology],static_cast<const uint16_t*>(source),count,
         uint16_t(reset),ranges):GetMultiPrimitiveHostIndexCountAndRanges(
         getters[topology],static_cast<const uint32_t*>(source),count,reset,mask,ranges);
-    if(ranges.size()>capacity)return UINT32_MAX;
+#ifdef XE_PRIMITIVE_FIXED_RANGES
+    if(total==UINT32_MAX || (output && ranges.count>capacity))return UINT32_MAX;
+    *used=ranges.count;
+    if(!output)return total;
+    for(unsigned i=0;i<ranges.count;++i) {
+      const auto& range=ranges.data[i];
+#else
+    if(output && ranges.size()>capacity)return UINT32_MAX;
     *used=unsigned(ranges.size());
+    if(!output)return total;
     for(const auto& range:ranges) {
+#endif
       *output++=range.guest_offset;*output++=range.guest_index_count;
       *output++=range.host_index_count;
     }
@@ -34,7 +62,33 @@ class PrimitiveProcessorTestAccess : public PrimitiveProcessor {
 extern "C" uint32_t xe_primitive_count_ranges(unsigned topology,unsigned width,
     const void* source,unsigned count,uint32_t reset,uint32_t mask,
     uint32_t* output,unsigned capacity,unsigned* used) {
-  return xe::gpu::PrimitiveProcessorTestAccess::Run(topology,width,source,count,reset,mask,output,capacity,used);
+  xe::gpu::PrimitiveProcessorTestAccess::Context context;
+  return xe::gpu::PrimitiveProcessorTestAccess::Run(context,topology,width,source,count,reset,mask,output,capacity,used);
+}
+extern "C" void* xe_primitive_counts_open() {
+  try {
+    auto* context=new xe::gpu::PrimitiveProcessorTestAccess::Context;
+    if(!context->valid) { delete context;return nullptr; }
+    return context;
+  } catch(...) { return nullptr; }
+}
+extern "C" void xe_primitive_counts_close(void* context) {
+  delete static_cast<xe::gpu::PrimitiveProcessorTestAccess::Context*>(context);
+}
+extern "C" unsigned xe_primitive_counts_kind() {
+#ifdef XE_PRIMITIVE_FIXED_RANGES
+  return 2;
+#else
+  return 1;
+#endif
+}
+extern "C" uint32_t xe_primitive_counts_run(void* context,unsigned topology,
+    unsigned width,const void* source,unsigned count,uint32_t reset,uint32_t mask,
+    uint32_t* output,unsigned capacity,unsigned* used) {
+  if(!context)return UINT32_MAX;
+  return xe::gpu::PrimitiveProcessorTestAccess::Run(
+      *static_cast<xe::gpu::PrimitiveProcessorTestAccess::Context*>(context),
+      topology,width,source,count,reset,mask,output,capacity,used);
 }
 class PrimitiveSharedMemory final : public xe::gpu::SharedMemory {
  public:

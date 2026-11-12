@@ -85,9 +85,7 @@ static void rejection(void)
    for(i=0;i<STORAGE_BYTES;++i)CHECK(((unsigned char*)storage)[i]==0x6d);
 }
 #ifdef XE_PRIMITIVE_NATIVE
-extern uint32_t xe_primitive_count_ranges(unsigned,unsigned,const void*,unsigned,
-      uint32_t,uint32_t,uint32_t*,unsigned,unsigned*);
-extern int xe_primitive_initialize(unsigned,void*,size_t,xe_primitive_builtin_layout*,size_t*,unsigned*,int);
+#include "primitive_counts_protocol.h"
 static uint16_t indices16[512];
 static uint32_t indices32[512],rows[512*3],golden[512*3];
 static unsigned host_count(unsigned topology,unsigned count)
@@ -161,6 +159,25 @@ static void ranges(void)
       }
    puts("PASS: 2048 actual 16/32-bit primitive range/count cases and output guards");
 }
+static void persistent(void)
+{
+   void *context=xe_primitive_counts_open();
+   unsigned i,used=123;
+   CHECK(context);
+   CHECK(xe_primitive_counts_run(NULL,0,2,NULL,0,0,0,NULL,0,&used)==UINT32_MAX && used==123);
+   for(i=0;i<512;++i)indices16[i]=i%3==2?UINT16_MAX:(uint16_t)(i+1);
+   for(i=0;i<128;++i) {
+      memset(rows,0x6d,sizeof(rows));used=123;
+      CHECK(xe_primitive_counts_run(context,1,2,indices16,510,UINT16_MAX,UINT16_MAX,rows,512,&used)==510 && used==170);
+      CHECK(rows[0]==0 && rows[1]==2 && rows[2]==3 && rows[507]==507 && rows[508]==2 && rows[509]==3);
+      CHECK(rows[510]==UINT32_C(0x6d6d6d6d));
+      CHECK(xe_primitive_counts_run(context,1,2,indices16,510,UINT16_MAX,UINT16_MAX,NULL,0,&used)==510 && used==170);
+   }
+   used=123;
+   CHECK(xe_primitive_counts_run(context,1,2,indices16,65536,0,0,NULL,0,&used)==UINT32_MAX && used==123);
+   xe_primitive_counts_close(context);xe_primitive_counts_close(NULL);
+   puts("PASS: persistent actual range owner, 256 warm calls, no-copy measurement mode and invalid context/bounds");
+}
 #endif
 int main(void)
 {
@@ -170,7 +187,7 @@ int main(void)
    for(mask=0;mask<16;++mask)for(i=0;i<sizeof(counts)/sizeof(counts[0]);++i)pattern(mask,counts[i]);
    rejection();puts("PASS: 80 primitive upload layouts, every emitted index, gaps/guards and preflight rejection");
 #ifdef XE_PRIMITIVE_NATIVE
-   ranges();initialization();
+   ranges();initialization();persistent();
 #endif
    free(storage);
    return 0;

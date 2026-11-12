@@ -351,6 +351,11 @@ Built-in primitive indices fill their mapped upload allocation directly through
 a C89 writer with checked ranges. The immutable layout is borrowed only during
 initialization; no callable owns it. Vulkan flushes that upload allocation and
 rejects flush failure before publication. The required GPU upload copy remains.
+Primitive-restart metadata uses a retained C89 array sized to the guest draw
+limit, with one 262,140-byte initialization allocation. Converters borrow its
+immutable rows while retaining the original index payload; clearing a draw
+does not free storage or rescan potentially changed reset markers. See
+[range ownership checks and comparison protocol](tools/tests/primitive_ranges_results.txt).
 The CPU shader interpreter uses defined 32-bit wrapping vertex-fetch address
 addition, with signed-offset full/mini-fetch regression tests and Linux UBSan
 coverage. Existing buffer bounds and physical-mirror checks remain in place;

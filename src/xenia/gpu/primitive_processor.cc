@@ -130,6 +130,9 @@ bool PrimitiveProcessor::InitializeCommon(
   expand_rectangle_lists_in_vs_ =
       !rectangle_lists_supported_without_vs_expansion;
 
+  // Retain restart segmentation without allocating range blocks during draws.
+  if (!xe_primitive_ranges_init(&single_primitive_ranges_)) return false;
+
   // Initialize the index buffer for conversion of auto-indexed primitive types.
   size_t builtin_index_buffer_size = 0;
   // 32-bit, before 16-bit due to alignment (for primitive expansion - when the
@@ -219,6 +222,9 @@ void PrimitiveProcessor::ShutdownCommon() {
     memory_invalidation_callback_handle_ = nullptr;
     cache_entry_pool_.clear();
   }
+  // The cache may never have registered an invalidation callback. Range storage
+  // is owned independently and also closes on initialization failure.
+  xe_primitive_ranges_close(&single_primitive_ranges_);
 }
 
 void PrimitiveProcessor::ClearPerFrameCache() {
@@ -738,7 +744,7 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
             assert_unhandled_case(guest_primitive_type);
             return false;
         }
-        single_primitive_ranges_.clear();
+        xe_primitive_ranges_clear(&single_primitive_ranges_);
         if (guest_index_format == xenos::IndexFormat::kInt16) {
           // 16-bit indices - just convert the primitive (or multiple
           // primitives) to the host topology.
@@ -758,11 +764,12 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
                     guest_draw_vertex_count,
                     guest_primitive_reset_index_guest_endian,
                     single_primitive_ranges_);
+            if (cacheable.host_draw_vertex_count == UINT32_MAX) return false;
           } else {
             cacheable.host_draw_vertex_count =
                 host_index_count_getter(guest_draw_vertex_count);
-            single_primitive_ranges_.emplace_back(
-                0, guest_draw_vertex_count, cacheable.host_draw_vertex_count);
+            if (!xe_primitive_ranges_push(&single_primitive_ranges_, 0,
+                    guest_draw_vertex_count, cacheable.host_draw_vertex_count)) return false;
           }
           auto host_indices = reinterpret_cast<uint16_t*>(
               RequestHostConvertedIndexBufferForCurrentFrame(
@@ -773,8 +780,8 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
           }
           ConvertSinglePrimitiveRanges(
               host_indices, guest_indices, guest_primitive_type,
-              PassthroughIndexTransform(), single_primitive_ranges_.cbegin(),
-              single_primitive_ranges_.cend());
+              PassthroughIndexTransform(), static_cast<const SinglePrimitiveRange*>(single_primitive_ranges_.data),
+              static_cast<const SinglePrimitiveRange*>(single_primitive_ranges_.data) + single_primitive_ranges_.count);
         } else {
           // 32-bit indices - may need to pre-swap and pre-mask also if the host
           // doesn't support full 32-bit vertex indices.
@@ -792,11 +799,12 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
                     guest_draw_vertex_count,
                     guest_primitive_reset_index_guest_endian,
                     guest_index_mask_guest_endian, single_primitive_ranges_);
+            if (cacheable.host_draw_vertex_count == UINT32_MAX) return false;
           } else {
             cacheable.host_draw_vertex_count =
                 host_index_count_getter(guest_draw_vertex_count);
-            single_primitive_ranges_.emplace_back(
-                0, guest_draw_vertex_count, cacheable.host_draw_vertex_count);
+            if (!xe_primitive_ranges_push(&single_primitive_ranges_, 0,
+                    guest_draw_vertex_count, cacheable.host_draw_vertex_count)) return false;
           }
           auto host_indices = reinterpret_cast<uint32_t*>(
               RequestHostConvertedIndexBufferForCurrentFrame(
@@ -806,8 +814,8 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
             return false;
           }
           auto single_primitive_ranges_beginning =
-              single_primitive_ranges_.cbegin();
-          auto single_primitive_ranges_end = single_primitive_ranges_.cend();
+              static_cast<const SinglePrimitiveRange*>(single_primitive_ranges_.data);
+          auto single_primitive_ranges_end = static_cast<const SinglePrimitiveRange*>(single_primitive_ranges_.data) + single_primitive_ranges_.count;
           if (full_32bit_vertex_indices_used_) {
             ConvertSinglePrimitiveRanges(
                 host_indices, guest_indices, guest_primitive_type,
@@ -1369,73 +1377,20 @@ uint32_t PrimitiveProcessor::GetMultiPrimitiveHostIndexCountAndRanges(
     xe_primitive_index_count single_primitive_guest_to_host_count,
     const uint16_t* source, uint32_t source_index_count,
     uint16_t reset_index_guest_endian,
-    std::deque<SinglePrimitiveRange>& ranges_append_out) {
-  uint32_t host_total_index_count = 0;
-  uint32_t guest_index_offset = 0;
-  for (;;) {
-    uint32_t guest_primitive_offset = guest_index_offset;
-    while (guest_index_offset < source_index_count) {
-      if (source[guest_index_offset] == reset_index_guest_endian) {
-        break;
-      }
-      ++guest_index_offset;
-    }
-    // Reset encountered or end of the index buffer - add the range.
-    uint32_t guest_primitive_index_count =
-        guest_index_offset - guest_primitive_offset;
-    uint32_t host_primitive_index_count =
-        single_primitive_guest_to_host_count(guest_primitive_index_count);
-    if (host_primitive_index_count) {
-      ranges_append_out.emplace_back(guest_primitive_offset,
-                                     guest_primitive_index_count,
-                                     host_primitive_index_count);
-      host_total_index_count += host_primitive_index_count;
-    }
-    if (guest_index_offset >= source_index_count) {
-      // End of the index buffer.
-      break;
-    }
-    // Reset index encountered - skip.
-    ++guest_index_offset;
-  }
-  return host_total_index_count;
+    xe_primitive_ranges& ranges_append_out) {
+  return xe_primitive_ranges_append(&ranges_append_out,
+      single_primitive_guest_to_host_count, source, source_index_count,
+      sizeof(*source), reset_index_guest_endian, UINT16_MAX);
 }
 
 uint32_t PrimitiveProcessor::GetMultiPrimitiveHostIndexCountAndRanges(
     xe_primitive_index_count single_primitive_guest_to_host_count,
     const uint32_t* source, uint32_t source_index_count,
     uint32_t reset_index_guest_endian, uint32_t low_bits_mask_guest_endian,
-    std::deque<SinglePrimitiveRange>& ranges_append_out) {
-  uint32_t host_total_index_count = 0;
-  uint32_t guest_index_offset = 0;
-  for (;;) {
-    uint32_t guest_primitive_offset = guest_index_offset;
-    while (guest_index_offset < source_index_count) {
-      if ((source[guest_index_offset] & low_bits_mask_guest_endian) ==
-          reset_index_guest_endian) {
-        break;
-      }
-      ++guest_index_offset;
-    }
-    // Reset encountered or end of the index buffer - add the range.
-    uint32_t guest_primitive_index_count =
-        guest_index_offset - guest_primitive_offset;
-    uint32_t host_primitive_index_count =
-        single_primitive_guest_to_host_count(guest_primitive_index_count);
-    if (host_primitive_index_count) {
-      ranges_append_out.emplace_back(guest_primitive_offset,
-                                     guest_primitive_index_count,
-                                     host_primitive_index_count);
-      host_total_index_count += host_primitive_index_count;
-    }
-    if (guest_index_offset >= source_index_count) {
-      // End of the index buffer.
-      break;
-    }
-    // Reset index encountered - skip.
-    ++guest_index_offset;
-  }
-  return host_total_index_count;
+    xe_primitive_ranges& ranges_append_out) {
+  return xe_primitive_ranges_append(&ranges_append_out,
+      single_primitive_guest_to_host_count, source, source_index_count,
+      sizeof(*source), reset_index_guest_endian, low_bits_mask_guest_endian);
 }
 
 PrimitiveProcessor::CacheTransaction::CacheTransaction(
