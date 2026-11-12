@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fix the Linux ARM64 vertex-address sanitizer check selecting an x86-only compiler flag. Select AVX only for x86-64 compiler targets, preserving the production-interpreter UBSan check on ARM64 and cross-compilers.
+
 - Reuse bounded primitive-restart metadata storage instead of allocating deque blocks while processing draws. Retain each draw's segmentation snapshot and borrow the original index payload; neither renderer gains a staging copy. Allocate 262,140 bytes once per primitive processor and release it even when initialization fails. Add capacity, lifetime, allocation-failure and repeated-reuse tests, plus an exact-parent CPU comparison harness. This does not remove other draw-path allocations or compilation.
 
 - Flush Vulkan built-in primitive indices through their mapped upload allocation and propagate noncoherent flush failures before publishing the buffer. Remove primitive-processing `std::function` wrappers: built-in patterns fill the final mapped storage with a checked C89 writer, and topology counts use plain function pointers. Preserve the existing index patterns, required upload copy and completion lifetimes.
