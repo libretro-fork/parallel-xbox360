@@ -40,6 +40,7 @@
 #include "xenia/ui/d3d12/d3d12_provider.h"
 #include "xenia/ui/d3d12/d3d12_upload_buffer_pool.h"
 #include "xenia/ui/d3d12/d3d12_util.h"
+#include "libretro/core_transfer_uint_d3d12.h"
 
 namespace xe {
 namespace gpu {
@@ -670,6 +671,7 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
       transfer_vertex_buffer_pool_;
 
   XeDxilShaderBinary transfer_vertex_shader_ = {};
+  xe_transfer_uint_d3d12_bank uint_transfer_pipelines_ = {};
 
   // One per transfer mode - the mode is what fixes the shader's bindings.
   ID3D12RootSignature*

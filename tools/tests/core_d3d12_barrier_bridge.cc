@@ -23,3 +23,9 @@ extern "C" int xe_test_barriers_try_submit(void* p) {
   try { static_cast<Commands*>(p)->SubmitResourceBarriers(); return 1; }
   catch (const std::bad_alloc&) { return 0; }
 }
+extern "C" int xe_test_constants_write(void* p, unsigned count, unsigned offset,
+    int (*writer)(void*, size_t, void*), void* context) {
+  try { return static_cast<Commands*>(p)->D3DSetGraphicsRoot32BitConstantsWrite(
+      1, count, offset, writer, context) ? 1 : 0; }
+  catch (const std::bad_alloc&) { return -1; }
+}

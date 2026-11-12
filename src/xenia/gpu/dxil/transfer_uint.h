@@ -12,6 +12,11 @@ extern "C" {
  * No pipeline creation, command submission or file I/O in this function. */
 int xe_dxil_transfer_uint_shader(const xe_transfer_uint_options *options,
  XeDxilShaderBinary *out);
+/* Initialization-known sample/scale/destination view. Pitches, base delta and
+ * source codec remain dynamic in the same checked112-byte packet. The caller
+ * must match prepared PSO identity to packet metadata before drawing. */
+int xe_dxil_transfer_uint_shader_shape(const xe_transfer_uint_options *options,
+ const xe_transfer_address_key *key,unsigned dest_format,XeDxilShaderBinary *out);
 #ifdef __cplusplus
 }
 #endif

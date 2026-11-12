@@ -114,8 +114,57 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  d3d12-hardware-comparison:
+    needs: revisions
+    if: needs.revisions.result == 'success' && vars.SHADER_D3D12_GPU_RUNNER_ENABLED == 'true'
+    runs-on: [self-hosted, windows, x64, shader-perf-d3d12]
+    timeout-minutes: 120
+    concurrency:
+      group: shader-perf-d3d12-hardware
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.revisions.outputs.commits) }}
+    env:
+      SHADER_PERF_ANCHOR: ${{ vars.SHADER_PERF_ANCHOR }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: First-parent compilation and warmed D3D12 execution
+        shell: cmd
+        env:
+          PERF_BASE: ${{ matrix.base }}
+          PERF_HEAD: ${{ matrix.sha }}
+          PERF_OUT: ${{ runner.temp }}/shader-perf-${{ matrix.sha }}-d3d12-hardware
+        run: |
+          python -c "import sys;sys.path.insert(0,'tools/tests');import shader_compile_ci as c;c.JOBS=3;sys.exit(c.main())" run --base "%PERF_BASE%" --head "%PERF_HEAD%" --backend d3d12-warp --out "%PERF_OUT%" --samples 7
+          if errorlevel 1 exit /b 1
+          set TRANSFER_D3D12_HEAD_SOURCE=%PERF_OUT%/source-candidate
+          set UINT_IMAGE_BUILD=%PERF_OUT%/source-candidate/build/shader-perf-core
+          set MSAA_IMAGE_OUT=%PERF_OUT%/results/msaa-image
+          call tools\tests\run_transfer_msaa_image_tests.cmd
+          if errorlevel 1 exit /b 1
+          python tools/tests/transfer_uint_warm_d3d12_ci.py --base "%PERF_BASE%" --head "%PERF_HEAD%" --parent-source "%PERF_OUT%/source-base" --head-source "%PERF_OUT%/source-candidate" --parent-build "%PERF_OUT%/source-base/build/shader-perf-core" --head-build "%PERF_OUT%/source-candidate/build/shader-perf-core" --utilities "%MSAA_IMAGE_OUT%/transfer" --out "%PERF_OUT%/results/transfer-warm"
+          if errorlevel 1 exit /b 1
+          if defined SHADER_PERF_ANCHOR (
+            python tools/tests/transfer_uint_warm_d3d12_ci.py --base "%PERF_BASE%" --head "%PERF_HEAD%" --pinned-reference "%SHADER_PERF_ANCHOR%" --parent-source "%PERF_OUT%/source-anchor" --head-source "%PERF_OUT%/source-candidate" --parent-build "%PERF_OUT%/source-anchor/build/shader-perf-core" --head-build "%PERF_OUT%/source-candidate/build/shader-perf-core" --utilities "%MSAA_IMAGE_OUT%/transfer" --out "%PERF_OUT%/results/transfer-warm-anchor"
+            if errorlevel 1 exit /b 1
+          )
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shader-comparison-${{ matrix.sha }}-d3d12-hardware-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/shader-perf-${{ matrix.sha }}-d3d12-hardware/results/
+          if-no-files-found: error
+          retention-days: 30
   coverage:
-    needs: [software-comparison, hardware-comparison]
+    needs: [software-comparison, hardware-comparison, d3d12-hardware-comparison]
     if: always() && github.event.deleted != true
     runs-on: ubuntu-24.04
     steps:
@@ -123,12 +172,15 @@ jobs:
         env:
           SOFTWARE_RESULT: ${{ needs.software-comparison.result }}
           HARDWARE_RESULT: ${{ needs.hardware-comparison.result }}
+          D3D12_HARDWARE_RESULT: ${{ needs.d3d12-hardware-comparison.result }}
+          D3D12_HARDWARE_ENABLED: ${{ vars.SHADER_D3D12_GPU_RUNNER_ENABLED }}
           HARDWARE_ENABLED: ${{ vars.SHADER_GPU_RUNNER_ENABLED }}
         run: |
           {
             echo '# Shader regression coverage'
             echo "Software comparisons: $SOFTWARE_RESULT"
             echo "Hardware comparisons: $HARDWARE_RESULT"
+            echo "D3D12 hardware comparisons: $D3D12_HARDWARE_RESULT"
             echo ''
             echo 'Procedural PSO/translation tests are not cross-game cold-play signoff.'
             echo 'A missing hardware runner or private replay corpus remains unverified coverage.'
@@ -137,3 +189,4 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           test "$SOFTWARE_RESULT" = success
           if test "$HARDWARE_ENABLED" = true; then test "$HARDWARE_RESULT" = success; fi
+          if test "$D3D12_HARDWARE_ENABLED" = true; then test "$D3D12_HARDWARE_RESULT" = success; fi

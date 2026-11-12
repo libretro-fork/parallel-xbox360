@@ -1,11 +1,19 @@
 /* Raw native DXIL, no HLSL/source compiler. BSD; MSVC C89. */
 #include "transfer_uint.h"
+#include "libretro/core_transfer_uint_shape.h"
 #include "transfer_sample.h"
 #include "guest_resources.h"
 #include <dxil_module.h>
 #include <dxil_function.h>
 static XeDxilValue integer(struct dxil_module *m,uint32_t n) {
  return dxil_module_get_int32_const(m,(int32_t)n);
+}
+/* Both constants and dynamic words borrow native arena values. No extra IR. */
+static XeDxilValue parameter(XeDxilAlu *alu,XeDxilValue constants,
+ const xe_transfer_uint_shape *fixed,unsigned word) {
+ if(fixed && (fixed->mask & (UINT32_C(1)<<word)))
+  return integer(alu->module,xe_transfer_uint_shape_word(fixed,word));
+ return xe_dxil_cbuffer_word(alu,constants,integer(alu->module,word));
 }
 static int begin(struct dxil_module *m,unsigned block) {
  struct dxil_func_def *f=m->cur_emitting_func;
@@ -27,8 +35,8 @@ static int fetch(XeDxilAlu *alu,XeDxilValue image,unsigned multisampled,
  for(i=0;i<4;++i){lanes[i]=(uintptr_t)dxil_emit_extractval(m,value,i);if(!lanes[i])return 0;}
  return 1;
 }
-int xe_dxil_transfer_uint_shader(const xe_transfer_uint_options *options,
- XeDxilShaderBinary *out) {
+static int build(const xe_transfer_uint_options *options,
+ const xe_transfer_uint_shape *fixed,XeDxilShaderBinary *out) {
  XeDxilShaderModule *shader;struct dxil_module *m;
  XeDxilAlu alu;XeDxilTransferSample adapter;xe_transfer_sample_emitter e;
  xe_transfer_address_parameters address;xe_transfer_address_result route;
@@ -57,7 +65,7 @@ int xe_dxil_transfer_uint_shader(const xe_transfer_uint_options *options,
  if(!image || !constants || !xe_dxil_transfer_sample_init(&adapter,&alu))goto done;
  e.emit=xe_dxil_transfer_sample_emit;e.context=&adapter;
  for(i=0;i<XE_ADDR_WORDS;++i) {
-  address.word[i]=(uintptr_t)xe_dxil_cbuffer_word(&alu,constants,integer(m,i));
+  address.word[i]=(uintptr_t)parameter(&alu,constants,fixed,i);
   if(!address.word[i])goto done;
  }
  function=dxil_get_function(m,"dx.op.loadInput",DXIL_F32);
@@ -74,13 +82,16 @@ int xe_dxil_transfer_uint_shader(const xe_transfer_uint_options *options,
   function=dxil_get_function(m,"dx.op.sampleIndex",DXIL_I32);args[0]=integer(m,90);
   sample=function?dxil_emit_call(m,function,args,1):NULL;
  } else if(options->sample_mode==XE_TRANSFER_UINT_SAMPLE_CONSTANT)
-  sample=xe_dxil_cbuffer_word(&alu,constants,integer(m,27));
+  sample=parameter(&alu,constants,fixed,27);
  if(!sample || !xe_transfer_address_emit(&e,&address,(uintptr_t)position[0],
    (uintptr_t)position[1],(uintptr_t)sample,&route))goto done;
- source.halves=(uintptr_t)xe_dxil_cbuffer_word(&alu,constants,integer(m,23));
- source.wide=(uintptr_t)xe_dxil_cbuffer_word(&alu,constants,integer(m,24));source.shift16=(uintptr_t)integer(m,16);
- dest.halves=(uintptr_t)xe_dxil_cbuffer_word(&alu,constants,integer(m,25));
- dest.wide=(uintptr_t)xe_dxil_cbuffer_word(&alu,constants,integer(m,26));dest.shift16=source.shift16;
+ source.halves=(uintptr_t)parameter(&alu,constants,fixed,23);
+ /* Address width is0/1; codec width is0/~0. Reuse only checked packets. */
+ source.wide=fixed?(uintptr_t)dxil_emit_binop(m,DXIL_BINOP_SUB,integer(m,0),
+  (XeDxilValue)address.word[XE_ADDR_S_WIDE],0):
+  (uintptr_t)parameter(&alu,constants,fixed,24);source.shift16=(uintptr_t)integer(m,16);
+ dest.halves=(uintptr_t)parameter(&alu,constants,fixed,25);
+ dest.wide=(uintptr_t)parameter(&alu,constants,fixed,26);dest.shift16=source.shift16;
  if(!fetch(&alu,image,options->source_multisampled,route.x,route.y,route.sample,lanes) ||
     !xe_transfer_uint_color_pack(&e,&source,lanes,first))goto done;
  condition=dxil_emit_cmp(m,DXIL_ICMP_NE,(XeDxilValue)route.two_loads,integer(m,0));
@@ -105,4 +116,15 @@ int xe_dxil_transfer_uint_shader(const xe_transfer_uint_options *options,
  }
  if(!alu.failed && dxil_emit_ret_void(m) && xe_dxil_shader_finish(shader,out))success=1;
 done:xe_dxil_shader_destroy(shader);return success;
+}
+
+int xe_dxil_transfer_uint_shader(const xe_transfer_uint_options *options,
+ XeDxilShaderBinary *out) {
+ return build(options,NULL,out);
+}
+int xe_dxil_transfer_uint_shader_shape(const xe_transfer_uint_options *options,
+ const xe_transfer_address_key *key,unsigned dest_format,XeDxilShaderBinary *out) {
+ xe_transfer_uint_shape shape;
+ if(!xe_transfer_uint_shape_prepare(&shape,options,key,dest_format))return 0;
+ return build(options,&shape,out);
 }

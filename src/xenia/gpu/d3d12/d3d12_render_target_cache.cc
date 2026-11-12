@@ -617,6 +617,18 @@ bool D3D12RenderTargetCache::Initialize() {
       return false;
     }
 
+    xe_transfer_uint_d3d12_config uint_config = {};
+    uint_config.device = device;
+    uint_config.vertex = transfer_vertex_shader_.data;
+    uint_config.vertex_bytes = transfer_vertex_shader_.size;
+    uint_config.native2 = msaa_2x_supported_;
+    uint_config.scale_x = draw_resolution_scale_x();
+    uint_config.scale_y = draw_resolution_scale_y();
+    if (!xe_transfer_uint_d3d12_init(&uint_transfer_pipelines_, &uint_config,
+                                    xe_transfer_uint_d3d12_native_ops())) {
+      Shutdown();
+      return false;
+    }
     // One float4 instance per transfer rectangle; vertices select its corners.
     transfer_vertex_buffer_pool_ =
         std::make_unique<ui::d3d12::D3D12UploadBufferPool>(
@@ -1050,6 +1062,8 @@ void D3D12RenderTargetCache::Shutdown(bool from_destructor) {
     ui::d3d12::util::ReleaseAndNull(transfer_root_signatures_[i]);
   }
 
+  xe_transfer_uint_d3d12_close(&uint_transfer_pipelines_,
+                               xe_transfer_uint_d3d12_native_ops());
   transfer_vertex_buffer_pool_.reset();
   xe_dxil_shader_binary_free(&transfer_vertex_shader_);
 
@@ -3032,6 +3046,61 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
         command_list.D3DIASetVertexBuffers(0, 1,
                                            &transfer_rectangle_buffer_view);
 
+        // Prepared integer ownership views. Other conversions remain explicit
+        // legacy-path debt; they are not covered by this initialization bank.
+        if (transfer_mode == EdramTransferMode::kColorToColor &&
+            !transfer_shader_key.value_convert && !host_depth_source_d3d12_rt &&
+            !dest_rt_key.is_depth && !source_d3d12_rt.key().is_depth) {
+          const RenderTargetKey source_key = source_d3d12_rt.key();
+          bool source_uint, dest_uint;
+          GetColorOwnershipTransferDXGIFormat(source_key.GetColorFormat(), &source_uint);
+          GetColorOwnershipTransferDXGIFormat(dest_rt_key.GetColorFormat(), &dest_uint);
+          ID3D12PipelineState* ready = source_uint && dest_uint
+              ? xe_transfer_uint_d3d12_get(&uint_transfer_pipelines_,
+                    unsigned(dest_rt_key.GetColorFormat()),
+                    unsigned(dest_rt_key.msaa_samples), unsigned(source_key.msaa_samples),
+                    dest_rt_key.scale_native, source_key.scale_native)
+              : nullptr;
+          if (ready) {
+            xe_transfer_address_key address = {};
+            address.dest_msaa = unsigned(dest_rt_key.msaa_samples);
+            address.source_msaa = unsigned(source_key.msaa_samples);
+            address.dest_native2 = address.source_native2 = uint_transfer_pipelines_.native2;
+            address.dest_scale_x = GetKeyScaleX(dest_rt_key);
+            address.dest_scale_y = GetKeyScaleY(dest_rt_key);
+            address.source_scale_x = GetKeyScaleX(source_key);
+            address.source_scale_y = GetKeyScaleY(source_key);
+            address.dest_wide = dest_rt_key.Is64bpp();
+            address.source_wide = source_key.Is64bpp();
+            address.dest_color = address.source_color = 1;
+            address.dest_pitch = dest_pitch_tiles;
+            address.source_pitch = source_key.GetPitchTiles();
+            address.dest_to_source_base = int32_t(dest_rt_key.base_tiles) - int32_t(source_key.base_tiles);
+            xe_transfer_uint_options options = {};
+            options.source_multisampled = address.source_msaa != 0;
+            options.sample_mode = address.dest_msaa ? XE_TRANSFER_UINT_SAMPLE_BUILTIN : XE_TRANSFER_UINT_SINGLE_SAMPLE;
+            xe_transfer_uint_packet_source packet = {
+                &options, &address, unsigned(source_key.GetColorFormat()),
+                unsigned(dest_rt_key.GetColorFormat()), 0};
+            // Rebind legacy state even if packet preparation is rejected.
+            last_transfer_mode = EdramTransferMode::kCount;
+            command_processor_.SetExternalGraphicsRootSignature(uint_transfer_pipelines_.root);
+            if (command_list.D3DSetGraphicsRoot32BitConstantsWrite(
+                    1, sizeof(xe_transfer_uint_packet) / sizeof(uint32_t), 0,
+                    xe_transfer_uint_packet_write, &packet)) {
+              command_list.D3DSetGraphicsRootDescriptorTable(0,
+                  TemporaryGPUDescriptors()[source_d3d12_rt.temporary_srv_descriptor_index()].second);
+              command_processor_.SubmitBarriers();
+              command_processor_.SetExternalPipeline(ready);
+              command_list.D3DDrawInstanced(XE_TRANSFER_RECTANGLE_VERTICES,
+                                             transfer_rectangle_count, 0, 0);
+              // Rebind all legacy state after switching root signatures.
+              // Rebind legacy state even if packet preparation is rejected.
+            last_transfer_mode = EdramTransferMode::kCount;
+              continue;
+            }
+          }
+        }
         ID3D12PipelineState* const* transfer_pipelines =
             GetOrCreateTransferPipelines(transfer_shader_key);
         if (!transfer_pipelines) {

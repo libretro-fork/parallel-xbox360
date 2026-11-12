@@ -1,0 +1,68 @@
+D3D12 prepared integer-transfer candidate
+========================================
+Scope: initialization-owned native DXIL PSOs for unsigned color ownership views.
+No claim of complete draw-path compilation removal or cold gameplay smoothness.
+No game content, installed core DLL, live frontend or driver cache was modified.
+
+Production bank: 36 PSOs at 1x; 144 for four scaled/native source/destination
+classes otherwise. Six guest integer formats share four raw RTV classes.
+Success-only handle publication; partial failure destroys acquired PSOs before
+root signatures. Existing command-processor GPU completion owns final teardown.
+The default root signature borrows t0/space0 and 28 b1/space31 DWORD constants.
+The synchronous writer constructs the checked 112-byte packet directly into
+unpublished retained command storage. Rejection publishes no packet and retains
+no context. Legacy state is invalidated across root-signature switches.
+
+Local checks (Windows 11, MSVC 19.44, RTX 5090 vendor4318/device11141):
+- 1296 shape constructor cases and SDK checks; existing generic binaries unchanged.
+- 936 SDK-validated actual bank modules; 3888 WARP and 3888 NVIDIA image cases,
+  36 format pairs, six asymmetric/native scale classes, nine MSAA crossings,
+  emulated2 physical 0/3 coverage, inactive samples and output guards.
+- 1092 C89 mock ownership/failure cases, every emission/PSO failure position,
+  failed poisoned outputs, successful null outputs, partial cleanup, alias
+  lookups, reinitialization, double close and missing release callbacks.
+- Instrumented MSVC AddressSanitizer bank/mock/emitter run passes.
+- Strict MinGW GCC C89 syntax checks pass for bank and ownership test.
+- 30001 actual deferred constant-packet replays: exact destination pointer
+  identity, context overwrite, reject/failure publication and zero allocations
+  after retained storage warms. Existing 200000 borrowed barrier rows pass.
+- Full MSVC CMake and GCC static-Make core builds pass (three jobs).
+  Remove duplicate GUID definitions instead of weakening GCC link diagnostics.
+
+Warmed GPU protocol (test-only instrumentation):
+- Same device and queue, existing native xe_dxil_build_edram_transfer versus
+  actual prepared bank, 90 cases: ten format pairs x three MSAA x 1x/2x/4x.
+- Prepare all PSOs before measurement; no PSO creation inside timestamp brackets.
+- Eight retained paired trials, trial0 warmup excluded, alternate and reverse.
+- 64 and 512 full-image draws; completed-fence query availability, timestamp
+  validation and IA/VS/PS work counts. Independently validate both image outputs
+  and guard tails after clearing the destination before each measured draw set.
+- Existing predeclared threshold: paired median >5% AND >100 ns/draw, with
+  >=5/7 exceeding paired samples; 512/64 GPU-work scaling >=2.
+- All 180 groups pass in both orders on the local GPU. A dynamically parameterized
+  shader control is tested separately; evidence is retained outside the repo.
+- Module construction and driver PSO startup costs are separately recorded.
+  Driver internal/disk caches are NOT certified cold. This is a procedural
+  comparison to the existing native producer, not a gameplay or FPS acceptance.
+
+Parent-revision protection:
+- A C89 producer DLL builds from each selected revision, using its native DXIL
+  archive and prepared-bank implementation when present. The initial legacy
+  adapter retains the real four-DWORD root layout (constants0, image1).
+- Owners remain inside the producing DLL. The shared-device harness validates
+  ABI/packet sizes, writes through the producer, and closes GPU-completed owners
+  before unloading their module. Prepared-to-prepared coverage passes too.
+- MSVC and strict GCC C89 callers pass the same real-DLL ABI boundary tests.
+- The public controller records compiler/driver/LUID/source/archive identities,
+  rejects changed inputs and mixed devices, retains both orders and raw samples,
+  and distinguishes unqualified self-checks. Eight protocol tests pass.
+- Optional dedicated Windows hardware CI enumerates every pushed revision and
+  compares the exact first parent, plus an explicitly configured anchor. The
+  runner is not configured here: hosted hardware coverage remains unverified.
+
+Publication gates:
+The clean first-parent compilation/PSO corpus, clean controller qualification,
+mailbox application and tree equality are evaluated separately from these
+component results; their raw acceptance artifacts are retained for delivery.
+Other normalized/gamma/depth/host-depth/stencil and guest shader paths still
+have draw-compilation/wait debt. No release timing, query or logging work added.

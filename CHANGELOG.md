@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Prepare D3D12 integer ownership-transfer PSOs before gameplay in an owned C89 bank, with fixed lookup and a direct deferred-packet writer. Preserve integer view aliases, mixed source/destination widths, asymmetric/native scales, and native/emulated 2x MSAA. Add partial-failure and exact replay tests, SDK validation and real WARP/NVIDIA image oracles, plus alternating warmed GPU comparisons against the existing native EDRAM producer and a failing dynamic-shader control. Add a checked C89 producer-DLL ABI and optional Windows hardware CI for actual first-parent and explicitly pinned comparisons. Other utility families and guest-shader compilation remain unfinished; this is not cold-gameplay signoff.
+
 - Add matched parent/candidate warmed-transfer GPU checks to hardware shader CI, with image guards, GPU work counters and strict raw-evidence validation. A real dynamically parameterized shader regression is rejected in both orders. Hardware-runner and cold-play coverage remain explicitly separate.
 
 - Fix the Windows standalone DXIL emitter test include path so libretro-common headers are found while compiling transfer shaders.

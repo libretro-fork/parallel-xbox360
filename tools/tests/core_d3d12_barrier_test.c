@@ -124,6 +124,53 @@ static void run(void *commands, unsigned iteration) {
   xe_test_barriers_execute(commands, &mock);
   CHECK(observed == expected_count && barrier_rows == ROWS + 1);
 }
+extern int xe_test_constants_write(void *,unsigned,unsigned,int (*)(void *,size_t,void *),void *);
+struct constant_context {unsigned value; void *destination; int accept;};
+static unsigned constant_observed,constant_limit;
+static const void *constant_identity;
+static int constants_writer(void *destination,size_t bytes,void *opaque) {
+ struct constant_context *context=(struct constant_context*)opaque;
+ uint32_t *words=(uint32_t*)destination;unsigned i;
+ CHECK(bytes==112);context->destination=destination;
+ for(i=0;i<28;++i)words[i]=context->value+i;
+ return context->accept;
+}
+static void STDMETHODCALLTYPE constants_replay(ID3D12GraphicsCommandList *self,
+ UINT root,UINT count,const void *data,UINT offset) {
+ const uint32_t *words=(const uint32_t*)data;unsigned i;
+ CHECK(self==&mock && root==1 && count==28 && offset==3);
+ CHECK(constant_observed<constant_limit);
+ if(constant_identity)CHECK(data==constant_identity);
+ for(i=0;i<28;++i)CHECK(words[i]==constant_observed+i);
+ ++constant_observed;
+}
+static void constants_run(void) {
+ void *commands=xe_test_barriers_sized(24);struct constant_context context;
+ unsigned iteration,i;size_t warmed=0;
+ CHECK(commands);vtable.SetGraphicsRoot32BitConstants=constants_replay;
+ context.value=0;context.destination=NULL;context.accept=1;
+ CHECK(!xe_test_constants_write(commands,0,0,constants_writer,&context));
+ CHECK(!xe_test_constants_write(commands,28,UINT32_MAX,constants_writer,&context));
+ CHECK(!xe_test_constants_write(commands,65,0,constants_writer,&context));
+ CHECK(!xe_test_constants_write(commands,28,3,NULL,&context));CHECK(!context.destination);
+ fail_after=0;CHECK(xe_test_constants_write(commands,28,3,constants_writer,&context)==-1);
+ CHECK(!context.destination);fail_after=-1;
+ context.accept=0;CHECK(!xe_test_constants_write(commands,28,3,constants_writer,&context));
+ CHECK(context.destination);constant_observed=constant_limit=0;
+ xe_test_barriers_execute(commands,&mock);CHECK(!constant_observed);
+ context.accept=1;CHECK(xe_test_constants_write(commands,28,3,constants_writer,&context)==1);
+ constant_identity=context.destination;context.value=999; /* Context is never retained. */
+ constant_limit=1;xe_test_barriers_execute(commands,&mock);CHECK(constant_observed==1);
+ constant_identity=NULL;
+ for(iteration=0;iteration<3;++iteration){
+  xe_test_barriers_reset(commands);constant_observed=0;constant_limit=10000;
+  for(i=0;i<constant_limit;++i){context.value=i;CHECK(xe_test_constants_write(commands,28,3,constants_writer,&context)==1);}
+  context.value=UINT32_MAX;xe_test_barriers_execute(commands,&mock);CHECK(constant_observed==constant_limit);
+  if(!iteration)warmed=allocation_calls;else CHECK(allocation_calls==warmed);
+ }
+ xe_test_barriers_delete(commands);CHECK(!live_bytes);
+ printf("D3D12 constants: 30001 direct-write packets, exact replay identity, rejected/failed publication, zero warmed allocation\n");
+}
 int main(void) {
   void *commands; unsigned i; size_t warmed_calls;
   memset(&vtable, 0, sizeof(vtable)); vtable.ResourceBarrier = resource_barrier; vtable.OMSetStencilRef = marker;
@@ -160,6 +207,7 @@ int main(void) {
   fail_after = -1; CHECK(xe_test_barriers_try_submit(commands));
   xe_test_barriers_execute(commands, &mock); CHECK(observed == expected_count);
   xe_test_barriers_delete(commands); CHECK(!live_bytes);
+  constants_run();
   printf("D3D12 mock replay: 200000 borrowed rows, exact pointer identity/order, stack-copy ownership and pending-reset preservation; %u calls\n", calls);
   printf("Recorder allocator: zero warmed allocations, zero live bytes at teardown; peak %lu bytes\n", (unsigned long)peak_bytes);
   return 0;

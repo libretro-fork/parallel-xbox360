@@ -30,4 +30,6 @@ if "%GPU_TESTS%"=="1" (
 cl /nologo /TC /MD /O2 /W4 /WX /wd4201 /D_CRT_SECURE_NO_WARNINGS /I. tools/tests/transfer_msaa_image_d3d12_test.c /Fo"%OUT%/" /Fe"%OUT%/msaa-warp.exe" /link d3d12.lib dxgi.lib dxguid.lib
 if errorlevel 1 exit /b 1
 "%OUT%/msaa-warp.exe" "%OUT%/transfer"
+if errorlevel 1 exit /b 1
+call tools\tests\run_transfer_uint_d3d12_bank_tests.cmd
 exit /b %errorlevel%

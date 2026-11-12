@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <new>
 #include "libretro/core_command_stream.h"
 #include "libretro/core_command_rows.h"
 
@@ -364,6 +365,33 @@ class DeferredCommandList {
     std::memcpy(args + 1, src_data, num_32bit_values_to_set * sizeof(uint32_t));
   }
 
+  // Build synchronously in final unpublished storage. The C89 writer must not
+  // reenter the recorder or retain the destination/context after return.
+  bool D3DSetGraphicsRoot32BitConstantsWrite(UINT root_parameter_index,
+      UINT count, UINT offset, int (*write)(void*, size_t, void*), void* context) {
+    uint32_t argument_elements;
+    size_t packet_bytes;
+    const size_t header_bytes = kCommandHeaderSizeElements * sizeof(uintmax_t);
+    xe_command_reservation lease = {};
+    if (!write || !count || count > 64 || offset > 64 - count ||
+        count > (size_t(-1) - sizeof(SetRoot32BitConstantsHeader)) / sizeof(uint32_t) ||
+        !xe_command_packet_layout(sizeof(SetRoot32BitConstantsHeader) +
+            size_t(count) * sizeof(uint32_t), header_bytes,
+            &argument_elements, &packet_bytes)) return false;
+    uint8_t* packet = static_cast<uint8_t*>(
+        xe_command_stream_reserve(&command_stream_, packet_bytes, &lease));
+    if (!packet) throw std::bad_alloc();
+    auto* args = reinterpret_cast<SetRoot32BitConstantsHeader*>(packet + header_bytes);
+    if (!write(args + 1, size_t(count) * sizeof(uint32_t), context)) return false;
+    args->root_parameter_index = root_parameter_index;
+    args->num_32bit_values_to_set = count;
+    args->dest_offset_in_32bit_values = offset;
+    auto* header = reinterpret_cast<CommandHeader*>(packet);
+    header->command = Command::kD3DSetGraphicsRoot32BitConstants;
+    header->arguments_size_elements = argument_elements;
+    if (!xe_command_stream_commit(&command_stream_, &lease)) throw std::bad_alloc();
+    return true;
+  }
   void D3DSetComputeRootConstantBufferView(
       UINT root_parameter_index, D3D12_GPU_VIRTUAL_ADDRESS buffer_location) {
     auto& args = *reinterpret_cast<SetRootDescriptorArguments*>(
