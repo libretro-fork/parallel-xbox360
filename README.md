@@ -8,7 +8,7 @@ startup and strict submission-wide waits still drain when requested. The require
 pipeline can still block its draw, and placeholder/fallback correctness and
 large-shader compile stalls remain unfinished cold-play work.
 
-D3D12 integer ownership transfers prepare their final native-DXIL PSOs during initialization and use a fixed lookup during supported color transfers. Parameters are constructed directly in retained deferred-command storage. The bank preserves unsigned storage views, native/emulated 2x MSAA and scaled/native crossings; normalized, gamma, depth and other legacy transfers remain draw-compilation debt. Procedural RTX 5090 comparisons against the existing native EDRAM emitter pass the declared warmed GPU threshold in both orders, with exact image and work-count checks. An optional dedicated Windows CI runner compares each parent producer through a checked C89 DLL boundary, including its packet layout and resource lifetime; without that runner, hosted hardware coverage remains unverified. These checks do not establish smooth cold gameplay or remove remaining guest-shader compilation.
+D3D12 integer ownership transfers prepare their final native-DXIL PSOs during initialization and use a fixed lookup during supported color transfers. Parameters are constructed directly in retained deferred-command storage. The bank preserves unsigned storage views, native/emulated 2x MSAA and scaled/native crossings; cross-format normalized/gamma conversions, depth and other legacy transfers remain draw-compilation debt. Procedural RTX 5090 comparisons against the existing native EDRAM emitter pass the declared warmed GPU threshold in both orders, with exact image and work-count checks. An optional dedicated Windows CI runner compares each parent producer through a checked C89 DLL boundary, including its packet layout and resource lifetime; without that runner, hosted hardware coverage remains unverified. These checks do not establish smooth cold gameplay or remove remaining guest-shader compilation.
 The default core build uses native libretro-common XMA, WMA and MP3 audio decoders and needs neither FFmpeg nor libiconv. FFmpeg sources are optional offline comparison dependencies, enabled only with `XENIA_BUILD_FFMPEG_REFERENCE=ON` in CMake or `FFMPEG_REFERENCE=1` in Make. Guest software decodes movie video; removing the host audio dependency does not remove FMV video support.
 
 Default Vulkan builds omit host profiler timestamp pools, readbacks and per-submission timestamp commands when profiling is disabled. Guest occlusion queries remain active. This removes discarded diagnostic work, without a measured Dark Souls II frame-time improvement; see [profiling gate checks](tools/tests/gpu_profile_gate_results.txt).
@@ -347,6 +347,18 @@ Linux, Android and macOS builds do not require Python or a shader compiler.
 Linux builds enable POSIX/GNU declarations for the selected libretro-common C sources.
 Version/commit definitions are tracked separately for the frontend adapter, so metadata changes do not invalidate unrelated emulator or dependency objects.
 D3D12 primitive-expansion geometry shaders are generated directly as DXIL.
+Matching numeric-view color ownership transfers now have initialization-owned
+Vulkan/D3D12 pipeline banks. Their raw SPIR-V/native DXIL fetches and forwards
+color without packing or conversion; typed resources, gamma storage and source
+descriptors are retained. Matching formats share modules across attachment
+classes, and a direct C89 writer publishes only 20 runtime bytes. Matched typed
+image/work checks and paired RTX 5090 single-sample/mixed-MSAA throughput gates
+pass in both orders for both backends. Complete-bank constructor observations
+and pixel-checked first Vulkan/D3D12 transfers are recorded separately; driver-cache
+conditions remain uncontrolled, and full startup and cold-play acceptance remain
+unverified. Cross-format conversion and guest fallback
+compilation remain unfinished. See
+[identity-transfer coverage and pending qualification](tools/tests/transfer_identity_results.txt).
 Built-in primitive indices fill their mapped upload allocation directly through
 a C89 writer with checked ranges. The immutable layout is borrowed only during
 initialization; no callable owns it. Vulkan flushes that upload allocation and
@@ -522,7 +534,7 @@ The generic transfer foundation also has a shared integer-view color codec. Two 
 
 Physical EDRAM routing now uses a shared 92-byte CPU-prepared metadata packet, borrowed native IR IDs and exact reciprocal division. Tests cover tile wrapping, pitch, MSAA, scaled/native conversion, 32/64-bit word selection and color/depth column swaps across 186,607 changing records per backend. The kernel retains destination coordinates for host-depth reuse but performs no image access and is not yet connected to rendering. See [physical-address coverage](tools/tests/transfer_address_results.txt).
 
-The integer transfer foundation now constructs complete raw SPIR-V/native DXIL fragment programs that fetch typed images, select 32-bit halves and write integer attachments. All 24 image/sample/target interfaces validate; actual single-sample raster tests cover all 36 format pairs and six scale classes on Vulkan and WARP using four pipelines prepared before drawing. A checked 112-byte packet feeds the shared recipe. These constructors are not connected to rendering yet: MSAA raster coverage, prepared renderer tables and the remaining format/depth families are still required. See [integer image coverage](tools/tests/transfer_uint_image_results.txt).
+The integer transfer foundation now constructs complete raw SPIR-V/native DXIL fragment programs that fetch typed images, select 32-bit halves and write integer attachments. All 24 image/sample/target interfaces validate; actual single-sample raster tests cover all 36 format pairs and six scale classes on Vulkan and WARP using four pipelines prepared before drawing. A checked 112-byte packet feeds the shared recipe. These fully dynamic constructors remain validation tools; rendering uses the separately prepared shape-specific integer banks described above. Their MSAA image tests and failure/lifetime checks do not complete the remaining format/depth families or guest fallback coverage. See [integer image coverage](tools/tests/transfer_uint_image_results.txt).
 
 ### Draw-path contract instrumentation
 

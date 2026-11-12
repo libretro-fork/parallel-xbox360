@@ -692,8 +692,9 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
       }
     }
 
-    if (!InitializeUintTransferPipelines()) {
-      XELOGE("Unable to prepare integer ownership transfer pipelines");
+    if (!InitializeUintTransferPipelines() ||
+        !InitializeIdentityTransferPipelines()) {
+      XELOGE("Unable to prepare ownership transfer pipelines");
       Shutdown();
       return false;
     }
@@ -978,6 +979,12 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
       xe_transfer_uint_vk_close(&uint_transfer_pipelines_, &uint_ops) != 0;
   assert_true(uint_closed);
   (void)uint_closed;
+  xe_transfer_identity_vk_ops identity_ops = {};
+  IdentityTransferOps(&identity_ops);
+  const bool identity_closed =
+      xe_transfer_identity_vk_close(&identity_transfer_pipelines_, &identity_ops) != 0;
+  assert_true(identity_closed);
+  (void)identity_closed;
   for (const auto& transfer_pipeline_array_pair : transfer_pipelines_) {
     for (VkPipeline transfer_pipeline : transfer_pipeline_array_pair.second) {
       // May be null to prevent recreation attempts.
@@ -2514,6 +2521,89 @@ bool VulkanRenderTargetCache::InitializeUintTransferPipelines() {
                                  &helper_shader_code_) != 0;
 }
 
+void VulkanRenderTargetCache::IdentityTransferOps(
+    xe_transfer_identity_vk_ops* ops) const {
+  const auto& dfn = command_processor_.GetVulkanDevice()->functions();
+  ops->create_shader = dfn.vkCreateShaderModule;
+  ops->destroy_shader = dfn.vkDestroyShaderModule;
+  ops->create_layout = dfn.vkCreatePipelineLayout;
+  ops->destroy_layout = dfn.vkDestroyPipelineLayout;
+  ops->create_pipelines = dfn.vkCreateGraphicsPipelines;
+  ops->destroy_pipeline = dfn.vkDestroyPipeline;
+}
+
+bool VulkanRenderTargetCache::InitializeIdentityTransferPipelines() {
+  static const VkFormat views[4] = {
+      VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R16G16B16A16_UNORM,
+      VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_R16G16B16A16_SFLOAT};
+  static const xenos::ColorRenderTargetFormat formats[4] = {
+      xenos::ColorRenderTargetFormat::k_8_8_8_8,
+      xenos::ColorRenderTargetFormat::k_8_8_8_8_GAMMA,
+      xenos::ColorRenderTargetFormat::k_2_10_10_10,
+      xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT};
+  const auto* device = command_processor_.GetVulkanDevice();
+  const auto& ifn = device->vulkan_instance()->functions();
+  xe_transfer_identity_vk_config config = {};
+  xe_transfer_identity_vk_ops ops = {};
+  config.device = device->device();
+  config.image_layout = descriptor_set_layout_sampled_image_;
+  config.vertex = transfer_passthrough_vertex_shader_;
+  config.native2 = msaa_2x_attachments_supported_;
+  config.sample_shading = device->properties().sampleRateShading;
+  config.scale_x = draw_resolution_scale_x();
+  config.scale_y = draw_resolution_scale_y();
+  config.dynamic_rendering =
+      cvars::vulkan_dynamic_rendering && device->properties().dynamicRendering;
+  for (unsigned f = 0; f < 4; ++f) {
+    if (f == XE_TRANSFER_IDENTITY_RGBA16 && !gamma_render_target_as_unorm16_)
+      continue;
+    VkImageFormatProperties properties = {};
+    const VkResult status = ifn.vkGetPhysicalDeviceImageFormatProperties(
+        device->physical_device(), views[f], VK_IMAGE_TYPE_2D,
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0,
+        &properties);
+    if (status == VK_ERROR_FORMAT_NOT_SUPPORTED) continue;
+    if (status != VK_SUCCESS) return false;
+    config.sample_mask[f] = xe_transfer_identity_samples(
+        unsigned(properties.sampleCounts), config.native2);
+    for (unsigned m = 0; m < 3; ++m) {
+      if (!(config.sample_mask[f] & (1u << m))) continue;
+      RenderPassKey key;
+      key.msaa_samples = static_cast<xenos::MsaaSamples>(m);
+      key.depth_and_color_used = 2;
+      key.color_0_view_format = formats[f];
+      key.color_rts_use_transfer_formats = 1;
+      config.passes[f][m] = GetHostRenderTargetsRenderPass(key);
+      if (!config.passes[f][m]) return false;
+    }
+  }
+  // Compatible alias keys still have distinct framebuffer-cache identities.
+  // Warm them too, rather than creating their render passes on first transfer.
+  static const xenos::ColorRenderTargetFormat aliases[3] = {
+      xenos::ColorRenderTargetFormat::k_8_8_8_8_GAMMA,
+      xenos::ColorRenderTargetFormat::k_2_10_10_10_AS_10_10_10_10,
+      xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT_AS_16_16_16_16};
+  for (unsigned a = 0; a < 3; ++a) {
+    unsigned view;
+    if (!xe_transfer_identity_class(unsigned(aliases[a]), unsigned(aliases[a]),
+                                    gamma_render_target_as_unorm16_, &view))
+      return false;
+    for (unsigned m = 0; m < 3; ++m) {
+      if (!(config.sample_mask[view] & (1u << m))) continue;
+      RenderPassKey key;
+      key.msaa_samples = static_cast<xenos::MsaaSamples>(m);
+      key.depth_and_color_used = 2;
+      key.color_0_view_format = aliases[a];
+      key.color_rts_use_transfer_formats = 1;
+      if (!GetHostRenderTargetsRenderPass(key)) return false;
+    }
+  }
+  IdentityTransferOps(&ops);
+  return xe_transfer_identity_vk_init(&identity_transfer_pipelines_, &config,
+                                     &ops, &helper_shader_code_) != 0;
+}
+
 VkShaderModule VulkanRenderTargetCache::GetTransferShader(
     EdramTransferShaderKey key) {
   auto shader_it = transfer_shaders_.find(key);
@@ -3568,8 +3658,8 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
         command_buffer.CmdVkBindVertexBuffers(0, 1, &transfer_vertex_buffer,
                                               &transfer_vertex_buffer_offset);
 
-        // Integer ownership views share one prepared image/word-routing
-        // family. Other conversions still use the legacy pipeline path below.
+        // Prepared raw integer and matching numeric-view families. Numeric
+        // identity preserves typed images, gamma layout and compression.
         if (transfer_shader_key.mode == EdramTransferMode::kColorToColor &&
             !transfer_shader_key.value_convert &&
             !host_depth_source_vulkan_rt && !dest_rt_key.is_depth &&
@@ -3580,13 +3670,23 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
                                                 &source_uint);
           GetColorOwnershipTransferVulkanFormat(dest_rt_key.GetColorFormat(),
                                                 &dest_uint);
+          unsigned identity_view = 0;
+          const bool numeric_identity = !source_uint && !dest_uint &&
+              xe_transfer_identity_class(unsigned(source_key.GetColorFormat()),
+                  unsigned(dest_rt_key.GetColorFormat()),
+                  gamma_render_target_as_unorm16_, &identity_view);
           const VkPipeline* ready = source_uint && dest_uint
               ? xe_transfer_uint_vk_get(&uint_transfer_pipelines_,
                     unsigned(dest_rt_key.GetColorFormat()),
                     unsigned(dest_rt_key.msaa_samples),
                     unsigned(source_key.msaa_samples),
                     dest_rt_key.scale_native, source_key.scale_native)
-              : nullptr;
+              : numeric_identity
+                  ? xe_transfer_identity_vk_get(&identity_transfer_pipelines_,
+                        identity_view, unsigned(dest_rt_key.msaa_samples),
+                        unsigned(source_key.msaa_samples),
+                        dest_rt_key.scale_native, source_key.scale_native)
+                  : nullptr;
           if (ready) {
             xe_transfer_address_key address = {};
             address.dest_msaa = unsigned(dest_rt_key.msaa_samples);
@@ -3614,28 +3714,45 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
             xe_transfer_uint_packet_source packet = {
                 &options, &address, unsigned(source_key.GetColorFormat()),
                 unsigned(dest_rt_key.GetColorFormat()), 0};
+            xe_transfer_identity_options identity_options = {
+                options.source_multisampled, options.sample_mode, 0, identity_view};
+            xe_transfer_identity_packet_source identity_packet = {
+                &identity_options, &address, unsigned(source_key.GetColorFormat()),
+                unsigned(dest_rt_key.GetColorFormat()),
+                unsigned(gamma_render_target_as_unorm16_), 0};
+            const VkPipelineLayout ready_layout = numeric_identity
+                ? identity_transfer_pipelines_.layout : uint_transfer_pipelines_.layout;
+            const uint32_t packet_bytes = numeric_identity
+                ? uint32_t(sizeof(xe_transfer_identity_packet))
+                : uint32_t(sizeof(xe_transfer_uint_packet));
+            const uint32_t sample_offset = numeric_identity
+                ? uint32_t(offsetof(xe_transfer_identity_packet, sample))
+                : uint32_t(offsetof(xe_transfer_uint_packet, sample));
+            int (*write_packet)(void*, size_t, void*) = numeric_identity
+                ? xe_transfer_identity_packet_write : xe_transfer_uint_packet_write;
+            void* packet_context = numeric_identity
+                ? static_cast<void*>(&identity_packet) : static_cast<void*>(&packet);
             if (command_buffer.CmdVkPushConstantsWrite(
-                    uint_transfer_pipelines_.layout,
+                    ready_layout,
                     VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                    sizeof(xe_transfer_uint_packet),
-                    xe_transfer_uint_packet_write, &packet)) {
+                    packet_bytes, write_packet, packet_context)) {
               VkDescriptorSet source_descriptor =
                   source_vulkan_rt.GetDescriptorSetTransferSource();
               command_buffer.CmdVkBindDescriptorSets(
                   VK_PIPELINE_BIND_POINT_GRAPHICS,
-                  uint_transfer_pipelines_.layout, 0, 1,
+                  ready_layout, 0, 1,
                   &source_descriptor, 0, nullptr);
               for (uint32_t sample = 0; sample < transfer_sample_pipeline_count;
                    ++sample) {
                 command_processor_.BindExternalGraphicsPipeline(ready[sample]);
                 if (sample) {
                   const uint32_t physical_sample =
-                      xe_transfer_uint_vk_physical_sample(
-                          &uint_transfer_pipelines_, address.dest_msaa, sample);
+                      address.dest_msaa == 1 && !address.dest_native2
+                          ? sample * 3 : sample;
                   command_buffer.CmdVkPushConstants(
-                      uint_transfer_pipelines_.layout,
+                      ready_layout,
                       VK_SHADER_STAGE_FRAGMENT_BIT,
-                      offsetof(xe_transfer_uint_packet, sample),
+                      sample_offset,
                       sizeof(physical_sample), &physical_sample);
                 }
                 command_buffer.CmdVkDraw(XE_TRANSFER_RECTANGLE_VERTICES,

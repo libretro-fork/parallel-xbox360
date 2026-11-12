@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Prepare matching numeric-view ownership transfers for Vulkan and D3D12 before gameplay, retaining existing typed images and gamma storage. Share float identity shaders across attachment classes and write only five runtime dwords directly into command storage. Typed-resource MSAA comparisons against the existing producers and paired RTX 5090 single-sample/mixed-MSAA throughput checks pass for both renderers under the unchanged gates. Add complete-bank constructor accounting and checked first Vulkan/D3D12 transfers with failing omitted-draw controls. Other format conversions and guest-shader fallback coverage remain unfinished; component checks do not certify cold-play smoothness.
+
 - Fix the Linux ARM64 vertex-address sanitizer check selecting an x86-only compiler flag. Select AVX only for x86-64 compiler targets, preserving the production-interpreter UBSan check on ARM64 and cross-compilers.
 
 - Reuse bounded primitive-restart metadata storage instead of allocating deque blocks while processing draws. Retain each draw's segmentation snapshot and borrow the original index payload; neither renderer gains a staging copy. Allocate 262,140 bytes once per primitive processor and release it even when initialization fails. Add capacity, lifetime, allocation-failure and repeated-reuse tests, plus an exact-parent CPU comparison harness. This does not remove other draw-path allocations or compilation.

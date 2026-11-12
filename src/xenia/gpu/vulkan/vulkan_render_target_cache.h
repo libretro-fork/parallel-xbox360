@@ -33,6 +33,7 @@
 #include "xenia/ui/vulkan/single_layout_descriptor_set_pool.h"
 #include "xenia/ui/vulkan/vulkan_upload_buffer_pool.h"
 #include "libretro/core_transfer_uint_vk.h"
+#include "libretro/core_transfer_identity_vk.h"
 
 namespace xe {
 namespace gpu {
@@ -662,6 +663,8 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
 
   bool InitializeUintTransferPipelines();
   void UintTransferOps(xe_transfer_uint_vk_ops* ops) const;
+  bool InitializeIdentityTransferPipelines();
+  void IdentityTransferOps(xe_transfer_identity_vk_ops* ops) const;
   VkShaderModule GetTransferShader(EdramTransferShaderKey key);
   // With sample-rate shading, returns a pointer to one pipeline. Without
   // sample-rate shading, returns a pointer to as many pipelines as there are
@@ -744,6 +747,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       transfer_vertex_buffer_pool_;
   VkShaderModule transfer_passthrough_vertex_shader_ = VK_NULL_HANDLE;
   xe_transfer_uint_vk_bank uint_transfer_pipelines_ = {};
+  xe_transfer_identity_vk_bank identity_transfer_pipelines_ = {};
   VkPipelineLayout transfer_pipeline_layouts_[size_t(
       EdramTransferPipelineLayoutIndex::kCount)] = {};
   // VK_NULL_HANDLE if failed to create.

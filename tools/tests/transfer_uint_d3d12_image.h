@@ -19,7 +19,17 @@ static INLINE void *read_binary(const char *path,size_t *bytes) {
  fclose(f);*bytes=(size_t)n;return p;
 }
 static INLINE DXGI_FORMAT format(unsigned f) {
+#ifdef XE_TRANSFER_IMAGE_IDENTITY_MS
+ static const DXGI_FORMAT views[4]={DXGI_FORMAT_R8G8B8A8_UINT,DXGI_FORMAT_R16G16B16A16_UINT,
+  DXGI_FORMAT_R10G10B10A2_UINT,DXGI_FORMAT_R16G16B16A16_UINT};
+ return views[f];
+#elif defined(XE_TRANSFER_IMAGE_NUMERIC)
+ static const DXGI_FORMAT views[4]={DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_R16G16B16A16_UNORM,
+  DXGI_FORMAT_R10G10B10A2_UNORM,DXGI_FORMAT_R16G16B16A16_FLOAT};
+ return views[f];
+#else
  return f==5 || f==7?DXGI_FORMAT_R16G16B16A16_UINT:f==14?DXGI_FORMAT_R32_UINT:f==15?DXGI_FORMAT_R32G32_UINT:DXGI_FORMAT_R16G16_UINT;
+#endif
 }
 static INLINE HRESULT buffer(ID3D12Device *device,D3D12_HEAP_TYPE type,UINT64 bytes,ID3D12Resource **out) {
  D3D12_HEAP_PROPERTIES heap;D3D12_RESOURCE_DESC desc;
@@ -34,6 +44,12 @@ static INLINE HRESULT texture_samples(ID3D12Device *device,unsigned f,unsigned w
  memset(&heap,0,sizeof(heap));heap.Type=D3D12_HEAP_TYPE_DEFAULT;memset(&desc,0,sizeof(desc));
  desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=w;desc.Height=h;desc.DepthOrArraySize=desc.MipLevels=1;
  desc.SampleDesc.Count=samples;desc.Format=format(f);desc.Flags=target?D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET:D3D12_RESOURCE_FLAG_NONE;
+#ifdef XE_TRANSFER_IMAGE_IDENTITY_MS
+ /* Oracle aliases only. The separate single-sample tests retain actual typed
+  * resources. Typed MSAA mode also uses separate normal resources for the
+  * transfer; these typeless textures remain the seed/probe oracle only. */
+ desc.Format=f==0?DXGI_FORMAT_R8G8B8A8_TYPELESS:f==2?DXGI_FORMAT_R10G10B10A2_TYPELESS:DXGI_FORMAT_R16G16B16A16_TYPELESS;
+#endif
  return ID3D12Device_CreateCommittedResource(device,&heap,D3D12_HEAP_FLAG_NONE,&desc,
   target?D3D12_RESOURCE_STATE_RENDER_TARGET:D3D12_RESOURCE_STATE_COPY_DEST,NULL,&IID_ID3D12Resource,(void**)out);
 }

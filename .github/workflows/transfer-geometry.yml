@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install validation tools and software Vulkan
-        run: sudo apt-get update -qq && sudo apt-get install -y gcc spirv-tools libvulkan1 mesa-vulkan-drivers
+        run: sudo apt-get update -qq && sudo apt-get install -y gcc g++ spirv-tools libvulkan1 mesa-vulkan-drivers vulkan-validationlayers
       - name: Validate binary and execute exact vertex oracle
         run: |
           export VK_ICD_FILENAMES=$(find /usr/share/vulkan/icd.d -name 'lvp*.json' -print -quit)
@@ -23,11 +23,19 @@ jobs:
           GPU_TESTS=1 sh tools/tests/run_transfer_uint_image_tests.sh
           sh tools/tests/run_transfer_uint_bank_tests.sh
           python3 tools/tests/test_transfer_uint_warm_analysis.py
+          python3 tools/tests/test_transfer_identity_warm_analysis.py
+          python3 -O tools/tests/test_transfer_identity_warm_analysis.py
+          python3 tools/tests/test_transfer_identity_msaa_warm_analysis.py
+          python3 -O tools/tests/test_transfer_identity_msaa_warm_analysis.py
+          python3 tools/tests/test_transfer_identity_msaa_warm_d3d12_analysis.py
+          python3 -O tools/tests/test_transfer_identity_msaa_warm_d3d12_analysis.py
           python3 tools/tests/test_transfer_uint_warm_ci.py
           python3 tools/tests/test_transfer_uint_warm_d3d12_ci.py
           GPU_TESTS=0 TRANSFER_WARM_PARENT_SOURCE="$PWD" sh tools/tests/run_transfer_uint_warm_tests.sh
           GPU_TESTS=1 sh tools/tests/run_transfer_msaa_image_tests.sh
           MSAA_DYNAMIC_RENDERING=1 GPU_TESTS=1 MSAA_IMAGE_OUT=build/tests/transfer-msaa-dynamic sh tools/tests/run_transfer_msaa_image_tests.sh
+          GPU_TESTS=1 sh tools/tests/run_transfer_identity_tests.sh
+          IDENTITY_MSAA_VALIDATION=VK_LAYER_KHRONOS_validation GPU_TESTS=1 sh tools/tests/run_transfer_identity_reference_tests.sh "$PWD"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -42,6 +50,8 @@ jobs:
             build/tests/transfer-uint-warm/
             build/tests/transfer-msaa-image/
             build/tests/transfer-msaa-dynamic/
+            build/tests/transfer-identity/
+            build/tests/transfer-identity-reference/
           if-no-files-found: error
   d3d12:
     runs-on: windows-2022
@@ -75,6 +85,8 @@ jobs:
           call tools\tests\run_transfer_uint_revision_tests.cmd
           if errorlevel 1 exit /b 1
           call tools\tests\run_transfer_msaa_image_tests.cmd
+          if errorlevel 1 exit /b 1
+          call tools\tests\run_transfer_identity_tests.cmd
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -88,4 +100,5 @@ jobs:
             build/tests/transfer-uint-bank-msvc/
             build/tests/transfer-revision-msvc/
             build/tests/transfer-msaa-image-msvc/
+            build/tests/transfer-identity-msvc/
           if-no-files-found: error

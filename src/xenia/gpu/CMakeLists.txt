@@ -7,6 +7,7 @@ add_library(xenia-spirv-writer STATIC
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_binary.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_transfer_geometry.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_transfer_uint_spv.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_transfer_identity_spv.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_image_sink.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_arena.c"
   "${PROJECT_SOURCE_DIR}/libretro/core_spv_size.c"

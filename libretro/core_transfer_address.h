@@ -27,11 +27,8 @@ typedef struct xe_transfer_address_result {
  uintptr_t dest_tile,dest_x,dest_y;
 } xe_transfer_address_result;
 typedef char xe_transfer_address_config_size[(sizeof(xe_transfer_address_config)==92)?1:-1];
-static INLINE int xe_transfer_address_prepare(xe_transfer_address_config *out,
- const xe_transfer_address_key *key) {
- /* key is borrowed for this call and must not overlap the final packet out. */
- uint32_t dw,dh,sw,sh;
- if(!out || !key || key->dest_msaa>2 || key->source_msaa>2 ||
+static INLINE int xe_transfer_address_key_valid(const xe_transfer_address_key *key) {
+ if(!key || key->dest_msaa>2 || key->source_msaa>2 ||
     key->dest_native2>1 || key->source_native2>1 ||
     key->dest_native2!=key->source_native2 || key->dest_wide>1 || key->source_wide>1 ||
     key->dest_color>1 || key->source_color>1 || (!key->dest_color && key->dest_wide) ||
@@ -47,6 +44,13 @@ static INLINE int xe_transfer_address_prepare(xe_transfer_address_config *out,
  if(!((key->dest_scale_x==key->source_scale_x && key->dest_scale_y==key->source_scale_y) ||
       (key->dest_scale_x==1 && key->dest_scale_y==1) ||
       (key->source_scale_x==1 && key->source_scale_y==1)))return 0;
+ return 1;
+}
+static INLINE int xe_transfer_address_prepare(xe_transfer_address_config *out,
+ const xe_transfer_address_key *key) {
+ /* key is borrowed for this call and must not overlap the final packet out. */
+ uint32_t dw,dh,sw,sh;
+ if(!out || !xe_transfer_address_key_valid(key))return 0;
  dw=(80*key->dest_scale_x)>>(key->dest_wide+(key->dest_msaa==2));
  dh=(16*key->dest_scale_y)>>(uint32_t)(key->dest_msaa!=0);
  sw=(80*key->source_scale_x)>>(key->source_wide+(key->source_msaa==2));

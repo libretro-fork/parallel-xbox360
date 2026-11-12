@@ -16,6 +16,10 @@ extern "C" int xe_test_transfer_reference_build(xe_spv_binary *out,const xe_test
  options.resolution_scale_y=input->scale_y;
  options.msaa_2x_attachments_supported=input->native2!=0;
  options.sample_rate_shading_supported=input->shading!=0;
+#ifdef XE_TEST_TRANSFER_NUMERIC_REFERENCE
+ options.source_color_is_uint=options.dest_color_is_uint=false;
+#else
  options.source_color_is_uint=options.dest_color_is_uint=true;
+#endif
  return xe::gpu::BuildEdramTransferShaderSpirv(key,options,*out)?1:0;
 }

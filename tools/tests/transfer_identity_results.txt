@@ -1,0 +1,406 @@
+Numeric-view identity transfer work (development branch; not release signoff)
+==========================================================================
+Scope
+-----
+Vulkan and D3D12 runtime dispatch select initialization-owned C89 banks for
+matching color storage families0/1/2/3 (aliases10/12), without value conversion,
+depth/stencil or host-depth sources. Gamma0/1 crossings are excluded, even
+when both use RGBA8. Gamma16 retains its actual UNORM16 host view. Raw integer
+ownership transfers continue to use their separate existing bank.
+
+Keep original typed resources and descriptors. No extra image, integer alias,
+intermediate color copy, worker queue or compilation wait is introduced.
+Float fetch results reach float output directly; GPU typed-view conversions
+are the same as the existing matching-format direct path. This does not
+establish bit preservation for arbitrary NaN encodings in numeric views.
+
+Four typed view classes share byte-identical shader modules for each shape.
+Vulkan uses at most36 temporary modules and144/336 retained PSOs; D3D12 uses
+at most36 modules and144 PSOs. Counts collapse at1x and unsupported/unused
+view/sample combinations are omitted using actual device format support.
+These are bounds, not measured startup latency or driver memory costs.
+
+Only pitches, source-pitch reciprocal, tile base delta and physical sample
+cross command storage (20bytes). C89 writers fill the unpublished destination
+directly, with checked immutable metadata borrowed through return. All fixed
+sample/scale/layout words are initialization constants, not repushed payload.
+The shared address validator was extracted without changing its predicates.
+
+Current evidence
+----------------
+- MSVC /TC /O2 /W4 /WX packet tests:4992 packets and rejection cases. Literal
+  physical/native/emulated sample policies, aliases and gamma separation.
+- Both emitters:480 sample/scale/target shapes, all four view classes compared
+  byte-for-byte per shape; invalid widths reject. Microsoft validator covers
+  those480 DXIL modules plus the rectangle vertex module. SPIR-V Tools validates
+  every SPIR-V module. Strict GCC C89 ASan/UBSan packet/emitter checks pass.
+- Driver-recording compact20byte bank tests passed830 D3D12 failure/ownership cases
+  and5584 Vulkan contexts (including sparse support, partial/null outputs,
+  correct masks/typed state, module sharing, lifetime ordering and lookup-only
+  zero draw-role event accounting). Linux Vulkan ASan/UBSan bank reruns pass;
+  shared legacy address tests pass62208 cases and170 failure points.
+- Actual RTX5090 Vulkan and WARP each pass32 single-sample raster cases using
+  standalone and actual prepared-bank pipelines, all65536 UNORM16 codes,
+  RGBA8/RGB10A2/finite-half encodings, four native/asymmetric scale pairs and
+  readback guards. Independent expected routes come from the legacy oracle.
+  These are untimed correctness tests, not gameplay or throughput acceptance.
+- Full MSVC Release/LTO-OFF core build passes, including compact packets and
+  final alias render-pass warming. Initial missing-loader-entry and strict
+  test-indentation compilation failures are retained in development logs.
+- Full MinGW static Makefile windows-x86_64 build passes at three jobs,
+  including both backend integrations and all new runtime sources.
+- Independent MSAA raw-code seed and probe shaders exercise actual numeric
+  prepared banks. RTX5090 Vulkan passes864 cases with sample shading and576
+  with manual samples, each under render passes and dynamic rendering. WARP
+  and RTX5090 D3D12 each pass432 cases. Lavapipe lacks native2 and passes432
+  sample-shaded/288 manual cases, each under both rendering modes. All four
+  views/six scale combinations/native and emulated2x/4x are covered where
+  supported, including untouched physical samples and readback tail guards.
+  Integer/typeless aliases are strictly test-only seeding/probing tools;
+  production retains the original typed resources. These are untimed checks.
+- Three independent fault controls reject legal but incorrect sample routing,
+  scaled-source selection and physical sample masks at the intended pixels.
+  Each process receives exactly one fault flag; wrappers verify flag metadata,
+  rendering/adapter modes and complete case counts. Initial contaminated
+  multi-flag development attempts are retained and excluded from coverage.
+- Repository Linux and MSVC runners cover packets, bank failure/unwind paths,
+  shared emitter bytes, numeric SS images, MSAA images and fault controls.
+  Linux validates every generated SPIR-V module and runs strict C89 ASan/UBSan
+  for packet/bank/generators. Windows validates the481 main and3 utility DXIL
+  modules. Transfer-helper CI invokes both runners and retains their artifacts.
+- The actual public-parent Vulkan numeric producer emits52 validated SPIR-V
+  fixtures: four numeric view classes, matching1x/2x/4x source/destination
+  samples at1x/2x/4x scale, plus16 native/asymmetric SS shapes. An optional
+  reference path in the numeric image fixture passes48 image cases on both
+  RTX5090 and Lavapipe, comparing the production reference, new standalone
+  emitter and actual prepared bank against the same independent oracle.
+  The reproducible reference runner records source hashes; helper CI runs
+  this as correctness coverage against its checked-out legacy producer.
+  The existing integer-reference runner still emits/validates90 modules.
+  No throughput or startup latency is inferred from module/image validation.
+- Existing integer regressions remain green: Linux216 SS,3888 sample-shaded
+  and2592 manual MSAA images,1840 failure/unwind contexts and1296 shader
+  shapes; WARP216 SS,7776 MSAA and3888 actual production-bank images,
+  1092 failure/unwind contexts and936 validated native modules. Linux command
+  reservation/stream lifetime sanitizer fixtures also remain green.
+- Native-DXIL reference qualification now also emits52 modules from the exact
+  public-parent library, all checked by Microsoft's validator. WARP and RTX5090
+  each pass48 SS cases including actual legacy numeric PSOs, new standalone
+  PSOs and the production bank against the same independent oracle. The MSVC
+  repository runner reproduces reference generation/validation and WARP images.
+- Typed-resource SS GPU measurement passes24 groups per renderer on RTX5090:
+  four numeric views x1x/2x/4x scale x64/512 repeated draws, eight alternating
+  pairs including retained warmup, plus a separate reverse-order process.
+  Vulkan forward paired-median ratios range0.9420..1.0146 and reverse
+  0.9644..1.0213; D3D12 forward0.9972..1.0056 and reverse0.9908..1.0071.
+  Both retain the existing gate: paired median >5% AND >100ns/draw, at least
+  five of seven paired exceedances;512/64 measured work scaling >=2. No group
+  fails. Minimum work scaling exceeds4.28 on Vulkan and5.69 on D3D12.
+  A real double-draw candidate control fails all24 groups on each renderer.
+- These timing tools use the production typed resources with no integer or
+  typeless alias flags. Both outputs pass pixel checks before each timed case;
+  primitive/vertex/fragment counters, raw timestamps and availability/fence
+  completion are checked. Host intervals bound GPU ticks. Readback/image I/O
+  and initial buffer copies stay outside the timed region. No release-path
+  logging, clocks, counters or readbacks are added. Offline analyzer tests
+  reject missing/duplicate samples, wrong pair order, unavailable/corrupt
+  queries, missing geometry/fragments, hidden work and flat work response;
+  both ordinary and optimized Python runs pass.
+- Initialization observations are retained separately. The three SS-only
+  numeric banks prepare36 PSOs in total; this is not the full runtime bank.
+  The first Vulkan process records about45ms total across those banks and the
+  reverse process about0.45ms, with uncontrolled internal driver cache state.
+  Legacy per-PSO timings exclude offline shader generation, while numeric-bank
+  timings include emission and layout construction: do not compare these as
+  equivalent startup costs or call the first process certified cold. Full-bank
+  startup/driver allocation cost and MSAA GPU throughput remain unverified.
+- The MSAA oracle can now seed and inspect separate normal typed images via
+  untimed exact-format/sample-count image copies. Renderer draws use zero
+  image-create flags and their normal numeric views, retaining compression
+  eligibility instead of rendering through oracle aliases. All original864/
+  576 NVIDIA and432/288 Lavapipe cases pass this mode under render passes and
+  dynamic rendering, including individual sample/scale/mask fault controls.
+  Vulkan loader output confirms the Khronos validation layer was inserted on
+  the Linux run; the wrappers reject API validation errors even after a PASS.
+- Actual public-parent71670f3db reference emitters now produce120 Vulkan MSAA
+  recipes (native/emulated policy, all four numeric views, matching samples,
+  1x/2x/4x, sample-shaded/manual) and72 native DXIL sample/scale recipes.
+  SPIR-V Tools and Microsoft validation pass respectively. Native-DXIL MSAA
+  reference images are not yet covered; module validation is not that proof.
+- A typed-image Vulkan reference/bank fixture passes240 NVIDIA images with
+  sample shading and144 with forced manual mode, each under render passes
+  and dynamic rendering. Lavapipe lacks native2 and passes120/72 respectively
+  in both modes, with Vulkan API validation including teardown. This covers
+  matching source/destination sample counts; the separate864-case typed oracle
+  also covers mixed counts. These comparisons remain untimed.
+- The reference build compiles the actual producer once for both C89 drivers.
+  All52 prior SS/asymmetric modules and120 MSAA modules are byte-identical to
+  the independently compiled reference outputs. The Linux repository runner
+  builds and validates both corpora, then runs SS and all four MSAA comparison
+  modes. Initial fixture development failed strict C89 local aggregate pointer
+  initialization and API teardown validation (unused scale-bank entries leaked);
+  both defects were fixed, with failed logs retained. Cleanup now visits the
+  full array capacity independently of the number of initialized scale banks.
+
+
+Mixed-sample throughput qualification (additional development evidence)
+---------------------------------------------------------------------
+- Reference generators accept --all-sources for all nine source/destination
+  MSAA pairs. All360 SPIR-V and216 native DXIL modules validate. Default120
+  SPIR-V/72 DXIL outputs remain byte-identical to their qualified references.
+- The C89 Vulkan throughput fixture renders only normal typed resources.
+  Integer seed/probe copies, sentinel reset, readback and full physical-sample
+  comparisons stay outside timestamp brackets. Test controls are cached before
+  draw recording. There are no new release diagnostics or production copies.
+- All360 Lavapipe parent/bank images pass under render passes and dynamic
+  rendering, including API validation through teardown. The timed wrong-sample
+  control and stale-image control both fail at the independent image oracle.
+  Small diagnostic timing data is retained but is never throughput acceptance:
+  the render-pass/dynamic data has14/18 threshold-crossing groups respectively.
+- RTX5090 driver621.01, normal render passes: all720 images and11,520 raw rows
+  pass in each process order. The unchanged gate finds0/720 regressions in
+  either order; paired median ratios range0.8660..1.0629 and0.8688..1.0329.
+  Minimum512/64 work scaling is5.325/5.789. A ratio over5% alone is insufficient;
+  the existing absolute100ns per actual draw and5/7 repeatability rules also
+  apply. No gate was relaxed. Warmup trial0 is retained but excluded from gates.
+- Dynamic rendering also passes720 images/11,520 rows in each hardware order,
+  with0/720 threshold-crossing regressions per run. Paired median ratio ranges
+  are0.8617..1.0667 and0.8557..1.1083; minimum work scaling5.133/5.143.
+  Preserve the raw ratios above5%, rather than calling them uniformly faster:
+  the unchanged combined absolute/relative/repeatability gate defines acceptance.
+- Doubling the candidate's actual draw count preserves all720 hardware images
+  and triggers720/720 render-pass regressions. Primitive/fragment counters and
+  sample-policy metadata reject omitted work and invalid timing evidence.
+  Seven offline analyzer tests pass on Windows (ordinary and optimized Python)
+  and Linux. Hosted helper CI runs both analyzer modes on subsequent commits.
+- Immutable run directories record executable/module hashes, raw GPU/query/host
+  samples, initialization observations and exact device metadata. Driver disk
+  caches are uncontrolled; this is warmed-object throughput, not cold startup,
+  real-game stutter acceptance or a measured full-bank preparation cost.
+
+
+Integrated helper-CI execution
+------------------------------
+The repository reference runner now compiles/validates360 mixed-sample parent
+modules, builds the strict-C89 diagnostic executable and executes both rendering
+modes plus stale-output/wrong-sample controls. The complete runner passes against
+the actual public71670f3db source on Lavapipe with Khronos validation enabled for
+the new work/query paths (identity-msaa-ci-integration-v3). Existing52 SS/asymmetric
+and120 matching-sample references, SS images and all four prior matching-sample
+MSAA image modes also pass in this same run. Both diagnostic360-image reports
+explicitly keep accepted=false; successful correctness CI is not throughput
+acceptance. CI installs the requested validation layer. Early launcher failures
+(missing script after an edit assertion, then CRLF shell input) are retained;
+the final runner uses LF shell input and completes without API errors.
+
+Additional typed D3D12 resource evidence
+--------------------------------------
+- Optional --typed now exercises normal numeric source/destination resource
+  formats, with untimed seed/probe CopyResource operations against the original
+  oracle. No typeless resource is bound to the numeric transfer in this mode.
+  Production resource formats, copies and synchronization are unchanged.
+- RTX5090 and WARP each pass432 images across all nine MSAA pairs, four views
+  and six symmetric/asymmetric scale classes, plus all three corruption controls.
+  The MSVC C89 tool also passes with the SDK debug layer enabled on both devices,
+  checking InfoQueue errors after resource/PSO cleanup. The original untyped
+  WARP suite passes with SDK validation too. SDK checks are opt-in and test-only.
+- Windows helper CI now runs typed and untyped D3D12 image/control suites.
+  These are independent-oracle images, not yet parent-emitter comparisons or
+  D3D12 MSAA throughput measurements. All such performance claims remain pending.
+
+Typed D3D12 actual-parent comparisons
+------------------------------------
+- A separate C89 fixture prepares the actual216 native parent recipes before
+  drawing, preserving their packed-address root binding (b1,space31), numeric
+  attachment formats, native/emulated sample masks and four-dword constant ABI.
+  Production banks use their own existing root signature and20-byte packet.
+- Both implementations pass the independent physical-sample/tail oracle on
+  normal typed resources:432 images per device, all nine source/destination
+  sample pairs, four views,1x/2x/4x uniform scales. RTX5090 and WARP pass with SDK
+  validation through cleanup. Initial root-binding mismatch was caught by the
+  SDK, fixed in the fixture, and retained as failed development evidence.
+- Windows helper CI builds/validates all216 native references and runs the WARP
+  comparison. The complete repository runner passed locally with a freshly
+  built feature emitter (three compile jobs) and the actual716 parent archive.
+  All216 generated parent modules remain byte-identical to the previously
+  qualified outputs. Existing packet/bank tests,481 native-module validations,
+  SS reference images and both typed/untyped MSAA fault controls pass too.
+  This Windows invocation compiles Vulkan fixtures but explicitly skips their
+  execution; the preceding Linux runner covers their actual image/work paths.
+- These are untimed parent comparisons. D3D12 MSAA throughput, full initialization
+  cost, cold-play acceptance and remaining draw-path compilation debt are not
+  established by these passes.
+
+Typed D3D12 MSAA warmed throughput
+---------------------------------
+- Full128-tile (16x8) work covers all9 source/destination MSAA pairs,4 typed
+  views,3 uniform scales and native/emulated2x.432 timing groups retain6,912
+  raw rows per run:64/512 repeats, trial0 warmup retained and7 gated alternating
+  pairs. Timing surrounds draws and matched query accounting; seed/probe copies,
+  sentinel resets, readbacks and physical-sample/tail checks are outside it.
+- An optional2D native DXIL probe supports dispatches beyond65,535 X groups.
+  All4 utility programs Microsoft-validate. Existing3 default utility programs
+  and rectangleVS remain byte-identical. A full-size hardware image-only run
+  passes432 images and the callback probe, with SDK validation through cleanup.
+- WARP small diagnostic passes432 images and all work/sample checks with SDK
+  validation. Stale-output and wrong-source-sample controls fail at the intended
+  timed-batch image oracle. Diagnostic/SDK/image-only runs cannot qualify hardware
+  throughput; the controller labels them and rejects incompatible acceptance.
+- D3D12 records IA primitives, VS/PS invocations and exact covered samples using
+  an occlusion query. Both the tool and analyzer verify covered samples equal
+  pixels*active_samples*repeat*work_multiplier. During development WARP reported
+  51,200 PS invocations for81,920 covered samples; the earlier assumed MSAA
+  invocation minimum failed and is retained as development evidence. The new
+  D3D12-specific model keeps these separate counters, requires per-pixel shader
+  work and exact sample coverage, with independently checked images. Vulkan's
+  forced-sample-shading counter contract is unchanged. API definitions:
+  https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_query_data_pipeline_statistics
+  https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ne-d3d12-d3d12_query_type
+- RTX5090 driver621.01 passes both hardware orders with432 correct images and
+  0/432 threshold-crossing groups each. Paired median ratios0.98917..1.01074
+  forward and0.96082..1.01392 reverse; minimum512/64 work scaling6.481/6.368.
+  Unchanged gate: paired median>5% AND>100ns/actualdraw,>=5/7 repeatability,
+  scaling>=2. No timing threshold was changed. All builds/CPU correctness work
+  completed before real timing. Driver disk caches remain uncontrolled; these
+  are warm in-process objects, not certified cold boot or gameplay evidence.
+- Actual2x candidate draws preserve432 hardware images and cause432/432 timing
+  regressions (paired medians1.7535..1.9997). Source/module/executable manifests,
+  query ticks, completed-fence checks, host envelopes and raw samples are retained.
+  Device-removed fence sentinel UINT64_MAX fails closed in the new harness.
+- Eight D3D12 analyzer tests pass on Windows ordinary/-O and Linux; seven Vulkan
+  tests pass ordinary/-O. The complete Windows repository runner passes with the
+  new WARP diagnostic and both real corruption controls; Linux helper CI runs
+  both analyzer modes. The diagnostic CSVs remain explicitly unaccepted for
+  throughput. Full-size hardware checks are local, not hosted GPU CI signoff.
+
+Single-bank D3D12 initialization observations
+-------------------------------------------
+- A standalone C89 driver queries actual typed-view/load/MSAA support, constructs
+  one complete selected-scale bank and tracks constructor calls, shader payload
+  sizes, live API refs and144 lookup combinations. SDK WARP checks pass for
+  1x/gamma16-off and4x/gamma16-on; the integrated Windows runner also passes its
+  new1x/4x gamma16-on constructor cases and existing numerical/work suites.
+- The scaled all-view bank emits36 programs, creates144 PSOs and retains a
+  1,200-byte fixed CPU bank struct. The largest serialized4x shader payload is
+  3,029 bytes; every returned shader blob is released before ready publication.
+  Default1x collapses to9 programs/36 PSOs (27 when gamma16 is omitted).
+  All acquired bank-owned API references are released at close in these checks.
+- Twenty-one fresh-process RTX5090 observations,7 per configuration, preserve
+  raw counts and all outliers.1x/gamma16-off: median3.434ms, range3.245..63.935ms;
+  4x/gamma16-on: median11.769ms, range11.523..198.279ms;
+  3x5/gamma16-on: median11.931ms, range11.597..191.080ms. These are constructor
+  observations with uncontrolled driver disk caches, not a matched parent
+  comparison, certified cold-driver timings or startup acceptance. Device and
+  shared vertex setup are excluded; capability-query time is reported separately.
+- Process private/working-set snapshots are recorded before readiness, at ready
+  and after close. They include allocator/driver caching and background activity;
+  they do not prove per-allocation sizes or a memory leak. Serialized payload
+  bytes and API-borrowed byte counts are also distinct from allocation sizes.
+  Intermediate emitter heap allocations and driver-owned object bytes remain
+  unobserved. Those original21 observations perform no draw; the subsequent
+  first-transfer qualification below adds actual execution separately.
+- Production call-path review confirms host-render-target initialization owns
+  the new bank; interlock paths omit it. Both command processors call
+  AwaitAllQueueOperationsCompletion at ShutdownContext entry before destroying
+  the render-target cache. ClearCache retires surfaces and retains these banks.
+  Shutdown closes bank PSOs/root/layout before the shared transfer vertex data.
+  Resolution scale is construction-time state exposed as restart-required in
+  libretro options. Guest aliases10/12 retain32-bit storage (xenos.h), matching
+  the packet validator. These source checks supplement the numerical/failure/
+  lifetime tests; they are not a new live-game reset/unload measurement.
+
+Full-bank Vulkan initialization and first D3D12 transfer
+------------------------------------------------------
+- A strict C89 Vulkan driver constructs one complete bank with actual queried
+  typed-format/sample support, tracks shader/layout/PSO ownership and144 lookup
+  combinations, then verifies all acquired objects are released. Coverage includes
+  render passes/dynamic rendering, built-in/manual sample shading,1x/gamma-off
+  and4x/gamma-on. Khronos-validated Lavapipe cases pass. MSVC /W4 /WX caught a
+  shadowed loop variable during development; it was corrected, not suppressed.
+- The D3D12 constructor check now executes one prepared RGBA8 transfer after
+  separately completed upload/clear setup. Every output pixel and row/tail guard
+  is checked, with GPU pipeline statistics and timestamps. The test separately
+  reports CPU recording, submit-to-completion (including validation copies), GPU
+  draw and CPU validation times. Bank creation counts remain unchanged through
+  the transfer. A real omitted-draw control fails the image oracle; SDK WARP1x
+  and4x pass without API validation errors. This is not whole-core first-frame
+  coverage. The later Vulkan first-use proof is recorded separately below.
+- Forty-nine fresh-process RTX5090/621.01 observations (seven per configuration)
+  retain every raw sample. Vulkan bank constructor median/range, milliseconds:
+    1x built-in/render-pass:1.140 /1.103..74.093
+    4x built-in/render-pass:2.119 /2.031..185.898
+    4x manual/render-pass:2.472 /2.394..166.940
+    4x built-in/dynamic:2.049 /1.978..2.144
+    4x manual/dynamic:2.447 /2.388..2.536
+  All five hardware configurations include gamma16. All-view scaled Vulkan
+  banks emit36 modules, peak9 live,144 built-in or336 manual PSOs, with2,736
+  inline bank bytes and16,384 retained scratch-capacity bytes on measured x64.
+  These payload/storage counts do not measure internal driver allocations.
+- D3D12 gamma-on constructor median/range, milliseconds:
+    1x:3.488 /3.374..65.918;4x:12.134 /11.761..198.224.
+  Fourteen first transfers pass: median GPU draw5.824us/5.952us (1x/4x), CPU
+  recording317.1us/297.9us, submit-to-completion99.4us/95.3us. These distinct
+  brackets include different work and must not be added as equivalent timings.
+  Seven samples do not establish stable tail percentiles. Source/executable
+  hashes and raw observations are retained in the evidence directory.
+- Builds/correctness completed before these hardware observations. Driver disk
+  caches were uncontrolled; these are observations, not paired startup/cold-play
+  acceptance. First D3D12 preparation in some processes took nearly200ms; those
+  samples remain visible. The initial observation attempt stopped before running
+  any case because the failed MSVC compilation left no Vulkan executable.
+
+- Linux's actual-parent runner passes all existing numerical/MSAA work and
+  corruption checks with the new constructor cases. Its software timing reports
+  remain diagnostic/accepted=false. The new log-preserving constructor wrapper
+  separately passes all five cases and rejects validation messages. Windows's
+  numerical/work stages and all three first-transfer cases pass; its final
+  negative-test log check initially failed because FINDSTR parsed a forward-slash
+  path as switches. Redirecting stdin fixes it; the corrected check and remaining
+  Vulkan compilation stages pass in a retained continuation. Windows execution
+  of Vulkan images remains disabled in that runner; Linux covers those images.
+
+First Vulkan transfer
+---------------------
+- A new strict C89 fixture uses the complete constructor-owned bank for one
+  normal RGBA8 single-sample transfer. Upload and target clear complete before
+  the first measured recording. All pixels/tail guards and IA/VS/fragment work
+  counters must match. GPU timestamps bracket the rendering interval; readback
+  lies outside that bracket. CPU command recording, submit-to-completion and
+  CPU validation are reported separately. The bank emits/creates nothing more.
+- Both MSVC /W4 /WX and strict GCC builds pass. Khronos Lavapipe validation
+  passes five configurations (1x/gamma-off;4x built-in/manual shading with
+  render passes and dynamic rendering). All five real omitted-draw controls
+  fail at the image oracle without validation errors. CI retains each log and
+  rejects validation messages or missing output/work evidence.
+- RTX5090/621.01 passes the same five hardware correctness checks and five
+  omitted-draw controls before35 fresh-process observations (seven/config).
+  Median GPU rendering interval, range, CPU record and submit-complete in us:
+    1x built-in/render-pass:4.832 /4.768..5.120;57.6;61.4
+    4x built-in/render-pass:4.768 /4.736..6.752;56.8;63.1
+    4x manual/render-pass:4.768 /4.736..5.984;57.7;62.8
+    4x built-in/dynamic:5.216 /4.768..5.600;66.7;65.9
+    4x manual/dynamic:4.768 /4.736..6.144;64.5;64.6
+  Source/module/executable hashes remain unchanged across observations. Raw,
+  median, empirical nearest-rank p95/p99/max and maximum-sample filenames are
+  retained. Seven observations do not establish stable tail percentiles.
+- Driver caches remain uncontrolled. These are representative first-use SS
+  observations, not per-PSO first-use latency, a parent comparison, full-core
+  startup acceptance or gameplay evidence. No earlier startup outlier is
+  erased or reclassified. MSAA correctness/warmed throughput is covered by the
+  separate suites above. All new timing/query/readback code is test-only.
+
+Publication and coverage limits
+-------------------------------
+Publication requires the full exact-first-parent shader comparison and core
+builds, in addition to these component checks; retain their evidence separately.
+Preserve the existing reset/unload completion ordering. Source call-path review
+and API-object lifetime tests above are not live-game reset/unload measurements.
+Allocation observations cover payloads, retained storage, API object references
+and process snapshots, not all emitter/driver internal allocation sizes.
+Do not substitute warmed procedural results for cold-play coverage, loosen
+limits, silently skip unavailable coverage or retry unchanged timings until
+green. Mailbox and CI evidence must state actual coverage and limitations.
+
+No game was run, no live shader cache was removed, no installed core changed.
+Other draw-path compilation, accurate guest fallback and broader allocation/
+thread/audio/I/O/serialization goals remain active and unresolved.

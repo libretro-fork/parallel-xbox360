@@ -1,7 +1,8 @@
 add_library(xenia-gpu-vulkan STATIC)
 xe_platform_sources(xenia-gpu-vulkan ${CMAKE_CURRENT_SOURCE_DIR})
 target_sources(xenia-gpu-vulkan PRIVATE
-  "${PROJECT_SOURCE_DIR}/libretro/core_transfer_uint_vk.c")
+  "${PROJECT_SOURCE_DIR}/libretro/core_transfer_uint_vk.c"
+  "${PROJECT_SOURCE_DIR}/libretro/core_transfer_identity_vk.c")
 xe_shader_rules_spirv(xenia-gpu-vulkan ${CMAKE_CURRENT_SOURCE_DIR}/../shaders)
 target_include_directories(xenia-gpu-vulkan PRIVATE
   ${PROJECT_SOURCE_DIR}/third_party/Vulkan-Headers/include

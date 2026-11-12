@@ -625,7 +625,8 @@ bool D3D12RenderTargetCache::Initialize() {
     uint_config.scale_x = draw_resolution_scale_x();
     uint_config.scale_y = draw_resolution_scale_y();
     if (!xe_transfer_uint_d3d12_init(&uint_transfer_pipelines_, &uint_config,
-                                    xe_transfer_uint_d3d12_native_ops())) {
+                                    xe_transfer_uint_d3d12_native_ops()) ||
+        !InitializeIdentityTransferPipelines()) {
       Shutdown();
       return false;
     }
@@ -1064,6 +1065,9 @@ void D3D12RenderTargetCache::Shutdown(bool from_destructor) {
 
   xe_transfer_uint_d3d12_close(&uint_transfer_pipelines_,
                                xe_transfer_uint_d3d12_native_ops());
+  xe_transfer_identity_d3d12_ops identity_ops = {};
+  xe_transfer_identity_d3d12_native_ops(&identity_ops);
+  xe_transfer_identity_d3d12_close(&identity_transfer_pipelines_, &identity_ops);
   transfer_vertex_buffer_pool_.reset();
   xe_dxil_shader_binary_free(&transfer_vertex_shader_);
 
@@ -1692,6 +1696,54 @@ void D3D12RenderTargetCache::RestoreEdramSnapshot(const void* snapshot) {
     default:
       assert_unhandled_case(GetPath());
   }
+}
+
+bool D3D12RenderTargetCache::InitializeIdentityTransferPipelines() {
+  static const DXGI_FORMAT views[4] = {
+      DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R16G16B16A16_UNORM,
+      DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT};
+  ID3D12Device* device = command_processor_.GetD3D12Provider().GetDevice();
+  xe_transfer_identity_d3d12_config config = {};
+  xe_transfer_identity_d3d12_ops ops = {};
+  config.device = device;
+  config.vertex = transfer_vertex_shader_.data;
+  config.vertex_bytes = transfer_vertex_shader_.size;
+  config.native2 = msaa_2x_supported_;
+  config.scale_x = draw_resolution_scale_x();
+  config.scale_y = draw_resolution_scale_y();
+  for (unsigned f = 0; f < 4; ++f) {
+    if (f == XE_TRANSFER_IDENTITY_RGBA16 && !gamma_render_target_as_unorm16_)
+      continue;
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT support = {};
+    support.Format = views[f];
+    if (FAILED(device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT,
+                                          &support, sizeof(support))))
+      return false;
+    const D3D12_FORMAT_SUPPORT1 required = D3D12_FORMAT_SUPPORT1(
+        D3D12_FORMAT_SUPPORT1_TEXTURE2D | D3D12_FORMAT_SUPPORT1_SHADER_LOAD |
+        D3D12_FORMAT_SUPPORT1_RENDER_TARGET);
+    if ((support.Support1 & required) != required) continue;
+    unsigned physical_samples = 1;
+    const D3D12_FORMAT_SUPPORT1 required_ms = D3D12_FORMAT_SUPPORT1(
+        D3D12_FORMAT_SUPPORT1_MULTISAMPLE_LOAD |
+        D3D12_FORMAT_SUPPORT1_MULTISAMPLE_RENDERTARGET);
+    if ((support.Support1 & required_ms) == required_ms) {
+      for (unsigned samples = 2; samples <= 4; samples *= 2) {
+        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS quality = {};
+        quality.Format = views[f];
+        quality.SampleCount = samples;
+        if (FAILED(device->CheckFeatureSupport(
+                D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &quality,
+                sizeof(quality)))) return false;
+        if (quality.NumQualityLevels) physical_samples |= samples;
+      }
+    }
+    config.sample_mask[f] =
+        xe_transfer_identity_samples(physical_samples, config.native2);
+  }
+  xe_transfer_identity_d3d12_native_ops(&ops);
+  return xe_transfer_identity_d3d12_init(&identity_transfer_pipelines_, &config,
+                                        &ops) != 0;
 }
 
 DXGI_FORMAT D3D12RenderTargetCache::GetColorResourceDXGIFormat(
@@ -3046,8 +3098,8 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
         command_list.D3DIASetVertexBuffers(0, 1,
                                            &transfer_rectangle_buffer_view);
 
-        // Prepared integer ownership views. Other conversions remain explicit
-        // legacy-path debt; they are not covered by this initialization bank.
+        // Prepared raw integer and matching numeric-view transfers. Other
+        // conversions remain explicit legacy-path compilation debt.
         if (transfer_mode == EdramTransferMode::kColorToColor &&
             !transfer_shader_key.value_convert && !host_depth_source_d3d12_rt &&
             !dest_rt_key.is_depth && !source_d3d12_rt.key().is_depth) {
@@ -3055,12 +3107,22 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
           bool source_uint, dest_uint;
           GetColorOwnershipTransferDXGIFormat(source_key.GetColorFormat(), &source_uint);
           GetColorOwnershipTransferDXGIFormat(dest_rt_key.GetColorFormat(), &dest_uint);
+          unsigned identity_view = 0;
+          const bool numeric_identity = !source_uint && !dest_uint &&
+              xe_transfer_identity_class(unsigned(source_key.GetColorFormat()),
+                  unsigned(dest_rt_key.GetColorFormat()),
+                  gamma_render_target_as_unorm16_, &identity_view);
           ID3D12PipelineState* ready = source_uint && dest_uint
               ? xe_transfer_uint_d3d12_get(&uint_transfer_pipelines_,
                     unsigned(dest_rt_key.GetColorFormat()),
                     unsigned(dest_rt_key.msaa_samples), unsigned(source_key.msaa_samples),
                     dest_rt_key.scale_native, source_key.scale_native)
-              : nullptr;
+              : numeric_identity
+                  ? xe_transfer_identity_d3d12_get(&identity_transfer_pipelines_,
+                        identity_view, unsigned(dest_rt_key.msaa_samples),
+                        unsigned(source_key.msaa_samples),
+                        dest_rt_key.scale_native, source_key.scale_native)
+                  : nullptr;
           if (ready) {
             xe_transfer_address_key address = {};
             address.dest_msaa = unsigned(dest_rt_key.msaa_samples);
@@ -3082,12 +3144,26 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
             xe_transfer_uint_packet_source packet = {
                 &options, &address, unsigned(source_key.GetColorFormat()),
                 unsigned(dest_rt_key.GetColorFormat()), 0};
+            xe_transfer_identity_options identity_options = {
+                options.source_multisampled, options.sample_mode, 0, identity_view};
+            xe_transfer_identity_packet_source identity_packet = {
+                &identity_options, &address, unsigned(source_key.GetColorFormat()),
+                unsigned(dest_rt_key.GetColorFormat()),
+                unsigned(gamma_render_target_as_unorm16_), 0};
+            ID3D12RootSignature* ready_root = numeric_identity
+                ? identity_transfer_pipelines_.root : uint_transfer_pipelines_.root;
+            const uint32_t packet_dwords = numeric_identity
+                ? sizeof(xe_transfer_identity_packet) / sizeof(uint32_t)
+                : sizeof(xe_transfer_uint_packet) / sizeof(uint32_t);
+            int (*write_packet)(void*, size_t, void*) = numeric_identity
+                ? xe_transfer_identity_packet_write : xe_transfer_uint_packet_write;
+            void* packet_context = numeric_identity
+                ? static_cast<void*>(&identity_packet) : static_cast<void*>(&packet);
             // Rebind legacy state even if packet preparation is rejected.
             last_transfer_mode = EdramTransferMode::kCount;
-            command_processor_.SetExternalGraphicsRootSignature(uint_transfer_pipelines_.root);
+            command_processor_.SetExternalGraphicsRootSignature(ready_root);
             if (command_list.D3DSetGraphicsRoot32BitConstantsWrite(
-                    1, sizeof(xe_transfer_uint_packet) / sizeof(uint32_t), 0,
-                    xe_transfer_uint_packet_write, &packet)) {
+                    1, packet_dwords, 0, write_packet, packet_context)) {
               command_list.D3DSetGraphicsRootDescriptorTable(0,
                   TemporaryGPUDescriptors()[source_d3d12_rt.temporary_srv_descriptor_index()].second);
               command_processor_.SubmitBarriers();
@@ -3095,8 +3171,7 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
               command_list.D3DDrawInstanced(XE_TRANSFER_RECTANGLE_VERTICES,
                                              transfer_rectangle_count, 0, 0);
               // Rebind all legacy state after switching root signatures.
-              // Rebind legacy state even if packet preparation is rejected.
-            last_transfer_mode = EdramTransferMode::kCount;
+              last_transfer_mode = EdramTransferMode::kCount;
               continue;
             }
           }
