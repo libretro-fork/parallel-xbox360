@@ -22,6 +22,9 @@ jobs:
           TRANSFER_ADDRESS_TEST=1 GPU_TESTS=1 sh tools/tests/run_transfer_sample_tests.sh
           GPU_TESTS=1 sh tools/tests/run_transfer_uint_image_tests.sh
           sh tools/tests/run_transfer_uint_bank_tests.sh
+          python3 tools/tests/test_transfer_uint_warm_analysis.py
+          python3 tools/tests/test_transfer_uint_warm_ci.py
+          GPU_TESTS=0 TRANSFER_WARM_PARENT_SOURCE="$PWD" sh tools/tests/run_transfer_uint_warm_tests.sh
           GPU_TESTS=1 sh tools/tests/run_transfer_msaa_image_tests.sh
           MSAA_DYNAMIC_RENDERING=1 GPU_TESTS=1 MSAA_IMAGE_OUT=build/tests/transfer-msaa-dynamic sh tools/tests/run_transfer_msaa_image_tests.sh
       - uses: actions/upload-artifact@v4
@@ -35,6 +38,7 @@ jobs:
             build/tests/transfer-address/
             build/tests/transfer-uint-image/
             build/tests/transfer-uint-bank/
+            build/tests/transfer-uint-warm/
             build/tests/transfer-msaa-image/
             build/tests/transfer-msaa-dynamic/
           if-no-files-found: error
@@ -67,6 +71,8 @@ jobs:
           if errorlevel 1 exit /b 1
           call tools\tests\run_transfer_uint_bank_tests.cmd
           if errorlevel 1 exit /b 1
+          call tools\tests\run_transfer_uint_revision_tests.cmd
+          if errorlevel 1 exit /b 1
           call tools\tests\run_transfer_msaa_image_tests.cmd
       - uses: actions/upload-artifact@v4
         if: always()
@@ -79,5 +85,6 @@ jobs:
             build/tests/transfer-address-msvc/
             build/tests/transfer-uint-image-msvc/
             build/tests/transfer-uint-bank-msvc/
+            build/tests/transfer-revision-msvc/
             build/tests/transfer-msaa-image-msvc/
           if-no-files-found: error

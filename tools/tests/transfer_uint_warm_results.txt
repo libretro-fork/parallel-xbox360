@@ -1,0 +1,67 @@
+Warmed integer-transfer gate: implementation and current verification
+
+No production source is included from these test-only files. Algorithms and the
+revision boundary are C89. The optional legacy emitter bridge is narrow C++.
+
+The hardware workflow invokes transfer_uint_warm_ci.py after the ordinary shader
+comparison. It verifies the exact first parent and clean revision worktrees,
+compiles the parent's bank into an isolated shared library, and compiles the
+candidate into the common fixture. Both run on one Vulkan device/context. Each
+uses its own bank layout and checked packet preparation. Opaque ownership avoids
+sharing bank struct layouts or freeing another module's memory. Packet schema
+changes explicitly fail rather than silently reinterpret data.
+
+Ninety image states exercise ten ownership format changes, 1x/2x/4x surfaces and
+native 1/2/4-sample images. Each source uses 33x16 tiles, destination 32x16 tiles,
+different pitches and a base delta. Parent and candidate image/oracle checks run
+before measurement. The common probe writes directly to mapped final readback
+storage; the measurement does not add production staging or release diagnostics.
+
+Each timed state retains one warmup plus seven alternating pairs at 64 and 512
+actual draws. A separate run reverses order. Input primitives must equal 2*N;
+vertex work must be nonzero and fragment work must cover the requested samples.
+Timestamp availability, wrap range, host envelope, device/driver/ABI identity,
+complete image checks, missing/duplicate samples and work scaling are mandatory.
+The unchanged gate is paired median >5% AND >100 ns/draw with >=5/7 exceedances;
+512/64 work scaling must be >=2. Raw rows explicitly distinguish legacy-emitter
+from revision-bank references. Missing capabilities are failures/unverified,
+not skipped passes. Driver disk/internal caches are NOT certified cold.
+
+If SHADER_PERF_ANCHOR is explicitly configured, CI runs a second comparison using
+that exact pinned worktree. No reference is chosen or promoted automatically.
+The absence of a certified anchor remains debt. Hardware CI remains optional
+only because an appropriately labelled runner must be supplied; skipped hardware
+is unverified coverage, never a hardware performance claim.
+
+Verified so far:
+- GCC strict C89 and MSVC /TC /W4 /WX compile the ABI and common driver.
+- Opaque parent/candidate native NVIDIA runs each pass all 90 image states.
+- Revision ABI negotiation, independent owners, poisoned single-object outputs,
+  valid partial pipeline batches and packet guards pass MSVC and GCC ASan/UBSan.
+- Eight raw-evidence unit tests and five CI qualification/identity tests pass,
+  including under Python -O. All 55 existing shader-CI unit tests still pass.
+- The four public vertex/probe modules match retained, independently validated
+  module bytes. The shared ordinary probe keeps its original one-dimensional
+  behavior unless the warm-only 2D option is enabled.
+
+- End-to-end Windows controller self-check (identical c776b467d implementations)
+  passes all 180 groups in both orders with strict SPIR-V validation, device/ABI
+  manifests and complete image oracles. This is explicitly unqualified self-check
+  evidence, not a first-parent acceptance claim.
+- A private c776b467d copy restores fully dynamic parameters in the shape builder,
+  leaving images and work counts unchanged. The controller correctly rejects
+  91 groups in EACH order; maximum observed forward median ratio is about 1.65x.
+  This negative control contains no sleeps or artificial timestamp changes.
+  Its unchanged image oracles pass all 90 states. Retain both raw failed runs.
+- Windows-to-WSL validation uses forward-slash paths; the first controller attempt
+  failed before GPU execution on backslash conversion, and was retained as a
+  failed harness attempt. A fresh output directory passes end-to-end validation.
+
+Pending before delivery: qualified clean parent/candidate timed comparison,
+final exact-parent gate and mailbox application validation. Linux C89 builds
+and ABI tests pass; end-to-end hardware execution was measured on Windows NVIDIA,
+not Linux software Vulkan. The hardware workflow's physical-device requirement
+is explicit. Missing native 2x/sample-shading/statistics remains unverified.
+
+These checks do not establish cold-play fluidity, eliminate guest shader compile
+waits, cover all transfer modes or complete D3D12 prepared integration.

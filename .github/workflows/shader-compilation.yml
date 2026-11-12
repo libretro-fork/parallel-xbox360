@@ -102,6 +102,10 @@ jobs:
           PERF_OUT: ${{ runner.temp }}/shader-perf-${{ matrix.sha }}-hardware
         run: |
           python3 tools/tests/shader_compile_ci.py run --base "$PERF_BASE" --head "$PERF_HEAD" --backend vulkan-hardware --out "$PERF_OUT" --samples 7
+          python3 tools/tests/transfer_uint_warm_ci.py --base "$PERF_BASE" --head "$PERF_HEAD" --parent-source "$PERF_OUT/source-base" --head-source "$PERF_OUT/source-candidate" --out "$PERF_OUT/results/transfer-warm"
+          if test -n "$SHADER_PERF_ANCHOR"; then
+            python3 tools/tests/transfer_uint_warm_ci.py --base "$PERF_BASE" --head "$PERF_HEAD" --pinned-reference "$SHADER_PERF_ANCHOR" --parent-source "$PERF_OUT/source-anchor" --head-source "$PERF_OUT/source-candidate" --out "$PERF_OUT/results/transfer-warm-anchor"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

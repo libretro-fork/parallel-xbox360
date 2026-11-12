@@ -98,7 +98,13 @@ static int build(xe_spv_binary *out,int probe,unsigned ms) {
   value=s.next++;xe_spv_binary_instruction(out,SpvOpCompositeConstruct,U4,value,args,4);
   put(&s,SpvOpStore,0,0,2,OUTPUT,value,0);
  } else {
-  index=val(&s,SpvOpCompositeExtract,U,2,input,0,0);width=field(&s,0);height=field(&s,1);sample=field(&s,2);
+  index=val(&s,SpvOpCompositeExtract,U,2,input,0,0);
+#ifdef XE_TRANSFER_MSAA_PROBE_2D
+  /* Runtime row stride; ordinary probes retain the one-dimensional interface. */
+  a=val(&s,SpvOpCompositeExtract,U,2,input,1,0);b=field(&s,3);
+  a=val(&s,SpvOpIMul,U,2,a,b,0);index=val(&s,SpvOpIAdd,U,2,index,a,0);
+#endif
+  width=field(&s,0);height=field(&s,1);sample=field(&s,2);
   total=val(&s,SpvOpIMul,U,2,width,height,0);total=val(&s,SpvOpIMul,U,2,total,sample,0);
   length=val(&s,SpvOpArrayLength,U,2,OUTPUT,0,0);length=val(&s,SpvOpUDiv,U,2,length,c(4),0);
   a=val(&s,SpvOpULessThan,B,2,index,total,0);b=val(&s,SpvOpULessThan,B,2,index,length,0);

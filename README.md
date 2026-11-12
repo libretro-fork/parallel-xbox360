@@ -662,3 +662,10 @@ coverage/ownership changes, not renderer integration or retail cold-play signoff
 See `tools/tests/minmax_results.txt` for measured costs and missing coverage.
 
 Supported Vulkan integer ownership transfers use an initialization-owned fixed pipeline table and construct constants directly in retained deferred-command storage. Manual sample passes update only the sample index. Other transfer formats and guest shaders still have unresolved draw-path compilation; this is not a smooth cold-play guarantee. See [prepared transfer coverage and limits](tools/tests/transfer_uint_bank_results.txt).
+Warmed integer ownership-transfer regression tests use one Vulkan device for
+separately compiled reference and candidate banks. Image oracles and GPU work
+counts precede seven alternating/reversed timing pairs. Hardware CI compares the
+exact first parent and an explicitly configured pinned reference; hosted jobs
+build and check the ABI/analyzer without claiming hardware timing coverage.
+See [the fixture coverage and limits](tools/tests/transfer_uint_warm_results.txt).
+This does not certify cold-play fluidity or resolve other draw-path compilation.

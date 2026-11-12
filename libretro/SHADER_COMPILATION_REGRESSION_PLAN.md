@@ -1049,3 +1049,25 @@ Delivery requires exact-parent comparison and mailbox validation. See
 `tools/tests/transfer_uint_bank_results.txt` for scope and unsupported coverage.
 These checks do not certify cross-game cold-play fluidity or close other utility
 and guest draw-path compilation debt.
+
+Warmed integer-transfer regression gate
+
+The public C89 fixture now loads a separately compiled revision bank through a
+small test-only ABI. Parent/reference and candidate PSOs share a device/context
+but retain their own layouts, packets and destruction. Image checks precede
+seven alternating/reversed pairs. Raw metadata rejects wrong reference kinds;
+work counters, timestamp checks and unchanged limits guard against missing work.
+
+`transfer_uint_warm_ci.py` checks exact first-parent identity and source cleanliness,
+records source/harness hashes, and retains all logs/raw samples. Hardware workflow
+wiring also covers an explicitly configured `SHADER_PERF_ANCHOR`, without automatic
+reference promotion. Hosted jobs compile the ABI and run rejection tests without
+claiming hardware performance. End-to-end identical-revision Windows hardware self-checks pass, and a real
+dynamic-shader regression is rejected in 91 groups in both orders at correct
+images/work. Clean first-parent qualification is required before delivery. See
+`tools/tests/transfer_uint_warm_results.txt` for current evidence and limits.
+
+This is supplementary to the 768-metric gate, which did not catch the rejected
+fully dynamic transfer GPU regression. It is not complete cold-play or guest
+fallback acceptance. No release logging, clock, readback or cache-default change
+is introduced by these test files.

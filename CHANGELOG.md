@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Add matched parent/candidate warmed-transfer GPU checks to hardware shader CI, with image guards, GPU work counters and strict raw-evidence validation. A real dynamically parameterized shader regression is rejected in both orders. Hardware-runner and cold-play coverage remain explicitly separate.
+
 - Fix the Windows standalone DXIL emitter test include path so libretro-common headers are found while compiling transfer shaders.
 
 - Prepare Vulkan integer ownership-transfer pipelines at initialization and select them through a fixed lookup table during supported transfers. Build transfer constants directly in retained command storage, updating only the sample index for later manual passes. Add real multisample raster and partial-failure regressions, including devices without sample-rate shading. Other transfer families and guest shader compilation remain unfinished; this does not certify smooth cold play.
