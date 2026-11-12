@@ -186,86 +186,13 @@ bool PrimitiveProcessor::InitializeCommon(
     builtin_ib_offset_triangle_strips_to_lists_ = SIZE_MAX;
   }
   if (builtin_index_buffer_size) {
-    if (!InitializeBuiltinIndexBuffer(
-            builtin_index_buffer_size,
-            [this, builtin_ib_two_triangle_strip_count](void* mapping) {
-              uint32_t* mapping_32bit = reinterpret_cast<uint32_t*>(mapping);
-              if (builtin_ib_offset_two_triangle_strips_ != SIZE_MAX) {
-                // Two-triangle strips.
-                uint32_t* two_triangle_strip_ptr =
-                    mapping_32bit +
-                    builtin_ib_offset_two_triangle_strips_ / sizeof(uint32_t);
-                for (uint32_t i = 0; i < builtin_ib_two_triangle_strip_count;
-                     ++i) {
-                  if (i) {
-                    // Primitive restart.
-                    *(two_triangle_strip_ptr++) = UINT32_MAX;
-                  }
-                  // Host vertex index within the pair in the lower 2 bits,
-                  // guest primitive index in the rest.
-                  uint32_t two_triangle_strip_first_index = i << 2;
-                  for (uint32_t j = 0; j < 4; ++j) {
-                    *(two_triangle_strip_ptr++) =
-                        two_triangle_strip_first_index + j;
-                  }
-                }
-              }
-              uint16_t* mapping_16bit = reinterpret_cast<uint16_t*>(mapping);
-              if (builtin_ib_offset_triangle_fans_to_lists_ != SIZE_MAX) {
-                // Triangle fans as triangle lists.
-                // Ordered as (v1, v2, v0), (v2, v3, v0) in Direct3D.
-                // https://docs.microsoft.com/en-us/windows/desktop/direct3d9/triangle-fans
-                uint16_t* triangle_list_ptr =
-                    mapping_16bit + builtin_ib_offset_triangle_fans_to_lists_ /
-                                        sizeof(uint16_t);
-                for (uint32_t i = 2; i < UINT16_MAX; ++i) {
-                  *(triangle_list_ptr++) = uint16_t(i - 1);
-                  *(triangle_list_ptr++) = uint16_t(i);
-                  *(triangle_list_ptr++) = 0;
-                }
-              }
-              if (builtin_ib_offset_quad_lists_to_triangle_lists_ != SIZE_MAX) {
-                uint16_t* triangle_list_ptr =
-                    mapping_16bit +
-                    builtin_ib_offset_quad_lists_to_triangle_lists_ /
-                        sizeof(uint16_t);
-                // TODO(Triang3l): SIMD for faster initialization?
-                for (uint32_t i = 0; i < UINT16_MAX / 4; ++i) {
-                  uint16_t quad_first_index = uint16_t(i * 4);
-                  // TODO(Triang3l): Find the correct order.
-                  // v0, v1, v2.
-                  *(triangle_list_ptr++) = quad_first_index;
-                  *(triangle_list_ptr++) = quad_first_index + 1;
-                  *(triangle_list_ptr++) = quad_first_index + 2;
-                  // v0, v2, v3.
-                  *(triangle_list_ptr++) = quad_first_index;
-                  *(triangle_list_ptr++) = quad_first_index + 2;
-                  *(triangle_list_ptr++) = quad_first_index + 3;
-                }
-              }
-              if (builtin_ib_offset_triangle_strips_to_lists_ != SIZE_MAX) {
-                // Triangle strip to triangle list conversion.
-                // For each triangle in the strip (starting at vertex 2), emit
-                // 3 indices. Winding order alternates for each triangle.
-                uint16_t* triangle_list_ptr =
-                    mapping_16bit +
-                    builtin_ib_offset_triangle_strips_to_lists_ /
-                        sizeof(uint16_t);
-                for (uint32_t i = 2; i < UINT16_MAX; ++i) {
-                  if ((i & 1) == 0) {
-                    // Even triangle: v0, v1, v2
-                    *(triangle_list_ptr++) = uint16_t(i - 2);
-                    *(triangle_list_ptr++) = uint16_t(i - 1);
-                    *(triangle_list_ptr++) = uint16_t(i);
-                  } else {
-                    // Odd triangle: v1, v0, v2 (swapped to maintain winding)
-                    *(triangle_list_ptr++) = uint16_t(i - 1);
-                    *(triangle_list_ptr++) = uint16_t(i - 2);
-                    *(triangle_list_ptr++) = uint16_t(i);
-                  }
-                }
-              }
-            })) {
+    const xe_primitive_builtin_layout layout = {
+        {builtin_ib_offset_two_triangle_strips_,
+         builtin_ib_offset_triangle_fans_to_lists_,
+         builtin_ib_offset_quad_lists_to_triangle_lists_,
+         builtin_ib_offset_triangle_strips_to_lists_},
+        builtin_ib_two_triangle_strip_count};
+    if (!InitializeBuiltinIndexBuffer(builtin_index_buffer_size, layout)) {
       ShutdownCommon();
       return false;
     }
@@ -793,7 +720,7 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
             memory_.TranslatePhysical(guest_index_base);
         cacheable.index_buffer_type = ProcessedIndexBufferType::kHostConverted;
         cacheable.host_primitive_reset_enabled = false;
-        std::function<uint32_t(uint32_t)> host_index_count_getter;
+        xe_primitive_index_count host_index_count_getter;
         switch (guest_primitive_type) {
           case xenos::PrimitiveType::kTriangleFan:
             host_index_count_getter = GetTriangleFanListIndexCount;
@@ -1439,7 +1366,7 @@ void PrimitiveProcessor::LineLoopToStrip(
 }
 
 uint32_t PrimitiveProcessor::GetMultiPrimitiveHostIndexCountAndRanges(
-    std::function<uint32_t(uint32_t)> single_primitive_guest_to_host_count,
+    xe_primitive_index_count single_primitive_guest_to_host_count,
     const uint16_t* source, uint32_t source_index_count,
     uint16_t reset_index_guest_endian,
     std::deque<SinglePrimitiveRange>& ranges_append_out) {
@@ -1475,7 +1402,7 @@ uint32_t PrimitiveProcessor::GetMultiPrimitiveHostIndexCountAndRanges(
 }
 
 uint32_t PrimitiveProcessor::GetMultiPrimitiveHostIndexCountAndRanges(
-    std::function<uint32_t(uint32_t)> single_primitive_guest_to_host_count,
+    xe_primitive_index_count single_primitive_guest_to_host_count,
     const uint32_t* source, uint32_t source_index_count,
     uint32_t reset_index_guest_endian, uint32_t low_bits_mask_guest_endian,
     std::deque<SinglePrimitiveRange>& ranges_append_out) {

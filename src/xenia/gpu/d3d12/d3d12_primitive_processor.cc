@@ -83,7 +83,7 @@ void D3D12PrimitiveProcessor::EndFrame() {
 }
 
 bool D3D12PrimitiveProcessor::InitializeBuiltinIndexBuffer(
-    size_t size_bytes, std::function<void(void*)> fill_callback) {
+    size_t size_bytes, const xe_primitive_builtin_layout& layout) {
   assert_not_zero(size_bytes);
   assert_null(builtin_index_buffer_);
   assert_null(builtin_index_buffer_upload_);
@@ -128,8 +128,9 @@ bool D3D12PrimitiveProcessor::InitializeBuiltinIndexBuffer(
         size_bytes);
     return false;
   }
-  fill_callback(reinterpret_cast<uint16_t*>(mapping));
+  const bool filled = xe_primitive_builtin_fill(mapping, size_bytes, &layout) != 0;
   upload_resource->Unmap(0, nullptr);
+  if (!filled) return false;
 
   // Successfully created the buffer and wrote the data to upload.
   builtin_index_buffer_ = std::move(draw_resource);

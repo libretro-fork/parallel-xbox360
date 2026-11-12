@@ -16,11 +16,11 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
-#include <functional>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
 
+#include "libretro/core_primitive_builtin.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/math.h"
@@ -102,6 +102,8 @@ namespace gpu {
 //     0xFFFFFFFF, resulting in an index buffer that can be used directly.
 
 class PrimitiveProcessor {
+  // Typed regression access to the actual private range/count implementations.
+  friend class PrimitiveProcessorTestAccess;
  public:
   enum ProcessedIndexBufferType {
     // Auto-indexed on the host.
@@ -267,10 +269,10 @@ class PrimitiveProcessor {
   // from InitializeCommon (thus only once in the primitive processor's
   // lifetime) to set up the backend's index buffer containing indices for
   // primitive type remapping. The backend must allocate a 4-byte-aligned buffer
-  // with `size_bytes` and call fill_callback for its mapping if creation has
-  // been successful.
+  // with `size_bytes` and fill its mapping from the borrowed layout if creation
+  // succeeds. Consume the layout synchronously; never retain the stack view.
   virtual bool InitializeBuiltinIndexBuffer(
-      size_t size_bytes, std::function<void(void*)> fill_callback) = 0;
+      size_t size_bytes, const xe_primitive_builtin_layout& layout) = 0;
   // Call last in implementation-specific shutdown, also callable from the
   // destructor.
   void ShutdownCommon();
@@ -682,12 +684,12 @@ class PrimitiveProcessor {
     uint32_t host_index_count;
   };
   static uint32_t GetMultiPrimitiveHostIndexCountAndRanges(
-      std::function<uint32_t(uint32_t)> single_primitive_guest_to_host_count,
+      xe_primitive_index_count single_primitive_guest_to_host_count,
       const uint16_t* source, uint32_t source_index_count,
       uint16_t reset_index_guest_endian,
       std::deque<SinglePrimitiveRange>& ranges_append_out);
   static uint32_t GetMultiPrimitiveHostIndexCountAndRanges(
-      std::function<uint32_t(uint32_t)> single_primitive_guest_to_host_count,
+      xe_primitive_index_count single_primitive_guest_to_host_count,
       const uint32_t* source, uint32_t source_index_count,
       uint32_t reset_index_guest_endian, uint32_t low_bits_mask_guest_endian,
       std::deque<SinglePrimitiveRange>& ranges_append_out);

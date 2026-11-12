@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Flush Vulkan built-in primitive indices through their mapped upload allocation and propagate noncoherent flush failures before publishing the buffer. Remove primitive-processing `std::function` wrappers: built-in patterns fill the final mapped storage with a checked C89 writer, and topology counts use plain function pointers. Preserve the existing index patterns, required upload copy and completion lifetimes.
+
 - Fix signed overflow in CPU shader-interpreter vertex-fetch addresses. Signed instruction offsets now use defined 32-bit wrapping addition before the existing buffer bounds and physical-mirror checks. Add literal/random address checks and packed full/mini-fetch regression programs, including production-interpreter UBSan coverage in Linux CI. This does not change float-to-index conversion or establish accurate GPU fallback coverage.
 
 - Prepare D3D12 integer ownership-transfer PSOs before gameplay in an owned C89 bank, with fixed lookup and a direct deferred-packet writer. Preserve integer view aliases, mixed source/destination widths, asymmetric/native scales, and native/emulated 2x MSAA. Add partial-failure and exact replay tests, SDK validation and real WARP/NVIDIA image oracles, plus alternating warmed GPU comparisons against the existing native EDRAM producer and a failing dynamic-shader control. Add a checked C89 producer-DLL ABI and optional Windows hardware CI for actual first-parent and explicitly pinned comparisons. Other utility families and guest-shader compilation remain unfinished; this is not cold-gameplay signoff.

@@ -1,0 +1,55 @@
+Primitive index upload and count interfaces (2026-11-12)
+Base: 9b81659bc6e440e92e0bf0f4ddf38b9a5193ab05.
+
+The C89 writer fills the existing mapped upload directly from a synchronously
+borrowed immutable layout. Bounds, alignment and non-overlap are preflighted
+before writes. Existing primitive patterns and the required GPU copy remain.
+Hot count wrappers are plain function pointers. std::function's former small
+object optimization may already have avoided heap allocation for these targets;
+no heap reduction, speedup or gameplay benefit is claimed from the type change.
+
+Vulkan previously flushed the device-local built-in index allocation after
+writing its separate mapped upload allocation. The new C89 flush recipe takes
+the actual upload handle, skips coherent memory, flushes the whole mapped
+allocation and returns the driver's status. Initialization unmaps and releases
+both buffers/allocations on failure, before publishing the upload marker.
+Existing submission-completion ownership after successful upload is unchanged.
+
+Completed component checks:
+- MSVC /TC /O2 /W4 /WX: 80 layout/count combinations, every generated index,
+  preflight rejection without output mutation, and gap/prefix/tail guards PASS.
+- GCC strict C89 + ASan/UBSan: same index writer checks PASS.
+- MSVC and GCC ASan/UBSan recording dispatch: all 32 memory types, coherent
+  no-op, upload-handle/range identity, invalid handles/types and driver failure
+  propagation PASS. This mock covers the actual C89 recipe, not device-backed
+  VulkanPrimitiveProcessor initialization or unload.
+- Full MSVC core build: PASS, with three jobs. The actual production count/range
+  implementations pass 2048 16/32-bit cases; InitializeCommon passes 64 feature
+  policies and 64 failed-upload replays against independent layout/index goldens.
+- Full static Make MinGW core build: PASS, with three jobs. Native GCC/Windows
+  tests also pass all 80 layouts, 2048 range/count cases, 64 initialization
+  policies, 64 failure replays and the 32-type flush recording tests.
+- Linux ASan/UBSan instruments the modified primitive_processor.cc, the C89
+  driver and C++ bridge: the same 2048 range and 128 initialization/failure cases
+  PASS. Remaining core dependencies are prebuilt, uninstrumented objects; this
+  does not certify a fully instrumented Linux core build.
+- Five production Vulkan source-wiring checks PASS in normal and optimized
+  Python: the upload map/flush/unmap allocation and full-map contract agree,
+  and wrong-allocation, partial-map, lost-error and wrong-unmap controls fail.
+  This complements the recording dispatch test; it is not a driver interposer.
+- Independently compiled, valid C89 winding and upload-handle mutations are
+  rejected by the numerical/recording oracles. The original and mutated source
+  hashes and failed-control output are retained with the local evidence.
+
+Retained setup failures: first MSVC command used an unquoted forward-slash mkdir
+path; first writer fixture arena was too small for all maximum-sized layouts.
+The corrected test-only arena is 3 MiB. GCC initially treated SDK C++ comments
+as C89 errors; the runner now treats Vulkan-Headers as system includes while
+retaining strict diagnostics for the core helper and fixture.
+The first native range bridge failed C++ access checks; a named friend test
+access class now reaches the actual private methods without runtime state.
+
+Exact-parent shader comparisons and mailbox application/tree validation remain
+delivery gates. Device-backed Vulkan/D3D12 initialization and unload are outside
+these fixtures. No complete cold-play, allocation-free renderer or GPU gain
+claim is established.

@@ -8,6 +8,7 @@
  */
 
 #include "xenia/gpu/vulkan/vulkan_primitive_processor.h"
+#include "libretro/core_vk_upload_flush.h"
 
 #include <cstdint>
 
@@ -130,7 +131,7 @@ void VulkanPrimitiveProcessor::EndFrame() {
 }
 
 bool VulkanPrimitiveProcessor::InitializeBuiltinIndexBuffer(
-    size_t size_bytes, std::function<void(void*)> fill_callback) {
+    size_t size_bytes, const xe_primitive_builtin_layout& layout) {
   assert_not_zero(size_bytes);
   assert_true(builtin_index_buffer_ == VK_NULL_HANDLE);
   assert_true(builtin_index_buffer_memory_ == VK_NULL_HANDLE);
@@ -189,10 +190,24 @@ bool VulkanPrimitiveProcessor::InitializeBuiltinIndexBuffer(
                                            builtin_index_buffer_memory_);
     return false;
   }
-  fill_callback(mapping);
-  ui::vulkan::util::FlushMappedMemoryRange(
-      vulkan_device, builtin_index_buffer_memory_, upload_memory_type);
+  bool filled = xe_primitive_builtin_fill(mapping, size_bytes, &layout) != 0;
+  if (filled) {
+    filled = xe_vk_upload_flush(dfn.vkFlushMappedMemoryRanges, device,
+        builtin_index_buffer_upload_memory_, upload_memory_type,
+        vulkan_device->memory_types().host_coherent) == VK_SUCCESS;
+  }
   dfn.vkUnmapMemory(device, builtin_index_buffer_upload_memory_);
+  if (!filled) {
+    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyBuffer, device,
+                                         builtin_index_buffer_upload_);
+    ui::vulkan::util::DestroyAndNullHandle(dfn.vkFreeMemory, device,
+                                         builtin_index_buffer_upload_memory_);
+    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyBuffer, device,
+                                         builtin_index_buffer_);
+    ui::vulkan::util::DestroyAndNullHandle(dfn.vkFreeMemory, device,
+                                         builtin_index_buffer_memory_);
+    return false;
+  }
 
   // Schedule uploading in the first submission.
   builtin_index_buffer_upload_submission_ = UINT64_MAX;
