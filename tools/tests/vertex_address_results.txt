@@ -1,0 +1,39 @@
+CPU interpreter vertex-fetch address regression, 2026-11-12
+
+Parent: a04c4f51a11e937bf3186bd73b67d7a293bbb77b.
+Problem: converting a uint32 base to int32 before adding the signed 23-bit
+instruction offset could overflow signed C++ arithmetic. Converting the result
+back to uint32 afterwards does not make that operation defined.
+
+The production interpreter now uses a C89 inline unsigned addition helper.
+The signed offset is converted before addition. Existing bounds, only-needed
+word loads, endian conversion and physical mirror checks are unchanged.
+There is no new allocation, copy, atomic operation, lock or runtime diagnostic.
+
+The C89 test includes ten literal modulo-32 address goldens and one million
+full-width bases with independently sign-extended 23-bit offsets. Expected
+addresses use a 64-bit nonnegative sum and explicit modulo, not the helper.
+The native C++ bridge runs the actual production interpreter on 56 raw packed
+EXEC_END/full-fetch/mini-fetch/export programs, with output guards. Empty guest
+buffers prohibit any memory dereference. This covers full/mini inherited address
+arithmetic and rejection before pointer access; it does not cover real buffer
+loads, endian/format conversion or invalid float-to-index conversion semantics.
+
+MSVC /TC /W4 /WX C89 driver and actual native core: PASS.
+Linux GCC strict C89 driver and actual linked core: PASS.
+Linux GCC UBSan-instrumented production interpreter: PASS on the fixed source.
+The same fixture and toolchain with the actual parent interpreter reports:
+  signed integer overflow: 2147483392 + 256 cannot be represented in type 'int'
+The rejected parent and successful candidate outputs are retained separately.
+The Windows native core rebuilt successfully with three jobs.
+
+Run after building the core:
+  VERTEX_ADDRESS_SANITIZE=1 sh tools/tests/run_vertex_address_tests.sh
+  call tools\tests\run_vertex_address_tests.cmd
+The Linux sanitizer runner links the instrumented production interpreter object
+before core.a, avoiding extraction of its uninstrumented counterpart. Windows
+uses the built native core. CI runs both fixtures after the platform core build.
+
+This is an addressing UB fix, not a measured GPU performance improvement or
+accurate guest fallback implementation. No game-derived assets are needed.
+Full exact-parent shader timing acceptance is required separately before push.

@@ -347,6 +347,10 @@ Linux, Android and macOS builds do not require Python or a shader compiler.
 Linux builds enable POSIX/GNU declarations for the selected libretro-common C sources.
 Version/commit definitions are tracked separately for the frontend adapter, so metadata changes do not invalidate unrelated emulator or dependency objects.
 D3D12 primitive-expansion geometry shaders are generated directly as DXIL.
+The CPU shader interpreter uses defined 32-bit wrapping vertex-fetch address
+addition, with signed-offset full/mini-fetch regression tests and Linux UBSan
+coverage. Existing buffer bounds and physical-mirror checks remain in place;
+this is not complete guest-shader fallback coverage.
 Render-target dumps, direct resolves and EDRAM ownership transfers also emit
 DXIL directly. Host-depth pixel shaders, including float24 conversion and
 occlusion counting, use native DXIL containers without a temporary bytecode

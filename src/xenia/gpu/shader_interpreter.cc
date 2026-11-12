@@ -9,6 +9,7 @@
 
 #include "xenia/gpu/shader_interpreter.h"
 #include "libretro/core_alu_operand.h"
+#include "libretro/core_vertex_address.h"
 
 #include <cfloat>
 #include <cmath>
@@ -1009,7 +1010,7 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(
         reinterpret_cast<const uint32_t*>(memory_.physical_membase());
     uint32_t buffer_end_dwords = fetch_constant.address + fetch_constant.size;
     uint32_t dword_0_address_dwords =
-        uint32_t(int32_t(state_.vfetch_address_dwords) + instr.offset());
+        xe_vertex_fetch_address(state_.vfetch_address_dwords, instr.offset());
     for (uint32_t i = 0; i < 4; ++i) {
       if (!(needed_dwords & (UINT32_C(1) << i))) {
         continue;
