@@ -1555,6 +1555,19 @@ exact emitted SPIR-V and shader-dump opt-in. `ANALYSIS_TEXT_BUILD` selects the
 MSVC core build; shell tests reuse the normal Make link inputs. These checks
 do not certify runtime fallback accuracy or gameplay frame-time tails.
 
+`run_shader_reentry_tests.cmd` / `.sh` compare the C89 interval pass with the
+previous fixed-point walk on30,005 packed CF graphs. The shared first-parent
+comparator records26 actual-analyzer operator-new allocation observations and
+rejects allocation growth, missing cases or changed reentry identities.
+
+`run_shader_labels_tests.cmd` / `.sh` check the owned C89 label bitmap against
+a byte-set oracle, including50,000 insertions, ascending iteration, inline/high
+boundaries, large return labels, allocation failure and close/reopen. Low bits
+never move into the single optional high allocation. Set `SHADER_LABELS_FLAGS`
+for sanitizer flags. The analyzer profile counts C++ operator-new only; its
+observations exclude this separately tested C89 calloc and driver allocations.
+Neither suite establishes allocation-free gameplay or shader-stutter acceptance.
+
 `run_layout_ready_tests.cmd` / `.sh` check the production C89 immutable cache and
 borrowed Vulkan layout records. Eight publishers race32768 owners across128
 forced-collision keys; losing owners are freed immediately. A deterministic CAS

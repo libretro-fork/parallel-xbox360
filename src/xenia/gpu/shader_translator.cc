@@ -720,7 +720,7 @@ bool ShaderTranslator::TranslateAnalyzedShader(
   uint32_t cf_pair_index_bound = shader.cf_pair_index_bound();
   // Decode directly from the immutable shader owner. The removed preprocessing
   // hook had no implementations, but built and copied a whole temporary vector.
-  const std::set<uint32_t>& label_addresses = shader.label_addresses();
+  const ShaderLabels& label_addresses = shader.label_addresses();
   for (uint32_t i = 0; i < cf_pair_index_bound; ++i) {
     ControlFlowInstruction cf_ab[2];
     UnpackControlFlowInstructions(ucode_dwords + i * 3, cf_ab);

@@ -1,0 +1,58 @@
+Owned shader label bitmap -- private qualification, 2026-11-13
+Intended parent: transient control-flow storage feature 6de076370.
+
+Replace Shader's allocating ordered-label tree with an owned C89 bitmap.
+Four inline64-bit words retain positions0..255 without allocation. Higher bits
+use one calloc block sized from the owned microcode's possible CF return range,
+at least8192 positions for13-bit branch destinations. Keep inline words separate:
+first high-label insertion copies no previous payload. Duplicate insertion and
+membership are direct bit operations; CLZ scans provide the same ascending
+iteration. Typed C++ glue owns destruction and exposes the existing label view.
+Inline-only iteration never scans the unallocated high universe; a sparse
+SIZE_MAX-derived capacity regression would hang without that bounded limit.
+No queue, lock, timer, release counter or asynchronous owner is introduced.
+
+Initialization checks overflow and a closed owner. First high-block allocation
+failure preserves existing labels and can be retried. Closure is idempotent and
+occurs with Shader destruction, after its existing translation consumers stop.
+The immutable result remains owned across all translations of that shader.
+No shader modification, emitted program or persistent schema is changed.
+
+The C89 unit checks50000 random insertions against a byte-set oracle, ascending
+views, duplicates, low/high word boundaries, large call-return positions, empty
+views, equality, failure preservation, a stable single high allocation and
+close/reopen. Low-label insertion makes no allocator calls. The explicit
+4096-CF-pair fixture's optional high block is1000 bytes; ordinary bounds of4095
+pairs or fewer use992 bytes. The inline owner itself occupies storage even
+when no labels exist, so this is not an unconditional per-shader RSS reduction.
+
+Linux GCC C89 ASan/UBSan and MSVC C89 unit checks pass the complete corpus.
+The original GCC64 always-false sentinel comparison warning was retained and
+fixed with a width-conditional check. The full MSVC Release core (LTO off)
+build and42 full-text/quiet analysis metadata and emitted SPIR-V identity
+cases pass. A development profile records2 C++ allocations for the512-CF
+fixture, excluding its one992-byte C89 label block. This is a development
+observation, not a matched-parent performance acceptance result. Full exact-
+parent qualification must finish before publication; do not pass partial runs.
+
+The actual-analysis C++ allocation profile inherited from the parent does not
+interpose this C89 calloc. Report its observations specifically as operator-new
+counts, together with the separate one-block C89 allocation/lifetime checks.
+Never claim zero total allocation from zero C++ allocations. Result vectors,
+other semantic metadata, translation output and GPU/PSO resources remain owned
+and may allocate. No whole-emulator allocation-free or smooth-play claim.
+
+Draw-side translation/module/PSO creation and compilation waits remain unresolved.
+This storage work does not replace a ready accurate guest/utility fallback or
+establish cold-driver-cache/retail-play smoothness. Public timing remains paired
+against the actual first parent, with unchanged limits and all failed samples.
+
+The first private bitmap candidate failed the largest swapped snapshot timing
+gate consistently across seven pairs; it was not published. A controlled test
+of the existing kernels then compared aligned and 16-byte-offset source buffers
+against the same aligned destination. On this AVX2 host, the aligned SSE kernel
+took about 6.1 ms per 2000 copies of 256 KiB versus 3.7--4.1 ms for the
+alignment-safe AVX2-capable kernel. The generic dispatch selected SSE for aligned
+input. Snapshot construction now calls the alignment-safe kernel directly.
+The failed fixture did not record addresses, so this does not establish its
+historical alignment. A new exact-parent gate must still pass before publication.

@@ -67,6 +67,15 @@ jobs:
             sh tools/tests/run_shader_reentry_tests.sh
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Bounded shader label storage correctness
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            cmd /d /c tools\tests\run_shader_labels_tests.cmd
+          } else {
+            sh tools/tests/run_shader_labels_tests.sh
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Compare actual translation and driver PSO calls
         env:
           PERF_BASE: ${{ matrix.base }}

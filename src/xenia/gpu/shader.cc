@@ -27,12 +27,16 @@ Shader::Shader(xenos::ShaderType shader_type, uint64_t ucode_data_hash,
                const uint32_t* ucode_dwords, size_t ucode_dword_count,
                std::endian ucode_source_endian)
     : shader_type_(shader_type), ucode_data_hash_(ucode_data_hash) {
+  if (!label_addresses_.Initialize(ucode_dword_count / 3)) throw std::bad_alloc();
   // Snapshot directly into the final owner, without zero-filling it first.
   // Guest/file scratch bytes may change while asynchronous consumers use us.
   if (!ucode_data_.Allocate(ucode_dword_count)) throw std::bad_alloc();
   if (!ucode_dword_count) return;
   if (std::endian::native != ucode_source_endian) {
-    xe::copy_and_swap(ucode_data_.data(), ucode_dwords, ucode_dword_count);
+    // This kernel accepts aligned input too and selects AVX2 where available.
+    // The generic dispatch otherwise sends aligned snapshots to the SSE loop.
+    xe::copy_and_swap_32_unaligned(ucode_data_.data(), ucode_dwords,
+                                   ucode_dword_count);
   } else {
     std::memcpy(ucode_data_.data(), ucode_dwords,
                 sizeof(uint32_t) * ucode_dword_count);

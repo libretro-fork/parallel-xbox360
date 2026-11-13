@@ -27,6 +27,7 @@
 #include "xenia/gpu/ucode.h"
 #include "xenia/gpu/shader_binary.h"
 #include "xenia/gpu/shader_ucode.h"
+#include "xenia/gpu/shader_labels.h"
 
 namespace xe {
 namespace gpu {
@@ -958,7 +959,7 @@ class Shader {
   }
 
   // Labels that jumps (explicit or from loops) can be done to.
-  const std::set<uint32_t>& label_addresses() const { return label_addresses_; }
+  const ShaderLabels& label_addresses() const { return label_addresses_; }
   // Components of registers 0-15, 4 bits per register, that may be written
   // after the label in the program and then reach it by jumping back or
   // returning from a subroutine. Zero for labels only jumped to forward.
@@ -1126,7 +1127,7 @@ class Shader {
   std::vector<VertexBinding> vertex_bindings_;
   std::vector<TextureBinding> texture_bindings_;
   ConstantRegisterMap constant_register_map_ = {0};
-  std::set<uint32_t> label_addresses_;
+  ShaderLabels label_addresses_;
   // Per control flow instruction index.
   std::vector<uint64_t> cf_register_components_written_;
   std::vector<uint64_t> reentered_label_register_components_written_;

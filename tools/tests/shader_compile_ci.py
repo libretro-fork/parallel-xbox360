@@ -854,7 +854,7 @@ def run_comparison(args):
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
          "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h",
          "core_shader_reentry_test.c","core_shader_reentry_profile_test.c","shader_reentry_profile_bridge.cc",
-         "core_pipeline_bench_profile.c","core_pipeline_bench_profile.h"]}
+         "core_pipeline_bench_profile.c","core_pipeline_bench_profile.h","core_shader_labels_test.c"]}
     manifest["corpus_contract"]=dict(version=8,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_frac_cases=64 if args.backend=="vulkan-hardware" else 0,

@@ -4,6 +4,10 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Replace guest-shader label trees with owned C89 bitmaps: keep the first 256 label positions inline and allocate higher positions once from the immutable shader's bounds. Duplicate insertion, membership and ascending iteration need no tree nodes, growth copies or locks. Preserve call-return and 13-bit branch labels and immutable publication; release bitmap ownership with the shader. Other analysis/result storage and renderer allocations remain.
+
+- Keep aligned big-endian shader snapshots on the existing runtime-selected AVX2-capable copy kernel too, avoiding the generic dispatch's aligned SSE path. Retain one owned immutable snapshot and scalar tails; this is not a zero-copy claim.
+
 - Remove transient backward-edge vectors, copied reentry-label trees and an unused whole-program control-flow preprocessing copy from first-use shader analysis/translation. Compute overlapping-loop write sets in the existing final result storage with an allocation-free C89 interval pass. Preserve subroutine rules and exact translated output; test real analysis allocation counts against each commit's parent without adding release diagnostics. Remaining draw-side translation, PSO creation and compilation waits are unresolved.
 
 - Preserve raw GPU timestamp-calibration evidence in CI artifacts even when preparation fails. Record control status and errors without weakening the calibration or performance gates; a failed calibration still stops the comparison.
