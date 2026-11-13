@@ -58,6 +58,15 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: Allocation-free shader reentry correctness
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            cmd /d /c tools\tests\run_shader_reentry_tests.cmd
+          } else {
+            sh tools/tests/run_shader_reentry_tests.sh
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Compare actual translation and driver PSO calls
         env:
           PERF_BASE: ${{ matrix.base }}

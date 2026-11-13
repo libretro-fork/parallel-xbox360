@@ -4,6 +4,10 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Remove transient backward-edge vectors, copied reentry-label trees and an unused whole-program control-flow preprocessing copy from first-use shader analysis/translation. Compute overlapping-loop write sets in the existing final result storage with an allocation-free C89 interval pass. Preserve subroutine rules and exact translated output; test real analysis allocation counts against each commit's parent without adding release diagnostics. Remaining draw-side translation, PSO creation and compilation waits are unresolved.
+
+- Preserve raw GPU timestamp-calibration evidence in CI artifacts even when preparation fails. Record control status and errors without weakening the calibration or performance gates; a failed calibration still stops the comparison.
+
 - Prepare matching numeric-view ownership transfers for Vulkan and D3D12 before gameplay, retaining existing typed images and gamma storage. Share float identity shaders across attachment classes and write only five runtime dwords directly into command storage. Typed-resource MSAA comparisons against the existing producers and paired RTX 5090 single-sample/mixed-MSAA throughput checks pass for both renderers under the unchanged gates. Add complete-bank constructor accounting and checked first Vulkan/D3D12 transfers with failing omitted-draw controls. Other format conversions and guest-shader fallback coverage remain unfinished; component checks do not certify cold-play smoothness.
 
 - Fix the Linux ARM64 vertex-address sanitizer check selecting an x86-only compiler flag. Select AVX only for x86-64 compiler targets, preserving the production-interpreter UBSan check on ARM64 and cross-compilers.

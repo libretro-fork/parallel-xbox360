@@ -275,25 +275,112 @@ def validate_gpu_timestamp_math(source,out,log,env):
         header_sha256=file_sha256(HERE/"gpu_timestamp_measure.h"),fixture_sha256=file_sha256(HERE/"gpu_timestamp_measure_test.c")),indent=2))
 
 
-def calibrate_gpu_timestamps(source,out,env,component):
-    directory=out/"gpu-calibration";directory.mkdir(parents=True,exist_ok=True)
+def gpu_calibration_report(results,out,component):
+    return results/"gpu-calibration"/out.name/(component+".json")
+
+
+def read_gpu_calibration(results,out,component):
+    report=json.loads(gpu_calibration_report(results,out,component).read_text())
+    if report.get("status")!="passed":raise ValueError("GPU calibration is incomplete or failed")
+    return report
+
+
+def calibrate_gpu_timestamps(source,out,env,component,results):
+    # The workflow uploads results even when preparation fails. Calibration is
+    # a preparation gate, so its raw evidence must already live under results.
+    report_path=gpu_calibration_report(results,out,component)
+    directory=report_path.parent;directory.mkdir(parents=True,exist_ok=True)
     stem=component.replace("_","-");native=out/stem/"native"/("test.exe" if WIN else "test")
     module=out/stem/("control.spv" if component=="raw_control" else "program.spv")
-    measurements={};metadata={}
-    for name,repetitions,delay in (("single",1,0),("repeat8",8,0),("record-delay",1,1)):
-        base=directory/(component+"-"+name);e=env.copy();e.pop("XE_ALU_PROGRAM_VALID_WORK",None)
-        e.update(XE_ALU_PROGRAM_TIMING_ONLY="1",XE_ALU_GPU_TIMING_CSV=str(base)+".csv",XE_ALU_GPU_REPEAT=str(repetitions),
-            XE_ALU_GPU_RECORD_DELAY=str(delay),XE_SHADER_BENCH_CSV=str(base)+"-host.csv",XE_SHADER_BENCH_CPU_CSV=str(base)+"-host-cpu.csv",XE_ALU_PROGRAM_DUMP=str(base)+".spv")
-        log=Path(str(base)+".log");run([native],source,log,e,120)
-        if file_sha256(Path(str(base)+".spv"))!=file_sha256(module):raise ValueError("GPU calibration module mismatch")
-        data=read_samples(Path(str(base)+".csv"));measurements[name]=data
-        metadata[name]=validate_gpu_ticks(Path(str(base)+".csv.ticks.csv"),data,1,component,repetitions)
-        described=gpu_timestamp_log_metadata(log.read_text(),1,repetitions,delay)
-        if (described["bits"],described["period_ns"])!=(metadata[name]["bits"],metadata[name]["period_ns"]):raise ValueError("GPU calibration metadata mismatch")
-        metadata[name]["queue"]=described["queue"]
-    if len({(x["queue"],x["bits"],x["period_ns"]) for x in metadata.values()})!=1:raise ValueError("GPU calibration timer/queue changed")
-    result=validate_gpu_calibration(measurements["single"],measurements["repeat8"],measurements["record-delay"],component)
-    result["metadata"]=metadata;(directory/(component+".json")).write_text(json.dumps(result,indent=2))
+    measurements={};metadata={};controls=(("single",1,0),("repeat8",8,0),("record-delay",1,1))
+    report=dict(status="running",component=component,source=str(source),native=str(native),module=str(module),
+                requested_controls=[dict(name=n,repetitions=r,record_delay=d) for n,r,d in controls])
+    report_path.write_text(json.dumps(report,indent=2))
+    try:
+        report.update(native_sha256=file_sha256(native),module_sha256=file_sha256(module))
+        for name,repetitions,delay in controls:
+            report["current_control"]=name
+            base=directory/(component+"-"+name);e=env.copy();e.pop("XE_ALU_PROGRAM_VALID_WORK",None)
+            e.update(XE_ALU_PROGRAM_TIMING_ONLY="1",XE_ALU_GPU_TIMING_CSV=str(base)+".csv",XE_ALU_GPU_REPEAT=str(repetitions),
+                XE_ALU_GPU_RECORD_DELAY=str(delay),XE_SHADER_BENCH_CSV=str(base)+"-host.csv",XE_SHADER_BENCH_CPU_CSV=str(base)+"-host-cpu.csv",XE_ALU_PROGRAM_DUMP=str(base)+".spv")
+            log=Path(str(base)+".log");run([native],source,log,e,120)
+            if file_sha256(Path(str(base)+".spv"))!=report["module_sha256"]:raise ValueError("GPU calibration module mismatch")
+            data=read_samples(Path(str(base)+".csv"));measurements[name]=data
+            metadata[name]=validate_gpu_ticks(Path(str(base)+".csv.ticks.csv"),data,1,component,repetitions)
+            described=gpu_timestamp_log_metadata(log.read_text(),1,repetitions,delay)
+            if (described["bits"],described["period_ns"])!=(metadata[name]["bits"],metadata[name]["period_ns"]):raise ValueError("GPU calibration metadata mismatch")
+            metadata[name]["queue"]=described["queue"]
+        if len({(x["queue"],x["bits"],x["period_ns"]) for x in metadata.values()})!=1:raise ValueError("GPU calibration timer/queue changed")
+        report.update(validate_gpu_calibration(measurements["single"],measurements["repeat8"],measurements["record-delay"],component))
+        report["status"]="passed"
+    except Exception as error:
+        report.update(status="failed",error_type=type(error).__name__,error=str(error))
+        raise
+    finally:
+        report["metadata"]=metadata
+        report["measurements"]={name:[dict(stage=s,case=i,samples=v) for (s,i),v in sorted(data.items())] for name,data in measurements.items()}
+        report_path.write_text(json.dumps(report,indent=2))
+
+
+def read_reentry_allocations(path):
+    observations={}
+    with Path(path).open(newline="",encoding="utf-8") as file:
+        for row in csv.reader(file):
+            if len(row)!=9 or row[0] not in ("nested","backward"):
+                raise ValueError("invalid analysis allocation row")
+            kind,pixel,mode,repeat,calls,requested,count,labels,identity=row
+            pixel,mode,repeat,calls,requested,count,labels=map(int,(pixel,mode,repeat,calls,requested,count,labels))
+            key=(kind,pixel,mode,repeat)
+            if pixel not in (0,1) or min(mode,repeat,calls,requested,count,labels)<0 or not count or not labels:
+                raise ValueError("invalid analysis allocation values")
+            if not re.fullmatch(r"[0-9a-f]{16}",identity) or key in observations:
+                raise ValueError("duplicate/malformed analysis identity")
+            observations[key]=dict(calls=calls,requested_bytes=requested,cf_count=count,labels=labels,identity=identity)
+    expected={(kind,pixel,mode,repeat) for pixel in (0,1)
+              for kind,modes,repeats in (("nested",range(5),range(1)),("backward",(16,64,256,512),range(2)))
+              for mode in modes for repeat in repeats}
+    if set(observations)!=expected:raise ValueError("missing/substituted analysis allocation observations")
+    return observations
+
+
+def compare_reentry_allocations(base,candidate):
+    if set(base)!=set(candidate) or not base:raise ValueError("missing analysis allocation roles/cases")
+    rows=[]
+    for key in sorted(base):
+        a,b=base[key],candidate[key]
+        if any(a[field]!=b[field] for field in ("cf_count","labels","identity")):
+            raise ValueError("analysis reentry semantics changed: "+str(key))
+        if b["calls"]>a["calls"] or b["requested_bytes"]>a["requested_bytes"]:
+            raise ValueError("analysis allocations increased: "+str(key))
+        rows.append(dict(case=key,base=a,candidate=b))
+    return dict(scope="operator-new during actual Shader::AnalyzeUcode; not all malloc/driver/gameplay allocations",
+                observations=rows,calls_saved=sum(r["base"]["calls"]-r["candidate"]["calls"] for r in rows),
+                requested_bytes_saved=sum(r["base"]["requested_bytes"]-r["candidate"]["requested_bytes"] for r in rows))
+
+
+def validate_reentry_allocations(source,build,results,env):
+    directory=results/"analysis-allocations"/source.name
+    directory.mkdir(parents=True,exist_ok=True)
+    log=directory/"build.log"
+    fixture=env.copy()
+    fixture.update(FORWARD_FLOW_SOURCE=str(HERE/"core_shader_reentry_profile_test.c"),
+                   FORWARD_FLOW_BRIDGE=str(HERE/"shader_reentry_profile_bridge.cc"),
+                   FORWARD_FLOW_OUT=str(directory))
+    if WIN:
+        obj=directory/"allocation-profile.obj"
+        run(["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/D_CRT_SECURE_NO_WARNINGS",
+             "/c",HERE/"core_pipeline_bench_profile.c","/Fo"+str(obj)],source,log,env)
+        fixture.update(FORWARD_FLOW_BUILD=str(build),FORWARD_FLOW_OBJECT=str(obj),
+                       FORWARD_FLOW_LINK_FLAGS="/CGTHREADS:"+str(JOBS))
+        run([os.environ.get("COMSPEC","cmd.exe"),"/d","/c",source/"tools/tests/run_forward_flow_tests.cmd"],source,log,fixture)
+    else:
+        obj=directory/"allocation-profile.o"
+        run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-D_POSIX_C_SOURCE=200809L",
+             "-O2","-Wall","-Wextra","-Werror","-c",HERE/"core_pipeline_bench_profile.c","-o",obj],source,log,env)
+        fixture["CXX"]=env.get("CXX","c++")+" "+str(obj)+" -Wl,--strip-debug"
+        run(["sh",source/"tools/tests/run_forward_flow_tests.sh"],source,log,fixture)
+    read_reentry_allocations(directory/"allocations.csv")
+    return directory/"allocations.csv"
 
 
 def prepare(source, out, results, backend, reuse_build=None):
@@ -319,6 +406,7 @@ def prepare(source, out, results, backend, reuse_build=None):
             run(["cmake", "--build", build, "--target", "xenia-libretro", "--parallel", JOBS], source, log, env)
         else:
             run(["make", "-j" + str(JOBS)], source, log, env)
+    validate_reentry_allocations(source,build,results,env)
     loop_coverage=validate_loop_reference(source,build,out,log,env,backend)
     (results/(source.name+"-"+out.parent.name+"-"+out.name+"-loops.json")).write_text(
         json.dumps(loop_coverage,indent=2),encoding="utf-8")
@@ -330,7 +418,7 @@ def prepare(source, out, results, backend, reuse_build=None):
         json.dumps(control_coverage,indent=2),encoding="utf-8")
     if backend.startswith("vulkan"):
         for component,coverage in (("raw_program",program_coverage),("raw_control",control_coverage)):
-            if coverage["vulkan_gpu"]:calibrate_gpu_timestamps(source,out,env,component)
+            if coverage["vulkan_gpu"]:calibrate_gpu_timestamps(source,out,env,component,results)
     snapshot=validate_ucode_snapshot(source,build,out,log,env)
     env["XE_SHADER_BENCH_CSV"] = str(out / "prepare.csv")
     env["XE_SHADER_BENCH_NO_DUMP"] = "0"
@@ -764,7 +852,9 @@ def run_comparison(args):
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
          "shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
-         "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h"]}
+         "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h",
+         "core_shader_reentry_test.c","core_shader_reentry_profile_test.c","shader_reentry_profile_bridge.cc",
+         "core_pipeline_bench_profile.c","core_pipeline_bench_profile.h"]}
     manifest["corpus_contract"]=dict(version=8,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_frac_cases=64 if args.backend=="vulkan-hardware" else 0,
@@ -812,6 +902,9 @@ def run_comparison(args):
             if source.resolve().parent!=work or target.parent!=source.resolve() or source.resolve()==ROOT:
                 raise ValueError("unsafe private build cleanup target")
             if target.exists():shutil.rmtree(target)
+    allocation_profiles={version:read_reentry_allocations(results/"analysis-allocations"/b["source"].name/"allocations.csv") for version,b in builds.items()}
+    allocation_report=compare_reentry_allocations(allocation_profiles["base"],allocation_profiles["candidate"])
+    (results/"analysis-allocations/comparison.json").write_text(json.dumps(allocation_report,indent=2),encoding="utf-8")
     control_coverage={version:json.loads((results/(b["source"].name+"-"+b["out"].parent.name+"-"+b["out"].name+"-raw-control.json")).read_text())
                       for version,b in builds.items()}
     control_coverage_report=compare_control_coverage(control_coverage,args.backend.startswith("vulkan"))
@@ -825,7 +918,7 @@ def run_comparison(args):
     manifest["gpu_driver_environment"]={name:env.get(name,"driver/default") for name in ("VK_ICD_FILENAMES","LP_NUM_THREADS")}
     manifest["gpu_timestamp_math"]={v:json.loads((b["out"]/"gpu-timestamp-math/coverage.json").read_text()) for v,b in builds.items()}
     if any(not x["unit"] for x in manifest["gpu_timestamp_math"].values()):raise ValueError("GPU timestamp math unit missing")
-    manifest["gpu_timestamp_calibration"]={v:{component:json.loads((b["out"]/"gpu-calibration"/(component+".json")).read_text())
+    manifest["gpu_timestamp_calibration"]={v:{component:read_gpu_calibration(results,b["out"],component)
         for component in ("raw_program","raw_control") if component in b} for v,b in builds.items()}
     manifest["clock_controls"]={version:"clock-checks/"+b["out"].parent.name+"-"+b["out"].name for version,b in builds.items()}
     manifest["prepared_binaries"]={version:{name:dict(sha256=file_sha256(b[name]),bytes=b[name].stat().st_size)
@@ -1001,6 +1094,7 @@ def run_comparison(args):
                 manifest["prepared_binaries"]["candidate"]["pso"]["sha256"],
             module_manifest_identical_to_candidate=ir[version]==ir["candidate"]) for version in builds}
     report=dict(environment=manifest,device=identities,cases=rows,anchor_cases=anchor_rows,
+                analysis_allocations=allocation_report,
                 driver_workload_identity=driver_identity,
                 process_cpu_diagnostics=cpu_rows,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",

@@ -100,6 +100,29 @@ established by this channel. Driver disk/internal cache coldness and a pinned
 last-known-good cross-game anchor remain unverified. No visible shader-stutter
 or frame-time improvement is certified. Release builds have no new diagnostics.
 
+Calibration artifact retention (2026-11-12)
+-------------------------------------------
+Hosted Vulkan run43273131723 at77086380f stopped during the parent's timestamp
+work-scaling calibration, before candidate preparation/comparison. Its artifact
+contained only nine preparation files: calibration CSVs/ticks/logs were written
+outside the results directory uploaded by the workflow. The missing samples
+cannot establish why scaling failed; neither a shader regression nor noise is
+proved by that error alone. The original failed log/artifact are retained.
+
+Calibration now writes under results/gpu-calibration/<revision-role>/ from the
+start. Raw GPU/host/CPU CSVs, ticks, logs and emitted modules remain there when
+a child, module identity check, timer/metadata check or scaling control fails.
+A report records requested controls, parsed samples/metadata, binary hashes,
+current control and an explicit running/failed/passed status. Exceptions still
+propagate. Timing thresholds, repetitions, recording delay and shader workload
+are unchanged; failure never becomes a passing or skipped comparison.
+
+Orchestration regressions cover both raw-program/control components, success,
+real scaling rejection and child failure, using synthetic subprocess output
+with the actual CSV/timestamp/metadata validators. They are not GPU evidence.
+Existing hardware comparison success does not erase the hosted calibration
+failure. New captures improve diagnosis; they do not certify cold gameplay.
+
 Primary API references
 ----------------------
 Vulkan timestamp scope and query result/availability layout:

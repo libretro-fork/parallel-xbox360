@@ -1,0 +1,50 @@
+Transient control-flow storage -- 2026-11-13
+Public parent: 77086380f606e300e676a545196aef798dbed531
+
+Both renderers use Shader::AnalyzeUcode. Backward edges previously grew a
+temporary vector, then populated a second allocating set of reentry labels.
+With calls, that set was overwritten by a copy of the existing labels. The
+overlap fixed point repeatedly rescanned every edge for each reentered label.
+
+The replacement uses the final result words as temporary farthest-end markers.
+An ascending sweep merges closed overlapping intervals and ORs per-CF writes
+once per component. Adjacent nonoverlapping intervals remain separate. Only
+actual backward-edge destinations receive the result. Existing call semantics
+still union all CF writes for every owned label, without copying its tree.
+No edge/label allocation, extra payload copy, queue, lock or timer is added.
+The existing two result vectors and original label tree still allocate; this
+is not an allocation-free shader analyzer or renderer.
+
+The shared translator also built a temporary vector of all unpacked CFs and
+passed another copy to a virtual preprocessing hook with no implementations.
+Remove the hook and both temporary arrays. Translation continues to decode the
+same immutable owned microcode directly. No shader key or binary schema change.
+
+Strict MSVC /TC /W4 /WX and Linux C89 ASan/UBSan pass 30,005 packed-program
+graphs against the former repeated-edge fixed-point oracle, including crossing,
+nested, adjacent and self intervals, 13-bit target limits, odd trailing words,
+shrinking EXEC bounds, output guards, zero and invalid spans. These are CPU
+algorithm checks, not rendered image or gameplay acceptance.
+
+CI runs the C89 unit on Windows and Linux. The first-parent comparator also
+links the real analyzer from each revision into a test-only C89 allocation
+profile. It records 26 nested-call/backward-branch observations, rejects higher
+operator-new allocation counts/bytes and changed CF/label/reentry identities,
+and checks tracked storage returns to baseline after each Shader destruction.
+This profile does not intercept all malloc, aligned, driver or GPU allocations.
+It runs before timing; release builds contain no allocation interposer.
+The comparison gate has explicit missing/duplicate/corrupt-data, allocation
+growth and semantic-corruption negative controls.
+
+Exact-parent full shader/driver timing and emitted-program identity must be
+qualified before publication. Seven alternating/reversed comparisons retain
+the existing thresholds and all raw samples. Current local qualification
+status and evidence are recorded outside the source tree, not assumed passed
+from these component tests. New calibration capture retains raw failed samples
+under uploaded results rather than losing preparation-failure evidence.
+
+The large hitches remain open: synchronous translation/placeholder creation,
+driver PSO creation, draw waits, blocking queue admission and missing accurate
+ready guest fallback still exist on Vulkan and D3D12. Never interpret allocation
+reductions or procedural timing as cross-game cold-play smoothness. No live
+game, installed core, save or driver/emulator cache was modified for this work.

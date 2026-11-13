@@ -14,6 +14,82 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_analysis_allocation_gate_rejects_growth_and_semantic_changes(self):
+        key=("backward",0,16,0)
+        base={key:dict(calls=10,requested_bytes=120,cf_count=16,labels=8,identity="1234567890abcdef")}
+        candidate={key:dict(base[key],calls=4,requested_bytes=80)}
+        result=ci.compare_reentry_allocations(base,candidate)
+        self.assertEqual(result["calls_saved"],6)
+        self.assertEqual(result["requested_bytes_saved"],40)
+        for field,value in (("calls",11),("requested_bytes",121),("cf_count",18),("labels",9),("identity","fedcba0987654321")):
+            with self.subTest(field=field),self.assertRaises(ValueError):
+                ci.compare_reentry_allocations(base,{key:dict(candidate[key],**{field:value})})
+        with self.assertRaises(ValueError):ci.compare_reentry_allocations(base,{})
+
+    def test_analysis_allocation_csv_requires_complete_unique_corpus(self):
+        rows=[]
+        for pixel in (0,1):
+            for kind,modes,repeats in (("nested",range(5),range(1)),("backward",(16,64,256,512),range(2))):
+                for mode in modes:
+                    for repeat in repeats:rows.append(f"{kind},{pixel},{mode},{repeat},4,80,16,8,1234567890abcdef\n")
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"allocations.csv";path.write_text("".join(rows))
+            self.assertEqual(len(ci.read_reentry_allocations(path)),26)
+            for bad in (rows[:-1],rows+[rows[0]],[rows[0].replace(",4,80,",",-1,80,")]+rows[1:],
+                        [rows[0].replace("1234567890abcdef","nan")]+rows[1:]):
+                path.write_text("".join(bad))
+                with self.assertRaises(ValueError):ci.read_reentry_allocations(path)
+
+    def test_calibration_retains_raw_evidence_on_success_scaling_failure_and_child_failure(self):
+        # Exercise orchestration with real CSV/tick/metadata validators. The
+        # subprocess stand-in is not GPU evidence or a timing qualification.
+        for component in ("raw_program","raw_control"):
+            for scenario in ("passed","bad-scaling","child-failure"):
+                with self.subTest(component=component,scenario=scenario),tempfile.TemporaryDirectory() as folder:
+                    root=Path(folder);source=root/"source-base";source.mkdir();out=root/"work/base";results=root/"results"
+                    fixture=out/component.replace("_","-");native=fixture/"native"/("test.exe" if ci.WIN else "test")
+                    native.parent.mkdir(parents=True);native.write_bytes(b"synthetic-process")
+                    module=fixture/("control.spv" if component=="raw_control" else "program.spv");module.write_bytes(b"synthetic-module")
+                    emitted=[]
+                    def execute(command,cwd,log,env,timeout):
+                        repetitions=int(env["XE_ALU_GPU_REPEAT"]);delay=int(env["XE_ALU_GPU_RECORD_DELAY"])
+                        base=Path(env["XE_ALU_GPU_TIMING_CSV"]);emitted.append(base)
+                        self.assertTrue(base.resolve().is_relative_to(results.resolve()))
+                        ticks=1000000*(1 if scenario=="bad-scaling" else repetitions)
+                        stage=component+(".gpu_dispatch_repeat8" if repetitions==8 else ".gpu_dispatch")
+                        base.write_text("".join(f"{stage},{i},{ticks*1e-9:.17g}\n" for i in range(3)))
+                        Path(str(base)+".ticks.csv").write_text("".join(f"{stage},{i},64,{100+ticks:x},1,1,64,1,1\n" for i in range(3)))
+                        Path(env["XE_ALU_PROGRAM_DUMP"]).write_bytes(module.read_bytes())
+                        Path(env["XE_SHADER_BENCH_CSV"]).write_text("synthetic host observations\n")
+                        Path(env["XE_SHADER_BENCH_CPU_CSV"]).write_text("synthetic CPU observations\n")
+                        log.write_text(f"GPU_TIMESTAMP queue=0 bits=64 period_ns=1 repetitions={repetitions} record_delay={delay} ordering=semaphore_chain3\n"
+                                       f"GPU_TIMESTAMP_EXECUTED repetitions={repetitions} dispatches={3*repetitions} record_delay={delay}\n")
+                        if scenario=="child-failure" and repetitions==8:raise subprocess.CalledProcessError(2,command)
+                    with patch.object(ci,"run",side_effect=execute):
+                        if scenario=="passed":ci.calibrate_gpu_timestamps(source,out,{},component,results)
+                        elif scenario=="bad-scaling":
+                            with self.assertRaisesRegex(ValueError,"work scaling is unverified"):
+                                ci.calibrate_gpu_timestamps(source,out,{},component,results)
+                        else:
+                            with self.assertRaises(subprocess.CalledProcessError):ci.calibrate_gpu_timestamps(source,out,{},component,results)
+                    report=json.loads((results/"gpu-calibration/base"/(component+".json")).read_text())
+                    self.assertEqual(report["status"],"passed" if scenario=="passed" else "failed")
+                    self.assertEqual(len(report["requested_controls"]),3)
+                    self.assertEqual(len(emitted),2 if scenario=="child-failure" else 3)
+                    self.assertEqual(len(report["measurements"]),1 if scenario=="child-failure" else 3)
+                    if scenario!="passed":self.assertIn("error",report)
+                    else:self.assertEqual(report["work_ratio"],8)
+                    if scenario=="passed":self.assertEqual(ci.read_gpu_calibration(results,out,component),report)
+                    else:
+                        with self.assertRaisesRegex(ValueError,"incomplete or failed"):ci.read_gpu_calibration(results,out,component)
+                    self.assertEqual(report["module_sha256"],ci.file_sha256(module))
+                    self.assertFalse((out/"gpu-calibration").exists())
+                    for path in emitted:
+                        self.assertTrue(path.exists());self.assertTrue(Path(str(path)+".ticks.csv").exists())
+                        self.assertTrue(path.with_suffix(".log").exists());self.assertTrue(path.with_suffix(".spv").exists())
+                        self.assertTrue(path.with_name(path.stem+"-host.csv").exists())
+                        self.assertTrue(path.with_name(path.stem+"-host-cpu.csv").exists())
+
     def test_gpu_submission_order_and_positive_negative_controls_are_required(self):
         meta="GPU_TIMESTAMP queue=0 bits=64 period_ns=1 repetitions=1 record_delay=0 ordering=semaphore_chain3\n"
         executed="GPU_TIMESTAMP_EXECUTED repetitions=1 dispatches=3 record_delay=0\n"
@@ -448,6 +524,15 @@ class ComparisonTests(unittest.TestCase):
             for i in range(64):
                 (compiled/("shader%03u.spv"%i)).write_bytes(ci.struct.pack("<5I",0x07230203,0x10000,0,1,0))
             def prepare(source_arg,out,results,backend,reuse):
+                allocation_dir=results/"analysis-allocations"/source.name
+                allocation_dir.mkdir(parents=True,exist_ok=True)
+                allocation_rows=[]
+                for pixel in (0,1):
+                    for kind,modes,repeats in (("nested",range(5),range(1)),("backward",(16,64,256,512),range(2))):
+                        for mode in modes:
+                            for repeat in repeats:
+                                allocation_rows.append(f"{kind},{pixel},{mode},{repeat},4,80,16,8,1234567890abcdef\n")
+                (allocation_dir/"allocations.csv").write_text("".join(allocation_rows))
                 (compiled/"gpu-timestamp-math").mkdir(exist_ok=True)
                 (compiled/"gpu-timestamp-math/coverage.json").write_text(json.dumps(dict(unit=True,version=1,synthetic_fixture=True)))
                 (results/(source.name+"-"+compiled.parent.name+"-"+compiled.name+"-raw-control.json")).write_text(

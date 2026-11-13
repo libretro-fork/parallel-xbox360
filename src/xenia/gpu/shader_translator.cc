@@ -8,6 +8,7 @@
  */
 
 #include "libretro/core_draw_stats.h"
+#include "libretro/core_shader_reentry.h"
 #include "xenia/gpu/shader_translator.h"
 
 #include <cstdarg>
@@ -56,8 +57,7 @@ void Shader::AnalyzeUcode(StringBuffer* ucode_disasm_buffer) {
   // Gather the upper bound of the control flow instructions, and label
   // addresses, which are needed for disassembly.
   cf_pair_index_bound_ = uint32_t(ucode_data_.size() / 3);
-  // Jumps back (source, target) for finding what may reenter a label.
-  std::vector<std::pair<uint32_t, uint32_t>> backward_jumps;
+  bool has_backward_jump = false;
   for (uint32_t i = 0; i < cf_pair_index_bound_; ++i) {
     ControlFlowInstruction cf_ab[2];
     UnpackControlFlowInstructions(ucode_data_.data() + i * 3, cf_ab);
@@ -83,18 +83,14 @@ void Shader::AnalyzeUcode(StringBuffer* ucode_disasm_buffer) {
           // Other incoming branches/calls still add the label independently.
           if (cf.cond_jmp.address() != i * 2 + j + 1)
             label_addresses_.insert(cf.cond_jmp.address());
-          if (cf.cond_jmp.address() <= i * 2 + j) {
-            backward_jumps.emplace_back(i * 2 + j, cf.cond_jmp.address());
-          }
+          has_backward_jump |= cf.cond_jmp.address() <= i * 2 + j;
           break;
         case ControlFlowOpcode::kLoopStart:
           label_addresses_.insert(cf.loop_start.address());
           break;
         case ControlFlowOpcode::kLoopEnd:
           label_addresses_.insert(cf.loop_end.address());
-          if (cf.loop_end.address() <= i * 2 + j) {
-            backward_jumps.emplace_back(i * 2 + j, cf.loop_end.address());
-          }
+          has_backward_jump |= cf.loop_end.address() <= i * 2 + j;
           break;
         default:
           break;
@@ -210,49 +206,23 @@ void Shader::AnalyzeUcode(StringBuffer* ucode_disasm_buffer) {
   // A label jumped back to may be reentered after anything within the span of
   // the jumps back overlapping it. With subroutines, anything may be executed
   // before returning to a label.
-  auto get_components_written = [this](uint32_t first, uint32_t last) {
-    uint64_t components_written = 0;
-    for (uint32_t cf_index = first; cf_index <= last; ++cf_index) {
-      components_written |= cf_register_components_written_[cf_index];
-    }
-    return components_written;
-  };
   uint32_t cf_index_count = cf_pair_index_bound_ * 2;
   reentered_label_register_components_written_.assign(cf_index_count, 0);
-  std::set<uint32_t> reentered_labels;
-  for (const auto& backward_jump : backward_jumps) {
-    reentered_labels.insert(backward_jump.second);
-  }
   if (uses_subroutine_calls_) {
-    reentered_labels = label_addresses_;
-  }
-  for (uint32_t label : reentered_labels) {
-    if (label >= cf_index_count) {
-      continue;
+    const uint64_t all_written = xe_shader_reentry_all(
+        cf_register_components_written_.data(), cf_index_count);
+    // Borrow the already-owned labels; copying a second tree was unnecessary.
+    for (uint32_t label : label_addresses_) {
+      if (label < cf_index_count)
+        reentered_label_register_components_written_[label] = all_written;
     }
-    uint32_t span_first = label, span_last = label;
-    if (uses_subroutine_calls_) {
-      span_first = 0;
-      span_last = cf_index_count - 1;
-    } else {
-      bool span_extended;
-      do {
-        span_extended = false;
-        for (const auto& backward_jump : backward_jumps) {
-          if (backward_jump.second <= span_last &&
-              backward_jump.first >= span_first &&
-              (backward_jump.first > span_last ||
-               backward_jump.second < span_first)) {
-            span_first = std::min(span_first, backward_jump.second);
-            span_last = std::max(span_last, backward_jump.first);
-            span_extended = true;
-          }
-        }
-      } while (span_extended);
-    }
-    reentered_label_register_components_written_[label] =
-        get_components_written(span_first,
-                               std::min(span_last, cf_index_count - 1));
+  } else if (has_backward_jump) {
+    const bool reentry_valid = xe_shader_reentry_analyze(
+        ucode_data_.data(), ucode_data_.size(),
+        cf_register_components_written_.data(),
+        reentered_label_register_components_written_.data(), cf_index_count);
+    assert_true(reentry_valid);
+    (void)reentry_valid;
   }
 
   if (constant_register_map_.float_dynamic_addressing) {
@@ -747,18 +717,9 @@ bool ShaderTranslator::TranslateAnalyzedShader(
 
   const uint32_t* ucode_dwords = shader.ucode_data().data();
 
-  // TODO(Triang3l): Remove when the old SPIR-V shader translator is deleted.
   uint32_t cf_pair_index_bound = shader.cf_pair_index_bound();
-  std::vector<ControlFlowInstruction> cf_instructions;
-  for (uint32_t i = 0; i < cf_pair_index_bound; ++i) {
-    ControlFlowInstruction cf_ab[2];
-    UnpackControlFlowInstructions(ucode_dwords + i * 3, cf_ab);
-    cf_instructions.push_back(cf_ab[0]);
-    cf_instructions.push_back(cf_ab[1]);
-  }
-  PreProcessControlFlowInstructions(cf_instructions);
-
-  // Translate all instructions.
+  // Decode directly from the immutable shader owner. The removed preprocessing
+  // hook had no implementations, but built and copied a whole temporary vector.
   const std::set<uint32_t>& label_addresses = shader.label_addresses();
   for (uint32_t i = 0; i < cf_pair_index_bound; ++i) {
     ControlFlowInstruction cf_ab[2];
