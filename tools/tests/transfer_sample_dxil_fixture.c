@@ -2,6 +2,15 @@
 #include "src/xenia/gpu/dxil/transfer_sample.h"
 #include "src/xenia/gpu/dxil/guest_resources.h"
 #include "src/xenia/gpu/dxil/shader_module.h"
+#ifdef XE_TRANSFER_ADDRESS_PACKET_TEST
+#include "libretro/core_transfer_address_packet.h"
+#ifndef XE_TRANSFER_PACKET_NATIVE2
+#define XE_TRANSFER_PACKET_NATIVE2 0
+#endif
+#ifndef XE_TRANSFER_ADDRESS_TEST
+#define XE_TRANSFER_ADDRESS_TEST 1
+#endif
+#endif
 #ifdef XE_TRANSFER_ADDRESS_TEST
 #include "libretro/core_transfer_address.h"
 #elif defined(XE_TRANSFER_UINT_COLOR_TEST)
@@ -28,6 +37,9 @@ int main(int argc,char **argv) {
  XeDxilAlu alu;XeDxilTransferSample adapter;xe_transfer_sample_emitter e;
 #ifdef XE_TRANSFER_ADDRESS_TEST
  xe_transfer_address_parameters p;xe_transfer_address_result result;
+#ifdef XE_TRANSFER_ADDRESS_PACKET_TEST
+ xe_transfer_address_packet_config packet_config={3,5,XE_TRANSFER_PACKET_NATIVE2};uintptr_t packet_ids[XE_AP_WORDS];
+#endif
 #elif defined(XE_TRANSFER_UINT_COLOR_TEST)
  xe_transfer_uint_color_parameters p;uintptr_t source[4],packed[2],result[4];
 #else
@@ -61,8 +73,14 @@ int main(int argc,char **argv) {
  e.emit=xe_dxil_transfer_sample_emit;e.context=&adapter;
 #ifdef XE_TRANSFER_ADDRESS_TEST
  lanes=10;
+#ifdef XE_TRANSFER_ADDRESS_PACKET_TEST
+ for(i=0;i<XE_AP_WORDS;++i)packet_ids[i]=(uintptr_t)field(&alu,input,base,2+i);
+ if(!xe_transfer_address_packet_emit(&e,&packet_config,packet_ids,&p))goto done;
+ a=field(&alu,input,base,0);b=field(&alu,input,base,1);c=(XeDxilValue)packet_ids[XE_AP_SAMPLE];
+#else
  for(i=0;i<XE_ADDR_WORDS;++i)p.word[i]=(uintptr_t)field(&alu,input,base,3+i);
  a=field(&alu,input,base,0);b=field(&alu,input,base,1);c=field(&alu,input,base,2);
+#endif
  if(!xe_transfer_address_emit(&e,&p,(uintptr_t)a,(uintptr_t)b,(uintptr_t)c,&result))goto done;
  values[0]=(XeDxilValue)result.x;values[1]=(XeDxilValue)result.y;values[2]=(XeDxilValue)result.sample;
  values[3]=(XeDxilValue)result.second_x;values[4]=(XeDxilValue)result.half;values[5]=(XeDxilValue)result.two_loads;

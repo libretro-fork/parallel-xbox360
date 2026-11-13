@@ -21,9 +21,10 @@ for name in binary packet arena size; do
 done
 gcc $flags -I. -I"$root/tools/tests" -Ithird_party/libretro-common/include -c "$root/tools/tests/transfer_identity_reference_fixture.c" -o "$out/driver.o"
 gcc $flags -I. -I"$root/tools/tests" -Ithird_party/libretro-common/include -c "$root/tools/tests/transfer_identity_msaa_reference_fixture.c" -o "$out/msaa-driver.o"
+gcc $flags -I. -I"$root/tools/tests" -Ithird_party/libretro-common/include -c "$root/tools/tests/transfer_color_reference_fixture.c" -o "$out/color-driver.o"
 set --
 index=0
-for source in "$root/tools/tests/transfer_uint_reference_bridge.cc" "$out/static-emitters.cc" src/xenia/gpu/edram_transfer_shader.cc src/xenia/gpu/spirv_builder.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp; do
+for source in "$root/tools/tests/transfer_uint_reference_bridge.cc" "$root/tools/tests/transfer_color_reference_bridge.cc" "$out/static-emitters.cc" src/xenia/gpu/edram_transfer_shader.cc src/xenia/gpu/spirv_builder.cc src/xenia/gpu/spirv/SpvBuilder.cpp src/xenia/gpu/spirv/InReadableOrder.cpp src/xenia/gpu/spirv/Logger.cpp; do
  object="$out/producer-$index.o"
  g++ -std=c++20 -O2 -DNDEBUG -DXE_TEST_TRANSFER_NUMERIC_REFERENCE -DXENIA_LIBRETRO=1 -DVULKAN_HPP_NO_TO_STRING -Wno-attributes -Isrc -I. -I"$root/tools/tests" -Ithird_party/libretro-common/include -Ithird_party/fmt/include -Ithird_party -Ithird_party/Vulkan-Headers/include -c "$source" -o "$object"
  set -- "$@" "$object"
@@ -31,4 +32,5 @@ for source in "$root/tools/tests/transfer_uint_reference_bridge.cc" "$out/static
 done
 g++ "$out/driver.o" "$@" "$out/legacy-binary.o" "$out/legacy-packet.o" "$out/legacy-arena.o" "$out/legacy-size.o" -o "$out/generator"
 g++ "$out/msaa-driver.o" "$@" "$out/legacy-binary.o" "$out/legacy-packet.o" "$out/legacy-arena.o" "$out/legacy-size.o" -o "$out/msaa-generator"
+g++ "$out/color-driver.o" "$@" "$out/legacy-binary.o" "$out/legacy-packet.o" "$out/legacy-arena.o" "$out/legacy-size.o" -o "$out/color-generator"
 sha256sum src/xenia/gpu/edram_transfer_shader.cc src/xenia/gpu/edram_transfer_shader.h src/xenia/gpu/spirv_shader_translator.cc src/xenia/gpu/spirv_shader_translator_rb.cc "$root/tools/tests/transfer_uint_reference_bridge.cc" "$root/tools/tests/transfer_identity_reference_fixture.c" "$root/tools/tests/transfer_identity_msaa_reference_fixture.c" > "$out/source-manifest.txt"

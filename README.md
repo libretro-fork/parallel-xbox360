@@ -347,6 +347,25 @@ Linux, Android and macOS builds do not require Python or a shader compiler.
 Linux builds enable POSIX/GNU declarations for the selected libretro-common C sources.
 Version/commit definitions are tracked separately for the frontend adapter, so metadata changes do not invalidate unrelated emulator or dependency objects.
 D3D12 primitive-expansion geometry shaders are generated directly as DXIL.
+Single-sample Vulkan color ownership transfers also have a fixed C89 bank for
+cross-format numeric and mixed integer/numeric views. It prepares the 44 pairs
+missing from the existing fast banks, with up to four native/scaled layouts
+per pair (176 PSOs, or 44 at 1x). Initialization invokes the existing transfer
+producer into reusable final SPIR-V storage, without inserting a second shader
+map. Draws retain the original four-byte packed address and borrow a stable PSO
+handle; the existing smaller integer and numeric-identity banks retain priority.
+Actual typed views and gamma storage policy remain intact. The producer's
+instruction arena may allocate during initialization, but it is not called from
+covered transfer draws. No pixel staging buffer is introduced.
+Image checks cover all 44 selected pairs, nine native/scaled layouts and signed
+base offsets through both render passes and dynamic rendering. Separate C89
+codec checks cover all 65,536 half encodings and both sides of every 7e3 rounding
+midpoint; the alternate raw shape emitter remains a validation foundation.
+MSAA/depth and value-converting transfers,
+the corresponding D3D12 generic bank and complete guest
+fallback rendering remain unresolved. GPU throughput qualification is separate
+from image correctness; these component tests do not certify smooth cold play.
+
 Matching numeric-view color ownership transfers now have initialization-owned
 Vulkan/D3D12 pipeline banks. Their raw SPIR-V/native DXIL fetches and forwards
 color without packing or conversion; typed resources, gamma storage and source
@@ -359,6 +378,10 @@ conditions remain uncontrolled, and full startup and cold-play acceptance remain
 unverified. Cross-format conversion and guest fallback
 compilation remain unfinished. See
 [identity-transfer coverage and pending qualification](tools/tests/transfer_identity_results.txt).
+Generic transfer fallback work has a direct 24-byte C89 routing packet and
+native GPU coordinate checks. It is not integrated into rendering; format
+conversion, depth/stencil behavior and nonblocking specialization remain to be
+implemented. See `tools/tests/transfer_address_packet_results.txt`.
 Built-in primitive indices fill their mapped upload allocation directly through
 a C89 writer with checked ranges. The immutable layout is borrowed only during
 initialization; no callable owns it. Vulkan flushes that upload allocation and

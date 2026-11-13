@@ -1,6 +1,8 @@
 /* One native compute PSO, changing runtime sample layouts. BSD; C89. */
 
-#ifdef XE_TRANSFER_ADDRESS_TEST
+#ifdef XE_TRANSFER_ADDRESS_PACKET_TEST
+#include "transfer_address_packet_cases.h"
+#elif defined(XE_TRANSFER_ADDRESS_TEST)
 #include "transfer_address_cases.h"
 #elif defined(XE_TRANSFER_UINT_COLOR_TEST)
 #include "transfer_uint_color_cases.h"
@@ -130,7 +132,9 @@ int main(int argc,char **argv) {
   }
   range.Begin=range.End=0;ID3D12Resource_Unmap(readback,0,&range);readback_data=NULL;
  }
-#ifdef XE_TRANSFER_ADDRESS_TEST
+#ifdef XE_TRANSFER_ADDRESS_PACKET_TEST
+ printf("PASS: compact routing packets, %u mutable coordinate records and output guards\n",cases);
+#elif defined(XE_TRANSFER_ADDRESS_TEST)
  printf("PASS: %u physical address records, independent legacy routes, ten result words and guards; one module and PSO\n",cases);
 #elif defined(XE_TRANSFER_UINT_COLOR_TEST)
  printf("PASS: WARP %u dynamic integer color records, independent payloads, guards, one module and PSO\n",cases);

@@ -3,7 +3,12 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "vulkan_test_context.h"
-#ifdef XE_TRANSFER_ADDRESS_TEST
+#ifdef XE_TRANSFER_FORMAT_TEST
+#include "transfer_format_cases.h"
+#define XE_SAMPLE_LANES 8
+#elif defined(XE_TRANSFER_ADDRESS_PACKET_TEST)
+#include "transfer_address_packet_cases.h"
+#elif defined(XE_TRANSFER_ADDRESS_TEST)
 #include "transfer_address_cases.h"
 #elif defined(XE_TRANSFER_UINT_COLOR_TEST)
 #include "transfer_uint_color_cases.h"
@@ -95,7 +100,11 @@ int main(int argc,char **argv){
   }
  }
  CHECK(modules==1 && pipelines==1);
-#ifdef XE_TRANSFER_ADDRESS_TEST
+#ifdef XE_TRANSFER_FORMAT_TEST
+ printf("PASS: %u raw-format records, color/depth/gamma/nonfinite bits and bounds guards; one module and PSO\n",cases);
+#elif defined(XE_TRANSFER_ADDRESS_PACKET_TEST)
+ printf("PASS: %u compact24-byte routing records, independent legacy coordinates and guards; one module and PSO\n",cases);
+#elif defined(XE_TRANSFER_ADDRESS_TEST)
  printf("PASS: %u physical address records, independent legacy routes, ten result words and guards; one module and PSO\n",cases);
 #elif defined(XE_TRANSFER_UINT_COLOR_TEST)
  printf("PASS: %u dynamic integer color records, all source/destination pairs, independent inverse payloads, guards; one module and PSO\n",cases);

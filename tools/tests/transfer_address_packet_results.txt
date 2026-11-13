@@ -1,0 +1,38 @@
+Compact transfer routing component
+==================================
+The renderer still reaches legacy shader/PSO creation for unsupported transfer
+families. The routing fixture alone is not a rendering fallback. The separate
+prepared single-sample color bank now uses this packet in the renderer.
+
+- Writes six final dwords directly from borrowed configuration/key metadata;
+  no intermediate92-byte routing object is constructed by the packet writer.
+  Renderer scale/native2 policy is immutable configuration. Source/destination
+  layout, native scale selection, physical sample, pitches/base offset and
+  three division reciprocals occupy24 bytes. Existing identity packets remain
+  20 bytes; no existing runtime packet is changed here.
+- Expands packet SSA IDs into the existing division-free routing program.
+  All rejection precedes packet writes; failed emission leaves its published
+  result unchanged. An incomplete shader module must be discarded by callers.
+- MSVC /TC/W4/WX and GCC strict C89 ASan/UBSan pass18,144 independent legacy
+  route comparisons,85 injected emission failures and rejection guards. The
+  typed CPU model distinguishes Boolean comparison results from u32 operands.
+  Code review found missing predicate/integer conversions in the first draft;
+  these were corrected before native shader validation, and the typed model
+  now guards that distinction. Initial MSVC test-variable warnings were fixed
+  with explicit initialization rather than warning suppression.
+- Native SPIR-V1.0 modules validate; Khronos Lavapipe and NVIDIA RTX5090 each
+  pass62,191 mutable coordinate records per native/emulated2x policy, including
+  all logical MSAA pairs, source/destination color/depth widths, native/scaled
+  asymmetric3x5 layouts, wrapping offsets and output guards. One compute PSO
+  handles each policy's records. Native DXIL validates with the Microsoft SDK;
+  WARP passes the same62,191 records for each policy.
+- These compute fixtures test address math, not color packing, gamma, depth
+  precision, stencil operations, memexport/query semantics, real image access,
+  first-correct-frame latency or renderer fallback publication. No performance,
+  zero-allocation gameplay or shader-stutter acceptance is claimed.
+
+The color bank adds typed loads/stores, format conversion and checked prepared
+PSO selection for its explicitly supported single-sample pairs. Depth/stencil,
+MSAA conversion, value-converting ownership and complete guest fallback
+coverage remain unfinished. Its image/performance qualification is separate
+from these routing-only observations; see transfer_color_results.txt.

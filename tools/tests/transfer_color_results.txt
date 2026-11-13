@@ -1,0 +1,94 @@
+Prepared single-sample Vulkan color transfers
+============================================
+Coverage is deliberately narrower than a complete guest-shader fallback.
+
+Runtime:
+- C89 owns 44 missing format-pair slots per native/scaled layout, at most176
+  handles and no map nodes. One layout at1x, four otherwise. Existing raw
+  integer and numeric-identity banks retain priority for their20 pairs.
+- Initialize and destroy explicitly. Production invokes the existing transfer
+  producer into borrowed reusable final words, with no new shader map or payload
+  copy. Its instruction arena may allocate during initialization. The alternative
+  raw shape producer reserves one exact maximum word allocation. Temporary shader
+  modules are destroyed immediately after their PSO is created. Partial-success
+  driver handles are always retained for cleanup; borrowed inputs are not freed.
+- Lookup returns an immutable borrowed PSO. Pitches, source-pitch reciprocal
+  and base offset retain the original packed four-byte command packet in production.
+  The alternate validation producer uses a32-byte packet.
+  No parser, instruction graph construction, pixel staging buffer, compilation admission,
+  driver creation, mutex or wait is added to this supported transfer path.
+- Global scale/native2 policy and actual typed/gamma view policy remain part of
+  compatibility. Format aliases are normalized only when stored layouts agree.
+  Existing transfer render-pass lookup already canonicalizes float16 aliases;
+  no separate alias warmup or duplicate PSO is needed.
+
+Correctness:
+- Literal codec/depth/nonfinite cases, independent1024-code small-float decoding,
+  all65536 half encodings and3069 F32 neighbors at7e3 rounding boundaries.
+  Half/midpoint references use nearest decoded values and tie parity, not the
+  production quantizer's bit algorithm. Scale-by512 plus explicit RoundEven
+  does not require an assumed default F32 addition rounding mode.
+-279535 mutable Vulkan format records per run, with independent expectations
+  for the extended rounding corpus, invalid selectors/bounds and untouched-word guards.
+-1152 fixed SPIR-V shapes across all64 typed pairs, nine native/scaled layouts
+  and both native2 policies; exact planning, allocation failure/retry and SPIR-V
+  validation. Production omits the20 already-covered fast pairs.
+-1188 actual-bank image pairs per rendering interface:44selected pairs, nine
+  layouts and zero/positive/negative base offsets. Compare exact attachment bytes
+  with the unchanged legacy producer; keep readback and tail guards untimed.
+-706 driver failure/null-output sites per rendering interface and producer, including live
+  partial pipelines on error;255 view masks,1024000 immutable lookup checks,
+  1x collapse, aliases, invalid flags, repeated close and double initialization.
+- Strict MSVC C89 and Linux C89 ASan/UBSan checks. Native DXIL codec foundation
+  additionally validates with Microsoft tooling and executes8648 exact words
+  on WARP and NVIDIA. This does not integrate the new bank into D3D12.
+
+Performance/negative controls:
+- Large images,44selected pairs and three scale configurations give132 cases.
+  Use64/512draw workloads, eight alternating/reversed pairs (trial0 retained as
+  warmup), timestamps in semaphore-ordered command buffers and IA/VS/FS counters.
+  Each file has4224raw rows and264comparison groups. Rendering interface is
+  explicit in every row. Check both render-pass and dynamic-rendering paths.
+- Keep the existing declared gate: paired median >5% and >100ns/draw with at
+  least5/7 exceedances fails;512/64work scaling must be at least2. Never substitute
+  equal images or static instruction counts for measured execution cost.
+- The earlier fully dynamic program passed images but failed154/156 groups
+  with up to~1.9x GPU cost. It was not published. Fixed layouts plus exact
+  quantization remove that candidate regression under the same thresholds;
+  failed BFE/BFI experiments and every raw result remain in development artifacts.
+- COLOR_OMIT_DRAW must fail with available query results and zero IA/VS/FS work;
+  presenting an unchanged attachment cannot pass the work gate.
+- Run tools/tests/test_transfer_color_warm_analysis.py normally and under-O.
+  Malformed/missing/duplicate rows, wrong interface/order, absent GPU work,
+  timestamp corruption and synthetic slowdowns are rejected.
+
+Limitations:
+No certified empty hardware-driver cache or private cross-game replay signoff.
+Initialization time is reported separately from first correct draw and warmed
+GPU cost. Unsupported MSAA/depth/value-converting ownership and guest VS/PS/GS/
+tessellation states still need accurate prepared coverage. General guest
+translation, placeholder PSO creation and compilation waits remain unresolved.
+These component results do not mean shader stutters or mid-game allocations
+have been eradicated.
+
+Additional qualification debt and retained failures:
+- The initial new shape programs failed the final short dynamic-rendering run
+  in two/one groups. They are not the production choice. Reusing original words
+  passed short dynamic rendering, but one short render-pass group still failed.
+  Every raw result remains retained; no unchanged rerun promotes those results.
+- The longer-workload corpus measures64/512 actual draws per sample with the
+  same >5%, >100ns/draw and5/7 limits, separately validated by same-PSO controls.
+  Its larger work does not establish acceptance of the earlier short samples.
+  Producer, rendering interface and self-control identity are explicit per row;
+  wrong identities fail analysis. This is supplementary component evidence,
+  not proof of cold-gameplay smoothness or removal of general guest waits.
+- Producer failure, empty words, failed storage and extent overflow are rejected
+  at every slot with ownership cleanup. Packed metadata has unaligned-output,
+  guard-byte and invalid-input tests; no release logging is introduced.
+
+The short identical-PSO control also fails one render-pass group while passing
+both dynamic orders; thus that short harness can flag a difference when the
+pipeline handle, shader and packet are identical. The64/512 controls and actual
+packed-program comparisons pass both orders/interfaces under unchanged limits.
+No short failed dataset is relabelled a pass. Full exact-parent qualification
+and hardware/cache coverage limits remain required before delivery.

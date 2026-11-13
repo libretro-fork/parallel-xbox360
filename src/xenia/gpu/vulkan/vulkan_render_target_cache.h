@@ -34,6 +34,7 @@
 #include "xenia/ui/vulkan/vulkan_upload_buffer_pool.h"
 #include "libretro/core_transfer_uint_vk.h"
 #include "libretro/core_transfer_identity_vk.h"
+#include "libretro/core_transfer_color_vk.h"
 
 namespace xe {
 namespace gpu {
@@ -662,6 +663,12 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       const RenderTarget* const* depth_and_color_render_targets);
 
   bool InitializeUintTransferPipelines();
+  bool InitializeColorTransferPipelines();
+  void ColorTransferOps(xe_transfer_color_vk_ops* ops) const;
+  bool BuildTransferShader(EdramTransferShaderKey key);
+  static int EmitPreparedColorTransfer(void* context, unsigned source,
+      unsigned dest, unsigned dest_native, unsigned source_native,
+      xe_spv_binary* output);
   void UintTransferOps(xe_transfer_uint_vk_ops* ops) const;
   bool InitializeIdentityTransferPipelines();
   void IdentityTransferOps(xe_transfer_identity_vk_ops* ops) const;
@@ -748,6 +755,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   VkShaderModule transfer_passthrough_vertex_shader_ = VK_NULL_HANDLE;
   xe_transfer_uint_vk_bank uint_transfer_pipelines_ = {};
   xe_transfer_identity_vk_bank identity_transfer_pipelines_ = {};
+  xe_transfer_color_vk_bank color_transfer_pipelines_ = {};
   VkPipelineLayout transfer_pipeline_layouts_[size_t(
       EdramTransferPipelineLayoutIndex::kCount)] = {};
   // VK_NULL_HANDLE if failed to create.

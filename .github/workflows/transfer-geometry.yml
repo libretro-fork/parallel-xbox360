@@ -23,6 +23,8 @@ jobs:
           GPU_TESTS=1 sh tools/tests/run_transfer_uint_image_tests.sh
           sh tools/tests/run_transfer_uint_bank_tests.sh
           python3 tools/tests/test_transfer_uint_warm_analysis.py
+          python3 tools/tests/test_transfer_color_warm_analysis.py
+          python3 -O tools/tests/test_transfer_color_warm_analysis.py
           python3 tools/tests/test_transfer_identity_warm_analysis.py
           python3 -O tools/tests/test_transfer_identity_warm_analysis.py
           python3 tools/tests/test_transfer_identity_msaa_warm_analysis.py
@@ -36,6 +38,7 @@ jobs:
           MSAA_DYNAMIC_RENDERING=1 GPU_TESTS=1 MSAA_IMAGE_OUT=build/tests/transfer-msaa-dynamic sh tools/tests/run_transfer_msaa_image_tests.sh
           GPU_TESTS=1 sh tools/tests/run_transfer_identity_tests.sh
           IDENTITY_MSAA_VALIDATION=VK_LAYER_KHRONOS_validation GPU_TESTS=1 sh tools/tests/run_transfer_identity_reference_tests.sh "$PWD"
+          LP_NUM_THREADS=3 COLOR_REFERENCE_BUILD="$PWD/build/tests/transfer-identity-reference" GPU_TESTS=1 sh tools/tests/run_transfer_color_tests.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -52,6 +55,7 @@ jobs:
             build/tests/transfer-msaa-dynamic/
             build/tests/transfer-identity/
             build/tests/transfer-identity-reference/
+            build/tests/transfer-color/
           if-no-files-found: error
   d3d12:
     runs-on: windows-2022
@@ -87,6 +91,8 @@ jobs:
           call tools\tests\run_transfer_msaa_image_tests.cmd
           if errorlevel 1 exit /b 1
           call tools\tests\run_transfer_identity_tests.cmd
+          if errorlevel 1 exit /b 1
+          call tools\tests\run_transfer_color_tests.cmd
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -101,4 +107,5 @@ jobs:
             build/tests/transfer-revision-msvc/
             build/tests/transfer-msaa-image-msvc/
             build/tests/transfer-identity-msvc/
+            build/tests/transfer-color-msvc/
           if-no-files-found: error

@@ -1,5 +1,14 @@
 /* Single-PSO dynamic addressing fixture. Raw SPIR-V1.0; BSD; C89. */
 #include "libretro/core_transfer_sample_spv.h"
+#ifdef XE_TRANSFER_ADDRESS_PACKET_TEST
+#include "libretro/core_transfer_address_packet.h"
+#ifndef XE_TRANSFER_PACKET_NATIVE2
+#define XE_TRANSFER_PACKET_NATIVE2 0
+#endif
+#ifndef XE_TRANSFER_ADDRESS_TEST
+#define XE_TRANSFER_ADDRESS_TEST 1
+#endif
+#endif
 #ifdef XE_TRANSFER_ADDRESS_TEST
 #include "libretro/core_transfer_address.h"
 #elif defined(XE_TRANSFER_UINT_COLOR_TEST)
@@ -10,6 +19,9 @@ enum {TV=1,TU,TB,T3,TPAIR,TARRAY,TBUFFER,PB,PU,PI,TF,
  INPUT,OUTPUT,INVOCATION,MAIN,LABEL,WORK,END,CONST_BASE=32};
 typedef struct fixture {
  xe_spv_binary *code;uint32_t next;
+#ifdef XE_TRANSFER_ADDRESS_PACKET_TEST
+ xe_transfer_sample_spv *packet_adapter;
+#endif
 } fixture;
 static void put(fixture *f,unsigned op,uint32_t type,uint32_t result,
  unsigned count,uint32_t a,uint32_t b,uint32_t c) {
@@ -30,10 +42,24 @@ static void store(fixture *f,uint32_t base,unsigned field,uintptr_t value) {
  put(f,SpvOpAccessChain,PU,pointer,3,OUTPUT,constant(0),index);
  put(f,SpvOpStore,0,0,2,pointer,(uint32_t)value,0);
 }
+#ifdef XE_TRANSFER_ADDRESS_PACKET_TEST
+static uintptr_t packet_emit(void *opaque,enum xe_transfer_sample_op op,uintptr_t a,uintptr_t b,uintptr_t c) {
+ fixture *f=(fixture*)opaque;
+ if(op==XE_TRANSFER_SAMPLE_CONST){
+  if(a<=32)return constant((unsigned)a);
+  switch(a){case 80:return constant(38);case 1023:return constant(39);case 2048:return constant(40);
+   case 4095:return constant(41);case 1431655765u:return constant(42);case 858993459u:return constant(43);default:break;}
+ }
+ return xe_transfer_sample_spv_emit(f->packet_adapter,op,a,b,c);
+}
+#endif
 int xe_test_transfer_sample_spv(xe_spv_binary *out) {
  fixture f;xe_transfer_sample_spv adapter;xe_transfer_sample_emitter emitter;
 #ifdef XE_TRANSFER_ADDRESS_TEST
  xe_transfer_address_parameters p;xe_transfer_address_result result;
+#ifdef XE_TRANSFER_ADDRESS_PACKET_TEST
+ xe_transfer_address_packet_config packet_config={3,5,XE_TRANSFER_PACKET_NATIVE2};uintptr_t packet_ids[XE_AP_WORDS];
+#endif
 #elif defined(XE_TRANSFER_UINT_COLOR_TEST)
  xe_transfer_uint_color_parameters p;uintptr_t source[4],packed[2],result[4];
 #else
@@ -79,6 +105,10 @@ int xe_test_transfer_sample_spv(xe_spv_binary *out) {
 #ifdef XE_TRANSFER_ADDRESS_TEST
  put(&f,SpvOpConstant,TU,constant(37),1,2047,0,0);
 #endif
+#ifdef XE_TRANSFER_ADDRESS_PACKET_TEST
+ {static const uint32_t extra[6]={80,1023,2048,4095,1431655765u,858993459u};
+  for(i=0;i<6;++i)put(&f,SpvOpConstant,TU,constant(38+i),1,extra[i],0,0);}
+#endif
  put(&f,SpvOpVariable,PB,INPUT,1,SpvStorageClassUniform,0,0);
  put(&f,SpvOpVariable,PB,OUTPUT,1,SpvStorageClassUniform,0,0);
  put(&f,SpvOpVariable,PI,INVOCATION,1,SpvStorageClassInput,0,0);
@@ -111,8 +141,15 @@ int xe_test_transfer_sample_spv(xe_spv_binary *out) {
 #endif
  emitter.emit=xe_transfer_sample_spv_emit;emitter.context=&adapter;
 #ifdef XE_TRANSFER_ADDRESS_TEST
+#ifdef XE_TRANSFER_ADDRESS_PACKET_TEST
+ f.packet_adapter=&adapter;emitter.emit=packet_emit;emitter.context=&f;
+ for(i=0;i<XE_AP_WORDS;++i)packet_ids[i]=load(&f,base,2+i);
+ if(!xe_transfer_address_packet_emit(&emitter,&packet_config,packet_ids,&p))goto fail;
+ a=load(&f,base,0);b=load(&f,base,1);c=(uint32_t)packet_ids[XE_AP_SAMPLE];
+#else
  for(i=0;i<XE_ADDR_WORDS;++i)p.word[i]=load(&f,base,3+i);
  a=load(&f,base,0);b=load(&f,base,1);c=load(&f,base,2);
+#endif
  if(!xe_transfer_address_emit(&emitter,&p,a,b,c,&result))goto fail;
  store(&f,dest,0,result.x);store(&f,dest,1,result.y);store(&f,dest,2,result.sample);
  store(&f,dest,3,result.second_x);store(&f,dest,4,result.half);store(&f,dest,5,result.two_loads);

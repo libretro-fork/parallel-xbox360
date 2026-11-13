@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Prepare remaining supported single-sample Vulkan color ownership transfers before gameplay in a fixed C89 pipeline bank. Invoke the existing transfer generator during initialization into borrowed reusable final words; retain its original four-byte address packet and existing raw/identity fast paths. Preserve typed views and gamma policy, with partial-owner cleanup and producer failure/bounds checks. Add numerical, render-pass/dynamic image and GPU-work regressions. MSAA/depth/value-converting transfers, D3D12 generic integration and general guest-shader compilation remain unfinished; this is not cold-play signoff.
+
 - Avoid constructing a 16 KiB disassembly buffer for ordinary Vulkan/D3D12 guest analysis when shader dumps are disabled. Preserve opt-in diagnostic text and reusable explicit sinks. This removes temporary host allocation, not the remaining draw-side compilation dependency.
 
 - Replace guest-shader label trees with owned C89 bitmaps: keep the first 256 label positions inline and allocate higher positions once from the immutable shader's bounds. Duplicate insertion, membership and ascending iteration need no tree nodes, growth copies or locks. Preserve call-return and 13-bit branch labels and immutable publication; release bitmap ownership with the shader. Other analysis/result storage and renderer allocations remain.
@@ -13,7 +15,6 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 - Remove transient backward-edge vectors, copied reentry-label trees and an unused whole-program control-flow preprocessing copy from first-use shader analysis/translation. Compute overlapping-loop write sets in the existing final result storage with an allocation-free C89 interval pass. Preserve subroutine rules and exact translated output; test real analysis allocation counts against each commit's parent without adding release diagnostics. Remaining draw-side translation, PSO creation and compilation waits are unresolved.
 
 - Preserve raw GPU timestamp-calibration evidence in CI artifacts even when preparation fails. Record control status and errors without weakening the calibration or performance gates; a failed calibration still stops the comparison.
-
 - Prepare matching numeric-view ownership transfers for Vulkan and D3D12 before gameplay, retaining existing typed images and gamma storage. Share float identity shaders across attachment classes and write only five runtime dwords directly into command storage. Typed-resource MSAA comparisons against the existing producers and paired RTX 5090 single-sample/mixed-MSAA throughput checks pass for both renderers under the unchanged gates. Add complete-bank constructor accounting and checked first Vulkan/D3D12 transfers with failing omitted-draw controls. Other format conversions and guest-shader fallback coverage remain unfinished; component checks do not certify cold-play smoothness.
 
 - Fix the Linux ARM64 vertex-address sanitizer check selecting an x86-only compiler flag. Select AVX only for x86-64 compiler targets, preserving the production-interpreter UBSan check on ARM64 and cross-compilers.

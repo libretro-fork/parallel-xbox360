@@ -160,6 +160,9 @@ int xe_dxil_edram_format_test(struct dxil_module *m, const char *path) {
     expected[7] = UINT32_C(0xb4000000) | i;
     if (!xe_dxil_test_record(m, handle, index++, &alu, values, expected, golden)) goto done;
   }
+#ifdef XE_DXIL_EDRAM_FORMAT_EXTRA
+  if (!XE_DXIL_EDRAM_FORMAT_EXTRA(m, &alu, handle, index, golden)) goto done;
+#endif
   result = dxil_emit_ret_void(m);
 done:
   if (fclose(golden)) result = 0;
