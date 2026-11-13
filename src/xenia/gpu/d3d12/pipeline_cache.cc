@@ -568,8 +568,7 @@ std::unique_ptr<SpirvShaderTranslator> PipelineCache::CreateTranslator() const {
 Shader::Translation* PipelineCache::EnsureGuestTranslation(
     SpirvShader& shader, uint64_t spirv_modification) {
   if (!shader.is_ucode_analyzed()) {
-    StringBuffer ucode_disasm;
-    shader.AnalyzeUcode(ucode_disasm);
+    shader.AnalyzeUcode();
   }
   return shader.GetOrCreateTranslation(spirv_modification);
 }

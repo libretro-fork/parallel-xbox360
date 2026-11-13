@@ -1555,6 +1555,17 @@ exact emitted SPIR-V and shader-dump opt-in. `ANALYSIS_TEXT_BUILD` selects the
 MSVC core build; shell tests reuse the normal Make link inputs. These checks
 do not certify runtime fallback accuracy or gameplay frame-time tails.
 
+The MSVC runner also substitutes a constructor allocator in the actual
+StringBuffer object. Its C89 observer excludes process initialization, requires
+only the two explicit test buffers per case (84 requests/1,376,256 bytes), and
+checks dump opt-in plus repeated-analysis reuse. Quiet no-sink analysis must
+construct no buffer. This counts diagnostic constructor requests, not all
+malloc/realloc, renderer or driver allocations. Normal builds compile the
+allocator macro directly to the existing malloc call. The paired shader harness
+runs this correctness check before timing when the revision provides the new
+API; older revisions are explicitly recorded as predating the contract. Linux
+runs metadata/text/binary identity without constructor interception.
+
 `run_shader_reentry_tests.cmd` / `.sh` compare the C89 interval pass with the
 previous fixed-point walk on30,005 packed CF graphs. The shared first-parent
 comparator records26 actual-analyzer operator-new allocation observations and

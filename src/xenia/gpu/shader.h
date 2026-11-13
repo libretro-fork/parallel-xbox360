@@ -915,6 +915,8 @@ class Shader {
   // The reference overload captures text only when shader dumping is enabled.
   // An explicit nullable sink supports analysis without formatting or copying
   // disassembly. A supplied sink borrows reusable scratch through this call.
+  // The no-sink overload constructs diagnostic scratch only when dumping is on.
+  void AnalyzeUcode();
   void AnalyzeUcode(StringBuffer& ucode_disasm_buffer);
   void AnalyzeUcode(StringBuffer* ucode_disasm_buffer);
 

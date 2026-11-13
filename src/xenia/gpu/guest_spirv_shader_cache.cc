@@ -230,8 +230,7 @@ uint64_t GuestSpirvShaderCache::GetPixelShaderModification(
 Shader::Translation* GuestSpirvShaderCache::EnsureTranslation(
     SpirvShader& shader, uint64_t modification) {
   if (!shader.is_ucode_analyzed()) {
-    StringBuffer ucode_disasm;
-    shader.AnalyzeUcode(ucode_disasm);
+    shader.AnalyzeUcode();
   }
   return shader.GetOrCreateTranslation(modification);
 }

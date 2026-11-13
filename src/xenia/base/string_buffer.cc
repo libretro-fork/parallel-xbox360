@@ -19,9 +19,14 @@ namespace xe {
 
 using namespace xe::literals;
 
+// Allocator substitution for focused tests; the normal call remains malloc.
+#ifndef XE_STRING_BUFFER_ALLOCATE
+#define XE_STRING_BUFFER_ALLOCATE std::malloc
+#endif
+
 StringBuffer::StringBuffer(size_t initial_capacity) {
   buffer_capacity_ = std::max(initial_capacity, static_cast<size_t>(16_KiB));
-  buffer_ = reinterpret_cast<char*>(std::malloc(buffer_capacity_));
+  buffer_ = reinterpret_cast<char*>(XE_STRING_BUFFER_ALLOCATE(buffer_capacity_));
   assert_not_null(buffer_);
   buffer_[0] = 0;
 }

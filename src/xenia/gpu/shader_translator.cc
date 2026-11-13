@@ -41,6 +41,16 @@ using namespace ucode;
 // Lots of naming comes from the disassembly spit out by the XNA GS compiler
 // and dumps of d3dcompiler and games: https://pastebin.com/i4kAv7bB
 
+void Shader::AnalyzeUcode() {
+  if (is_ucode_analyzed_) return;
+  if (cvars::dump_shaders.empty()) {
+    AnalyzeUcode(nullptr);
+  } else {
+    StringBuffer scratch;
+    AnalyzeUcode(&scratch);
+  }
+}
+
 void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
   AnalyzeUcode(cvars::dump_shaders.empty() ? nullptr : &ucode_disasm_buffer);
 }

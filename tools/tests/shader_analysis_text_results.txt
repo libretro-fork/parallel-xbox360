@@ -1,3 +1,30 @@
+No-sink diagnostic scratch follow-up -- private development, 2026-11-13
+Parent b96ae974b78c5fab18b22f65645b9079db61ef7a.
+The earlier quiet-text change still left three callers constructing an unused
+StringBuffer, whose constructor immediately mallocs16KiB. The no-sink API now
+constructs that scratch only when dumping is enabled, and returns immediately
+for an analyzed owner. Shared Vulkan/D3D12 analysis and depth-only preparation
+use it. Explicit reusable sinks and dump text remain supported. Cache-owned
+initialization scratch, metadata and other allocations are not removed here.
+
+Native development: actual updated analysis and StringBuffer objects plus
+ABI-compatible native archives pass42 VS/PS metadata and exact SPIR-V identities.
+The C89 constructor observer verifies84 explicit test-buffer requests/1376256
+bytes, zero additional quiet buffers, two opt-in owners, and zero repeat calls.
+A deliberate external wrong implementation constructs quiet scratch: the same
+fixture rejects126 requests/2064384 bytes. Production source stays correct.
+Initial test failures retained: counters initially included one process-startup
+constructor; the corrected measurement window explicitly resets after startup.
+No runtime timing/logging/allocator indirection is added to normal builds.
+The allocator macro expands to std::malloc outside this focused test object.
+
+The first-parent harness now runs the check before timing and records coverage.
+Older API revisions explicitly predate this contract; Linux metadata/text/binary
+coverage does not pretend to intercept constructor allocations. Final full-core,
+exact-parent timing, static Make and lifecycle qualification are still pending.
+This removes diagnostic allocation, not draw-side translation or PSO waits.
+
+Historical preceding feature evidence follows unchanged:
 Quiet guest-shader analysis -- 2026-11-10
 Parent b27cfdfda3f5d472dc0a8051717e388bc03b6699
 

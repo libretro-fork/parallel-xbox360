@@ -7,11 +7,13 @@ using namespace xe::gpu;
 extern "C" size_t xe_analysis_compare(const uint32_t* code,size_t count,unsigned pixel) {
   SpirvShader full(pixel?xenos::ShaderType::kPixel:xenos::ShaderType::kVertex,0,code,count,std::endian::native);
   SpirvShader quiet(pixel?xenos::ShaderType::kPixel:xenos::ShaderType::kVertex,0,code,count,std::endian::native);
+  SpirvShader guarded(pixel?xenos::ShaderType::kPixel:xenos::ShaderType::kVertex,0,code,count,std::endian::native);
   xe::StringBuffer text,unused;unused.Append("untouched");
   const char* unused_storage=unused.buffer();
-  full.AnalyzeUcode(&text);quiet.AnalyzeUcode(unused);
+  full.AnalyzeUcode(&text);quiet.AnalyzeUcode();guarded.AnalyzeUcode(unused);
   if(!full.is_ucode_analyzed() || !quiet.is_ucode_analyzed() || !text.length() ||
      full.ucode_disassembly()!=text.to_string_view() || !quiet.ucode_disassembly().empty() ||
+     !guarded.is_ucode_analyzed() || !guarded.ucode_disassembly().empty() ||
      unused.buffer()!=unused_storage || unused.to_string_view()!="untouched")return 0;
   const auto& a=full.constant_register_map();const auto& b=quiet.constant_register_map();
   if(std::memcmp(a.float_bitmap,b.float_bitmap,sizeof(a.float_bitmap)) ||
@@ -49,6 +51,9 @@ extern "C" int xe_analysis_dump_switch(const uint32_t* code,size_t count,const c
   if(!cvars::dump_shaders.empty())return 0;
   cvars::dump_shaders=directory;
   SpirvShader shader(xenos::ShaderType::kVertex,0,code,count,std::endian::native);
-  xe::StringBuffer text;shader.AnalyzeUcode(text);cvars::dump_shaders.clear();
-  return text.length()!=0 && shader.ucode_disassembly()==text.to_string_view();
+  SpirvShader automatic(xenos::ShaderType::kVertex,0,code,count,std::endian::native);
+  xe::StringBuffer text;shader.AnalyzeUcode(text);automatic.AnalyzeUcode();
+  const char* storage=automatic.ucode_disassembly().data();automatic.AnalyzeUcode();cvars::dump_shaders.clear();
+  return text.length()!=0 && shader.ucode_disassembly()==text.to_string_view() &&
+      automatic.ucode_disassembly()==text.to_string_view() && automatic.ucode_disassembly().data()==storage;
 }

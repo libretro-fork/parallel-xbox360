@@ -322,6 +322,32 @@ def calibrate_gpu_timestamps(source,out,env,component,results):
         report_path.write_text(json.dumps(report,indent=2))
 
 
+def validate_analysis_text(source, build, out, results, env):
+    """Exercise optional diagnostics before timing; no production allocator hook."""
+    hook=source/"tools/tests/shader_analysis_allocation_hook.h"
+    report=dict(available=hook.is_file(),metadata_binary_identity=False,constructor_requests=False)
+    if not report["available"]:
+        report["reason"]="revision predates the no-sink diagnostic allocation contract"
+        return report
+    directory=out/"analysis-text";directory.mkdir(parents=True,exist_ok=True)
+    log=results/"analysis-text"/(source.name+"-"+out.name+".log")
+    fixture=env.copy();fixture.update(ANALYSIS_TEXT_BUILD=str(build),ANALYSIS_TEXT_OUT=str(directory),
+        FORWARD_FLOW_LINK_FLAGS="/CGTHREADS:"+str(JOBS))
+    command=["cmd","/d","/c","tools\\tests\\run_shader_analysis_text_tests.cmd"] if WIN else ["sh","tools/tests/run_shader_analysis_text_tests.sh"]
+    run(command,source,log,fixture)
+    text=log.read_text(encoding="utf-8",errors="replace")
+    if "PASS: 42 VS/PS analysis metadata and emitted binary identities" not in text:
+        raise ValueError("diagnostic analysis corpus missing or incomplete")
+    report["metadata_binary_identity"]=True
+    if WIN:
+        if "TEXT_CONSTRUCTORS calls=84 bytes=1376256 cases=42" not in text or "PASS: no quiet diagnostic-buffer allocation" not in text:
+            raise ValueError("diagnostic constructor allocation contract failed")
+        report["constructor_requests"]=True
+    else:
+        report["allocation_limit"]="constructor request interception is MSVC-only"
+    return report
+
+
 def read_reentry_allocations(path):
     observations={}
     with Path(path).open(newline="",encoding="utf-8") as file:
@@ -406,6 +432,8 @@ def prepare(source, out, results, backend, reuse_build=None):
             run(["cmake", "--build", build, "--target", "xenia-libretro", "--parallel", JOBS], source, log, env)
         else:
             run(["make", "-j" + str(JOBS)], source, log, env)
+    diagnostic_coverage=validate_analysis_text(source,build,out,results,env)
+    (results/(source.name+"-"+out.name+"-analysis-text.json")).write_text(json.dumps(diagnostic_coverage,indent=2),encoding="utf-8")
     validate_reentry_allocations(source,build,results,env)
     loop_coverage=validate_loop_reference(source,build,out,log,env,backend)
     (results/(source.name+"-"+out.parent.name+"-"+out.name+"-loops.json")).write_text(
@@ -854,7 +882,9 @@ def run_comparison(args):
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
          "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h",
          "core_shader_reentry_test.c","core_shader_reentry_profile_test.c","shader_reentry_profile_bridge.cc",
-         "core_pipeline_bench_profile.c","core_pipeline_bench_profile.h","core_shader_labels_test.c"]}
+         "core_pipeline_bench_profile.c","core_pipeline_bench_profile.h","core_shader_labels_test.c",
+         "core_shader_analysis_text_test.c","shader_analysis_text_bridge.cc","shader_analysis_allocation_hook.h",
+         "run_shader_analysis_text_tests.cmd","run_shader_analysis_text_tests.sh"]}
     manifest["corpus_contract"]=dict(version=8,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_frac_cases=64 if args.backend=="vulkan-hardware" else 0,

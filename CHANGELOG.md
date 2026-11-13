@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Avoid constructing a 16 KiB disassembly buffer for ordinary Vulkan/D3D12 guest analysis when shader dumps are disabled. Preserve opt-in diagnostic text and reusable explicit sinks. This removes temporary host allocation, not the remaining draw-side compilation dependency.
+
 - Replace guest-shader label trees with owned C89 bitmaps: keep the first 256 label positions inline and allocate higher positions once from the immutable shader's bounds. Duplicate insertion, membership and ascending iteration need no tree nodes, growth copies or locks. Preserve call-return and 13-bit branch labels and immutable publication; release bitmap ownership with the shader. Other analysis/result storage and renderer allocations remain.
 
 - Keep aligned big-endian shader snapshots on the existing runtime-selected AVX2-capable copy kernel too, avoiding the generic dispatch's aligned SSE path. Retain one owned immutable snapshot and scalar tails; this is not a zero-copy claim.
