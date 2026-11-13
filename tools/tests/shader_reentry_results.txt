@@ -28,7 +28,8 @@ algorithm checks, not rendered image or gameplay acceptance.
 
 CI runs the C89 unit on Windows and Linux. The first-parent comparator also
 links the real analyzer from each revision into a test-only C89 allocation
-profile. It records 26 nested-call/backward-branch observations, rejects higher
+profile. The original26 nested-call/backward-branch observations are now joined by32
+straight/forward-only observations. The58-case profile rejects higher
 operator-new allocation counts/bytes and changed CF/label/reentry identities,
 and checks tracked storage returns to baseline after each Shader destruction.
 This profile does not intercept all malloc, aligned, driver or GPU allocations.

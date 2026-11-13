@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Skip unused reentry-write arrays and per-instruction scratch updates for straight or forward-only guest shaders. Backward branches and subroutine calls keep their existing metadata; shader compilation waits and other allocations remain.
+
 - Prepare remaining supported single-sample Vulkan color ownership transfers before gameplay in a fixed C89 pipeline bank. Invoke the existing transfer generator during initialization into borrowed reusable final words; retain its original four-byte address packet and existing raw/identity fast paths. Preserve typed views and gamma policy, with partial-owner cleanup and producer failure/bounds checks. Add numerical, render-pass/dynamic image and GPU-work regressions. MSAA/depth/value-converting transfers, D3D12 generic integration and general guest-shader compilation remain unfinished; this is not cold-play signoff.
 
 - Avoid constructing a 16 KiB disassembly buffer for ordinary Vulkan/D3D12 guest analysis when shader dumps are disabled. Preserve opt-in diagnostic text and reusable explicit sinks. This removes temporary host allocation, not the remaining draw-side compilation dependency.

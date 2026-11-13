@@ -113,7 +113,11 @@ void Shader::AnalyzeUcode(StringBuffer* ucode_disasm_buffer) {
   VertexFetchInstruction previous_vfetch_full;
   std::memset(&previous_vfetch_full, 0, sizeof(previous_vfetch_full));
   uint32_t unique_texture_bindings = 0;
-  cf_register_components_written_.assign(cf_pair_index_bound_ * 2, 0);
+  // Forward-only execution never reenters a label. The first scan already
+  // established whether write-set tracking is needed.
+  if (uses_subroutine_calls_ || has_backward_jump) {
+    cf_register_components_written_.assign(cf_pair_index_bound_ * 2, 0);
+  }
   for (uint32_t i = 0; i < cf_pair_index_bound_; ++i) {
     ControlFlowInstruction cf_ab[2];
     UnpackControlFlowInstructions(ucode_data_.data() + i * 3, cf_ab);
@@ -217,7 +221,9 @@ void Shader::AnalyzeUcode(StringBuffer* ucode_disasm_buffer) {
   // the jumps back overlapping it. With subroutines, anything may be executed
   // before returning to a label.
   uint32_t cf_index_count = cf_pair_index_bound_ * 2;
-  reentered_label_register_components_written_.assign(cf_index_count, 0);
+  if (uses_subroutine_calls_ || has_backward_jump) {
+    reentered_label_register_components_written_.assign(cf_index_count, 0);
+  }
   if (uses_subroutine_calls_) {
     const uint64_t all_written = xe_shader_reentry_all(
         cf_register_components_written_.data(), cf_index_count);
@@ -640,6 +646,7 @@ void Shader::GatherFetchResultInformation(const InstructionResult& result,
 
 void Shader::GatherRegisterWriteInformation(const InstructionResult& result,
                                             uint32_t exec_cf_index) {
+  if (cf_register_components_written_.empty()) return;
   uint64_t& cf_components_written =
       cf_register_components_written_[exec_cf_index];
   if (result.storage_addressing_mode !=

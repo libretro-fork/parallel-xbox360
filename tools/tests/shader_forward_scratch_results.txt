@@ -1,0 +1,44 @@
+Forward-only analysis scratch
+============================
+First parent:706a10c2b568979ae0508e33c0f340ab2e3f3069.
+
+The existing first CF scan already identifies calls and backward jumps.
+Without either, reentry metadata is uniformly zero: the old final array was
+zero-filled and never updated. Its getter already returns zero for absence.
+Omit both arrays in that case, and return before gathering unused per-CF
+register write bits. Continue gathering register-use, exports, resources and
+every other analysis result. No extra prepass, payload copy, lock or timer.
+Calls/backedges retain their existing arrays and tracking. This change does
+not replace all vectors or remove their allocations from complex shaders.
+
+The actual Shader::AnalyzeUcode profile now has58 observations: the original26
+call/backedge cases plus32 straight/forward-only VS/PS cases at16/64/256/512 CF
+slots, each repeated with a fresh owner. Literal zero reentry masks and CF/label
+identity include static-register bounds and dynamic-addressing flags. Six
+additional literal r0/r63/relative-destination cases independently check those
+properties. The new capability also requires zero tracked C++ new
+requests during quiet analysis of those simple fixtures. Older revisions keep
+their explicit historical capability absence and still run the same cases.
+All tracked storage must return to its pre-Shader baseline after destruction.
+The bridge instantiates the real base Shader; it does not replace analysis.
+
+Initial matched native components save64 operator-new requests and109168
+requested bytes across the32 simple observations, with identical metadata.
+MSVC alignment padding is included in requested bytes. This is not measured
+RSS, driver allocation or gameplay-stall savings. C allocations, including
+the existing high-label bitmap, are outside this operator-new observer.
+
+The CSV guard rejects missing/duplicate/corrupt rows, wrong zero-label policy,
+metadata changes and allocation growth. Normal and optimized Python modes run
+the same rejection tests. No allocation observer is present in release code.
+Full native/static builds, sanitizers, exact-parent emitted-program identity
+and the unchanged seven-pair shader/PSO timing gate are required before push;
+component evidence alone is not qualification. Deliberately restored allocating
+behavior fails the zero-request assertion, and a broken destination-bound
+update fails the independent r63 literal assertion. Evidence and rejected setup
+attempts are retained outside the source tree with exact revision identities.
+
+General draw-path translation/PSO creation, compilation waits, missing ready
+accurate guest fallback and other mid-game allocations remain unresolved.
+No shader cache schema/default, audio scheduling, installed DLL, live cache,
+save or game is changed by this work.

@@ -10,6 +10,9 @@
 #ifndef XENIA_GPU_SHADER_H_
 #define XENIA_GPU_SHADER_H_
 
+/* Matched-revision allocation tests verify this on actual quiet analysis. */
+#define XE_SHADER_FORWARD_REENTRY_SCRATCH_FREE 1
+
 #include <algorithm>
 #include "libretro/core_shader_state.h"
 #include <cstdint>

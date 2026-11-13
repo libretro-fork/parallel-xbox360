@@ -29,14 +29,16 @@ class ComparisonTests(unittest.TestCase):
     def test_analysis_allocation_csv_requires_complete_unique_corpus(self):
         rows=[]
         for pixel in (0,1):
-            for kind,modes,repeats in (("nested",range(5),range(1)),("backward",(16,64,256,512),range(2))):
+            for kind,modes,repeats in (("nested",range(5),range(1)),("backward",(16,64,256,512),range(2)),("straight",(16,64,256,512),range(2)),("forward",(16,64,256,512),range(2))):
                 for mode in modes:
-                    for repeat in repeats:rows.append(f"{kind},{pixel},{mode},{repeat},4,80,16,8,1234567890abcdef\n")
+                    for repeat in repeats:rows.append(f"{kind},{pixel},{mode},{repeat},4,80,16,{0 if kind=='straight' else 8},1234567890abcdef\n")
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/"allocations.csv";path.write_text("".join(rows))
-            self.assertEqual(len(ci.read_reentry_allocations(path)),26)
+            self.assertEqual(len(ci.read_reentry_allocations(path)),58)
             for bad in (rows[:-1],rows+[rows[0]],[rows[0].replace(",4,80,",",-1,80,")]+rows[1:],
-                        [rows[0].replace("1234567890abcdef","nan")]+rows[1:]):
+                        [rows[0].replace("1234567890abcdef","nan")]+rows[1:],
+                        [x.replace(",16,8,",",16,0,") if x.startswith("forward,") else x for x in rows],
+                        [x.replace(",16,0,1234567890abcdef",",16,8,1234567890abcdef") if x.startswith("straight,") else x for x in rows]):
                 path.write_text("".join(bad))
                 with self.assertRaises(ValueError):ci.read_reentry_allocations(path)
 
@@ -528,10 +530,10 @@ class ComparisonTests(unittest.TestCase):
                 allocation_dir.mkdir(parents=True,exist_ok=True)
                 allocation_rows=[]
                 for pixel in (0,1):
-                    for kind,modes,repeats in (("nested",range(5),range(1)),("backward",(16,64,256,512),range(2))):
+                    for kind,modes,repeats in (("nested",range(5),range(1)),("backward",(16,64,256,512),range(2)),("straight",(16,64,256,512),range(2)),("forward",(16,64,256,512),range(2))):
                         for mode in modes:
                             for repeat in repeats:
-                                allocation_rows.append(f"{kind},{pixel},{mode},{repeat},4,80,16,8,1234567890abcdef\n")
+                                allocation_rows.append(f"{kind},{pixel},{mode},{repeat},4,80,16,{0 if kind=='straight' else 8},1234567890abcdef\n")
                 (allocation_dir/"allocations.csv").write_text("".join(allocation_rows))
                 (compiled/"gpu-timestamp-math").mkdir(exist_ok=True)
                 (compiled/"gpu-timestamp-math/coverage.json").write_text(json.dumps(dict(unit=True,version=1,synthetic_fixture=True)))

@@ -584,6 +584,12 @@ nullable diagnostic sink preserves disassembly when requested; the existing
 shader-dump setting opts in before analysis. This avoids diagnostic text work
 on the cold shader path. Analysis containers and shader/driver compilation
 still allocate, and accurate nonblocking fallback coverage remains unfinished.
+Straight/forward-only shaders now omit both reentry-write arrays and their
+per-instruction scratch writes, using flags already collected in the first
+scan. Register-use, export and binding metadata remain active. Calls and
+backward branches retain their existing tracking. The real-analyzer allocation
+fixture covers58 cases; [scope and limits](tools/tests/shader_forward_scratch_results.txt)
+distinguish tracked C++ requests from other allocations.
 
 Vulkan pipeline and texture-descriptor layout caches publish immutable native
 owners through an intrusive C89 cache using libretro-common pointer atomics.

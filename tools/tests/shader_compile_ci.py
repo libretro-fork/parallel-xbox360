@@ -352,18 +352,19 @@ def read_reentry_allocations(path):
     observations={}
     with Path(path).open(newline="",encoding="utf-8") as file:
         for row in csv.reader(file):
-            if len(row)!=9 or row[0] not in ("nested","backward"):
+            if len(row)!=9 or row[0] not in ("nested","backward","straight","forward"):
                 raise ValueError("invalid analysis allocation row")
             kind,pixel,mode,repeat,calls,requested,count,labels,identity=row
             pixel,mode,repeat,calls,requested,count,labels=map(int,(pixel,mode,repeat,calls,requested,count,labels))
             key=(kind,pixel,mode,repeat)
-            if pixel not in (0,1) or min(mode,repeat,calls,requested,count,labels)<0 or not count or not labels:
+            if pixel not in (0,1) or min(mode,repeat,calls,requested,count,labels)<0 or not count or (not labels and kind!="straight") or (kind=="straight" and labels):
                 raise ValueError("invalid analysis allocation values")
             if not re.fullmatch(r"[0-9a-f]{16}",identity) or key in observations:
                 raise ValueError("duplicate/malformed analysis identity")
             observations[key]=dict(calls=calls,requested_bytes=requested,cf_count=count,labels=labels,identity=identity)
     expected={(kind,pixel,mode,repeat) for pixel in (0,1)
-              for kind,modes,repeats in (("nested",range(5),range(1)),("backward",(16,64,256,512),range(2)))
+              for kind,modes,repeats in (("nested",range(5),range(1)),("backward",(16,64,256,512),range(2)),
+                                       ("straight",(16,64,256,512),range(2)),("forward",(16,64,256,512),range(2)))
               for mode in modes for repeat in repeats}
     if set(observations)!=expected:raise ValueError("missing/substituted analysis allocation observations")
     return observations
