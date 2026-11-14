@@ -94,6 +94,7 @@ static unsigned expected_status(unsigned kind) {
 #include "shader_control_program_fixture.h"
 #include "shader_register_borrow_fixture.h"
 #include "shader_minmax_fixture.h"
+#include "shader_dot_fixture.h"
 #endif
 #ifdef XE_ALU_CONTROL_TEST
 #define XE_PROGRAM_BINDINGS 5
@@ -135,8 +136,16 @@ static unsigned expected_status(unsigned kind) {
 #define XE_REGISTER_GOLDEN_FIRST 16384
 #define XE_MINMAX_FIRST (XE_REGISTER_FIRST+XE_REGISTER_CASES)
 #define XE_MINMAX_GOLDEN_FIRST 32768
-#define XE_EXTRA_CASES (XE_MINMAX_FIRST+XE_MINMAX_CASES)
+#ifndef XE_DOT_CASES
+#define XE_DOT_CASES 0
+#endif
+#define XE_DOT_FIRST (XE_MINMAX_FIRST+XE_MINMAX_CASES)
+#define XE_DOT_GOLDEN_FIRST 65536
+#define XE_EXTRA_CASES (XE_DOT_FIRST+XE_DOT_CASES)
 static void round_program(uint32_t *p,unsigned group,unsigned round) {
+#if XE_DOT_CASES
+ if(round>=3+XE_DOT_FIRST){dot_program(p,round-3-XE_DOT_FIRST);return;}
+#endif
 #if XE_MINMAX_CASES
  if(round>=3+XE_MINMAX_FIRST){minmax_program(p,round-3-XE_MINMAX_FIRST);return;}
 #endif
@@ -163,6 +172,9 @@ static void round_program(uint32_t *p,unsigned group,unsigned round) {
 }
 #if XE_EXTRA_CASES
 static unsigned extra_which(unsigned which,unsigned invocation) {
+#if XE_DOT_CASES
+ if(which>=XE_DOT_FIRST)return XE_DOT_GOLDEN_FIRST+which-XE_DOT_FIRST;
+#endif
 #if XE_MINMAX_CASES
  if(which>=XE_MINMAX_FIRST)return XE_MINMAX_GOLDEN_FIRST+which-XE_MINMAX_FIRST;
 #endif
@@ -183,6 +195,9 @@ static unsigned extra_which(unsigned which,unsigned invocation) {
  return which;
 }
 static void extra_context(uint32_t *bank,unsigned which) {
+#if XE_DOT_CASES
+ if(which>=XE_DOT_FIRST){memset(bank,0,160);return;}
+#endif
 #if XE_MINMAX_CASES
  if(which>=XE_MINMAX_FIRST){minmax_context(bank,which-XE_MINMAX_FIRST);return;}
 #endif
@@ -206,6 +221,9 @@ static void extra_context(uint32_t *bank,unsigned which) {
 #endif
 }
 static unsigned extra_status(unsigned which) {
+#if XE_DOT_CASES
+ if(which>=XE_DOT_GOLDEN_FIRST)return 1;
+#endif
 #if XE_MINMAX_CASES
  if(which>=XE_MINMAX_GOLDEN_FIRST)return minmax_status(which-XE_MINMAX_GOLDEN_FIRST);
 #endif
@@ -231,6 +249,9 @@ static unsigned extra_status(unsigned which) {
 #endif
 }
 static uint32_t extra_golden(unsigned which,unsigned lane) {
+#if XE_DOT_CASES
+ if(which>=XE_DOT_GOLDEN_FIRST)return dot_golden(which-XE_DOT_GOLDEN_FIRST,lane);
+#endif
 #if XE_MINMAX_CASES
  if(which>=XE_MINMAX_GOLDEN_FIRST)return minmax_golden(which-XE_MINMAX_GOLDEN_FIRST,lane);
 #endif
@@ -338,6 +359,7 @@ int main(void){
 #if XE_MINMAX_CASES
  unsigned minmax_invocations=0;
 #endif
+ unsigned dot_invocations=0;
  unsigned modules=0,pipelines=0,cases=0,inactive=0,context_replays=XE_EXTRA_CASES;float priority=1.0f;int result=1;
  const char *timing_only=getenv("XE_ALU_PROGRAM_TIMING_ONLY");
  const char *valid_mode=getenv("XE_ALU_PROGRAM_VALID_WORK");
@@ -486,7 +508,10 @@ int main(void){
    if(group==8){static const uint32_t initial[8]={0x3f800000u,0x40000000u,0x40400000u,0x40800000u,0x40a00000u,0x40c00000u,0x40e00000u,0x41000000u};memcpy(temporary,initial,sizeof(initial));}
    if(round>=3){descriptor[3]=64;descriptor[5]=512;descriptor[6]=0;descriptor[7]=511;}
 #if XE_MINMAX_CASES
-   if(round>=3+XE_MINMAX_FIRST)minmax_temporary(temporary,round-3-XE_MINMAX_FIRST);
+   if(round>=3+XE_MINMAX_FIRST && round<3+XE_DOT_FIRST)minmax_temporary(temporary,round-3-XE_MINMAX_FIRST);
+#endif
+#if XE_DOT_CASES
+   if(round>=3+XE_DOT_FIRST)dot_temporary(temporary,round-3-XE_DOT_FIRST);
 #endif
 #if XE_REGISTER_CASES
    if(round>=3+XE_REGISTER_FIRST && round<3+XE_MINMAX_FIRST){register_temporary(temporary);descriptor[3]=register_count(round-3-XE_REGISTER_FIRST);}
@@ -637,8 +662,11 @@ int main(void){
     ++compared;
    }else{for(lane=0;lane<7;++lane)if(lane!=4)CHECK(out[i*8+lane]==0x6d6d6d6du);}
    CHECK(out[i*8+7]==0x6d6d6d6du);++cases;
+#if XE_DOT_CASES
+   if(round>=3+XE_DOT_FIRST){CHECK(out[i*8+5]==1);++dot_invocations;}
+#endif
 #if XE_MINMAX_CASES
-   if(round>=3+XE_MINMAX_FIRST){if(status==1)CHECK(out[i*8+5]==1);++minmax_invocations;}
+   if(round>=3+XE_MINMAX_FIRST && round<3+XE_DOT_FIRST){if(status==1)CHECK(out[i*8+5]==1);++minmax_invocations;}
 #endif
 #if XE_REGISTER_CASES
    if(round>=3+XE_REGISTER_FIRST && round<3+XE_MINMAX_FIRST){CHECK(out[i*8+5]==1);++register_invocations;}
@@ -652,6 +680,12 @@ int main(void){
   }
  }
  CHECK(modules==1 && compared>300);
+#if XE_DOT_CASES
+ if(context_replays){CHECK(dot_invocations==2*XE_DOT_CASES);
+  printf("DOT_CONTEXT replays=%u invocations=%u\n",dot_invocations/2,dot_invocations);}
+#else
+ (void)dot_invocations;
+#endif
 #if XE_MINMAX_CASES
  if(context_replays){CHECK(minmax_invocations==2*XE_MINMAX_CASES);
   printf("MINMAX_CONTEXT replays=%u invocations=%u\n",minmax_invocations/2,minmax_invocations);}

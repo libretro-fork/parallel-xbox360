@@ -17,7 +17,9 @@ static void release(void *p){if(p)++frees;free(p);}
 #else
 #define XE_TEST_CONTROL_LOOPS 3u
 #endif
-#ifdef XE_ALU_CONTROL_MINMAX
+#ifdef XE_ALU_CONTROL_DOT
+#define XE_TEST_CONTROL_FUNCTIONS 5u
+#elif defined(XE_ALU_CONTROL_MINMAX)
 #define XE_TEST_CONTROL_FUNCTIONS 4u
 #else
 #define XE_TEST_CONTROL_FUNCTIONS 3u

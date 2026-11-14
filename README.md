@@ -707,6 +707,13 @@ and original coissue inputs. This prototype is still unlinked from rendering;
 these component changes do not establish improved retail frame times or remove
 draw-path compilation. See `tools/tests/register_borrow_results.txt`.
 
+The raw control prototype supports DP4, DP3 and DP2ADD using ordered RTZ/FTZ
+products and scalar additions. It does not fuse or reassociate reductions;
+DP2ADD alone consumes its third vector operand. Literal numeric, swizzle, mask,
+coissue and temporary-write tests execute these operations as instruction data
+with one prepared test PSO. This remains a compute validation prototype: no
+rendering integration, complete stages/fetch/ROP or cold-play signoff is claimed.
+
 The raw control prototype also supports vector/scalar MAX/MIN through a shared
 integer-only SPIR-V helper. It preserves ordered ties, unordered selection and
 selected operand bits after the existing source-denormal policy, with no host

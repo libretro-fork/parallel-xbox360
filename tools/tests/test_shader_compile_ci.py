@@ -189,7 +189,7 @@ class ComparisonTests(unittest.TestCase):
         old=dict(available=True,unit=True,vulkan_gpu=True,boolean_cf_supported=True,
                  nonempty_loops_supported=True,predicate_cf_supported=True,
                  comparison_alu_supported=True,comparison_context_cases=1536,
-                 lazy_source_supported=True,lazy_source_context_cases=64,register_borrow_supported=True,register_context_cases=896,minmax_supported=True,minmax_context_cases=5136,
+                 lazy_source_supported=True,lazy_source_context_cases=64,register_borrow_supported=True,register_context_cases=896,minmax_supported=True,minmax_context_cases=5136,dot_supported=True,dot_context_cases=60,
                  boolean_context_cases=224,loop_context_cases=32,predicate_context_cases=1254)
         for field,value in [("available",False),("unit",False),("vulkan_gpu",False),
                             ("boolean_cf_supported",False),("nonempty_loops_supported",False),
@@ -198,6 +198,7 @@ class ComparisonTests(unittest.TestCase):
                             ("lazy_source_supported",False),("lazy_source_context_cases",0),
                             ("register_borrow_supported",False),("register_context_cases",0),
                             ("minmax_supported",False),("minmax_context_cases",0),
+                            ("dot_supported",False),("dot_context_cases",0),
                             ("boolean_context_cases",0),("loop_context_cases",0)]:
             candidate=dict(old);candidate[field]=value
             self.assertTrue(ci.compare_control_coverage(dict(base=old,candidate=candidate),True)["failures"],field)
@@ -274,6 +275,24 @@ class ComparisonTests(unittest.TestCase):
                 if backend.startswith("vulkan"):
                     with self.assertRaisesRegex(ValueError,"register ownership"):
                         ci.validate_raw_program(root,root,root,root/"log",{},backend,control=True)
+
+    def test_dot_execution_guard(self):
+        marker="DOT_CONTEXT replays=60 invocations=120\n"
+        ci.validate_dot_workload(marker)
+        for text in ("",marker+marker,marker.replace("60","59"),marker.replace("120","119")):
+            with self.assertRaisesRegex(ValueError,"dot context"):
+                ci.validate_dot_workload(text)
+        with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run"):
+            root=Path(folder);tests=root/"tools/tests";tests.mkdir(parents=True)
+            (root/"libretro").mkdir()
+            (tests/("run_alu_program_tests.cmd" if ci.WIN else "run_alu_program_tests.sh")).touch()
+            (root/"libretro/core_alu_spv.h").write_text("xe_alu_control_spv_build(\n#define XE_ALU_CONTROL_DOT 1\n")
+            (root/"log").write_text(marker)
+            value=ci.validate_raw_program(root,root,root,root/"log",{},"vulkan-hardware",control=True)
+            self.assertTrue(value["dot_supported"]);self.assertEqual(value["dot_context_cases"],60)
+            (root/"log").write_text("")
+            with self.assertRaisesRegex(ValueError,"dot context"):
+                ci.validate_raw_program(root,root,root,root/"log",{},"vulkan-hardware",control=True)
 
     def test_minmax_and_cold_storage_execution_guards(self):
         marker="MINMAX_CONTEXT replays=5136 invocations=10272\n"

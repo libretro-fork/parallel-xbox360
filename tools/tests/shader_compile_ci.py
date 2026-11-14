@@ -112,6 +112,11 @@ def validate_minmax_workload(log):
     if observed!=[("5136","10272")]:raise ValueError("missing or substituted minmax context execution")
 
 
+def validate_dot_workload(log):
+    observed=re.findall(r"^DOT_CONTEXT replays=(\d+) invocations=(\d+)$",log,re.MULTILINE)
+    if observed!=[("60","120")]:raise ValueError("missing or substituted dot context execution")
+
+
 def validate_control_cold_storage(log):
     observed=re.findall(r"^CONTROL_COLD_STORAGE allocations=(\d+) capacity_words=(\d+)$",log,re.MULTILINE)
     if observed!=[("1","16384")]:raise ValueError("missing or substituted cold control allocation execution")
@@ -159,19 +164,23 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
         comparison="#define XE_ALU_CONTROL_COMPARE 1" in content
         lazy_source="#define XE_ALU_CONTROL_LAZY_SOURCE 1" in content
         borrowed_registers="#define XE_ALU_CONTROL_BORROW_REGISTERS 1" in content
+        dot="#define XE_ALU_CONTROL_DOT 1" in content
         minmax="#define XE_ALU_CONTROL_MINMAX 1" in content
+        if dot and coverage["vulkan_gpu"]:validate_dot_workload(log.read_text())
         if comparison and coverage["vulkan_gpu"]:validate_comparison_workload(log.read_text())
         if lazy_source and coverage["vulkan_gpu"]:validate_lazy_source_workload(log.read_text())
         if borrowed_registers and coverage["vulkan_gpu"]:validate_register_workload(log.read_text())
         if minmax:
             validate_control_cold_storage(log.read_text())
             if coverage["vulkan_gpu"]:validate_minmax_workload(log.read_text())
-        coverage.update(control_flow_version=7 if minmax else 6 if lazy_source else 5 if comparison else 4 if predicate else 3 if loops else 2 if boolean else 1,
+        coverage.update(control_flow_version=8 if dot else 7 if minmax else 6 if lazy_source else 5 if comparison else 4 if predicate else 3 if loops else 2 if boolean else 1,
                         boolean_cf_supported=boolean,nonempty_loops_supported=loops,
                         predicate_cf_supported=predicate,
                         comparison_alu_supported=comparison,
                         lazy_source_supported=lazy_source,
                         register_borrow_supported=borrowed_registers,minmax_supported=minmax,
+                        dot_supported=dot,dot_context_cases=60 if dot and coverage["vulkan_gpu"] else 0,
+                        pinned_dot_fixture_sha256=file_sha256(HERE/"shader_dot_fixture.h"),
                         minmax_context_cases=5136 if minmax and coverage["vulkan_gpu"] else 0,
                         cold_control_allocations=1 if minmax else None,
                         pinned_minmax_fixture_sha256=file_sha256(HERE/"shader_minmax_fixture.h"),register_context_cases=896 if coverage["vulkan_gpu"] else 0,
@@ -737,10 +746,10 @@ def compare_control_coverage(coverage, vulkan):
     for version in ("base","anchor"):
         if version not in coverage:continue
         previous=coverage[version]
-        for feature in ("available","boolean_cf_supported","nonempty_loops_supported","predicate_cf_supported","comparison_alu_supported","lazy_source_supported","register_borrow_supported","minmax_supported"):
+        for feature in ("available","boolean_cf_supported","nonempty_loops_supported","predicate_cf_supported","comparison_alu_supported","lazy_source_supported","register_borrow_supported","minmax_supported","dot_supported"):
             if previous.get(feature,False) and not candidate.get(feature,False):
                 failures.append(version+": removed "+feature)
-        for feature in ("boolean_context_cases","loop_context_cases","predicate_context_cases","comparison_context_cases","lazy_source_context_cases","register_context_cases","minmax_context_cases"):
+        for feature in ("boolean_context_cases","loop_context_cases","predicate_context_cases","comparison_context_cases","lazy_source_context_cases","register_context_cases","minmax_context_cases","dot_context_cases"):
             if previous.get(feature,0)>candidate.get(feature,0):failures.append(version+": reduced "+feature)
     return dict(revisions=coverage,failures=failures)
 
@@ -879,7 +888,7 @@ def run_comparison(args):
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
-         "shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
+         "shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
          "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h",
          "core_shader_reentry_test.c","core_shader_reentry_profile_test.c","shader_reentry_profile_bridge.cc",

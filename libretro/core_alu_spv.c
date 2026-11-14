@@ -9,7 +9,7 @@ enum {
  V_INPUT=20,V_OUTPUT,V_INVOCATION,F_ADD,F_MUL,F_MAIN,
  T_REG_ARRAY=32,T_PREG_ARRAY,T_PREG,T_PLOCAL_UINT,V_PROGRAM,V_CONSTANT,C_NULL_REG,
  V_CONTEXT,T_CONTEXT_ARRAY,T_CONTEXT,T_PCONTEXT,
- T_MINMAX_FN=16,F_MINMAX=26
+ T_MINMAX_FN=16,F_MINMAX=26,T_SCALAR_MATH_FN=17,F_SCALAR_ADD=27
 };
 typedef struct alu_constant { uint32_t literal,scalar,vector; } alu_constant;
 typedef struct alu_builder {
@@ -121,6 +121,76 @@ static void math_function(alu_builder *b,int multiply) {
    vector(b,UINT32_C(0x7fc00000)),special);
   result=(uint32_t)xe_rtz_emit_add(&r,a,c,special);
  }
+ if(r.failed)b->out->failed=1;
+ emit(b,SpvOpReturnValue,0,0,1,result,0,0,0);
+ emit(b,SpvOpFunctionEnd,0,0,0,0,0,0,0);
+}
+static uint32_t scalar_select(alu_builder *b,uint32_t condition,uint32_t a,uint32_t c) {
+ uint32_t result=id(b);emit(b,SpvOpSelect,T_UINT,result,3,condition,a,c,0);return result;
+}
+static xe_rtz_id scalar_recipe(void *opaque,unsigned op,xe_rtz_id a,xe_rtz_id c,
+ xe_rtz_id d,uint32_t literal) {
+ alu_builder *b=(alu_builder*)opaque;uint32_t x,n,part,predicate;
+ uint32_t value_type=T_UINT,bool_type=T_BOOL;
+ unsigned i;static const uint32_t thresholds[5]={65536,UINT32_C(0x1000000),UINT32_C(0x10000000),UINT32_C(0x40000000),UINT32_C(0x80000000)};
+ static const uint32_t shifts[5]={16,8,4,2,1};
+ if(op==XE_RTZ_CONST)return scalar(b,literal);
+ if(op==XE_RTZ_SELECT)return scalar_select(b,(uint32_t)a,(uint32_t)c,(uint32_t)d);
+ if(op==XE_RTZ_CLZ){
+  x=(uint32_t)a;n=scalar(b,0);
+  for(i=0;i<5;++i){
+   predicate=operation(b,SpvOpULessThan,bool_type,x,scalar(b,thresholds[i]));
+   part=scalar_select(b,predicate,scalar(b,shifts[i]),scalar(b,0));
+   n=operation(b,SpvOpIAdd,value_type,n,part);
+   x=operation(b,SpvOpShiftLeftLogical,value_type,x,part);
+  }
+  return scalar_select(b,operation(b,SpvOpIEqual,bool_type,(uint32_t)a,scalar(b,0)),
+   scalar(b,32),n);
+ }
+ if(op==XE_RTZ_MUL_TRUNC16){b->out->failed=1;return 0;}
+ switch(op){
+ case XE_RTZ_ADD:return operation(b,SpvOpIAdd,value_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_SUB:return operation(b,SpvOpISub,value_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_MUL:return operation(b,SpvOpIMul,value_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_AND:return operation(b,SpvOpBitwiseAnd,value_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_OR:return operation(b,SpvOpBitwiseOr,value_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_XOR:return operation(b,SpvOpBitwiseXor,value_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_SHL:return operation(b,SpvOpShiftLeftLogical,value_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_SHR:return operation(b,SpvOpShiftRightLogical,value_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_EQ:return operation(b,SpvOpIEqual,bool_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_ULT:return operation(b,SpvOpULessThan,bool_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_ULE:return operation(b,SpvOpULessThanEqual,bool_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_UGE:return operation(b,SpvOpUGreaterThanEqual,bool_type,(uint32_t)a,(uint32_t)c);
+ case XE_RTZ_BOOL_AND:return operation(b,SpvOpLogicalAnd,bool_type,(uint32_t)a,(uint32_t)c);
+ default:b->out->failed=1;return 0;
+ }
+}
+static void scalar_math_function(alu_builder *b) {
+ uint32_t value_type=T_UINT,bool_type=T_BOOL;
+ xe_rtz_emitter r;uint32_t a=id(b),c=id(b),label=id(b),mag_a,mag_c,nan,inf,sign,special,result;
+ emit(b,SpvOpFunction,value_type,F_SCALAR_ADD,2,0,T_SCALAR_MATH_FN,0,0);
+ emit(b,SpvOpFunctionParameter,value_type,a,0,0,0,0,0);
+ emit(b,SpvOpFunctionParameter,value_type,c,0,0,0,0,0);
+ emit(b,SpvOpLabel,0,label,0,0,0,0,0);
+ r.context=b;r.emit=scalar_recipe;r.failed=0;
+ a=(uint32_t)xe_rtz_emit_flush(&r,a);c=(uint32_t)xe_rtz_emit_flush(&r,c);
+ mag_a=operation(b,SpvOpBitwiseAnd,value_type,a,scalar(b,UINT32_C(0x7fffffff)));
+ mag_c=operation(b,SpvOpBitwiseAnd,value_type,c,scalar(b,UINT32_C(0x7fffffff)));
+ nan=operation(b,SpvOpLogicalOr,bool_type,
+  operation(b,SpvOpUGreaterThan,bool_type,mag_a,scalar(b,UINT32_C(0x7f800000))),
+  operation(b,SpvOpUGreaterThan,bool_type,mag_c,scalar(b,UINT32_C(0x7f800000))));
+ sign=operation(b,SpvOpBitwiseAnd,value_type,
+  operation(b,SpvOpBitwiseXor,value_type,a,c),scalar(b,UINT32_C(0x80000000)));
+  inf=operation(b,SpvOpLogicalAnd,bool_type,
+   operation(b,SpvOpIEqual,bool_type,mag_a,scalar(b,UINT32_C(0x7f800000))),
+   operation(b,SpvOpIEqual,bool_type,mag_c,scalar(b,UINT32_C(0x7f800000))));
+  inf=operation(b,SpvOpLogicalAnd,bool_type,inf,
+   operation(b,SpvOpINotEqual,bool_type,sign,scalar(b,0)));
+  special=scalar_select(b,operation(b,SpvOpIEqual,bool_type,mag_a,
+   scalar(b,UINT32_C(0x7f800000))),a,c);
+  special=scalar_select(b,operation(b,SpvOpLogicalOr,bool_type,nan,inf),
+   scalar(b,UINT32_C(0x7fc00000)),special);
+  result=(uint32_t)xe_rtz_emit_add(&r,a,c,special);
  if(r.failed)b->out->failed=1;
  emit(b,SpvOpReturnValue,0,0,1,result,0,0,0);
  emit(b,SpvOpFunctionEnd,0,0,0,0,0,0,0);
@@ -457,22 +527,41 @@ static uint32_t minmax_call(alu_builder *b,uint32_t opcode,unsigned max_opcode,u
  uint32_t result=id(b),maximum=equal(b,opcode,scalar(b,max_opcode));
  emit(b,SpvOpFunctionCall,T_U4,result,4,F_MINMAX,maximum,a,c);return result;
 }
+/* Preserve the renderer's ordered RTZ products and adds. No fused OpDot,
+ * reassociation, or vector-wide replicated horizontal addition. */
+static uint32_t dot_alu(alu_builder *b,uint32_t a,uint32_t c,uint32_t d,unsigned lanes) {
+ uint32_t products=call(b,F_MUL,a,c),sum=id(b),part,result;unsigned lane;
+ emit(b,SpvOpCompositeExtract,T_UINT,sum,2,products,0,0,0);
+ for(lane=1;lane<lanes;++lane){
+  part=id(b);emit(b,SpvOpCompositeExtract,T_UINT,part,2,products,lane,0,0);
+  result=id(b);emit(b,SpvOpFunctionCall,T_UINT,result,3,F_SCALAR_ADD,sum,part,0);sum=result;
+ }
+ if(lanes==2){
+  part=id(b);emit(b,SpvOpCompositeExtract,T_UINT,part,2,d,0,0,0);
+  result=id(b);emit(b,SpvOpFunctionCall,T_UINT,result,3,F_SCALAR_ADD,sum,part,0);sum=result;
+ }
+ return splat(b,sum);
+}
 static uint32_t vector_alu(alu_builder *b,uint32_t opcode,uint32_t a,uint32_t c,uint32_t d,int control) {
- uint32_t add=id(b),mul=id(b),mad=id(b),joined=id(b),av,mv,dv,result=id(b),ops[18],cmp=0,cv=0,mm=0,mv_select=0;
+ uint32_t add=id(b),mul=id(b),mad=id(b),joined=id(b),av,mv,dv,result=id(b),ops[24],cmp=0,cv=0,mm=0,mv_select=0,dot[3]={0},dot_value[3]={0};
  emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
  ops[0]=opcode;ops[1]=add;ops[2]=1;ops[3]=mul;ops[4]=11;ops[5]=mad;
  if(control){unsigned i;cmp=id(b);for(i=0;i<4;++i){ops[6+i*2]=4+i;ops[7+i*2]=cmp;}
-  mm=id(b);ops[14]=2;ops[15]=mm;ops[16]=3;ops[17]=mm;}
- xe_spv_binary_instruction(b->out,SpvOpSwitch,0,0,ops,control?18:6);
+  mm=id(b);ops[14]=2;ops[15]=mm;ops[16]=3;ops[17]=mm;
+  for(i=0;i<3;++i){dot[i]=id(b);ops[18+i*2]=15+i;ops[19+i*2]=dot[i];}}
+ xe_spv_binary_instruction(b->out,SpvOpSwitch,0,0,ops,control?24:6);
  emit(b,SpvOpLabel,0,add,0,0,0,0,0);av=call(b,F_ADD,a,c);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,mul,0,0,0,0,0);mv=call(b,F_MUL,a,c);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,mad,0,0,0,0,0);dv=call(b,F_ADD,call(b,F_MUL,a,c),d);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  if(control){emit(b,SpvOpLabel,0,cmp,0,0,0,0,0);cv=compare_alu(b,opcode,a,c,4);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
-  emit(b,SpvOpLabel,0,mm,0,0,0,0,0);mv_select=minmax_call(b,opcode,2,a,c);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);}
+  emit(b,SpvOpLabel,0,mm,0,0,0,0,0);mv_select=minmax_call(b,opcode,2,a,c);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+  {unsigned i;for(i=0;i<3;++i){emit(b,SpvOpLabel,0,dot[i],0,0,0,0,0);
+   dot_value[i]=dot_alu(b,a,c,d,4-i);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);}}}
  emit(b,SpvOpLabel,0,joined,0,0,0,0,0);
  ops[0]=av;ops[1]=add;ops[2]=mv;ops[3]=mul;ops[4]=dv;ops[5]=mad;
- if(control){ops[6]=cv;ops[7]=cmp;ops[8]=mv_select;ops[9]=mm;}
- xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,control?10:6);return result;
+ if(control){ops[6]=cv;ops[7]=cmp;ops[8]=mv_select;ops[9]=mm;
+  {unsigned i;for(i=0;i<3;++i){ops[10+i*2]=dot_value[i];ops[11+i*2]=dot[i];}}}
+ xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,control?16:6);return result;
 }
 static uint32_t lane_splat(alu_builder *b,uint32_t value,uint32_t component) {
  uint32_t word=id(b);emit(b,SpvOpVectorExtractDynamic,T_UINT,word,2,value,component,0,0);return splat(b,word);
@@ -561,7 +650,7 @@ static uint32_t control_vector_value(alu_builder *b,uint32_t registers,uint32_t 
  needed=yes(b,select_word(b,is_export,needed,mask_v));
  scalar_needs=both(b,operation(b,SpvOpINotEqual,T_BOOL,scalar_opcode,scalar(b,44)),
   operation(b,SpvOpINotEqual,T_BOOL,scalar_opcode,scalar(b,50)));
- third_needed=either(b,scalar_needs,both(b,needed,equal(b,opcode,scalar(b,11))));
+ third_needed=either(b,scalar_needs,both(b,needed,either(b,equal(b,opcode,scalar(b,11)),equal(b,opcode,scalar(b,17)))));
  read=id(b);joined=id(b);direct=b->block;
  emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
  emit(b,SpvOpBranchConditional,0,0,3,third_needed,read,joined,0);
@@ -847,6 +936,8 @@ static void program_entry(alu_builder *b,int control) {
   scalar_valid=either(b,scalar_valid,both(b,operation(b,SpvOpUGreaterThanEqual,T_BOOL,scalar_opcode,scalar(b,5)),
    operation(b,SpvOpULessThanEqual,T_BOOL,scalar_opcode,scalar(b,10))));
   valid=either(b,operation(b,SpvOpULessThanEqual,T_BOOL,opcode,scalar(b,7)),equal(b,opcode,scalar(b,11)));
+  valid=either(b,valid,both(b,operation(b,SpvOpUGreaterThanEqual,T_BOOL,opcode,scalar(b,15)),
+   operation(b,SpvOpULessThanEqual,T_BOOL,opcode,scalar(b,17))));
   valid=both(b,valid,scalar_valid);
  }
  /* Sequence emitter side effects explicitly; C argument evaluation order must
@@ -965,7 +1056,8 @@ static int build(xe_spv_binary *out,int program) {
  emit(&b,SpvOpTypePointer,0,T_PINPUT,2,SpvStorageClassInput,T_U3,0,0);
  emit(&b,SpvOpTypeFunction,0,T_MAIN_FN,1,T_VOID,0,0,0);
  emit(&b,SpvOpTypeFunction,0,T_MATH_FN,3,T_U4,T_U4,T_U4,0);
- if(program==2)emit(&b,SpvOpTypeFunction,0,T_MINMAX_FN,4,T_U4,T_BOOL,T_U4,T_U4);
+ if(program==2){emit(&b,SpvOpTypeFunction,0,T_MINMAX_FN,4,T_U4,T_BOOL,T_U4,T_U4);
+  emit(&b,SpvOpTypeFunction,0,T_SCALAR_MATH_FN,3,T_UINT,T_UINT,T_UINT,0);}
  for(i=0;i<sizeof(values)/sizeof(values[0]);++i){
   alu_constant *c=&b.constant[b.constants++];c->literal=values[i];c->scalar=id(&b);c->vector=id(&b);
   emit(&b,SpvOpConstant,T_UINT,c->scalar,1,c->literal,0,0,0);
@@ -997,7 +1089,7 @@ static int build(xe_spv_binary *out,int program) {
  emit(&b,SpvOpVariable,T_PBUFFER,V_INPUT,1,SpvStorageClassUniform,0,0,0);
  emit(&b,SpvOpVariable,T_PBUFFER,V_OUTPUT,1,SpvStorageClassUniform,0,0,0);
  emit(&b,SpvOpVariable,T_PINPUT,V_INVOCATION,1,SpvStorageClassInput,0,0,0);
- math_function(&b,0);math_function(&b,1);if(program==2)minmax_function(&b);
+ math_function(&b,0);math_function(&b,1);if(program==2){minmax_function(&b);scalar_math_function(&b);}
  if(program)program_entry(&b,program==2);else entry(&b);
  if(out->failed){out->count=0;return 0;}out->words[3]=b.next;return 1;
 }
