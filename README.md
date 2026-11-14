@@ -18,8 +18,15 @@ separately. This is not connected to rendering: texture fetch, remaining stages
 and accurate raster output still prevent it from replacing the current fallback.
 State-buffer traffic and continuation execution cost remain to be profiled.
 
-D3D12 integer ownership transfers prepare their final native-DXIL PSOs during initialization and use a fixed lookup during supported color transfers. Parameters are constructed directly in retained deferred-command storage. The bank preserves unsigned storage views, native/emulated 2x MSAA and scaled/native crossings; cross-format normalized/gamma conversions, depth and other legacy transfers remain draw-compilation debt. Procedural RTX 5090 comparisons against the existing native EDRAM emitter pass the declared warmed GPU threshold in both orders, with exact image and work-count checks. An optional dedicated Windows CI runner compares each parent producer through a checked C89 DLL boundary, including its packet layout and resource lifetime; without that runner, hosted hardware coverage remains unverified. These checks do not establish smooth cold gameplay or remove remaining guest-shader compilation.
+D3D12 integer ownership transfers prepare their final native-DXIL PSOs during initialization and use a fixed lookup during supported color transfers. Parameters are constructed directly in retained deferred-command storage. The bank preserves unsigned storage views, native/emulated 2x MSAA and scaled/native crossings; cross-format MSAA, depth and other legacy transfers remain draw-compilation debt. Procedural RTX 5090 comparisons against the existing native EDRAM emitter pass the declared warmed GPU threshold in both orders, with exact image and work-count checks. An optional dedicated Windows CI runner compares each parent producer through a checked C89 DLL boundary, including its packet layout and resource lifetime; without that runner, hosted hardware coverage remains unverified. The separate new single-sample cross-format bank has component image coverage and significant startup cost, with full qualification pending. These checks do not establish smooth cold gameplay or remove remaining guest-shader compilation.
 The default core build uses native libretro-common XMA, WMA and MP3 audio decoders and needs neither FFmpeg nor libiconv. FFmpeg sources are optional offline comparison dependencies, enabled only with `XENIA_BUILD_FFMPEG_REFERENCE=ON` in CMake or `FFMPEG_REFERENCE=1` in Make. Guest software decodes movie video; removing the host audio dependency does not remove FMV video support.
+
+D3D12's pipeline index now keeps links inside stable owners and uses fixed C89
+bucket storage, avoiding separate map-node allocations and bucket growth. Hash
+matches still require exact full-key comparison. The 256 KiB table and extra
+24 bytes per owner are explicit memory costs; this is not a blanket RSS reduction.
+Pipeline owners and driver payloads still allocate, and compile waits remain.
+See [index evidence and limits](tools/tests/pipeline_hash_index_results.txt).
 
 Default Vulkan builds omit host profiler timestamp pools, readbacks and per-submission timestamp commands when profiling is disabled. Guest occlusion queries remain active. This removes discarded diagnostic work, without a measured Dark Souls II frame-time improvement; see [profiling gate checks](tools/tests/gpu_profile_gate_results.txt).
 
@@ -371,9 +378,18 @@ Image checks cover all 44 selected pairs, nine native/scaled layouts and signed
 base offsets through both render passes and dynamic rendering. Separate C89
 codec checks cover all 65,536 half encodings and both sides of every 7e3 rounding
 midpoint; the alternate raw shape emitter remains a validation foundation.
-MSAA/depth and value-converting transfers,
-the corresponding D3D12 generic bank and complete guest
-fallback rendering remain unresolved. GPU throughput qualification is separate
+The corresponding D3D12 bank now prepares the existing native DXIL for these
+44 single-sample pairs and the existing 7e3-to-plain-8888 value-converting route.
+Its final 45 handles (180 with native/scaled crossings) live in fixed storage;
+lookup introduces no shader generation, PSO creation, map node or pixel copy.
+This relocates compilation to initialization rather than eliminating its cost:
+one instrumented 5090 component run took about 1.6 seconds at 1x and 5.3 seconds
+for the asymmetric scaled bank. These are startup observations, not cold-driver
+cache qualification or gameplay measurements. Prepared/legacy image parity and
+failure cleanup are covered separately; see
+[D3D12 transfer coverage](tools/tests/transfer_color_d3d12_results.txt).
+MSAA/depth transfers and complete guest fallback rendering remain unresolved.
+GPU throughput qualification is separate
 from image correctness; these component tests do not certify smooth cold play.
 
 Matching numeric-view color ownership transfers now have initialization-owned

@@ -59,6 +59,57 @@ def run(command, source, log, env=None, timeout=3600):
                        stdout=output, stderr=subprocess.STDOUT, check=True, timeout=timeout)
 
 
+COMPETING_PROCESS_NAMES = frozenset((
+    "retroarch", "cl", "link", "clang", "clang++", "clang-cl", "lld-link",
+    "gcc", "g++", "cc1", "cc1plus", "lto1", "make", "mingw32-make",
+    "ninja", "cmake", "msbuild", "dxc", "glslangvalidator", "spirv-val"))
+
+
+def competing_processes():
+    """Known process boundary guard; not a continuous host-idleness proof."""
+    if WIN:
+        names=",".join("'"+name+"'" for name in sorted(COMPETING_PROCESS_NAMES))
+        script=("$names=@("+names+"); @(Get-Process -Name $names -ErrorAction SilentlyContinue | "
+                "Select-Object @{n='pid';e={$_.Id}},@{n='name';e={$_.ProcessName}}) | "
+                "ConvertTo-Json -Compress; exit 0")
+        result=subprocess.run(["powershell","-NoProfile","-NonInteractive","-Command",script],
+                              capture_output=True,text=True,check=True,timeout=30)
+        records=json.loads(result.stdout.strip() or "[]")
+        if isinstance(records,dict):records=[records]
+        if not isinstance(records,list):raise ValueError("invalid runner process records")
+    else:
+        result=subprocess.run(["ps","-eo","pid=,comm="],capture_output=True,
+                              text=True,check=True,timeout=30)
+        records=[]
+        for line in result.stdout.splitlines():
+            fields=line.strip().split(None,1)
+            if len(fields)!=2:raise ValueError("invalid runner process row")
+            records.append(dict(pid=int(fields[0]),name=fields[1]))
+    found=[]
+    for record in records:
+        if (not isinstance(record,dict) or type(record.get("pid")) is not int or
+            record["pid"]<=0 or not isinstance(record.get("name"),str) or not record["name"]):
+            raise ValueError("invalid runner process identity")
+        name=record["name"].lower().removesuffix(".exe")
+        if name in COMPETING_PROCESS_NAMES:found.append(dict(pid=record["pid"],name=name))
+    return sorted(found,key=lambda value:(value["name"],value["pid"]))
+
+
+def require_idle_runner(log,phase):
+    record=dict(phase=phase,scope="known process boundary snapshot; not continuous")
+    try:
+        record["processes"]=competing_processes()
+        record["inspection_ok"]=True
+    except (OSError,ValueError,subprocess.SubprocessError) as error:
+        record.update(inspection_ok=False,error=str(error))
+        with log.open("a",encoding="utf-8") as output:output.write(json.dumps(record)+"\n")
+        raise ValueError("runner inspection failed; no timing acceptance") from error
+    with log.open("a",encoding="utf-8") as output:output.write(json.dumps(record)+"\n")
+    if record["processes"]:
+        raise ValueError("active compiler/build/frontend work; retain samples, no automatic retry: "+
+                         repr(record["processes"]))
+
+
 def cpu_build(source, build, out, logs, env):
     out.mkdir(parents=True, exist_ok=True)
     driver, bridge = HERE / "core_shader_compile_fixture.c", HERE / "shader_compile_bridge.cc"
@@ -1128,6 +1179,8 @@ def run_comparison(args):
               "no application cache; driver internal/disk cache NOT certified cold",
         coverage="procedural translation and PSO tests; not full gameplay cold/warm signoff",
         anchor=os.environ.get("SHADER_PERF_ANCHOR") or "UNSET: no last-known-good ratchet certified")
+    manifest["runner_idle_guard"]=dict(scope="known compiler/build/frontend processes before/after each revision sample",
+        limitation="not continuous host-idleness proof; no automatic retry or wait")
     manifest["toolchain"]={}
     manifest["harness_revision"]=git("rev-parse","HEAD")
     manifest["harness_sha256"]={name:hashlib.sha256((HERE/name).read_bytes()).hexdigest() for name in
@@ -1239,6 +1292,7 @@ def run_comparison(args):
         order=[x[0] for x in versions]
         if sample%2:order.reverse()
         for version in order:
+            require_idle_runner(results/"runner-idle.jsonl",version+"-sample%d-before"%sample)
             b=builds[version];e=env.copy();e["XE_SHADER_BENCH_CSV"]=str(results/(version+".csv"))
             e["XE_SHADER_BENCH_NO_DUMP"]="1"
             e["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-cpu.csv"))
@@ -1291,6 +1345,7 @@ def run_comparison(args):
                 text=log.read_text()
                 coverage=resume_report["revisions"][version]
                 validate_resume_compiler_log(text,coverage["device"])
+            require_idle_runner(results/"runner-idle.jsonl",version+"-sample%d-after"%sample)
     raw={version:read_samples(results/(version+".csv")) for version in builds}
     for version,measurements in raw.items():
         if set(measurements)!=expected_keys(args.backend):

@@ -1,0 +1,38 @@
+name: Pipeline index ownership
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+jobs:
+  c89:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Strict C89 collision and ownership tests
+        run: |
+          mkdir -p build/tests/pipeline-index
+          cc -std=c89 -pedantic-errors -Wno-long-long -Wall -Wextra -Werror -O2 -g -fsanitize=address,undefined -I. -Ithird_party/libretro-common/include tools/tests/core_pipeline_hash_index_test.c -o build/tests/pipeline-index/test
+          build/tests/pipeline-index/test
+  native:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Actual typed owner and legacy-index reference
+        shell: cmd
+        run: |
+          git worktree add --detach "%RUNNER_TEMP%/pipeline-index-reference" 524f73b9bf3f8654b4af26be282958292b6b9429
+          if errorlevel 1 exit /b 1
+          set PIPELINE_INDEX_PARENT_SOURCE=%RUNNER_TEMP%/pipeline-index-reference
+          set PIPELINE_INDEX_OUT=%RUNNER_TEMP%/pipeline-index-evidence
+          call tools\tests\run_pipeline_hash_index_native_tests.cmd
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-index-ownership
+          path: ${{ runner.temp }}/pipeline-index-evidence
