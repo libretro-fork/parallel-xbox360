@@ -628,6 +628,18 @@ fallbacks remain unfinished; this is not cold-play acceptance.
 Compiler job notification uses a registered per-worker libretro-common eventcount instead of a shared parking mutex/condition. A submission selects at most one idle worker and retains the existing direct queue-slot lease; it does not copy or allocate a new payload. Worker teardown releases cached per-thread backend resources after its final wait. Required idle parking remains; this does not remove existing compilation/admission waits or establish cold-play smoothness. See [wakeup and lifetime checks](tools/tests/job_wake_results.txt).
 
 
+The shared shader translation index stores C89 tree links inside each translation,
+removing separate hash nodes, bucket buffers and their allocation-failure window.
+Insertion and removal preserve translation addresses and keys; a reentrant factory
+keeps the registered instance and retires its redundant result. Teardown drains a
+detached index in linear time. A recent-created variant pointer changes only on
+insertion/removal, never on read hits; const lookup remains read-only. The owning thread
+still serializes index mutation, while existing immutable publication and GPU
+resource lifetimes remain necessary. Translation objects and their binaries are
+still allocated; this index change does not establish allocation-free gameplay or
+remove draw-path compilation. See `tools/tests/shader_variant_index_results.txt`
+for validation and qualification status.
+
 The C89 raw SPIR-V interpreter foundation in `libretro/core_alu_spv.c` is built
 only by validation tools, not linked or selected by the core. Each fixed compute
 module consumes shared packed bytecode and constant views across repeated data

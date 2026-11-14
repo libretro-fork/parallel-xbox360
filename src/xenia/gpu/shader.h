@@ -15,11 +15,12 @@
 
 #include <algorithm>
 #include "libretro/core_shader_state.h"
+#include "libretro/core_shader_variant_index.h"
+#define XE_SHADER_INTRUSIVE_VARIANT_INDEX 1
 #include <cstdint>
 #include <filesystem>
 #include <set>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -814,7 +815,7 @@ class Shader {
     uint8_t eM_potentially_written_by_exec = 0;
   };
 
-  class Translation {
+  class Translation : protected xe_shader_variant_node {
    public:
     virtual ~Translation() {}
     Translation(const Translation&) = delete;
@@ -823,7 +824,7 @@ class Shader {
     Shader& shader() const { return shader_; }
 
     // Translator-specific modification bits.
-    uint64_t modification() const { return modification_; }
+    uint64_t modification() const { return key; }
 
     // True if the shader was translated and prepared without error.
     bool is_valid() const { return xe_shader_valid(&publication_state_); }
@@ -872,7 +873,11 @@ class Shader {
 
    protected:
     Translation(Shader& shader, uint64_t modification)
-        : shader_(shader), modification_(modification) {}
+        : shader_(shader) {
+      left = right = nullptr;
+      key = modification;
+      height = 1;
+    }
 
     // Sole translation owner prepares immutable backend state before the
     // is_translated release publication. Readers never perform lazy creation.
@@ -889,7 +894,6 @@ class Shader {
     friend class SpirvShaderTranslator;
 
     Shader& shader_;
-    uint64_t modification_;
 
     retro_atomic_int_t publication_state_{0};
     std::vector<Error> errors_;
@@ -1061,15 +1065,8 @@ class Shader {
 
   // Host translations with the specified modification bits. Not thread-safe
   // with respect to translation creation/destruction.
-  const std::unordered_map<uint64_t, Translation*>& translations() const {
-    return translations_;
-  }
   Translation* GetTranslation(uint64_t modification) const {
-    auto it = translations_.find(modification);
-    if (it != translations_.cend()) {
-      return it->second;
-    }
-    return nullptr;
+    return static_cast<Translation*>(xe_shader_variant_find(translations_, modification));
   }
   Translation* GetOrCreateTranslation(uint64_t modification,
                                       bool* is_new = nullptr);
@@ -1161,7 +1158,10 @@ class Shader {
   bool uses_subroutine_calls_ = false;
 
   // Modification bits -> translation.
-  std::unordered_map<uint64_t, Translation*> translations_;
+  xe_shader_variant_node* translations_ = nullptr;
+  // Updated only by insertion/removal, never on a read/hit. Existing concurrent
+  // readers still require creation/destruction to be serialized by the owner.
+  Translation* most_recent_translation_ = nullptr;
 
   retro_atomic_int_t ucode_storage_index_{-1};
 

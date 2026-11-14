@@ -14,6 +14,29 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_variant_owner_missing_execution_and_removed_capability_fail(self):
+        good=dict(available=True,unit=True,native=True)
+        self.assertFalse(ci.compare_variant_owner(dict(base=dict(available=False),candidate=good))["failures"])
+        for item in (dict(available=False),dict(available=True,unit=False,native=True),dict(available=True,unit=True,native=False)):
+            self.assertTrue(ci.compare_variant_owner(dict(base=good,candidate=item))["failures"])
+        with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run"):
+            root=Path(folder);(root/"src/xenia/gpu").mkdir(parents=True)
+            header=root/"src/xenia/gpu/shader.h";header.write_text("#define XE_SHADER_INTRUSIVE_VARIANT_INDEX 1\n")
+            with self.assertRaisesRegex(ValueError,"runner missing"):
+                ci.validate_variant_owner(root,root,root,root/"log",{})
+            scripts=root/"tools/tests";scripts.mkdir(parents=True)
+            (scripts/("run_shader_variant_index_tests.cmd" if ci.WIN else "run_shader_variant_index_tests.sh")).touch()
+            unit="PASS: 5040 permutations, 103331 live-set/identity/balance observations; full64-bit keys\n"
+            drain="LINEAR_DRAIN nodes=512 stable_payloads=512 rotations=503\n"
+            owner="PASS: production Shader owner; one object allocation/miss, zero bookkeeping allocations, factory failure/reentrancy, stable identities and balanced destruction; owner=432 value=160\n"
+            for text in ("",unit,owner,unit+owner+owner,unit+owner,unit+drain.replace("503","512")+owner):
+                (root/"log").write_text(text)
+                with self.assertRaises(ValueError):ci.validate_variant_owner(root,root,root,root/"log",{})
+            (root/"log").write_text(unit+drain+owner)
+            value=ci.validate_variant_owner(root,root,root,root/"log",{})
+            self.assertTrue(value["native"]);self.assertEqual(value["variants"],512)
+            header.write_text("");self.assertFalse(ci.validate_variant_owner(root,root,root,root/"log",{})["available"])
+
     def test_analysis_allocation_gate_rejects_growth_and_semantic_changes(self):
         key=("backward",0,16,0)
         base={key:dict(calls=10,requested_bytes=120,cf_count=16,labels=8,identity="1234567890abcdef")}
@@ -590,6 +613,7 @@ class ComparisonTests(unittest.TestCase):
                 (compiled/("shader%03u.spv"%i)).write_bytes(ci.struct.pack("<5I",0x07230203,0x10000,0,1,0))
             def prepare(source_arg,out,results,backend,reuse):
                 (results/(source.name+"-vertex-dot-unit.json")).write_text(json.dumps(dict(available=False,unit=False)))
+                (results/(source.name+"-variant-owner.json")).write_text(json.dumps(dict(available=False,unit=False,native=False)))
                 allocation_dir=results/"analysis-allocations"/source.name
                 allocation_dir.mkdir(parents=True,exist_ok=True)
                 allocation_rows=[]

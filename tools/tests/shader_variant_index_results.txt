@@ -1,0 +1,64 @@
+Shader translation index: development evidence and integration contract
+
+The intrusive C89 AVL index reuses each Translation object's node and key.
+It allocates no hash node or bucket array, never swaps published keys/payloads,
+and drains a detached owner in amortized linear time. GetTranslation is read-
+only; the recent-created pointer changes only on insertion/removal/destruction,
+not ordinary hits. Existing owner mutation serialization remains required.
+Translation objects and generated shader payloads still allocate.
+
+Strict MSVC C89 and GCC ASan+UBSan tests pass5040 insertion permutations and
+103331 independent live-set/full-key/identity/balance observations. Two-child
+removal transplants the actual node. The detached512-node drain takes504
+rotations and preserves every address and payload. Actual production Shader.cc
+owner tests cover512 variants, object/factory allocation failure, null/throwing
+and reentrant factories, duplicate hits, removal and balanced destruction.
+Windows ASan uses consistently instrumented support archives/STL annotations.
+These focused adapters do not establish complete renderer/lifecycle acceptance.
+
+An actual parent-only reentrant probe rejects the old cached-identity/retirement
+behavior; the changed owner passes. A separate copied production shader.cc
+mutant performs a real extra8-byte allocation through a volatile operator-new
+entry, then frees it. The owner test rejects that mutant at its exact one-object-
+allocation-per-miss assertion. Neither compiler failure is counted as that gate.
+
+Final MSVC fixture sizes: owner488->440 bytes, derived value136->160 bytes.
+Retained C++ new request bytes (owner plus its variants):
+ variants       parent          candidate
+       1           848                632
+       4          1352               1112
+      16          4264               3032
+      64         12328              10712
+     256         51791              41432
+     512         94799              82392
+These are requested bytes, not all malloc traffic or process RSS. Sixty-four
+512-variant create/destroy batches request65920->32896 allocations. Cached
+lookups allocate zero in both revisions. All24 workloads retain operation and
+payload checksums. Initial preparatory times collected during another build
+are unqualified and are not used for acceptance.
+
+Rejected first candidate (ordinary AVL lookup/rebalanced destruction): seven
+alternating pairs fail create_destroy512(4.7508->5.4523ms),find512(2.5207->
+2.6983ms),repeat256(2.1757->2.871ms),repeat512(2.223->2.7116ms). Last two also
+fail tails. Preserve shader-variant-index-throughput-v1 raw records.
+
+Rejected indexed-child follow-up retains linear drain/recent-created handling
+but fails find512(2.4379->3.3004ms) and mixed GetOrCreate512(4.456->4.9013ms).
+MSVC disassembly shows CMP/SBB/AND/dependent child load delaying each traversal;
+separate left/right direction branches can speculate their loads. Preserve v2.
+
+Final four-level predictable traversal passes all24 groups/seven alternating
+pairs, with unchanged limits (median5% plus50us/at least5 slower pairs; max25%
+plus500us). At512 variants, parent->candidate batch medians in milliseconds:
+create/destroy4.5109->4.0158;find2.4369->2.368;mixed GetOrCreate4.4659->3.2201;
+repeated GetOrCreate2.2698->1.5144. Pure-find improvement is small; this is not
+retail frame-time evidence. Runtime owner files remain byte-identical across
+rebases onto the CPU-dot and raw-dot changes; those change no measured index
+methods. Preserve shader-variant-index-throughput-v3 and both rejected revisions.
+
+Integration requires full new-layout MSVC/MinGW/ASan builds, existing numerical
+GPU regressions, exact-first-parent shader/PSO comparison, mailbox git-am/identical-
+tree verification and hosted workflow artifacts. Focused passes do not replace
+those gates. No timing thresholds were changed, no unchanged failed timing run
+was retried to obtain a pass, and no allocation-free gameplay, removed draw-path
+compilation or smooth cold-play claim is made.

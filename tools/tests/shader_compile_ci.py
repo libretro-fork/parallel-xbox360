@@ -481,6 +481,45 @@ def validate_vertex_dot_unit(source,out,log,env):
     return coverage
 
 
+def validate_variant_owner(source,build,out,log,env):
+    header=source/"src/xenia/gpu/shader.h"
+    available=header.is_file() and "#define XE_SHADER_INTRUSIVE_VARIANT_INDEX 1" in header.read_text()
+    coverage=dict(available=available,unit=False,native=False)
+    if not available:return coverage
+    script=source/"tools/tests"/("run_shader_variant_index_tests.cmd" if WIN else "run_shader_variant_index_tests.sh")
+    if not script.is_file():raise ValueError("variant owner test runner missing")
+    fixture=env.copy();fixture.update(VARIANT_INDEX_OUT=str(out/"variant-index"),VARIANT_INDEX_BUILD=str(build),
+        VARIANT_INDEX_UNIT=str(HERE/"core_shader_variant_index_test.c"),
+        VARIANT_INDEX_SOURCE=str(HERE/"core_shader_variant_owner_test.c"),
+        VARIANT_INDEX_BRIDGE=str(HERE/"shader_variant_index_bridge.cc"))
+    fixture.pop("FORWARD_FLOW_FLAGS",None)
+    if WIN:
+        fixture["FORWARD_FLOW_LINK_FLAGS"]="/CGTHREADS:"+str(JOBS)
+        command=[os.environ.get("COMSPEC","cmd.exe"),"/d","/c",script]
+    else:command=["sh",script]
+    run(command,source,log,fixture,180)
+    text=log.read_text()
+    if len(re.findall(r"^PASS: 5040 permutations, 103331 live-set/identity/balance observations;",text,re.MULTILINE))!=1:
+        raise ValueError("variant index unit execution missing or substituted")
+    drain=re.findall(r"^LINEAR_DRAIN nodes=512 stable_payloads=512 rotations=(\d+)$",text,re.MULTILINE)
+    if len(drain)!=1 or not 0<int(drain[0])<512:raise ValueError("linear variant destruction missing or unbounded")
+    sizes=re.findall(r"^PASS: production Shader owner; one object allocation/miss, zero bookkeeping allocations, factory failure/reentrancy, stable identities and balanced destruction; owner=(\d+) value=(\d+)$",text,re.MULTILINE)
+    if len(sizes)!=1 or not all(int(x)>0 for x in sizes[0]):raise ValueError("variant owner execution missing or substituted")
+    coverage.update(unit=True,native=True,permutations=5040,identity_observations=103331,
+                    variants=512,drain_rotations=int(drain[0]),owner_bytes=int(sizes[0][0]),value_bytes=int(sizes[0][1]),
+                    scope="production base owner/factory lifetime; no GPU resource or complete renderer signoff")
+    return coverage
+
+
+def compare_variant_owner(coverage):
+    candidate=coverage.get("candidate",{});failures=[]
+    if candidate.get("available") and (not candidate.get("unit") or not candidate.get("native")):
+        failures.append("candidate variant owner correctness missing")
+    if any(v.get("available") for k,v in coverage.items() if k!="candidate") and not candidate.get("available"):
+        failures.append("candidate variant owner coverage removed")
+    return dict(revisions=coverage,failures=failures)
+
+
 def prepare(source, out, results, backend, reuse_build=None):
     out.mkdir(parents=True,exist_ok=True)
     env = os.environ.copy()
@@ -506,6 +545,8 @@ def prepare(source, out, results, backend, reuse_build=None):
             run(["make", "-j" + str(JOBS)], source, log, env)
     vertex_dot_unit=validate_vertex_dot_unit(source,out,log,env)
     (results/(source.name+"-vertex-dot-unit.json")).write_text(json.dumps(vertex_dot_unit,indent=2),encoding="utf-8")
+    variant_owner=validate_variant_owner(source,build,out,log,env)
+    (results/(source.name+"-variant-owner.json")).write_text(json.dumps(variant_owner,indent=2),encoding="utf-8")
     diagnostic_coverage=validate_analysis_text(source,build,out,results,env)
     (results/(source.name+"-"+out.name+"-analysis-text.json")).write_text(json.dumps(diagnostic_coverage,indent=2),encoding="utf-8")
     validate_reentry_allocations(source,build,results,env)
@@ -960,7 +1001,9 @@ def run_comparison(args):
          "core_shader_reentry_test.c","core_shader_reentry_profile_test.c","shader_reentry_profile_bridge.cc",
          "core_pipeline_bench_profile.c","core_pipeline_bench_profile.h","core_shader_labels_test.c",
          "core_shader_analysis_text_test.c","shader_analysis_text_bridge.cc","shader_analysis_allocation_hook.h",
-         "run_shader_analysis_text_tests.cmd","run_shader_analysis_text_tests.sh"]}
+         "run_shader_analysis_text_tests.cmd","run_shader_analysis_text_tests.sh",
+         "core_shader_variant_index_test.c","core_shader_variant_owner_test.c","shader_variant_index_bridge.cc",
+         "run_shader_variant_index_tests.cmd","run_shader_variant_index_tests.sh"]}
     manifest["corpus_contract"]=dict(version=8,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_frac_cases=64 if args.backend=="vulkan-hardware" else 0,
@@ -1014,6 +1057,9 @@ def run_comparison(args):
     if any(x["available"] for v,x in vertex_dot_units.items() if v!="candidate") and not vertex_dot_units["candidate"]["available"]:
         raise ValueError("vertex dot unit coverage removed")
     (results/"vertex-dot-unit-comparison.json").write_text(json.dumps(vertex_dot_units,indent=2),encoding="utf-8")
+    variant_owner_report=compare_variant_owner({v:json.loads((results/(b["source"].name+"-variant-owner.json")).read_text()) for v,b in builds.items()})
+    if variant_owner_report["failures"]:raise ValueError("; ".join(variant_owner_report["failures"]))
+    (results/"variant-owner-comparison.json").write_text(json.dumps(variant_owner_report,indent=2),encoding="utf-8")
     allocation_profiles={version:read_reentry_allocations(results/"analysis-allocations"/b["source"].name/"allocations.csv") for version,b in builds.items()}
     allocation_report=compare_reentry_allocations(allocation_profiles["base"],allocation_profiles["candidate"])
     (results/"analysis-allocations/comparison.json").write_text(json.dumps(allocation_report,indent=2),encoding="utf-8")

@@ -44,8 +44,13 @@ Shader::Shader(xenos::ShaderType shader_type, uint64_t ucode_data_hash,
 }
 
 Shader::~Shader() {
-  for (auto it : translations_) {
-    delete it.second;
+  while (translations_) {
+    xe_shader_variant_node* remaining = translations_;
+    translations_ = nullptr;
+    most_recent_translation_ = nullptr;
+    while (xe_shader_variant_node* node = xe_shader_variant_drain_pop(&remaining)) {
+      delete static_cast<Translation*>(node);
+    }
   }
 }
 
@@ -103,28 +108,37 @@ Shader::Translation::Dump(const std::filesystem::path& base_path,
 
 Shader::Translation* Shader::GetOrCreateTranslation(uint64_t modification,
                                                     bool* is_new) {
-  auto it = translations_.find(modification);
-  if (it != translations_.end()) {
-    if (is_new) {
-      *is_new = false;
-    }
-    return it->second;
+  if (most_recent_translation_ && most_recent_translation_->modification() == modification) {
+    if (is_new) *is_new = false;
+    return most_recent_translation_;
+  }
+  if (Translation* existing = GetTranslation(modification)) {
+    if (is_new) *is_new = false;
+    return existing;
   }
   Translation* translation = CreateTranslationInstance(modification);
-  translations_.emplace(modification, translation);
-  if (is_new) {
-    *is_new = true;
+  if (!translation) {
+    if (is_new) *is_new = false;
+    return nullptr;
   }
+  Translation* registered = static_cast<Translation*>(
+      xe_shader_variant_insert(&translations_, translation));
+  if (registered != translation) {
+    // A reentrant factory may have registered the same key. Keep its identity.
+    delete translation;
+    most_recent_translation_ = registered;
+    if (is_new) *is_new = false;
+    return registered;
+  }
+  most_recent_translation_ = translation;
+  if (is_new) *is_new = true;
   return translation;
 }
 
 void Shader::DestroyTranslation(uint64_t modification) {
-  auto it = translations_.find(modification);
-  if (it == translations_.end()) {
-    return;
-  }
-  delete it->second;
-  translations_.erase(it);
+  Translation* translation = static_cast<Translation*>(xe_shader_variant_remove(&translations_, modification));
+  if (most_recent_translation_ == translation) most_recent_translation_ = nullptr;
+  delete translation;
 }
 
 std::pair<std::filesystem::path, std::filesystem::path> Shader::DumpUcode(
