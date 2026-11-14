@@ -14,6 +14,30 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_resume_compiler_counts_tails_and_capability_removal(self):
+        raw={("raw_resume."+stage,0):[.001]*7 for stage in ("module","compute_pso","compute_pso_warm")}
+        intro=ci.compare_resume_compiler(dict(candidate=raw),7)
+        self.assertTrue(intro["new_component_without_parent"]);self.assertFalse(intro["failure"])
+        self.assertTrue(ci.compare_resume_compiler(dict(base=raw),7)["failure"])
+        self.assertFalse(ci.compare_resume_compiler(dict(base=raw,candidate=raw),7)["failure"])
+        worse={k:v[:] for k,v in raw.items()};worse[("raw_resume.compute_pso_warm",0)][-1]=1.0
+        self.assertTrue(ci.compare_resume_compiler(dict(base=raw,candidate=worse,anchor=raw),7)["failure"])
+        initial={k:v[:] for k,v in raw.items()};initial[("raw_resume.compute_pso",0)]=[1.0]*7
+        report=ci.compare_resume_compiler(dict(base=raw,candidate=initial),7)
+        self.assertFalse(report["failure"])
+        self.assertEqual(next(x for x in report["observed"]["candidate"] if x["stage"]=="raw_resume.compute_pso")["maximum"],1.0)
+        for item in ({k:v for k,v in raw.items() if k[0]!="raw_resume.module"},
+                     {k:v[:-1] for k,v in raw.items()},dict(raw,extra=[.001]*7)):
+            with self.assertRaises(ValueError):ci.compare_resume_compiler(dict(candidate=item),7)
+
+    def test_resume_compiler_execution_identity_is_exact(self):
+        device="vendor=4318 device=11141 driver=1 name=test"
+        lines=["RESUME_PSO_DEVICE "+device,"PASS: resume compiler-only pipelines=2 bindings=6; no execution or cold-cache claim"]
+        ci.validate_resume_compiler_log("\n".join(lines),device)
+        for text in (lines[0],lines[1],"\n".join(lines+lines),"\n".join(lines).replace("bindings=6","bindings=5")):
+            with self.assertRaises(ValueError):ci.validate_resume_compiler_log(text,device)
+        with self.assertRaises(ValueError):ci.validate_resume_compiler_log("\n".join(lines),device+"changed")
+
     def test_variant_owner_missing_execution_and_removed_capability_fail(self):
         good=dict(available=True,unit=True,native=True)
         self.assertFalse(ci.compare_variant_owner(dict(base=dict(available=False),candidate=good))["failures"])
@@ -36,6 +60,86 @@ class ComparisonTests(unittest.TestCase):
             value=ci.validate_variant_owner(root,root,root,root/"log",{})
             self.assertTrue(value["native"]);self.assertEqual(value["variants"],512)
             header.write_text("");self.assertFalse(ci.validate_variant_owner(root,root,root,root/"log",{})["available"])
+    def test_resume_execution_markers_reject_missing_substituted_or_duplicate_work(self):
+        lines=["RESUME_COLD_STORAGE allocations=1 capacity_words=16384 local_arrays=0",
+               "PASS: resume 12911 words, integer-only, 1000 same-owner exact builds/no allocations, failure/recovery",
+               "RAW_RESUME_DEVICE Vulkan vendor=4318 device=11141 driver=1 name=test"]
+        chain=lambda r,b,n:f"RESUME_CHAIN round={r} budget={b} dispatches={n} between_pass_cpu_readbacks=0; inactive/reserved/borrowed-register guards intact"
+        lines += [chain(r,b,1) for r,b in enumerate((1,7,4096,64))]
+        lines += ["RESUME_LONG reference_status=5 limit=4096 valid_steps=9362; no position committed",
+                  "PASS: original CF limit reference cases=745 native=315; valid long program stops at4096",
+                  lines[2],"RESUME_PENDING_PASS outputs=2 copied_bytes=64; partial position not committed"]
+        lines += [chain(r,b,n) for r,(b,n) in enumerate(((1,4098),(7,587),(4096,3),(64,627),(1,4098)))]
+        lines += ["RESUME_FAULTS cases=25; executed",
+                  "PASS: resumable CF cases=770 native=324 long_steps=9362 increments=4096 faults=25; generation and GPU continuation ownership"]
+        text="\n".join(lines)+"\n"
+        observed=ci.validate_resume_log(text,True)
+        self.assertEqual(observed["cases"],770)
+        self.assertEqual(observed["chained_dispatches"],9413)
+        self.assertNotIn("cases",ci.validate_resume_log("\n".join(lines[:2])+"\n",False))
+        for bad in (text.replace("local_arrays=0","local_arrays=1"),
+                    text.replace("allocations=1","allocations=2"),
+                    text.replace("native=324","native=0"),
+                    text.replace("reference_status=5","reference_status=1"),
+                    text.replace("copied_bytes=64","copied_bytes=0"),
+                    text.replace("faults=25","faults=0"),
+                    text.replace("dispatches=627","dispatches=1"),
+                    text.replace("between_pass_cpu_readbacks=0","between_pass_cpu_readbacks=1"),
+                    text.replace("RESUME_FAULTS cases=25; executed\n",""),
+                    text+lines[-1]+"\n",text.replace("name=test","name=other",1)):
+            with self.subTest(bad=bad[-150:]),self.assertRaises(ValueError):ci.validate_resume_log(bad,True)
+
+    def test_resume_coverage_cannot_remove_or_skip_required_work(self):
+        absent=dict(available=False,unit=False,vulkan_gpu=False)
+        good=dict(available=True,unit=True,vulkan_gpu=True,cold_allocations=1,local_register_arrays=0,
+                  cases=770,native_comparisons=324,long_cf_steps=9362,fault_cases=25,
+                  between_pass_cpu_readbacks=0,spirv_validated=True)
+        self.assertFalse(ci.compare_resume_coverage(dict(base=absent,candidate=good),True)["failures"])
+        for field,value in (("available",False),("unit",False),("vulkan_gpu",False),
+                            ("local_register_arrays",1),("cold_allocations",2),("cases",0),
+                            ("native_comparisons",0),("long_cf_steps",4096),("fault_cases",0),
+                            ("between_pass_cpu_readbacks",1),("spirv_validated",False)):
+            with self.subTest(field=field):
+                self.assertTrue(ci.compare_resume_coverage(dict(base=good,candidate=dict(good,**{field:value})),True)["failures"])
+        self.assertFalse(ci.compare_resume_coverage(dict(base=absent,candidate=dict(good,vulkan_gpu=False)),False)["failures"])
+
+    def test_resume_historical_absence_is_distinct_from_missing_runner(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder);out=source/"out";results=source/"results"
+            self.assertFalse(ci.validate_resume(source,source,out,results,{},"vulkan-hardware")["available"])
+            header=source/"libretro/core_alu_spv.h";header.parent.mkdir()
+            header.write_text("int xe_alu_control_resume_spv_build(void*);\n")
+            with self.assertRaisesRegex(ValueError,"recognized ABI"):ci.validate_resume(source,source,out,results,{},"vulkan-hardware")
+            header.write_text("#define XE_ALU_RESUME_ABI 1\nint xe_alu_control_resume_spv_build(void*);\n")
+            with self.assertRaisesRegex(ValueError,"regression runner"):ci.validate_resume(source,source,out,results,{},"vulkan-hardware")
+
+    def test_resume_unit_artifact_transport_checks_names_magic_and_size(self):
+        # Synthetic files exercise transport only; no device/validator is claimed.
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder);out=source/"out";results=source/"results";results.mkdir()
+            header=source/"libretro/core_alu_spv.h";header.parent.mkdir()
+            header.write_text("#define XE_ALU_RESUME_ABI 1\nint xe_alu_control_resume_spv_build(void*);\n")
+            script=source/"tools/tests"/("run_alu_resume_tests.cmd" if ci.WIN else "run_alu_resume_tests.sh")
+            script.parent.mkdir(parents=True);script.write_text("synthetic runner")
+            damaged=[None]
+            def run(command,cwd,log,env,timeout):
+                directory=out/"raw-resume";directory.mkdir(parents=True,exist_ok=True)
+                log.write_text("RESUME_COLD_STORAGE allocations=1 capacity_words=16384 local_arrays=0\n"
+                    "PASS: resume 6 words, integer-only, 1000 same-owner exact builds/no allocations, failure/recovery\n")
+                for name in ("arithmetic","program","control","resume"):
+                    words=[0x07230203,0x10000,0,1,0,0x10000]
+                    if damaged[0]=="magic" and name=="resume":words[0]=0
+                    if damaged[0]=="size" and name=="resume":words.append(0x10000)
+                    (directory/(name+".spv")).write_bytes(ci.struct.pack("<%dI"%len(words),*words))
+            with patch.object(ci,"run",side_effect=run),patch.object(ci.shutil,"which",return_value=None):
+                coverage=ci.validate_resume(source,source,out,results,{},"d3d12-warp")
+                self.assertFalse(coverage["spirv_validated"])
+                self.assertFalse(coverage["vulkan_gpu"])
+                with ci.zipfile.ZipFile(results/(source.name+"-resume-modules.zip")) as archive:
+                    self.assertEqual(set(archive.namelist()),{"arithmetic.spv","program.spv","control.spv","resume.spv"})
+                for damage in ("magic","size"):
+                    damaged[0]=damage
+                    with self.subTest(damage=damage),self.assertRaises(ValueError):ci.validate_resume(source,source,out,results,{},"d3d12-warp")
 
     def test_analysis_allocation_gate_rejects_growth_and_semantic_changes(self):
         key=("backward",0,16,0)
@@ -614,6 +718,7 @@ class ComparisonTests(unittest.TestCase):
             def prepare(source_arg,out,results,backend,reuse):
                 (results/(source.name+"-vertex-dot-unit.json")).write_text(json.dumps(dict(available=False,unit=False)))
                 (results/(source.name+"-variant-owner.json")).write_text(json.dumps(dict(available=False,unit=False,native=False)))
+                (results/(source.name+"-resume-coverage.json")).write_text(json.dumps(dict(available=False,unit=False,vulkan_gpu=False)))
                 allocation_dir=results/"analysis-allocations"/source.name
                 allocation_dir.mkdir(parents=True,exist_ok=True)
                 allocation_rows=[]

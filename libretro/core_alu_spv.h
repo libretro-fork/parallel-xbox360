@@ -12,6 +12,7 @@
 #define XE_ALU_CONTROL_MINMAX 1
 #define XE_ALU_CONTROL_DOT 1
 #define XE_ALU_CONTROL_SHARED_DOT_LOOP 1
+#define XE_ALU_RESUME_ABI 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -83,6 +84,31 @@ int xe_alu_program_spv_build(xe_spv_binary *out);
  * or CPU/frontend upload copy is removed by this change.
  * The original entry remains separately available for matched comparisons. */
 int xe_alu_control_spv_build(xe_spv_binary *out);
+/* Separate continuation prototype. The original three entry points and ABI 1
+ * remain unchanged. This entry uses sixteen descriptor words per invocation:
+ * the first eight retain ABI 1 meanings, word8 is a nonzero owner generation,
+ * word9 is the per-dispatch CF budget (1..4096), words10..15 are reserved.
+ * Binding5 is a disjoint read/write storage buffer with320 words/invocation.
+ * A generation mismatch starts a new job without clearing the register area.
+ * Initialize state generation words to zero before their first use. Generations
+ * must not wrap/recur while retained state is live; quiesce and reset on wrap.
+ * All input/program/constant/context views and the output buffer stay identical
+ * and alive across continuations. Invocation-to-slot mapping stays fixed.
+ * State words: generation0, status1, PC2, return depth3, return stack4..7,
+ * loop depth8, loop counts9..12, loop addresses13..16, P0=17, scalar history18,
+ * export count19, written mask20, position21..24, dirty words25..28. Words29..63
+ * are reserved/untouched. The64 register vectors start at word64. Only dirty
+ * registers are owned there; the others continue borrowing immutable input.
+ * No register snapshot, zero-fill loop or per-continuation host copy is needed.
+ * Status5 now means a committed continuation, not a terminal budget failure.
+ * Chain dispatches with storage write/read barriers before consuming results;
+ * no CPU readback is required between those dispatches. Success1 and faults2..4
+ * are terminal for that generation. Failures/pending work never commit position.
+ * A new generation reuses the same storage, ignoring old register contents.
+ * This is not wired into rendering; missing fetch/stages/ROP remain unresolved.
+ */
+enum { XE_ALU_RESUME_DESCRIPTOR_WORDS=16, XE_ALU_RESUME_STATE_WORDS=320 };
+int xe_alu_control_resume_spv_build(xe_spv_binary *out);
 #ifdef __cplusplus
 }
 #endif

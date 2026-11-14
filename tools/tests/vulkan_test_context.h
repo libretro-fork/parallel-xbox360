@@ -40,6 +40,9 @@ static struct {
    FN(vkResetCommandPool); FN(vkBeginCommandBuffer); FN(vkEndCommandBuffer);
    FN(vkCmdPipelineBarrier); FN(vkCmdBindPipeline); FN(vkCmdBindDescriptorSets);
    FN(vkCmdPushConstants); FN(vkCmdDispatch); FN(vkCreateFence); FN(vkDestroyFence);
+#ifdef XE_VK_TEST_TRANSFER
+   FN(vkCmdCopyBuffer);
+#endif
    FN(vkResetFences); FN(vkQueueSubmit); FN(vkWaitForFences);
 #ifdef XE_VK_TEST_GPU_TIMING
    FN(vkCreateQueryPool); FN(vkDestroyQueryPool); FN(vkGetQueryPoolResults);
@@ -71,6 +74,9 @@ static int make_buffer(struct buffer *b, size_t bytes)
    uint32_t type, pass;
    info.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
    info.size=bytes; info.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+#ifdef XE_VK_TEST_TRANSFER
+   info.usage|=VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+#endif
 #ifdef XE_VK_TEST_VERTEX_INPUT
    info.usage|=VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
 #endif

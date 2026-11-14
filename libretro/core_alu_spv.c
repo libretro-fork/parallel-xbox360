@@ -8,7 +8,7 @@ enum {
  T_PBUFFER,T_PUINT,T_PINPUT,T_MAIN_FN,T_MATH_FN,
  V_INPUT=20,V_OUTPUT,V_INVOCATION,F_ADD,F_MUL,F_MAIN,
  T_REG_ARRAY=32,T_PREG_ARRAY,T_PREG,T_PLOCAL_UINT,V_PROGRAM,V_CONSTANT,C_NULL_REG,
- V_CONTEXT,T_CONTEXT_ARRAY,T_CONTEXT,T_PCONTEXT,
+ V_CONTEXT,T_CONTEXT_ARRAY,T_CONTEXT,T_PCONTEXT,V_STATE,
  T_MINMAX_FN=16,F_MINMAX=26,T_SCALAR_MATH_FN=17,F_SCALAR_ADD=27
 };
 typedef struct alu_constant { uint32_t literal,scalar,vector; } alu_constant;
@@ -16,6 +16,8 @@ typedef struct alu_builder {
  xe_spv_binary *out;
  uint32_t next,block;
  uint32_t register_dirty,register_base,register_count;
+ uint32_t resume_base,resume_budget,resume_previous,resume_position,resume_exports,resume_written;
+ int resume;
  unsigned constants;
  alu_constant constant[64];
 } alu_builder;
@@ -207,6 +209,19 @@ static void store_word(alu_builder *b,uint32_t index,uint32_t value) {
 static uint32_t offset(alu_builder *b,uint32_t base,unsigned word) {
  return operation(b,SpvOpIAdd,T_UINT,base,scalar(b,word));
 }
+static void state_store(alu_builder *b,unsigned word,uint32_t value) {
+ uint32_t pointer=id(b);
+ emit(b,SpvOpAccessChain,T_PUINT,pointer,3,V_STATE,scalar(b,0),offset(b,b->resume_base,word),0);
+ emit(b,SpvOpStore,0,0,2,pointer,value,0,0);
+}
+static void state_vector_store(alu_builder *b,uint32_t at,uint32_t value) {
+ unsigned i;uint32_t part,pointer;
+ for(i=0;i<4;++i){
+  part=id(b);emit(b,SpvOpCompositeExtract,T_UINT,part,2,value,i,0,0);
+  pointer=id(b);emit(b,SpvOpAccessChain,T_PUINT,pointer,3,V_STATE,scalar(b,0),offset(b,at,i),0);
+  emit(b,SpvOpStore,0,0,2,pointer,part,0,0);
+ }
+}
 static uint32_t load_vector_from(alu_builder *b,uint32_t buffer,uint32_t base,unsigned first) {
  uint32_t v[4],result=id(b);unsigned i;
  for(i=0;i<4;++i)v[i]=load_word(b,buffer,offset(b,base,first+i));
@@ -351,6 +366,7 @@ static void guard(alu_builder *b,uint32_t predicate,uint32_t output,unsigned sta
  emit(b,SpvOpBranchConditional,0,0,3,predicate,good,bad,0);
  emit(b,SpvOpLabel,0,bad,0,0,0,0,0);
  if(status)store_word(b,offset(b,output,4),scalar(b,status));
+ if(status && b->resume_base)state_store(b,1,scalar(b,status));
  emit(b,SpvOpReturn,0,0,0,0,0,0,0);
  emit(b,SpvOpLabel,0,good,0,0,0,0,0);
 }
@@ -372,7 +388,10 @@ static uint32_t reg_load(alu_builder *b,uint32_t registers,uint32_t index) {
  condition=yes(b,operation(b,SpvOpBitwiseAnd,T_UINT,dirty,bit));
  emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
  emit(b,SpvOpBranchConditional,0,0,3,condition,owned,borrowed,0);
- emit(b,SpvOpLabel,0,owned,0,0,0,0,0);value=local_load(b,T_U4,reg_pointer(b,registers,index));
+ emit(b,SpvOpLabel,0,owned,0,0,0,0,0);
+ if(b->resume)value=load_vector_from(b,V_STATE,operation(b,SpvOpIAdd,T_UINT,offset(b,b->resume_base,64),
+  operation(b,SpvOpIMul,T_UINT,index,scalar(b,4))),0);
+ else value=local_load(b,T_U4,reg_pointer(b,registers,index));
  emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,borrowed,0,0,0,0,0);
  condition=operation(b,SpvOpULessThan,T_BOOL,index,b->register_count);
@@ -693,8 +712,15 @@ static void register_write(alu_builder *b,uint32_t registers,uint32_t at,uint32_
  emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
  emit(b,SpvOpBranchConditional,0,0,3,predicate,write,joined,0);
  emit(b,SpvOpLabel,0,write,0,0,0,0,0);
- pointer=reg_pointer(b,registers,at);old=b->register_dirty?reg_load(b,registers,at):local_load(b,T_U4,pointer);
- local_store(b,pointer,choose(b,mask_predicate(b,mask),value,old));register_publish(b,at);
+ if(b->resume){
+  old=reg_load(b,registers,at);value=choose(b,mask_predicate(b,mask),value,old);
+  state_vector_store(b,operation(b,SpvOpIAdd,T_UINT,offset(b,b->resume_base,64),
+   operation(b,SpvOpIMul,T_UINT,at,scalar(b,4))),value);
+ }else{
+  pointer=reg_pointer(b,registers,at);old=b->register_dirty?reg_load(b,registers,at):local_load(b,T_U4,pointer);
+  local_store(b,pointer,choose(b,mask_predicate(b,mask),value,old));
+ }
+ register_publish(b,at);
  emit(b,SpvOpBranch,0,0,1,joined,0,0,0);emit(b,SpvOpLabel,0,joined,0,0,0,0,0);
 }
 static uint32_t context_word(alu_builder *b,uint32_t word) {
@@ -744,6 +770,72 @@ static void transfer_gate(alu_builder *b,uint32_t cf0,uint32_t cf1,uint32_t stat
  emit(b,SpvOpLabel,0,passed,0,0,0,0,0);emit(b,SpvOpBranch,0,0,1,taken,0,0,0);
  emit(b,SpvOpLabel,0,taken,0,0,0,0,0);
 }
+/* Continuations own only changed registers. Untouched registers keep borrowing
+ * the immutable input window across dispatches; no register snapshot is made. */
+static void resume_save(alu_builder *b,uint32_t flow[13]) {
+ state_store(b,2,local_load(b,T_UINT,flow[0]));
+ state_store(b,3,local_load(b,T_UINT,flow[1]));
+ state_vector_store(b,offset(b,b->resume_base,4),local_load(b,T_U4,flow[2]));
+ state_store(b,8,local_load(b,T_UINT,flow[9]));
+ state_vector_store(b,offset(b,b->resume_base,9),local_load(b,T_U4,flow[10]));
+ state_vector_store(b,offset(b,b->resume_base,13),local_load(b,T_U4,flow[11]));
+ state_store(b,17,local_load(b,T_UINT,flow[12]));
+ state_store(b,18,local_load(b,T_UINT,b->resume_previous));
+ state_store(b,19,local_load(b,T_UINT,b->resume_exports));
+ state_store(b,20,local_load(b,T_UINT,b->resume_written));
+ state_vector_store(b,offset(b,b->resume_base,21),local_load(b,T_U4,b->resume_position));
+ state_vector_store(b,offset(b,b->resume_base,25),local_load(b,T_U4,b->register_dirty));
+ state_store(b,1,scalar(b,5));
+}
+static void resume_restore(alu_builder *b,uint32_t flow[13],uint32_t output) {
+ uint32_t depth,loop_depth,predicate,written,dirty,high[2],valid,counts,count,count_valid;unsigned i;
+ depth=load_word(b,V_STATE,offset(b,b->resume_base,3));
+ loop_depth=load_word(b,V_STATE,offset(b,b->resume_base,8));
+ predicate=load_word(b,V_STATE,offset(b,b->resume_base,17));
+ written=load_word(b,V_STATE,offset(b,b->resume_base,20));
+ dirty=load_vector_from(b,V_STATE,b->resume_base,25);
+ for(i=0;i<2;++i){high[i]=id(b);emit(b,SpvOpCompositeExtract,T_UINT,high[i],2,dirty,i+2,0,0);}
+ valid=both(b,operation(b,SpvOpULessThanEqual,T_BOOL,depth,scalar(b,4)),
+  operation(b,SpvOpULessThanEqual,T_BOOL,loop_depth,scalar(b,4)));
+ valid=both(b,valid,both(b,operation(b,SpvOpULessThanEqual,T_BOOL,predicate,scalar(b,1)),
+  operation(b,SpvOpULessThanEqual,T_BOOL,written,scalar(b,15))));
+ valid=both(b,valid,both(b,equal(b,high[0],scalar(b,0)),equal(b,high[1],scalar(b,0))));
+ counts=load_vector_from(b,V_STATE,b->resume_base,9);
+ for(i=0;i<4;++i){
+  count=id(b);emit(b,SpvOpCompositeExtract,T_UINT,count,2,counts,i,0,0);
+  /* Only active stack entries must be nonzero. All words remain byte counts. */
+  count_valid=either(b,operation(b,SpvOpULessThanEqual,T_BOOL,loop_depth,scalar(b,i)),yes(b,count));
+  valid=both(b,valid,both(b,count_valid,operation(b,SpvOpULessThanEqual,T_BOOL,count,scalar(b,255))));
+ }
+ guard(b,valid,output,3);
+ local_store(b,flow[0],load_word(b,V_STATE,offset(b,b->resume_base,2)));
+ local_store(b,flow[1],depth);local_store(b,flow[2],load_vector_from(b,V_STATE,b->resume_base,4));
+ local_store(b,flow[9],loop_depth);local_store(b,flow[10],counts);
+ local_store(b,flow[11],load_vector_from(b,V_STATE,b->resume_base,13));local_store(b,flow[12],predicate);
+ local_store(b,b->resume_previous,load_word(b,V_STATE,offset(b,b->resume_base,18)));
+ local_store(b,b->resume_exports,load_word(b,V_STATE,offset(b,b->resume_base,19)));
+ local_store(b,b->resume_written,written);local_store(b,b->resume_position,load_vector_from(b,V_STATE,b->resume_base,21));
+ local_store(b,b->register_dirty,dirty);
+}
+static void resume_begin(alu_builder *b,uint32_t flow[13],uint32_t generation,uint32_t output) {
+ uint32_t fresh=id(b),existing=id(b),joined=id(b),active=id(b),terminal=id(b),status,valid,condition;
+ condition=equal(b,generation,load_word(b,V_STATE,b->resume_base));
+ emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
+ emit(b,SpvOpBranchConditional,0,0,3,condition,existing,fresh,0);
+ emit(b,SpvOpLabel,0,fresh,0,0,0,0,0);
+ state_store(b,0,generation);state_store(b,1,scalar(b,5));
+ emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ emit(b,SpvOpLabel,0,existing,0,0,0,0,0);
+ status=load_word(b,V_STATE,offset(b,b->resume_base,1));condition=equal(b,status,scalar(b,5));
+ emit(b,SpvOpSelectionMerge,0,0,2,active,0,0,0);
+ emit(b,SpvOpBranchConditional,0,0,3,condition,active,terminal,0);
+ emit(b,SpvOpLabel,0,terminal,0,0,0,0,0);
+ valid=both(b,yes(b,status),operation(b,SpvOpULessThanEqual,T_BOOL,status,scalar(b,4)));
+ guard(b,valid,output,3);store_word(b,offset(b,output,4),status);emit(b,SpvOpReturn,0,0,0,0,0,0,0);
+ emit(b,SpvOpLabel,0,active,0,0,0,0,0);resume_restore(b,flow,output);
+ emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
+ emit(b,SpvOpLabel,0,joined,0,0,0,0,0);
+}
 /* Fixed per-invocation PC, return stack and work budget. Leave the build point
  * at the EXEC case; every other supported case rejoins the outer continuation. */
 static void control_dispatch(alu_builder *b,uint32_t flow[13],uint32_t base,
@@ -760,7 +852,15 @@ static void control_dispatch(alu_builder *b,uint32_t flow[13],uint32_t base,
  emit(b,SpvOpBranch,0,0,1,body,0,0,0);
  emit(b,SpvOpLabel,0,body,0,0,0,0,0);
  steps=local_load(b,T_UINT,flow[3]);
- guard(b,operation(b,SpvOpULessThan,T_BOOL,steps,scalar(b,4096)),output,5);
+ if(b->resume){
+  uint32_t run=id(b),paused=id(b);
+  condition=operation(b,SpvOpULessThan,T_BOOL,steps,b->resume_budget);
+  emit(b,SpvOpSelectionMerge,0,0,2,run,0,0,0);
+  emit(b,SpvOpBranchConditional,0,0,3,condition,run,paused,0);
+  emit(b,SpvOpLabel,0,paused,0,0,0,0,0);resume_save(b,flow);
+  store_word(b,offset(b,output,4),scalar(b,5));emit(b,SpvOpReturn,0,0,0,0,0,0,0);
+  emit(b,SpvOpLabel,0,run,0,0,0,0,0);
+ }else guard(b,operation(b,SpvOpULessThan,T_BOOL,steps,scalar(b,4096)),output,5);
  local_store(b,flow[3],offset(b,steps,1));pc=local_load(b,T_UINT,flow[0]);
  pair=operation(b,SpvOpShiftRightLogical,T_UINT,pc,scalar(b,1));
  guard(b,operation(b,SpvOpULessThan,T_BOOL,pair,available),output,2);
@@ -783,6 +883,7 @@ static void control_dispatch(alu_builder *b,uint32_t flow[13],uint32_t base,
  ops[26]=7;ops[27]=loop_start;ops[28]=8;ops[29]=loop_end;
  xe_spv_binary_instruction(b->out,SpvOpSwitch,0,0,ops,30);
  emit(b,SpvOpLabel,0,bad,0,0,0,0,0);store_word(b,offset(b,output,4),scalar(b,3));
+ if(b->resume)state_store(b,1,scalar(b,3));
  emit(b,SpvOpReturn,0,0,0,0,0,0,0);
  emit(b,SpvOpLabel,0,skip,0,0,0,0,0);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,call_block,0,0,0,0,0);
@@ -840,7 +941,7 @@ static void control_dispatch(alu_builder *b,uint32_t flow[13],uint32_t base,
 }
 static void program_entry(alu_builder *b,int control) {
  uint32_t start=id(b),registers=id(b),previous=id(b),position=id(b),exports=id(b),written=id(b),iterator=id(b);
- uint32_t invocation,x,length,output_length,descriptor_count,record,output,desc[8],constants[4],swap;
+ uint32_t invocation,x,length,output_length,descriptor_count,record,output,desc[8],constants[4],swap,generation=0;
  uint32_t h,body,advance,end,index,predicate,cf0,cf1,count,address,sequence,available,word0,word1,word2;
  uint32_t opcode,scalar_opcode,mask_v,mask_s,is_export,valid,a,c,d,value,scalar_value,at;
  uint32_t store_export,store_temp,stored,overlap,union_mask,zero_mask;
@@ -849,7 +950,7 @@ static void program_entry(alu_builder *b,int control) {
  cf0=cf1=count=address=sequence=0;
  emit(b,SpvOpFunction,T_VOID,F_MAIN,2,0,T_MAIN_FN,0,0);
  emit(b,SpvOpLabel,0,start,0,0,0,0,0);
- emit(b,SpvOpVariable,T_PREG_ARRAY,registers,control?1:2,SpvStorageClassFunction,C_NULL_REG,0,0);
+ if(!b->resume)emit(b,SpvOpVariable,T_PREG_ARRAY,registers,control?1:2,SpvStorageClassFunction,C_NULL_REG,0,0);
  if(control){b->register_dirty=id(b);emit(b,SpvOpVariable,T_PREG,b->register_dirty,2,SpvStorageClassFunction,vector(b,0),0,0);}
  emit(b,SpvOpVariable,T_PLOCAL_UINT,previous,2,SpvStorageClassFunction,scalar(b,0),0,0);
  emit(b,SpvOpVariable,T_PREG,position,2,SpvStorageClassFunction,vector(b,0),0,0);
@@ -874,9 +975,9 @@ static void program_entry(alu_builder *b,int control) {
  valid=both(b,operation(b,SpvOpULessThan,T_BOOL,x,descriptor_count),
   both(b,operation(b,SpvOpULessThan,T_BOOL,x,operation(b,SpvOpShiftRightLogical,T_UINT,output_length,scalar(b,3))),
    operation(b,SpvOpULessThanEqual,T_BOOL,descriptor_count,
-    operation(b,SpvOpShiftRightLogical,T_UINT,operation(b,SpvOpISub,T_UINT,length,scalar(b,1)),scalar(b,3)))));
+    operation(b,SpvOpShiftRightLogical,T_UINT,operation(b,SpvOpISub,T_UINT,length,scalar(b,1)),scalar(b,b->resume?4:3)))));
  guard(b,valid,0,0);
- record=offset(b,operation(b,SpvOpIMul,T_UINT,x,scalar(b,8)),1);
+ record=offset(b,operation(b,SpvOpIMul,T_UINT,x,scalar(b,b->resume?16:8)),1);
  output=operation(b,SpvOpIMul,T_UINT,x,scalar(b,8));
  for(i=0;i<8;++i)desc[i]=load_word(b,V_INPUT,offset(b,record,i));
  swap=field(b,desc[1],31,1);desc[1]=field(b,desc[1],0,0x7fffffff);
@@ -887,6 +988,17 @@ static void program_entry(alu_builder *b,int control) {
      fits(b,desc[4],operation(b,SpvOpIMul,T_UINT,desc[5],scalar(b,4)),array_length(b,V_CONSTANT))))));
  valid=both(b,valid,operation(b,SpvOpUGreaterThanEqual,T_BOOL,desc[1],scalar(b,3)));
  guard(b,valid,output,2);
+ if(b->resume){
+  generation=load_word(b,V_INPUT,offset(b,record,8));b->resume_budget=load_word(b,V_INPUT,offset(b,record,9));
+  valid=both(b,yes(b,generation),both(b,yes(b,b->resume_budget),
+   operation(b,SpvOpULessThanEqual,T_BOOL,b->resume_budget,scalar(b,4096))));
+  valid=both(b,valid,operation(b,SpvOpULessThanEqual,T_BOOL,descriptor_count,
+   operation(b,SpvOpUDiv,T_UINT,array_length(b,V_STATE),scalar(b,320))));
+  guard(b,valid,output,2);
+  b->resume_base=operation(b,SpvOpIMul,T_UINT,x,scalar(b,320));
+  b->resume_previous=previous;b->resume_position=position;b->resume_exports=exports;b->resume_written=written;
+  resume_begin(b,flow,generation,output);
+ }
  if(!control){
  cf0=program_word(b,desc[0],swap);cf1=program_word(b,offset(b,desc[0],1),swap);
  count=field(b,cf0,12,7);address=field(b,cf0,0,4095);sequence=field(b,cf0,16,4095);
@@ -1014,6 +1126,7 @@ static void program_entry(alu_builder *b,int control) {
  for(i=0;i<4;++i){at=id(b);emit(b,SpvOpCompositeExtract,T_UINT,at,2,value,i,0,0);store_word(b,offset(b,output,i),at);}
  store_word(b,offset(b,output,4),scalar(b,1));store_word(b,offset(b,output,5),local_load(b,T_UINT,exports));
  store_word(b,offset(b,output,6),local_load(b,T_UINT,written));
+ if(b->resume)state_store(b,1,scalar(b,1));
  emit(b,SpvOpReturn,0,0,0,0,0,0,0);emit(b,SpvOpFunctionEnd,0,0,0,0,0,0,0);
 }
 
@@ -1026,8 +1139,8 @@ static int build(xe_spv_binary *out,int program) {
   UINT32_C(0x7fffffff),UINT32_C(0x80000000),UINT32_C(0x7fffff),
   UINT32_C(0x800000),UINT32_C(0x7f800000),UINT32_C(0x7f7fffff),UINT32_C(0x7fc00000),UINT32_C(0xffffffff)};
  if(!out)return 0;
- xe_spv_binary_reset(out);if(!xe_spv_binary_reserve(out,program==2?12288:program?8192:4096))return 0;
- memset(&b,0,sizeof(b));b.out=out;b.next=64;
+ xe_spv_binary_reset(out);if(!xe_spv_binary_reserve(out,program==3?16384:program>=2?12288:program?8192:4096))return 0;
+ memset(&b,0,sizeof(b));b.out=out;b.next=64;b.resume=program==3;
  v[0]=UINT32_C(0x07230203);v[1]=UINT32_C(0x00010000);v[2]=0;v[3]=0;v[4]=0;
  xe_spv_binary_append(out,v,5);
  emit(&b,SpvOpCapability,0,0,1,SpvCapabilityShader,0,0,0);
@@ -1040,12 +1153,16 @@ static int build(xe_spv_binary *out,int program) {
  emit(&b,SpvOpDecorate,0,0,3,T_ARRAY,SpvDecorationArrayStride,4,0);
  emit(&b,SpvOpDecorate,0,0,2,T_BUFFER,SpvDecorationBufferBlock,0,0);
  emit(&b,SpvOpMemberDecorate,0,0,4,T_BUFFER,0,SpvDecorationOffset,0);
- if(program==2){
+ if(program>=2){
   emit(&b,SpvOpDecorate,0,0,3,T_CONTEXT_ARRAY,SpvDecorationArrayStride,16,0);
   emit(&b,SpvOpDecorate,0,0,2,T_CONTEXT,SpvDecorationBlock,0,0);
   emit(&b,SpvOpMemberDecorate,0,0,4,T_CONTEXT,0,SpvDecorationOffset,0);
   emit(&b,SpvOpDecorate,0,0,3,V_CONTEXT,SpvDecorationDescriptorSet,0,0);
   emit(&b,SpvOpDecorate,0,0,3,V_CONTEXT,SpvDecorationBinding,4,0);
+ }
+ if(b.resume){
+  emit(&b,SpvOpDecorate,0,0,3,V_STATE,SpvDecorationDescriptorSet,0,0);
+  emit(&b,SpvOpDecorate,0,0,3,V_STATE,SpvDecorationBinding,5,0);
  }
  emit(&b,SpvOpDecorate,0,0,3,V_INPUT,SpvDecorationDescriptorSet,0,0);
  emit(&b,SpvOpDecorate,0,0,3,V_INPUT,SpvDecorationBinding,0,0);
@@ -1072,16 +1189,16 @@ static int build(xe_spv_binary *out,int program) {
  emit(&b,SpvOpTypePointer,0,T_PINPUT,2,SpvStorageClassInput,T_U3,0,0);
  emit(&b,SpvOpTypeFunction,0,T_MAIN_FN,1,T_VOID,0,0,0);
  emit(&b,SpvOpTypeFunction,0,T_MATH_FN,3,T_U4,T_U4,T_U4,0);
- if(program==2){emit(&b,SpvOpTypeFunction,0,T_MINMAX_FN,4,T_U4,T_BOOL,T_U4,T_U4);
+ if(program>=2){emit(&b,SpvOpTypeFunction,0,T_MINMAX_FN,4,T_U4,T_BOOL,T_U4,T_U4);
   emit(&b,SpvOpTypeFunction,0,T_SCALAR_MATH_FN,3,T_UINT,T_UINT,T_UINT,0);}
  for(i=0;i<sizeof(values)/sizeof(values[0]);++i){
   alu_constant *c=&b.constant[b.constants++];c->literal=values[i];c->scalar=id(&b);c->vector=id(&b);
   emit(&b,SpvOpConstant,T_UINT,c->scalar,1,c->literal,0,0,0);
   emit(&b,SpvOpConstantComposite,T_U4,c->vector,4,c->scalar,c->scalar,c->scalar,c->scalar);
  }
- if(program==2){
-  static const uint32_t extra[3]={4096,8191,65535};
-  for(i=0;i<3;++i){
+ if(program>=2){
+  static const uint32_t extra[4]={4096,8191,65535,320};
+  for(i=0;i<(b.resume?4u:3u);++i){
    alu_constant *c=&b.constant[b.constants++];c->literal=extra[i];c->scalar=id(&b);c->vector=id(&b);
    emit(&b,SpvOpConstant,T_UINT,c->scalar,1,c->literal,0,0,0);
    emit(&b,SpvOpConstantComposite,T_U4,c->vector,4,c->scalar,c->scalar,c->scalar,c->scalar);
@@ -1096,20 +1213,23 @@ static int build(xe_spv_binary *out,int program) {
   emit(&b,SpvOpVariable,T_PBUFFER,V_PROGRAM,1,SpvStorageClassUniform,0,0,0);
   emit(&b,SpvOpVariable,T_PBUFFER,V_CONSTANT,1,SpvStorageClassUniform,0,0,0);
  }
- if(program==2){
+ if(program>=2){
   emit(&b,SpvOpTypeArray,0,T_CONTEXT_ARRAY,2,T_U4,scalar(&b,10),0,0);
   emit(&b,SpvOpTypeStruct,0,T_CONTEXT,1,T_CONTEXT_ARRAY,0,0,0);
   emit(&b,SpvOpTypePointer,0,T_PCONTEXT,2,SpvStorageClassUniform,T_CONTEXT,0,0);
   emit(&b,SpvOpVariable,T_PCONTEXT,V_CONTEXT,1,SpvStorageClassUniform,0,0,0);
  }
+ if(b.resume)emit(&b,SpvOpVariable,T_PBUFFER,V_STATE,1,SpvStorageClassUniform,0,0,0);
  emit(&b,SpvOpVariable,T_PBUFFER,V_INPUT,1,SpvStorageClassUniform,0,0,0);
  emit(&b,SpvOpVariable,T_PBUFFER,V_OUTPUT,1,SpvStorageClassUniform,0,0,0);
  emit(&b,SpvOpVariable,T_PINPUT,V_INVOCATION,1,SpvStorageClassInput,0,0,0);
- math_function(&b,0);math_function(&b,1);if(program==2){minmax_function(&b);scalar_math_function(&b);}
- if(program)program_entry(&b,program==2);else entry(&b);
+ math_function(&b,0);math_function(&b,1);if(program>=2){minmax_function(&b);scalar_math_function(&b);}
+ if(program)program_entry(&b,program>=2);else entry(&b);
  if(out->failed){out->count=0;return 0;}out->words[3]=b.next;return 1;
 }
 
 int xe_alu_spv_build(xe_spv_binary *out){return build(out,0);}
 int xe_alu_program_spv_build(xe_spv_binary *out){return build(out,1);}
 int xe_alu_control_spv_build(xe_spv_binary *out){return build(out,2);}
+
+int xe_alu_control_resume_spv_build(xe_spv_binary *out){return build(out,3);}

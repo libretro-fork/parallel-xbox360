@@ -20,6 +20,7 @@ import struct
 import subprocess
 import sys
 import time
+import zipfile
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -201,6 +202,115 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
                         cf_step_limit=4096,call_depth_limit=4,
                         pinned_control_fixture_sha256=file_sha256(HERE/"shader_control_program_fixture.h"))
     return coverage
+
+
+def validate_resume_log(text, gpu):
+    unit=re.findall(r"^PASS: resume (\d+) words, integer-only, 1000 same-owner exact builds/no allocations, failure/recovery$",text,re.MULTILINE)
+    cold=re.findall(r"^RESUME_COLD_STORAGE allocations=(\d+) capacity_words=(\d+) local_arrays=(\d+)$",text,re.MULTILINE)
+    if len(unit)!=1 or not 5<int(unit[0])<16384 or cold!=[("1","16384","0")]:
+        raise ValueError("missing or substituted resume module/storage execution")
+    if not gpu:return dict(module_words=int(unit[0]),cold_allocations=1,local_register_arrays=0)
+    if len(re.findall(r"^PASS: original CF limit reference cases=745 native=315; valid long program stops at4096$",text,re.MULTILINE))!=1:
+        raise ValueError("original limit reference missing or substituted")
+    if len(re.findall(r"^RESUME_LONG reference_status=5 limit=4096 valid_steps=9362; no position committed$",text,re.MULTILINE))!=1:
+        raise ValueError("long-program limit reproduction missing")
+    if len(re.findall(r"^PASS: resumable CF cases=770 native=324 long_steps=9362 increments=4096 faults=25; generation and GPU continuation ownership$",text,re.MULTILINE))!=1:
+        raise ValueError("resume GPU execution missing or substituted")
+    if len(re.findall(r"^RESUME_PENDING_PASS outputs=2 copied_bytes=64; partial position not committed$",text,re.MULTILINE))!=1:
+        raise ValueError("pending partial-export check missing")
+    if len(re.findall(r"^RESUME_FAULTS cases=25; .+$",text,re.MULTILINE))!=1:
+        raise ValueError("continuation fault execution missing")
+    chains=re.findall(r"^RESUME_CHAIN round=(\d+) budget=(\d+) dispatches=(\d+) between_pass_cpu_readbacks=(\d+); inactive/reserved/borrowed-register guards intact$",text,re.MULTILINE)
+    reference=[(str(r),str(b),"1","0") for r,b in enumerate((1,7,4096,64))]
+    continuation=[(str(r),str(b),str(n),"0") for r,(b,n) in enumerate(((1,4098),(7,587),(4096,3),(64,627),(1,4098)))]
+    if chains!=reference+continuation:raise ValueError("missing or substituted continuation chains")
+    devices=re.findall(r"^RAW_RESUME_DEVICE Vulkan (.+)$",text,re.MULTILINE)
+    if len(devices)!=2 or len(set(devices))!=1:raise ValueError("resume device identity missing or changed")
+    return dict(module_words=int(unit[0]),cold_allocations=1,local_register_arrays=0,
+                cases=770,native_comparisons=324,long_cf_steps=9362,fault_cases=25,
+                chained_dispatches=sum(n for b,n in ((1,4098),(7,587),(4096,3),(64,627),(1,4098))),
+                between_pass_cpu_readbacks=0,test_only_pending_copy_bytes=64,device=devices[0])
+
+
+def validate_resume(source,build,out,results,env,backend):
+    header=source/"libretro/core_alu_spv.h"
+    content=header.read_text() if header.is_file() else ""
+    available="#define XE_ALU_RESUME_ABI 1" in content
+    if "xe_alu_control_resume_spv_build(" in content and not available:
+        raise ValueError("continuation declaration has no recognized ABI")
+    coverage=dict(available=available,unit=False,vulkan_gpu=False,renderer_integration=False)
+    if not available:
+        coverage["reason"]="historical source has no continuation ABI"
+        return coverage
+    script=source/"tools/tests"/("run_alu_resume_tests.cmd" if WIN else "run_alu_resume_tests.sh")
+    if not script.is_file():raise ValueError("resume ABI has no regression runner")
+    directory=out/"raw-resume";log=results/(source.name+"-resume-build.log")
+    fixture=env.copy()
+    for flag in ("XE_SHADER_BENCH_CSV","XE_SHADER_BENCH_CPU_CSV","XE_ALU_PROGRAM_TIMING_ONLY",
+                 "XE_ALU_PROGRAM_VALID_WORK","XE_ALU_GPU_TIMING_CSV","XE_ALU_GPU_REPEAT","XE_ALU_GPU_RECORD_DELAY"):
+        fixture.pop(flag,None)
+    fixture.update(ALU_RESUME_OUT=str(directory),ALU_RESUME_BUILD=str(build),
+                   ALU_RESUME_UNIT=str(HERE/"core_alu_spv_build_test.c"),
+                   ALU_RESUME_SOURCE=str(HERE/"core_alu_resume_vulkan_test.c"),
+                   ALU_RESUME_BRIDGE=str(HERE/"alu_program_bridge.cc"),
+                   GPU_TESTS="1" if backend.startswith("vulkan") else "0")
+    validator=fixture.get("SPIRV_VALIDATOR") or shutil.which("spirv-val")
+    if validator:fixture["SPIRV_VALIDATOR"]=validator
+    if backend.startswith("vulkan") and not validator:raise ValueError("resume Vulkan checks require spirv-val")
+    if WIN:
+        fixture["FORWARD_FLOW_LINK_FLAGS"]="/CGTHREADS:"+str(JOBS)
+        command=[os.environ.get("COMSPEC","cmd.exe"),"/d","/c",script]
+    else:command=["sh",script]
+    run(command,source,log,fixture,240)
+    observed=validate_resume_log(log.read_text(),fixture["GPU_TESTS"]=="1")
+    coverage.update(observed,unit=True,vulkan_gpu=fixture["GPU_TESTS"]=="1",spirv_validated=bool(validator),
+                    scope="continuation correctness, not renderer fallback or cold-play acceptance")
+    if coverage["vulkan_gpu"]:
+        software=any(name in observed["device"].lower() for name in ("llvmpipe","lavapipe","swiftshader"))
+        if software!=(backend=="vulkan-software"):raise ValueError("wrong resume software/hardware device")
+    names=["arithmetic.spv","program.spv","control.spv","resume.spv"]
+    if coverage["vulkan_gpu"]:names += ["reference/observed.spv","continuation/observed.spv"]
+    coverage["modules"]={}
+    with zipfile.ZipFile(results/(source.name+"-resume-modules.zip"),"w",zipfile.ZIP_DEFLATED) as archive:
+        for name in names:
+            path=directory/name
+            if not path.is_file() or path.stat().st_size<20 or path.stat().st_size%4:
+                raise ValueError("missing resume module: "+name)
+            with path.open("rb") as module:
+                if module.read(4)!=struct.pack("<I",0x07230203):raise ValueError("invalid resume module: "+name)
+            coverage["modules"][name]=dict(bytes=path.stat().st_size,sha256=file_sha256(path))
+            archive.write(path,name)
+    if coverage["modules"]["resume.spv"]["bytes"]!=observed["module_words"]*4:
+        raise ValueError("resume module size disagrees with executed unit")
+    if coverage["vulkan_gpu"]:
+        for module,mode in (("control","reference"),("resume","continuation")):
+            if coverage["modules"][module+".spv"]!=coverage["modules"][mode+"/observed.spv"]:
+                raise ValueError("GPU used a substituted continuation module")
+        probe=directory/("pso.exe" if WIN else "pso")
+        if WIN:
+            command=["cl","/nologo","/TC","/MD","/O2","/W4","/WX",
+                     "/I"+str(source/"third_party/Vulkan-Headers/include"),
+                     HERE/"core_alu_resume_pso_test.c","/Fo"+str(directory/"pso.obj"),"/Fe"+str(probe)]
+        else:
+            command=[env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+                     "-isystem",source/"third_party/Vulkan-Headers/include",HERE/"core_alu_resume_pso_test.c","-ldl","-o",probe]
+        run(command,source,log,env,120)
+        if not probe.is_file():raise ValueError("resume compiler probe missing")
+    return coverage
+
+
+def compare_resume_coverage(coverage,vulkan):
+    candidate=coverage["candidate"];failures=[]
+    for version,previous in coverage.items():
+        if previous.get("available") and not candidate.get("available"):failures.append("resume ABI coverage removed")
+        if previous.get("available") and (not previous.get("unit") or (vulkan and not previous.get("vulkan_gpu"))):
+            failures.append(version+": missing continuation execution")
+        if previous.get("available"):
+            expected=dict(cold_allocations=1,local_register_arrays=0)
+            if vulkan:expected.update(cases=770,native_comparisons=324,long_cf_steps=9362,fault_cases=25,
+                                      between_pass_cpu_readbacks=0,spirv_validated=True)
+            if any(previous.get(k)!=v for k,v in expected.items()):failures.append(version+": continuation contract missing or changed")
+    return dict(revisions=coverage,failures=failures)
 
 
 def validate_loop_reference(source, build, out, log, env, backend):
@@ -562,6 +672,8 @@ def prepare(source, out, results, backend, reuse_build=None):
     if backend.startswith("vulkan"):
         for component,coverage in (("raw_program",program_coverage),("raw_control",control_coverage)):
             if coverage["vulkan_gpu"]:calibrate_gpu_timestamps(source,out,env,component,results)
+    resume_coverage=validate_resume(source,build,out,results,env,backend)
+    (results/(source.name+"-resume-coverage.json")).write_text(json.dumps(resume_coverage,indent=2),encoding="utf-8")
     snapshot=validate_ucode_snapshot(source,build,out,log,env)
     env["XE_SHADER_BENCH_CSV"] = str(out / "prepare.csv")
     env["XE_SHADER_BENCH_NO_DUMP"] = "0"
@@ -632,6 +744,9 @@ def prepare(source, out, results, backend, reuse_build=None):
             dot_zero=validate_renderer_dot_zero(source,build,out,log,env)
             (results/(source.name+"-renderer-dot-zero.json")).write_text(json.dumps(dot_zero,indent=2),encoding="utf-8")
         result={"cpu": cpu, "pso": exe, "source": source, "out": out}
+        if resume_coverage["vulkan_gpu"]:
+            result["raw_resume"]=out/"raw-resume"/("pso.exe" if WIN else "pso")
+            result["raw_resume_module"]=out/"raw-resume/resume.spv"
         if program_coverage["vulkan_gpu"]:
             result["raw_program"]=out / "raw-program/native" / ("test.exe" if WIN else "test")
             result["raw_program_module"]=out / "raw-program/program.spv"
@@ -845,6 +960,32 @@ def compare_raw_program(raw, samples, prefix="raw_program."):
         scope="prototype emission/module and primed PSO/warm completion gates; not cold-play or pure GPU time")
 
 
+def compare_resume_compiler(raw,samples):
+    expected={("raw_resume."+stage,0) for stage in ("module","compute_pso","compute_pso_warm")}
+    observed={}
+    for version,data in raw.items():
+        if set(data)!=expected or any(len(x)!=samples for x in data.values()):
+            raise ValueError("missing resume compiler case/sample: "+version)
+        observed[version]=[dict(stage=k[0],case=k[1],samples=len(v),median=statistics.median(v),
+            p95=percentile(v,.95),p99=percentile(v,.99),maximum=max(v),
+            outliers=sorted(enumerate(v),key=lambda x:x[1],reverse=True)[:5]) for k,v in sorted(data.items())]
+    controlled={v:{k:x for k,x in data.items() if k[0]!="raw_resume.compute_pso"} for v,data in raw.items()}
+    rows=compare(controlled["base"],controlled["candidate"],samples) if "base" in raw and "candidate" in raw else []
+    anchor=compare(controlled["anchor"],controlled["candidate"],samples) if "anchor" in raw and "candidate" in raw else []
+    removed=bool(set(raw)-{"candidate"}) and "candidate" not in raw
+    return dict(comparable=bool(rows),new_component_without_parent="candidate" in raw and "base" not in raw,
+        observed=observed,cases=rows,anchor_cases=anchor,failure=removed or any(x["failures"] for x in rows+anchor),
+        first_use_cache_status="UNVERIFIED: initial driver disk/internal cache is not controlled; observed only",
+        scope="module and retained-first-PSO/private-primed-cache creation; no dispatch or gameplay claim")
+
+
+def validate_resume_compiler_log(text,device):
+    identities=re.findall(r"^RESUME_PSO_DEVICE (.+)$",text,re.MULTILINE)
+    if identities!=[device]:raise ValueError("resume compiler device changed or execution missing")
+    if len(re.findall(r"^PASS: resume compiler-only pipelines=2 bindings=6; no execution or cold-cache claim$",text,re.MULTILINE))!=1:
+        raise ValueError("resume compiler execution missing or substituted")
+
+
 def compare_control_coverage(coverage, vulkan):
     candidate=coverage["candidate"];failures=[]
     if candidate["available"]:
@@ -995,7 +1136,7 @@ def run_comparison(args):
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
-         "shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_shader_vertex_dot_test.c","core_shader_vertex_dot_gpu_fixture.c","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
+         "core_alu_spv_build_test.c","core_alu_resume_vulkan_test.c","core_alu_resume_pso_test.c","run_alu_resume_tests.cmd","run_alu_resume_tests.sh","shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_shader_vertex_dot_test.c","core_shader_vertex_dot_gpu_fixture.c","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
          "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h",
          "core_shader_reentry_test.c","core_shader_reentry_profile_test.c","shader_reentry_profile_bridge.cc",
@@ -1060,6 +1201,9 @@ def run_comparison(args):
     variant_owner_report=compare_variant_owner({v:json.loads((results/(b["source"].name+"-variant-owner.json")).read_text()) for v,b in builds.items()})
     if variant_owner_report["failures"]:raise ValueError("; ".join(variant_owner_report["failures"]))
     (results/"variant-owner-comparison.json").write_text(json.dumps(variant_owner_report,indent=2),encoding="utf-8")
+    resume_report=compare_resume_coverage({v:json.loads((results/(b["source"].name+"-resume-coverage.json")).read_text()) for v,b in builds.items()},args.backend.startswith("vulkan"))
+    (results/"resume-comparison.json").write_text(json.dumps(resume_report,indent=2),encoding="utf-8")
+    if resume_report["failures"]:raise ValueError("; ".join(resume_report["failures"]))
     allocation_profiles={version:read_reentry_allocations(results/"analysis-allocations"/b["source"].name/"allocations.csv") for version,b in builds.items()}
     allocation_report=compare_reentry_allocations(allocation_profiles["base"],allocation_profiles["candidate"])
     (results/"analysis-allocations/comparison.json").write_text(json.dumps(allocation_report,indent=2),encoding="utf-8")
@@ -1080,7 +1224,7 @@ def run_comparison(args):
         for component in ("raw_program","raw_control") if component in b} for v,b in builds.items()}
     manifest["clock_controls"]={version:"clock-checks/"+b["out"].parent.name+"-"+b["out"].name for version,b in builds.items()}
     manifest["prepared_binaries"]={version:{name:dict(sha256=file_sha256(b[name]),bytes=b[name].stat().st_size)
-        for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module","raw_control","raw_control_module","ucode_snapshot"] if name in b} for version,b in builds.items()}
+        for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module","raw_control","raw_control_module","raw_resume","raw_resume_module","ucode_snapshot"] if name in b} for version,b in builds.items()}
     (results/"environment.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     ir={version:spirv_manifest(b["out"]) for version,b in builds.items()}
     for version,b in builds.items():
@@ -1139,12 +1283,22 @@ def run_comparison(args):
                 snapshot_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-ucode.csv"))
                 snapshot_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-ucode-cpu.csv"))
                 run([b["ucode_snapshot"]],b["source"],log,snapshot_env,120)
+            if "raw_resume" in b:
+                resume_env=e.copy()
+                resume_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-resume-compiler.csv"))
+                resume_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-resume-compiler-cpu.csv"))
+                run([b["raw_resume"],b["raw_resume_module"]],b["source"],log,resume_env,120)
+                text=log.read_text()
+                coverage=resume_report["revisions"][version]
+                validate_resume_compiler_log(text,coverage["device"])
     raw={version:read_samples(results/(version+".csv")) for version in builds}
     for version,measurements in raw.items():
         if set(measurements)!=expected_keys(args.backend):
             raise ValueError("missing or substituted expected stage cases: "+version)
     cpu={version:read_samples(results/(version+"-cpu.csv")) for version in builds}
     rows,anchor_rows,cpu_rows=compare_timing_channels(raw,cpu,args.samples)
+    resume_compiler=compare_resume_compiler({v:read_samples(results/(v+"-resume-compiler.csv")) for v,b in builds.items() if "raw_resume" in b},args.samples)
+    resume_compiler["process_cpu_observations"]=compare_resume_compiler({v:read_samples(results/(v+"-resume-compiler-cpu.csv")) for v,b in builds.items() if "raw_resume" in b},args.samples)["observed"]
     snapshot_raw={v:read_samples(results/(v+"-ucode.csv")) for v,b in builds.items() if "ucode_snapshot" in b}
     snapshot_report=compare_ucode_snapshot(snapshot_raw,args.samples)
     snapshot_coverage={v:json.loads((b["ucode_snapshot"].parent/"coverage.json").read_text()) for v,b in builds.items() if "ucode_snapshot" in b}
@@ -1257,13 +1411,15 @@ def run_comparison(args):
                 process_cpu_diagnostics=cpu_rows,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
-                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,raw_gpu_dispatch=gpu_reports,ucode_snapshot=snapshot_report,
-                success=not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not snapshot_report["failure"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(v["failure"] for v in gpu_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
+                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,raw_gpu_dispatch=gpu_reports,ucode_snapshot=snapshot_report,raw_resume_compiler=resume_compiler,
+                success=not resume_compiler["failure"] and not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not snapshot_report["failure"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(v["failure"] for v in gpu_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
                 self_check=bool(args.self_check))
     (results/"comparison.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     summary="# Shader compilation comparison\n\n%s -> %s (%s)\n\n"%(args.base,args.head,args.backend)
     summary+="**%s** across %d procedural stage/case metrics.\n\n"%("PASS" if report["success"] else "FAIL / investigate",len(rows))
     summary+="This is NOT cold-play gameplay signoff. Driver-cache status and missing anchor are recorded in environment.json.\n\n"
+    if resume_compiler["observed"]:
+        summary+="Resumable control flow: validated GPU continuations and ownership faults before timing. Separate module/PSO samples retain the initial PSO and prime a private in-memory cache; initial driver compilation is observed without a cold-cache claim. The new component has no comparable historical parent when its ABI is absent; it is not integrated into rendering.\n\n"
     if any(v["available"] for v in gpu_reports.values()):
         summary+="Separate Vulkan timestamp profiles retain raw ticks/availability/width/period and a host envelope. Existing wall channels stay uninstrumented; primed dispatches use unchanged timing gates. First dispatch is observed without a certified cold-cache claim. Queue interval includes timestamp/dispatch overhead, not isolated ALU cost.\n\n"
     if snapshot_report["available"]:

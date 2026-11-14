@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Add a resumable raw shader-control prototype with reusable generation-owned GPU state, borrowed unwritten registers and no host readback between continuations. Add real GPU long-program, ownership/fault and module-identity tests plus separate compiler-cost CI samples. Rendering integration remains unfinished; this does not yet fix gameplay shader stalls.
+
 - Share the raw control interpreter's dot-product reduction across DP4, DP3 and DP2ADD instead of emitting three copies. Preserve ordered arithmetic and lazy guest operands. This addresses prototype compiler work; the kernel remains outside rendering and does not remove gameplay compilation stalls.
 
 - Correct the CPU vertex interpreter's dot-product accumulation order to match the renderer, preserving negative zero from nonzero underflow. Add C89 host-FP-mode checks and GPU regressions for signed zero and unused relative operands; pixel interpretation is unchanged.

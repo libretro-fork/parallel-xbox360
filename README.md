@@ -8,6 +8,16 @@ startup and strict submission-wide waits still drain when requested. The require
 pipeline can still block its draw, and placeholder/fallback correctness and
 large-shader compile stalls remain unfinished cold-play work.
 
+The separate raw control-flow prototype can resume bounded GPU dispatches using
+generation-owned reusable state. Unwritten registers borrow immutable input;
+written registers stay in their final state slots without a whole-register-bank
+checkpoint copy or host readback between passes. Numerical tests cover a valid
+9,362-step program beyond the original 4,096-step limit and invalid/reused state.
+CI validates the executed module bytes and measures module/PSO creation
+separately. This is not connected to rendering: texture fetch, remaining stages
+and accurate raster output still prevent it from replacing the current fallback.
+State-buffer traffic and continuation execution cost remain to be profiled.
+
 D3D12 integer ownership transfers prepare their final native-DXIL PSOs during initialization and use a fixed lookup during supported color transfers. Parameters are constructed directly in retained deferred-command storage. The bank preserves unsigned storage views, native/emulated 2x MSAA and scaled/native crossings; cross-format normalized/gamma conversions, depth and other legacy transfers remain draw-compilation debt. Procedural RTX 5090 comparisons against the existing native EDRAM emitter pass the declared warmed GPU threshold in both orders, with exact image and work-count checks. An optional dedicated Windows CI runner compares each parent producer through a checked C89 DLL boundary, including its packet layout and resource lifetime; without that runner, hosted hardware coverage remains unverified. These checks do not establish smooth cold gameplay or remove remaining guest-shader compilation.
 The default core build uses native libretro-common XMA, WMA and MP3 audio decoders and needs neither FFmpeg nor libiconv. FFmpeg sources are optional offline comparison dependencies, enabled only with `XENIA_BUILD_FFMPEG_REFERENCE=ON` in CMake or `FFMPEG_REFERENCE=1` in Make. Guest software decodes movie video; removing the host audio dependency does not remove FMV video support.
 
