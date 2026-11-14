@@ -12,7 +12,9 @@ static void release(void *p){if(p)++frees;free(p);}
 #define XE_SPV_BINARY_FREE release
 #include "../../libretro/core_spv_binary.c"
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"ALU build line %u\n",(unsigned)__LINE__);return 1;}}while(0)
-#ifdef XE_ALU_CONTROL_BORROW_REGISTERS
+#ifdef XE_ALU_CONTROL_SHARED_DOT_LOOP
+#define XE_TEST_CONTROL_LOOPS 3u
+#elif defined(XE_ALU_CONTROL_BORROW_REGISTERS)
 #define XE_TEST_CONTROL_LOOPS 2u
 #else
 #define XE_TEST_CONTROL_LOOPS 3u

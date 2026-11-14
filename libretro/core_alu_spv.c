@@ -529,39 +529,55 @@ static uint32_t minmax_call(alu_builder *b,uint32_t opcode,unsigned max_opcode,u
 }
 /* Preserve the renderer's ordered RTZ products and adds. No fused OpDot,
  * reassociation, or vector-wide replicated horizontal addition. */
-static uint32_t dot_alu(alu_builder *b,uint32_t a,uint32_t c,uint32_t d,unsigned lanes) {
- uint32_t products=call(b,F_MUL,a,c),sum=id(b),part,result;unsigned lane;
- emit(b,SpvOpCompositeExtract,T_UINT,sum,2,products,0,0,0);
- for(lane=1;lane<lanes;++lane){
-  part=id(b);emit(b,SpvOpCompositeExtract,T_UINT,part,2,products,lane,0,0);
-  result=id(b);emit(b,SpvOpFunctionCall,T_UINT,result,3,F_SCALAR_ADD,sum,part,0);sum=result;
- }
- if(lanes==2){
-  part=id(b);emit(b,SpvOpCompositeExtract,T_UINT,part,2,d,0,0,0);
-  result=id(b);emit(b,SpvOpFunctionCall,T_UINT,result,3,F_SCALAR_ADD,sum,part,0);sum=result;
- }
- return splat(b,sum);
+static uint32_t dot_alu(alu_builder *b,uint32_t opcode,uint32_t a,uint32_t c,uint32_t d) {
+ uint32_t products=call(b,F_MUL,a,c),first=id(b),extra=id(b),limit;
+ uint32_t initial=b->block,header=id(b),body=id(b),advance=id(b),end=id(b);
+ uint32_t sum=id(b),index=id(b),next_sum=id(b),next_index=id(b),part=id(b),condition,ops[4];
+ emit(b,SpvOpCompositeExtract,T_UINT,first,2,products,0,0,0);
+ emit(b,SpvOpCompositeExtract,T_UINT,extra,2,d,0,0,0);
+ limit=select_word(b,equal(b,opcode,scalar(b,15)),scalar(b,4),scalar(b,3));
+ emit(b,SpvOpBranch,0,0,1,header,0,0,0);
+ emit(b,SpvOpLabel,0,header,0,0,0,0,0);
+ ops[0]=first;ops[1]=initial;ops[2]=next_sum;ops[3]=advance;
+ xe_spv_binary_instruction(b->out,SpvOpPhi,T_UINT,sum,ops,4);
+ ops[0]=scalar(b,1);ops[2]=next_index;
+ xe_spv_binary_instruction(b->out,SpvOpPhi,T_UINT,index,ops,4);
+ condition=operation(b,SpvOpULessThan,T_BOOL,index,limit);
+ /* One ordered add body keeps driver inlining from replicating integer RTZ
+  * arithmetic for each term. Guest operands remain lazily resolved upstream. */
+ emit(b,SpvOpLoopMerge,0,0,3,end,advance,SpvLoopControlDontUnrollMask,0);
+ emit(b,SpvOpBranchConditional,0,0,3,condition,body,end,0);
+ emit(b,SpvOpLabel,0,body,0,0,0,0,0);
+ emit(b,SpvOpVectorExtractDynamic,T_UINT,part,2,products,index,0,0);
+ condition=both(b,equal(b,opcode,scalar(b,17)),equal(b,index,scalar(b,2)));
+ part=select_word(b,condition,extra,part);
+ emit(b,SpvOpFunctionCall,T_UINT,next_sum,3,F_SCALAR_ADD,sum,part,0);
+ emit(b,SpvOpBranch,0,0,1,advance,0,0,0);
+ emit(b,SpvOpLabel,0,advance,0,0,0,0,0);
+ emit(b,SpvOpIAdd,T_UINT,next_index,2,index,scalar(b,1),0,0);
+ emit(b,SpvOpBranch,0,0,1,header,0,0,0);
+ emit(b,SpvOpLabel,0,end,0,0,0,0,0);return splat(b,sum);
 }
 static uint32_t vector_alu(alu_builder *b,uint32_t opcode,uint32_t a,uint32_t c,uint32_t d,int control) {
- uint32_t add=id(b),mul=id(b),mad=id(b),joined=id(b),av,mv,dv,result=id(b),ops[24],cmp=0,cv=0,mm=0,mv_select=0,dot[3]={0},dot_value[3]={0};
+ uint32_t add=id(b),mul=id(b),mad=id(b),joined=id(b),av,mv,dv,result=id(b),ops[24],cmp=0,cv=0,mm=0,mv_select=0,dot=0,dot_value=0,dot_end=0;
  emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
  ops[0]=opcode;ops[1]=add;ops[2]=1;ops[3]=mul;ops[4]=11;ops[5]=mad;
  if(control){unsigned i;cmp=id(b);for(i=0;i<4;++i){ops[6+i*2]=4+i;ops[7+i*2]=cmp;}
   mm=id(b);ops[14]=2;ops[15]=mm;ops[16]=3;ops[17]=mm;
-  for(i=0;i<3;++i){dot[i]=id(b);ops[18+i*2]=15+i;ops[19+i*2]=dot[i];}}
+  dot=id(b);for(i=0;i<3;++i){ops[18+i*2]=15+i;ops[19+i*2]=dot;}}
  xe_spv_binary_instruction(b->out,SpvOpSwitch,0,0,ops,control?24:6);
  emit(b,SpvOpLabel,0,add,0,0,0,0,0);av=call(b,F_ADD,a,c);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,mul,0,0,0,0,0);mv=call(b,F_MUL,a,c);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,mad,0,0,0,0,0);dv=call(b,F_ADD,call(b,F_MUL,a,c),d);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  if(control){emit(b,SpvOpLabel,0,cmp,0,0,0,0,0);cv=compare_alu(b,opcode,a,c,4);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
   emit(b,SpvOpLabel,0,mm,0,0,0,0,0);mv_select=minmax_call(b,opcode,2,a,c);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
-  {unsigned i;for(i=0;i<3;++i){emit(b,SpvOpLabel,0,dot[i],0,0,0,0,0);
-   dot_value[i]=dot_alu(b,a,c,d,4-i);emit(b,SpvOpBranch,0,0,1,joined,0,0,0);}}}
+  emit(b,SpvOpLabel,0,dot,0,0,0,0,0);
+  dot_value=dot_alu(b,opcode,a,c,d);dot_end=b->block;emit(b,SpvOpBranch,0,0,1,joined,0,0,0);}
  emit(b,SpvOpLabel,0,joined,0,0,0,0,0);
  ops[0]=av;ops[1]=add;ops[2]=mv;ops[3]=mul;ops[4]=dv;ops[5]=mad;
  if(control){ops[6]=cv;ops[7]=cmp;ops[8]=mv_select;ops[9]=mm;
-  {unsigned i;for(i=0;i<3;++i){ops[10+i*2]=dot_value[i];ops[11+i*2]=dot[i];}}}
- xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,control?16:6);return result;
+  ops[10]=dot_value;ops[11]=dot_end;}
+ xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,control?12:6);return result;
 }
 static uint32_t lane_splat(alu_builder *b,uint32_t value,uint32_t component) {
  uint32_t word=id(b);emit(b,SpvOpVectorExtractDynamic,T_UINT,word,2,value,component,0,0);return splat(b,word);

@@ -1,0 +1,29 @@
+Private qualification: shared raw dot reduction
+
+The public dot addition passed the local hardware gates but hosted software
+Vulkan rejected raw_control.compute_pso_warm:41.652->54.585ms median, with
+p95/max failures too. Original96 renderer metrics and D3D12 WARP passed. This
+is the unlinked prototype's preparation cost, not evidence explaining a retail
+frame stall. Keep a589-hosted-vulkan-software-v1 and all original samples.
+
+First shared-case candidate preserves19191 GPU invocations/18327 native matches
+but a seven-pair software compiler probe still fails the pre-dot reference:
+primed16.773->19.273ms. The failed candidate and samples remain retained.
+
+The revised candidate uses one bounded ordered-add loop with a DontUnroll hint.
+All dot opcodes share one product and add body. DP2ADD alone consumes D; DP4
+alone includes W. It preserves order, signed zero and unused-relative-source
+behavior. The control module is10525 words; the original arithmetic/program
+entries retain their SHA256 identity. One cold module storage request and1000
+same-owner allocation-free rebuilds remain covered. A structural unit requires
+the extra reduction loop. RTX5090 checks pass19191 packed invocations,18327
+native comparisons and all78 dot contexts; spirv-val passes.
+
+A new seven-pair alternating/reversed software compiler probe, with disk cache
+disabled and the initial pipeline retained, passes the unchanged limits:
+primed original16.995ms / public dot parent22.497ms / revised18.750ms.
+The revised cost remains above the pre-dot reference, within its absolute noise
+floor; this is not a zero-cost feature claim. The probe tests compiler work only,
+not draws, GPU execution or the whole canonical workflow. Physical/internal
+cache coldness is not certified. Full first-parent shader/PSO qualification is
+pending. No retail stutter or accurate-renderer-fallback claim is made.

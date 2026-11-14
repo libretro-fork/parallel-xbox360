@@ -11,6 +11,7 @@
 #define XE_ALU_CONTROL_BORROW_REGISTERS 1
 #define XE_ALU_CONTROL_MINMAX 1
 #define XE_ALU_CONTROL_DOT 1
+#define XE_ALU_CONTROL_SHARED_DOT_LOOP 1
 #ifdef __cplusplus
 extern "C" {
 #endif

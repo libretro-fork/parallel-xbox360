@@ -720,7 +720,11 @@ The raw control prototype supports DP4, DP3 and DP2ADD using ordered RTZ/FTZ
 products and scalar additions. It does not fuse or reassociate reductions;
 DP2ADD alone consumes its third vector operand. Literal numeric, swizzle, mask,
 coissue and temporary-write tests execute these operations as instruction data
-with one prepared test PSO. This remains a compute validation prototype: no
+with one prepared test PSO. All three opcodes share one product/reduction path;
+only DP4 executes the final fourth-term addition. This avoids duplicating the
+integer arithmetic in three compiler case bodies. A bounded ordered loop retains
+one add body. Compiler measurements and rejected candidates are recorded in
+`tools/tests/raw_dot_shared_results.txt`. This remains a compute validation prototype: no
 rendering integration, complete stages/fetch/ROP or cold-play signoff is claimed.
 
 The raw control prototype also supports vector/scalar MAX/MIN through a shared

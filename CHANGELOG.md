@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Share the raw control interpreter's dot-product reduction across DP4, DP3 and DP2ADD instead of emitting three copies. Preserve ordered arithmetic and lazy guest operands. This addresses prototype compiler work; the kernel remains outside rendering and does not remove gameplay compilation stalls.
+
 - Correct the CPU vertex interpreter's dot-product accumulation order to match the renderer, preserving negative zero from nonzero underflow. Add C89 host-FP-mode checks and GPU regressions for signed zero and unused relative operands; pixel interpretation is unchanged.
 
 - Extend the unlinked raw control interpreter with ordered DP4/DP3/DP2ADD, without per-program emission, fused reductions or unused third-source reads. Add independent numeric and coissue/mask/swizzle GPU regressions. This prepares missing fallback arithmetic; it does not remove the renderer's existing draw-path compilation or waits.
