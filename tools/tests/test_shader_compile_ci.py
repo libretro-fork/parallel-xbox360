@@ -189,7 +189,7 @@ class ComparisonTests(unittest.TestCase):
         old=dict(available=True,unit=True,vulkan_gpu=True,boolean_cf_supported=True,
                  nonempty_loops_supported=True,predicate_cf_supported=True,
                  comparison_alu_supported=True,comparison_context_cases=1536,
-                 lazy_source_supported=True,lazy_source_context_cases=64,register_borrow_supported=True,register_context_cases=896,minmax_supported=True,minmax_context_cases=5136,dot_supported=True,dot_context_cases=60,
+                 lazy_source_supported=True,lazy_source_context_cases=64,register_borrow_supported=True,register_context_cases=896,minmax_supported=True,minmax_context_cases=5136,dot_supported=True,dot_context_cases=78,vertex_dot_reference_order_supported=True,vertex_dot_sign_context_cases=12,dot_relative_source_context_cases=6,
                  boolean_context_cases=224,loop_context_cases=32,predicate_context_cases=1254)
         for field,value in [("available",False),("unit",False),("vulkan_gpu",False),
                             ("boolean_cf_supported",False),("nonempty_loops_supported",False),
@@ -199,6 +199,7 @@ class ComparisonTests(unittest.TestCase):
                             ("register_borrow_supported",False),("register_context_cases",0),
                             ("minmax_supported",False),("minmax_context_cases",0),
                             ("dot_supported",False),("dot_context_cases",0),
+                            ("vertex_dot_reference_order_supported",False),("vertex_dot_sign_context_cases",0),("dot_relative_source_context_cases",0),
                             ("boolean_context_cases",0),("loop_context_cases",0)]:
             candidate=dict(old);candidate[field]=value
             self.assertTrue(ci.compare_control_coverage(dict(base=old,candidate=candidate),True)["failures"],field)
@@ -275,6 +276,49 @@ class ComparisonTests(unittest.TestCase):
                 if backend.startswith("vulkan"):
                     with self.assertRaisesRegex(ValueError,"register ownership"):
                         ci.validate_raw_program(root,root,root,root/"log",{},backend,control=True)
+
+    def test_renderer_dot_zero_rejects_changed_goldens_and_missing_execution(self):
+        marker="PASS: 6 actual guest vertex shaders, exact4-word output and feedback guards (test)\n"
+        with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run"):
+            root=Path(folder);data=root/"vertex-dot-zero";data.mkdir()
+            for i in range(6):(data/("call%d.expected"%i)).write_bytes(ci.struct.pack("<4I",*[0x80000000]*4))
+            (root/"log").write_text(marker)
+            self.assertEqual(ci.validate_renderer_dot_zero(root,root,root,root/"log",{})["output_words"],24)
+            for text in ("",marker+marker,marker.replace("6 actual","5 actual")):
+                (root/"log").write_text(text)
+                with self.assertRaisesRegex(ValueError,"GPU execution"):
+                    ci.validate_renderer_dot_zero(root,root,root,root/"log",{})
+            (root/"log").write_text(marker);(data/"call0.expected").write_bytes(ci.struct.pack("<4I",0,0,0,0x80000000))
+            with self.assertRaisesRegex(ValueError,"golden"):
+                ci.validate_renderer_dot_zero(root,root,root,root/"log",{})
+
+    def test_vertex_dot_unit_guard_and_actual_context_capability(self):
+        marker="PASS: vertex dot literal cases=480 host_modes=16; ordered RTZ/SM3\n"
+        with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run") as run:
+            root=Path(folder);(root/"src/xenia/gpu").mkdir(parents=True)
+            header=root/"src/xenia/gpu/shader_interpreter.h"
+            header.write_text("#define XE_SHADER_CPU_VERTEX_DOT_ORDER 1\n")
+            for text in ("",marker+marker,marker.replace("480","479"),marker.replace("16","1")):
+                (root/"log").write_text(text)
+                with self.assertRaisesRegex(ValueError,"vertex dot unit"):
+                    ci.validate_vertex_dot_unit(root,root,root/"log",{})
+            (root/"log").write_text(marker)
+            self.assertTrue(ci.validate_vertex_dot_unit(root,root,root/"log",{})["unit"])
+            header.write_text("");self.assertFalse(ci.validate_vertex_dot_unit(root,root,root/"log",{})["available"])
+        with tempfile.TemporaryDirectory() as folder,patch.object(ci,"run") as run:
+            root=Path(folder);(root/"src/xenia/gpu").mkdir(parents=True);(root/"libretro").mkdir()
+            (root/"tools/tests").mkdir(parents=True)
+            (root/"src/xenia/gpu/shader_interpreter.h").write_text("#define XE_SHADER_CPU_VERTEX_DOT_ORDER 1\n")
+            (root/"libretro/core_alu_spv.h").write_text("xe_alu_control_spv_build(\n#define XE_ALU_CONTROL_DOT 1\n")
+            (root/"tools/tests"/("run_alu_program_tests.cmd" if ci.WIN else "run_alu_program_tests.sh")).touch()
+            (root/"log").write_text("DOT_CONTEXT replays=78 invocations=156\n")
+            value=ci.validate_raw_program(root,root,root,root/"log",{},"vulkan-hardware",control=True)
+            self.assertEqual(value["dot_context_cases"],78);self.assertEqual(value["dot_relative_source_context_cases"],6)
+            self.assertEqual(value["vertex_dot_sign_context_cases"],12)
+            self.assertIn("XE_VERTEX_DOT_ZERO_REFERENCE",run.call_args.args[3]["ALU_PROGRAM_FLAGS"])
+        ci.validate_dot_workload("DOT_CONTEXT replays=78 invocations=156\n",78)
+        with self.assertRaises(ValueError):ci.validate_dot_workload("DOT_CONTEXT replays=60 invocations=120\n",78)
+        with self.assertRaises(ValueError):ci.validate_dot_workload("",0)
 
     def test_dot_execution_guard(self):
         marker="DOT_CONTEXT replays=60 invocations=120\n"
@@ -545,6 +589,7 @@ class ComparisonTests(unittest.TestCase):
             for i in range(64):
                 (compiled/("shader%03u.spv"%i)).write_bytes(ci.struct.pack("<5I",0x07230203,0x10000,0,1,0))
             def prepare(source_arg,out,results,backend,reuse):
+                (results/(source.name+"-vertex-dot-unit.json")).write_text(json.dumps(dict(available=False,unit=False)))
                 allocation_dir=results/"analysis-allocations"/source.name
                 allocation_dir.mkdir(parents=True,exist_ok=True)
                 allocation_rows=[]

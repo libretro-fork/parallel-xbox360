@@ -182,7 +182,12 @@ int main(int argc,char **argv) {
 #ifdef XE_FLOAT_RTZ_GPU_TEST
   sprintf(path,"%s/call%u.input",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
   i=(uint32_t)fread((unsigned char*)buffers[0].mapped+1024,1,48,file);
-  j=(uint32_t)fgetc(file);fclose(file);if(i!=(which<576?32u:48u) || j!=(uint32_t)EOF)goto done;
+  j=(uint32_t)fgetc(file);fclose(file);
+#ifdef XE_DOT_ZERO_GPU_TEST
+  if(i!=(which%3==2?48u:32u) || j!=(uint32_t)EOF)goto done;
+#else
+  if(i!=(which<576?32u:48u) || j!=(uint32_t)EOF)goto done;
+#endif
 #endif
   if(!cache_buffer(&buffers[0],0))goto done;
   XE_COMPILE_CASE(which);sprintf(path,"%s/call%u.spv",argv[1],which);if(!shader(path,&module))goto done;

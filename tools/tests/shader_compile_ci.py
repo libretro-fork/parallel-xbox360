@@ -112,9 +112,10 @@ def validate_minmax_workload(log):
     if observed!=[("5136","10272")]:raise ValueError("missing or substituted minmax context execution")
 
 
-def validate_dot_workload(log):
+def validate_dot_workload(log,cases=60):
+    if cases not in (60,78):raise ValueError("unsupported dot context count")
     observed=re.findall(r"^DOT_CONTEXT replays=(\d+) invocations=(\d+)$",log,re.MULTILINE)
-    if observed!=[("60","120")]:raise ValueError("missing or substituted dot context execution")
+    if observed!=[(str(cases),str(cases*2))]:raise ValueError("missing or substituted dot context execution")
 
 
 def validate_control_cold_storage(log):
@@ -142,8 +143,11 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
                    ALU_PROGRAM_BRIDGE=str(HERE / "alu_program_bridge.cc"),
                    GPU_TESTS="1" if backend.startswith("vulkan") else "0")
     fixture["ALU_CONTROL_TEST"]="1" if control else "0"
+    reference_header=source/"src/xenia/gpu/shader_interpreter.h"
+    vertex_dot_order=control and reference_header.is_file() and "#define XE_SHADER_CPU_VERTEX_DOT_ORDER 1" in reference_header.read_text()
     if fixture["GPU_TESTS"]=="1":
         fixture["ALU_PROGRAM_FLAGS"]="/DXE_SHADER_COMPILE_BENCH" if WIN else "-DXE_SHADER_COMPILE_BENCH"
+        if vertex_dot_order:fixture["ALU_PROGRAM_FLAGS"]+=" /DXE_VERTEX_DOT_ZERO_REFERENCE" if WIN else " -DXE_VERTEX_DOT_ZERO_REFERENCE"
         fixture["XE_SHADER_BENCH_CSV"]=str(out / ("raw-control-prepare.csv" if control else "raw-program-prepare.csv"))
         fixture["XE_SHADER_BENCH_CPU_CSV"]=str(out / ("raw-control-prepare-cpu.csv" if control else "raw-program-prepare-cpu.csv"))
     if WIN:
@@ -166,20 +170,23 @@ def validate_raw_program(source, build, out, log, env, backend, control=False):
         borrowed_registers="#define XE_ALU_CONTROL_BORROW_REGISTERS 1" in content
         dot="#define XE_ALU_CONTROL_DOT 1" in content
         minmax="#define XE_ALU_CONTROL_MINMAX 1" in content
-        if dot and coverage["vulkan_gpu"]:validate_dot_workload(log.read_text())
+        if dot and coverage["vulkan_gpu"]:validate_dot_workload(log.read_text(),78 if vertex_dot_order else 60)
         if comparison and coverage["vulkan_gpu"]:validate_comparison_workload(log.read_text())
         if lazy_source and coverage["vulkan_gpu"]:validate_lazy_source_workload(log.read_text())
         if borrowed_registers and coverage["vulkan_gpu"]:validate_register_workload(log.read_text())
         if minmax:
             validate_control_cold_storage(log.read_text())
             if coverage["vulkan_gpu"]:validate_minmax_workload(log.read_text())
-        coverage.update(control_flow_version=8 if dot else 7 if minmax else 6 if lazy_source else 5 if comparison else 4 if predicate else 3 if loops else 2 if boolean else 1,
+        coverage.update(control_flow_version=9 if vertex_dot_order else 8 if dot else 7 if minmax else 6 if lazy_source else 5 if comparison else 4 if predicate else 3 if loops else 2 if boolean else 1,
                         boolean_cf_supported=boolean,nonempty_loops_supported=loops,
                         predicate_cf_supported=predicate,
                         comparison_alu_supported=comparison,
                         lazy_source_supported=lazy_source,
                         register_borrow_supported=borrowed_registers,minmax_supported=minmax,
-                        dot_supported=dot,dot_context_cases=60 if dot and coverage["vulkan_gpu"] else 0,
+                        dot_supported=dot,dot_context_cases=(78 if vertex_dot_order else 60) if dot and coverage["vulkan_gpu"] else 0,
+                        vertex_dot_reference_order_supported=vertex_dot_order,
+                        vertex_dot_sign_context_cases=12 if vertex_dot_order and coverage["vulkan_gpu"] else 0,
+                        dot_relative_source_context_cases=6 if vertex_dot_order and coverage["vulkan_gpu"] else 0,
                         pinned_dot_fixture_sha256=file_sha256(HERE/"shader_dot_fixture.h"),
                         minmax_context_cases=5136 if minmax and coverage["vulkan_gpu"] else 0,
                         cold_control_allocations=1 if minmax else None,
@@ -419,6 +426,61 @@ def validate_reentry_allocations(source,build,results,env):
     return directory/"allocations.csv"
 
 
+def validate_renderer_dot_zero(source,build,out,log,env):
+    directory=out/"vertex-dot-zero";directory.mkdir(parents=True,exist_ok=True)
+    fixture=env.copy();fixture.update(FORWARD_FLOW_BUILD=str(build),FORWARD_FLOW_OUT=str(directory),
+        FORWARD_FLOW_SOURCE=str(HERE/"core_shader_vertex_dot_gpu_fixture.c"),
+        FORWARD_FLOW_BRIDGE=str(HERE/"float_rtz_bridge.cc"))
+    if WIN:
+        fixture["FORWARD_FLOW_FLAGS"]="/I"+str(HERE)
+        fixture["FORWARD_FLOW_LINK_FLAGS"]="/CGTHREADS:"+str(JOBS)
+        run([os.environ.get("COMSPEC","cmd.exe"),"/d","/c",source/"tools/tests/run_forward_flow_tests.cmd"],source,log,fixture)
+        binary=directory/"gpu.exe"
+        run(["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/D_CRT_SECURE_NO_WARNINGS",
+            "/DXE_VERTEX_TEST_CASES=6","/DXE_FLOAT_RTZ_GPU_TEST","/DXE_DOT_ZERO_GPU_TEST",
+            "/I"+str(source/"third_party/Vulkan-Headers/include"),HERE/"core_shader_call_vulkan_test.c",
+            "/Fo"+str(directory/"gpu.obj"),"/Fe"+str(binary)],source,log,env)
+    else:
+        fixture["FORWARD_FLOW_FLAGS"]="-I"+str(HERE)
+        fixture["CXX"]=env.get("CXX","c++")+" -Wl,--strip-debug"
+        run(["sh",source/"tools/tests/run_forward_flow_tests.sh"],source,log,fixture)
+        binary=directory/"gpu"
+        run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+            "-DXE_VERTEX_TEST_CASES=6","-DXE_FLOAT_RTZ_GPU_TEST","-DXE_DOT_ZERO_GPU_TEST",
+            "-isystem",source/"third_party/Vulkan-Headers/include",HERE/"core_shader_call_vulkan_test.c","-ldl","-o",binary],source,log,env)
+    for which in range(6):
+        expected=(directory/("call%d.expected"%which)).read_bytes()
+        if expected!=struct.pack("<4I",*[0x80000000]*4):raise ValueError("substituted renderer dot zero golden")
+    run([binary,directory],source,log,env,60)
+    if len(re.findall(r"^PASS: 6 actual guest vertex shaders, exact4-word output and feedback guards",log.read_text(),re.MULTILINE))!=1:
+        raise ValueError("renderer dot zero GPU execution missing or substituted")
+    return dict(cases=6,native_rtz_cases=3,portable_rtz_cases=3,gpu=True,output_words=24,
+                scope="actual vertex dot sign; not hardware-console certification or cold-play signoff")
+
+
+def validate_vertex_dot_unit(source,out,log,env):
+    header=source/"src/xenia/gpu/shader_interpreter.h"
+    available=header.is_file() and "#define XE_SHADER_CPU_VERTEX_DOT_ORDER 1" in header.read_text()
+    coverage=dict(available=available,unit=False)
+    if not available:return coverage
+    directory=out/"vertex-dot-unit";directory.mkdir(parents=True,exist_ok=True)
+    binary=directory/("unit.exe" if WIN else "unit")
+    if WIN:
+        command=["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/I"+str(source),
+                 HERE/"core_shader_vertex_dot_test.c","/Fo"+str(directory/"unit.obj"),"/Fe"+str(binary)]
+    else:
+        command=[env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wdeclaration-after-statement",
+                 "-Wall","-Wextra","-Werror","-O2","-fsanitize=address,undefined","-I"+str(source),
+                 HERE/"core_shader_vertex_dot_test.c","-o",binary]
+    run(command,source,log,env);run([binary],source,log,env,30)
+    observed=re.findall(r"^PASS: vertex dot literal cases=(\d+) host_modes=(\d+);",log.read_text(),re.MULTILINE)
+    if len(observed)!=1 or tuple(map(int,observed[0])) not in ((480,16),(30,1)):
+        raise ValueError("vertex dot unit execution missing or substituted")
+    coverage.update(unit=True,cases=int(observed[0][0]),host_modes=int(observed[0][1]),
+                    scope="CPU vertex RTZ order; pixel interpreter rounding unchanged")
+    return coverage
+
+
 def prepare(source, out, results, backend, reuse_build=None):
     out.mkdir(parents=True,exist_ok=True)
     env = os.environ.copy()
@@ -442,6 +504,8 @@ def prepare(source, out, results, backend, reuse_build=None):
             run(["cmake", "--build", build, "--target", "xenia-libretro", "--parallel", JOBS], source, log, env)
         else:
             run(["make", "-j" + str(JOBS)], source, log, env)
+    vertex_dot_unit=validate_vertex_dot_unit(source,out,log,env)
+    (results/(source.name+"-vertex-dot-unit.json")).write_text(json.dumps(vertex_dot_unit,indent=2),encoding="utf-8")
     diagnostic_coverage=validate_analysis_text(source,build,out,results,env)
     (results/(source.name+"-"+out.name+"-analysis-text.json")).write_text(json.dumps(diagnostic_coverage,indent=2),encoding="utf-8")
     validate_reentry_allocations(source,build,results,env)
@@ -524,6 +588,8 @@ def prepare(source, out, results, backend, reuse_build=None):
                      "-DXE_VERTEX_TEST_CASES=704","-DXE_FLOAT_RTZ_GPU_TEST","-isystem",source / "third_party/Vulkan-Headers/include",
                      HERE / "core_shader_call_vulkan_test.c","-ldl","-o",float_exe],source,log,env)
             run([float_exe,out / "float-correctness"],source,log,env,120)
+            dot_zero=validate_renderer_dot_zero(source,build,out,log,env)
+            (results/(source.name+"-renderer-dot-zero.json")).write_text(json.dumps(dot_zero,indent=2),encoding="utf-8")
         result={"cpu": cpu, "pso": exe, "source": source, "out": out}
         if program_coverage["vulkan_gpu"]:
             result["raw_program"]=out / "raw-program/native" / ("test.exe" if WIN else "test")
@@ -746,10 +812,10 @@ def compare_control_coverage(coverage, vulkan):
     for version in ("base","anchor"):
         if version not in coverage:continue
         previous=coverage[version]
-        for feature in ("available","boolean_cf_supported","nonempty_loops_supported","predicate_cf_supported","comparison_alu_supported","lazy_source_supported","register_borrow_supported","minmax_supported","dot_supported"):
+        for feature in ("available","boolean_cf_supported","nonempty_loops_supported","predicate_cf_supported","comparison_alu_supported","lazy_source_supported","register_borrow_supported","minmax_supported","dot_supported","vertex_dot_reference_order_supported"):
             if previous.get(feature,False) and not candidate.get(feature,False):
                 failures.append(version+": removed "+feature)
-        for feature in ("boolean_context_cases","loop_context_cases","predicate_context_cases","comparison_context_cases","lazy_source_context_cases","register_context_cases","minmax_context_cases","dot_context_cases"):
+        for feature in ("boolean_context_cases","loop_context_cases","predicate_context_cases","comparison_context_cases","lazy_source_context_cases","register_context_cases","minmax_context_cases","dot_context_cases","vertex_dot_sign_context_cases","dot_relative_source_context_cases"):
             if previous.get(feature,0)>candidate.get(feature,0):failures.append(version+": reduced "+feature)
     return dict(revisions=coverage,failures=failures)
 
@@ -888,7 +954,7 @@ def run_comparison(args):
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
-         "shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
+         "shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_shader_vertex_dot_test.c","core_shader_vertex_dot_gpu_fixture.c","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
          "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h",
          "core_shader_reentry_test.c","core_shader_reentry_profile_test.c","shader_reentry_profile_bridge.cc",
@@ -902,7 +968,8 @@ def run_comparison(args):
                                     software_frac_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     partial_mad_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     software_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
-                                    hardware_alu_cases=704 if args.backend=="vulkan-hardware" else 0,alu_additions=[32,96,256],
+                                    hardware_alu_cases=704 if args.backend=="vulkan-hardware" else 0,
+                                    hardware_dot_zero_cases=6 if args.backend=="vulkan-hardware" else 0,alu_additions=[32,96,256],
                                     profiles="VS/PS, native/portable swizzle,1x/4x",batch=4)
     manifest["raw_valid_work_profile"]=dict(version=1,active_program=363,active_control=315,
         inactive="early bounds rejection; no payload compaction; mixed fault coverage retained")
@@ -942,6 +1009,11 @@ def run_comparison(args):
             if source.resolve().parent!=work or target.parent!=source.resolve() or source.resolve()==ROOT:
                 raise ValueError("unsafe private build cleanup target")
             if target.exists():shutil.rmtree(target)
+    vertex_dot_units={v:json.loads((results/(b["source"].name+"-vertex-dot-unit.json")).read_text()) for v,b in builds.items()}
+    if any(x["available"] and not x["unit"] for x in vertex_dot_units.values()):raise ValueError("vertex dot unit coverage missing")
+    if any(x["available"] for v,x in vertex_dot_units.items() if v!="candidate") and not vertex_dot_units["candidate"]["available"]:
+        raise ValueError("vertex dot unit coverage removed")
+    (results/"vertex-dot-unit-comparison.json").write_text(json.dumps(vertex_dot_units,indent=2),encoding="utf-8")
     allocation_profiles={version:read_reentry_allocations(results/"analysis-allocations"/b["source"].name/"allocations.csv") for version,b in builds.items()}
     allocation_report=compare_reentry_allocations(allocation_profiles["base"],allocation_profiles["candidate"])
     (results/"analysis-allocations/comparison.json").write_text(json.dumps(allocation_report,indent=2),encoding="utf-8")

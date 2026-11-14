@@ -9,6 +9,8 @@
 
 #ifndef XENIA_GPU_SHADER_INTERPRETER_H_
 #define XENIA_GPU_SHADER_INTERPRETER_H_
+#define XE_SHADER_CPU_VERTEX_DOT_ORDER 1
+
 
 #include <algorithm>
 #include <cstddef>

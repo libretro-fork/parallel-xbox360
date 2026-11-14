@@ -707,6 +707,15 @@ and original coissue inputs. This prototype is still unlinked from rendering;
 these component changes do not establish improved retail frame times or remove
 draw-path compilation. See `tools/tests/register_borrow_results.txt`.
 
+The CPU vertex interpreter used by draw-extent estimation starts dot accumulation
+from its first product, matching the renderer. A synthetic leading positive zero
+previously changed all-negative underflow results. The ordered RTZ/SM3 helper is
+C89 and does not change host FP control modes; the pixel interpreter is unchanged.
+Tests retain the original numeric corpus and add explicit signed-zero and unused
+relative-source cases. This numeric correction is separate from the remaining
+shader compilation and accurate-fallback work. See
+`tools/tests/vertex_dot_order_results.txt` for coverage and qualification status.
+
 The raw control prototype supports DP4, DP3 and DP2ADD using ordered RTZ/FTZ
 products and scalar additions. It does not fuse or reassociate reductions;
 DP2ADD alone consumes its third vector operand. Literal numeric, swizzle, mask,

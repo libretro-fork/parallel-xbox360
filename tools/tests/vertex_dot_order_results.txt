@@ -1,0 +1,41 @@
+PRIVATE FEATURE — final qualification pending
+
+An actual renderer probe (native and portable RTZ, DP4/DP3/DP2ADD) produces -0
+in all four output components when nonzero products underflow negatively. The
+raw control kernel agrees. The previous production CPU vertex interpreter adds
+a synthetic +0 before the first product and returns +0 instead. This mismatch
+was reproduced at raw invocation9161; the changed production interpreter passes
+that same diagnostic and all original mixed program tests. No GPU shader
+translation algorithm is changed, and pixel interpretation remains unchanged.
+
+New C89 helper: ordered first product, SM3 zero/denormal-input suppression,
+finite integer RTZ products/additions, no fused/reassociated operation or host
+FP-mode modification. Strict MSVC C89 and GCC ASan+UBSan unit tests pass480
+literal cases under16 x86 host rounding/FTZ/DAZ combinations. Non-x86 tests run
+30 literal cases; additional non-x86 host-mode variation remains unverified.
+
+Actual changed production interpreter, typed native adapter and RTX5090 kernel:
+19191 packed invocations,18327 native comparisons,9224 extra context replays.
+Dot coverage grows60->78 contexts/156 invocations:12 signed-zero replays plus6
+relative-third-source replays. Unused r[aL+63] is tested with aL=255; DP4/DP3
+ignore it, whereas DP2ADD explicitly reports the prototype's unsupported range.
+All old5136 minmax,896 register,64 lazy and1536 comparison contexts remain.
+The original fallback compute module is unchanged and remains outside rendering.
+
+Six independent actual-renderer vertex draws, native/portable RTZ, validate all24
+output words and feedback guards against literal -0. Initial diagnostic failures
+are retained: the first fixture incorrectly inherited XYZ zero normalization from
+an older numeric test, and the second used a704-case input-size rule for a new
+six-case dataset. Correcting the fixture and using explicit32/48-byte input rules
+produced the six-draw pass; no renderer code or tolerance was changed for it.
+
+CI runs the C89 unit when the production CPU capability is present, validates the
+new78-case context marker and flags, rejects coverage removal and substituted
+unit/GPU outputs, and runs the independent six-draw test only on the hardware
+RTZ job alongside the original704 cases. Original timed workloads remain intact.
+
+REMAINING: final full native/ASan/Make builds, exact-parent shader/PSO comparison,
+mailbox application validation and hosted CI. Focused tests currently reuse
+support archives with explicitly compiled production interpreter code; this is
+not full renderer/lifecycle validation. No retail FPS, console-hardware numeric
+certification or shader-stutter fix is claimed.

@@ -196,7 +196,7 @@ static unsigned extra_which(unsigned which,unsigned invocation) {
 }
 static void extra_context(uint32_t *bank,unsigned which) {
 #if XE_DOT_CASES
- if(which>=XE_DOT_FIRST){memset(bank,0,160);return;}
+ if(which>=XE_DOT_FIRST){dot_context(bank,which-XE_DOT_FIRST);return;}
 #endif
 #if XE_MINMAX_CASES
  if(which>=XE_MINMAX_FIRST){minmax_context(bank,which-XE_MINMAX_FIRST);return;}
@@ -222,7 +222,7 @@ static void extra_context(uint32_t *bank,unsigned which) {
 }
 static unsigned extra_status(unsigned which) {
 #if XE_DOT_CASES
- if(which>=XE_DOT_GOLDEN_FIRST)return 1;
+ if(which>=XE_DOT_GOLDEN_FIRST)return dot_status(which-XE_DOT_GOLDEN_FIRST);
 #endif
 #if XE_MINMAX_CASES
  if(which>=XE_MINMAX_GOLDEN_FIRST)return minmax_status(which-XE_MINMAX_GOLDEN_FIRST);
@@ -663,7 +663,7 @@ int main(void){
    }else{for(lane=0;lane<7;++lane)if(lane!=4)CHECK(out[i*8+lane]==0x6d6d6d6du);}
    CHECK(out[i*8+7]==0x6d6d6d6du);++cases;
 #if XE_DOT_CASES
-   if(round>=3+XE_DOT_FIRST){CHECK(out[i*8+5]==1);++dot_invocations;}
+   if(round>=3+XE_DOT_FIRST){if(status==1)CHECK(out[i*8+5]==1);++dot_invocations;}
 #endif
 #if XE_MINMAX_CASES
    if(round>=3+XE_MINMAX_FIRST && round<3+XE_DOT_FIRST){if(status==1)CHECK(out[i*8+5]==1);++minmax_invocations;}

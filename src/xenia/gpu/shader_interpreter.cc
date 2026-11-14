@@ -8,6 +8,7 @@
  */
 
 #include "xenia/gpu/shader_interpreter.h"
+#include "libretro/core_shader_vertex_dot.h"
 #include "libretro/core_alu_operand.h"
 #include "libretro/core_vertex_address.h"
 
@@ -424,42 +425,57 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         }
       } break;
       case ucode::AluVectorOpcode::kDp4: {
-        vector_result[0] = 0.0f;
-        for (uint32_t i = 0; i < 4; ++i) {
-          // Direct3D 9 behavior (0 or denormal * anything = +0).
-          // Doing the addition even for zero operands because +0 + -0 must be
-          // +0.
-          vector_result[0] = GuestAdd(vector_result[0],
-              (vector_operands[0][i] && vector_operands[1][i])
-                  ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
-                  : 0.0f);
+        if (shader_type_ == xenos::ShaderType::kVertex) {
+          vector_result[0] = xe_shader_vertex_dot_rtz(
+              vector_operands[0], vector_operands[1], 4u, nullptr);
+        } else {
+          vector_result[0] = 0.0f;
+          for (uint32_t i = 0; i < 4; ++i) {
+            // Direct3D 9 behavior (0 or denormal * anything = +0).
+            // Doing the addition even for zero operands because +0 + -0 must be
+            // +0.
+            vector_result[0] = GuestAdd(vector_result[0],
+                (vector_operands[0][i] && vector_operands[1][i])
+                    ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                    : 0.0f);
+          }
         }
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kDp3: {
-        vector_result[0] = 0.0f;
-        for (uint32_t i = 0; i < 3; ++i) {
-          // Direct3D 9 behavior (0 or denormal * anything = +0).
-          // Doing the addition even for zero operands because +0 + -0 must be
-          // +0.
-          vector_result[0] = GuestAdd(vector_result[0],
-              (vector_operands[0][i] && vector_operands[1][i])
-                  ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
-                  : 0.0f);
+        if (shader_type_ == xenos::ShaderType::kVertex) {
+          vector_result[0] = xe_shader_vertex_dot_rtz(
+              vector_operands[0], vector_operands[1], 3u, nullptr);
+        } else {
+          vector_result[0] = 0.0f;
+          for (uint32_t i = 0; i < 3; ++i) {
+            // Direct3D 9 behavior (0 or denormal * anything = +0).
+            // Doing the addition even for zero operands because +0 + -0 must be
+            // +0.
+            vector_result[0] = GuestAdd(vector_result[0],
+                (vector_operands[0][i] && vector_operands[1][i])
+                    ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                    : 0.0f);
+          }
         }
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kDp2Add: {
-        // Doing the addition even for zero operands because +0 + -0 must be +0.
-        vector_result[0] = 0.0f;
-        for (uint32_t i = 0; i < 2; ++i) {
-          // Direct3D 9 behavior (0 or denormal * anything = +0).
-          vector_result[0] = GuestAdd(vector_result[0],
-              (vector_operands[0][i] && vector_operands[1][i])
-                  ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
-                  : 0.0f);
+        if (shader_type_ == xenos::ShaderType::kVertex) {
+          vector_result[0] = xe_shader_vertex_dot_rtz(
+              vector_operands[0], vector_operands[1], 2u, &vector_operands[2][0]);
+        } else {
+          // Doing the addition even for zero operands because +0 + -0 must be +0.
+          vector_result[0] = 0.0f;
+          for (uint32_t i = 0; i < 2; ++i) {
+            // Direct3D 9 behavior (0 or denormal * anything = +0).
+            vector_result[0] = GuestAdd(vector_result[0],
+                (vector_operands[0][i] && vector_operands[1][i])
+                    ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                    : 0.0f);
+          }
+          vector_result[0] = GuestAdd(vector_result[0], vector_operands[2][0]);
         }
-        vector_result[0] = GuestAdd(vector_result[0], vector_operands[2][0]);
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kCube: {
