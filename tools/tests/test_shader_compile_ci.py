@@ -145,6 +145,36 @@ class ComparisonTests(unittest.TestCase):
             changed=dict(new);changed[field]=0
             self.assertTrue(ci.compare_resume_coverage(dict(base=old,candidate=changed),True)["failures"])
 
+    def test_saturation_execution_requires_all_cpu_and_literal_work(self):
+        device="vendor=1 device=2 driver=3 name=test"
+        text="SATURATION_DEVICE "+device+" validation=1\nPASS: saturation cases=160 endian_modes=2 budgets=2 native=640 literals=640 pipelines=1 between_pass_readbacks=0\nREFERENCE_DOMAIN rejections=0 expected=0 literals_only=0\n"
+        observed=ci.validate_saturation_log(text,device,True)
+        self.assertTrue(observed["saturation_gpu"])
+        self.assertFalse(observed["saturation_specialized_denorm_agreement"])
+        for before,after in (("native=640","native=0"),("cases=160","cases=159"),("budgets=2","budgets=1"),
+                             ("endian_modes=2","endian_modes=1"),("literals=640","literals=639"),
+                             ("pipelines=1","pipelines=160"),("readbacks=0","readbacks=1"),
+                             ("validation=1","validation=0"),("literals_only=0","literals_only=1")):
+            with self.assertRaises(ValueError):ci.validate_saturation_log(text.replace(before,after),device,True)
+        for changed in (text+text,text+"VUID-test\n",text.replace(device,"other")):
+            with self.assertRaises(ValueError):ci.validate_saturation_log(changed,device,True)
+
+    def test_saturation_coverage_cannot_remove_work(self):
+        old=dict(available=True,unit=True,vulkan_gpu=True,cold_allocations=1,local_register_arrays=0,
+                 cases=770,native_comparisons=324,long_cf_steps=9362,fault_cases=25,
+                 between_pass_cpu_readbacks=0,spirv_validated=True)
+        new=dict(old,saturation_available=True,saturation_gpu=True,saturation_cases=160,
+                 saturation_native=640,saturation_literals=640,saturation_endian_modes=2,
+                 saturation_budgets=2,saturation_between_pass_readbacks=0)
+        self.assertFalse(ci.compare_resume_coverage(dict(base=old,candidate=new),True)["failures"])
+        self.assertTrue(ci.compare_resume_coverage(dict(base=new,candidate=old),True)["failures"])
+        for field in ("saturation_gpu","saturation_cases","saturation_native","saturation_literals",
+                      "saturation_endian_modes","saturation_budgets"):
+            changed=dict(new);changed[field]=0
+            self.assertTrue(ci.compare_resume_coverage(dict(base=old,candidate=changed),True)["failures"])
+        changed=dict(new,saturation_between_pass_readbacks=1)
+        self.assertTrue(ci.compare_resume_coverage(dict(base=old,candidate=changed),True)["failures"])
+
     def test_selection_cpu_requires_all_equal_work_cases_and_samples(self):
         data={("shader.cpu.selection_1m",i):[.01]*7 for i in range(12)}
         self.assertFalse(ci.compare_selection_cpu(dict(base=data,candidate=data),7,("base","candidate"))["failure"])

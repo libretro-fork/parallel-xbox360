@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Extend the unlinked continuation shader with vector/scalar destination saturation while retaining raw scalar history and borrowed inputs across dispatches. Add masked/coissued, boundary and continuation tests. This remains a CPU-reference prototype: specialized Vulkan subnormal-clamp agreement is unresolved, and it does not remove gameplay compilation stalls.
+
 - Preserve selected subnormal and signed-zero bits in CPU and generic shader MIN/MAX instead of quantizing the chosen value. Keep comparison and arithmetic flushing rules separate. Use a C89 SSE2 four-lane selection path with a scalar fallback, and add independent native-GPU checks plus per-commit CPU throughput gates. This repairs the shader reference used by draw-extent analysis; the generic kernel is still outside rendering and compilation stalls remain unfinished.
 
 - Extend the unlinked GPU shader continuation prototype with loop-relative float constants, using borrowed constant-bank views and lazy operand reads. Keep unsupported a0-relative reads explicit. Add native/literal boundary and continuation checks, including rejected unrepresentable reference descriptors. This is preparation for an accurate fallback; out-of-range agreement with the specialized renderer and rendering integration remain unresolved.

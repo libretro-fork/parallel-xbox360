@@ -309,11 +309,26 @@ def validate_relative_constant_log(text,device,validation):
                 relative_constant_between_pass_readbacks=0,relative_constant_validation=identities[0][1]=="1")
 
 
-def validate_resume_relative_write(source,build,directory,results,env,device,kind="write"):
-    if kind not in ("write","constant"):raise ValueError("unknown continuation-address fixture")
-    target=directory/("relative-"+kind);target.mkdir()
-    log=results/(source.name+"-relative-"+kind+".log");fixture=env.copy()
-    driver=HERE/("core_alu_relative_"+kind+"_vulkan_test.c")
+def validate_saturation_log(text,device,validation):
+    expected="PASS: saturation cases=160 endian_modes=2 budgets=2 native=640 literals=640 pipelines=1 between_pass_readbacks=0"
+    domain="REFERENCE_DOMAIN rejections=0 expected=0 literals_only=0"
+    if text.splitlines().count(expected)!=1 or text.splitlines().count(domain)!=1 or re.search(r"VUID-|Validation Error|ERROR:",text):
+        raise ValueError("saturation CPU/literal execution missing, substituted or invalid")
+    identities=re.findall(r"^SATURATION_DEVICE (.+) validation=([01])$",text,re.MULTILINE)
+    if len(identities)!=1 or identities[0][0]!=device or (validation and identities[0][1]!="1"):
+        raise ValueError("saturation device/validation coverage missing")
+    return dict(saturation_gpu=True,saturation_cases=160,saturation_native=640,
+                saturation_literals=640,saturation_endian_modes=2,saturation_budgets=2,
+                saturation_between_pass_readbacks=0,saturation_validation=identities[0][1]=="1",
+                saturation_specialized_denorm_agreement=False)
+
+
+def validate_resume_case(source,build,directory,results,env,device,kind="write"):
+    if kind not in ("write","constant","saturation"):raise ValueError("unknown continuation fixture")
+    name="saturation" if kind=="saturation" else "relative-"+kind
+    target=directory/name;target.mkdir()
+    log=results/(source.name+"-"+name+".log");fixture=env.copy()
+    driver=HERE/("core_alu_saturation_vulkan_test.c" if kind=="saturation" else "core_alu_relative_"+kind+"_vulkan_test.c")
     fixture.update(XE_ALU_PROGRAM_DUMP=str(target/"observed.spv"),
                    FORWARD_FLOW_SOURCE=str(driver),
                    FORWARD_FLOW_BRIDGE=str(HERE/"alu_program_bridge.cc"),FORWARD_FLOW_OUT=str(target),
@@ -335,8 +350,8 @@ def validate_resume_relative_write(source,build,directory,results,env,device,kin
     run(command,source,log,fixture,240)
     observed=target/"observed.spv"
     if not observed.is_file() or file_sha256(observed)!=file_sha256(directory/"resume.spv"):
-        raise ValueError("relative-address fixture used a substituted continuation module")
-    validator=validate_relative_write_log if kind=="write" else validate_relative_constant_log
+        raise ValueError("continuation fixture used a substituted module")
+    validator={"write":validate_relative_write_log,"constant":validate_relative_constant_log,"saturation":validate_saturation_log}[kind]
     return validator(log.read_text(),device,not WIN)
 
 
@@ -350,7 +365,9 @@ def validate_resume(source,build,out,results,env,backend):
                   relative_write_available="#define XE_ALU_RESUME_RELATIVE_TEMP_WRITE 1" in content,
                   relative_write_gpu=False,
                   relative_constant_available="#define XE_ALU_RESUME_RELATIVE_CONSTANTS 1" in content,
-                  relative_constant_gpu=False)
+                  relative_constant_gpu=False,
+                  saturation_available="#define XE_ALU_RESUME_SATURATION 1" in content,
+                  saturation_gpu=False,saturation_specialized_denorm_agreement=False)
     if not available:
         coverage["reason"]="historical source has no continuation ABI"
         return coverage
@@ -381,13 +398,16 @@ def validate_resume(source,build,out,results,env,backend):
         software=any(name in observed["device"].lower() for name in ("llvmpipe","lavapipe","swiftshader"))
         if software!=(backend=="vulkan-software"):raise ValueError("wrong resume software/hardware device")
         if coverage["relative_write_available"]:
-            coverage.update(validate_resume_relative_write(source,build,directory,results,fixture,observed["device"]))
+            coverage.update(validate_resume_case(source,build,directory,results,fixture,observed["device"]))
         if coverage["relative_constant_available"]:
-            coverage.update(validate_resume_relative_write(source,build,directory,results,fixture,observed["device"],"constant"))
+            coverage.update(validate_resume_case(source,build,directory,results,fixture,observed["device"],"constant"))
+        if coverage["saturation_available"]:
+            coverage.update(validate_resume_case(source,build,directory,results,fixture,observed["device"],"saturation"))
     names=["arithmetic.spv","program.spv","control.spv","resume.spv"]
     if coverage["vulkan_gpu"]:names += ["reference/observed.spv","continuation/observed.spv"]
     if coverage["relative_write_gpu"]:names += ["relative-write/observed.spv"]
     if coverage["relative_constant_gpu"]:names += ["relative-constant/observed.spv"]
+    if coverage["saturation_gpu"]:names += ["saturation/observed.spv"]
     coverage["modules"]={}
     with zipfile.ZipFile(results/(source.name+"-resume-modules.zip"),"w",zipfile.ZIP_DEFLATED) as archive:
         for name in names:
@@ -425,6 +445,13 @@ def compare_resume_coverage(coverage,vulkan):
             failures.append("relative-write capability removed")
         if previous.get("relative_constant_available") and not candidate.get("relative_constant_available"):
             failures.append("relative-constant capability removed")
+        if previous.get("saturation_available") and not candidate.get("saturation_available"):
+            failures.append("saturation capability removed")
+        if vulkan and previous.get("saturation_available"):
+            fields=dict(saturation_gpu=True,saturation_cases=160,saturation_native=640,
+                        saturation_literals=640,saturation_endian_modes=2,saturation_budgets=2,
+                        saturation_between_pass_readbacks=0)
+            if any(previous.get(k)!=v for k,v in fields.items()):failures.append(version+": saturation execution missing")
         if vulkan and previous.get("relative_constant_available"):
             fields=dict(relative_constant_gpu=True,relative_constant_cases=128,relative_constant_native=492,
                         relative_constant_literals=496,relative_constant_reference_rejections=4,
@@ -1573,6 +1600,8 @@ def run_comparison(args):
          "core_alu_spv_build_test.c","core_alu_resume_vulkan_test.c","core_alu_resume_pso_test.c","run_alu_resume_tests.cmd","run_alu_resume_tests.sh","shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_shader_vertex_dot_test.c","core_shader_vertex_dot_gpu_fixture.c","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
          "core_alu_relative_write_vulkan_test.c",
          "core_alu_relative_constant_vulkan_test.c","alu_continuation_address_fixture.h",
+         "core_alu_saturation_vulkan_test.c","shader_saturation_fixture.h",
+         "core_shader_saturation_gpu_fixture.c","shader_saturation_bridge.cc",
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
          "core_shader_ucode_reuse_test.c","core_shader_ucode_reuse_threads_test.c","core_shader_ucode_reuse_stale_test.c",
          "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h","shader_compile_resources.h",

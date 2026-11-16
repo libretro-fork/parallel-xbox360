@@ -1,0 +1,99 @@
+Continuation destination saturation: scope and qualification (2026-11-16)
+======================================================================
+Parent: dbb3ddc13765227e9c34fe12c326fe91834b9429.
+
+This extends only the unlinked continuation kernel. It does not integrate a
+renderer fallback, remove draw-side compilation/waits or certify cold gameplay.
+New algorithms and scenarios are MSVC C89. Typed native translator/reference
+bridges exist only in tests. No new production logging, clock or GPU readback.
+
+The vector and scalar clamp flags apply to their destination views. Unsaturated
+scalar history is written before constructing either view and survives a budget
+boundary; RETAIN_PREV observes that raw history. Unsigned binary32 comparisons
+implement [0,1], positive zero for negative values/NaNs, and preserved positive
+subnormals. This is the CPU-reference policy, not physical Xenos confirmation.
+Partial masks and coissued writes keep their established ownership and order.
+Only this entry accepts clamp flags; older entry modules remain unchanged.
+
+No input snapshot, normalized-code copy, new payload storage or state ABI change.
+Existing register views and continuation storage remain borrowed/owned through
+GPU completion. There is no host readback between passes. The module grows from
+13726 to 13820 words, within the same 16384-word allocation. MSVC and GCC sanitizer
+units pass one cold allocation and 1000 exact same-owner allocation-free rebuilds,
+failure/recovery and zero private register arrays. Arithmetic/program/control
+modules remain byte-identical within each compiler.
+
+Numerical coverage:
+- 160 packed guest programs: 16 boundary words, independent vector/scalar clamp
+  flags, vector/scalar destinations, mixed coissued masks and raw scalar history.
+  Values include both infinities, signed zero, finite boundaries around 0 and 1,
+  positive/negative NaNs, min-normal and a positive subnormal.
+- Two endian modes and two dispatch budgets: 640 literal and 640 actual CPU
+  reference comparisons on the RTX 5090. One initialization pipeline interprets
+  the entire corpus. The existing continuation generation/guard tests still run.
+- GCC C89 ASan/UBSan llvmpipe execution passes 640 literal comparisons with
+  Khronos validation and official SPIR-V validation. It does not execute the
+  Linux CPU bridge locally; that remains full remote-CI coverage.
+- The actual Windows CI helper runs the new fixture, both older relative-address
+  fixtures and the original 770-case/324-native/9362-step/25-fault continuation
+  suite. It hashes the observed module against the unit-generated module.
+  Exact MSVC Release bytes also execute all 770 continuation cases and all 640
+  saturation comparisons. Exact GCC Release blobs execute the same fixtures via
+  a test-only final-word shim; their observed hashes match the timed blobs. No
+  correctness inference is made from differently instrumented emitter output.
+
+An initial MSVC build reordered two independent validation expressions in the
+older program/control modules after the resume-only change. The unchanged-module
+hash assertion caught it before timing. Explicit C sequencing restores the old
+order and byte identity on both compilers. The failed assertion and initial
+modules remain evidence; final MSVC Release numerical execution uses the fixed
+bytes. GCC's continuation bytes were unchanged by that sequencing repair.
+
+Independent native shader observation remains a failed agreement check:
+The real specialized Vulkan translator emits the same 160 programs, with a
+finite position and parameter0 transform feedback before viewport arithmetic.
+Supported SignedZeroInfNanPreserve32 is enabled; explicit FTZ and denormal
+preservation are unsupported on both observed devices. All three vertices and
+feedback guards are inspected. NaN class is checked where payload is unspecified.
+The RTX 5090 driver 32.0.16.2101 differs on cases 126/127 (24 lane observations);
+llvmpipe LLVM 20.1.2 differs on cases 121/123/126/127 (48 lane observations).
+Each difference is positive subnormal 0x00000001 becoming zero under NClamp.
+The diagnostic deliberately returns failure after collecting all cases; it is
+not an acceptance pass. Every other program matches the CPU/literal values.
+
+Earlier portable Features(false) and unsupported FTZ-mode attempts remain as
+failed/unsupported evidence. They are not silently replaced by a passing claim.
+After the selected-bit repair, raw and clamped positive-subnormal CPU/literal
+expectations are 1, not the prior loader-flushed 0. The initial stale literal was
+caught at native fixture case121 before module generation; that failure remains.
+
+Khronos specifies denormal execution controls separately from signed-zero/NaN
+controls; the latter alone does not establish preserved NClamp subnormals:
+https://docs.vulkan.org/spec/latest/appendices/spirvenv.html
+https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html
+Host-GPU output is not proof of physical Xenos saturation semantics. Do not
+change the specialized renderer or declare fallback equivalence merely to make
+these fixtures green. Resolve this edge before activating the fallback.
+
+CI requires all CPU/literal cases, endian modes, budgets, exact module identity,
+device/validation identity and zero intermediate readbacks; missing/substituted
+work or capability removal fails. It explicitly reports
+saturation_specialized_denorm_agreement=false. A component green cannot erase
+that gap or the existing failed main-promotion/cold-play gates.
+
+Compiler-cost qualification uses seven alternating pairs and a reverse-order
+seven pairs on each device, with unchanged module/primed-PSO comparison limits.
+All four cohorts pass those gates. Primed PSO median milliseconds:
+  NVIDIA forward .0131 -> .0140; reverse .0141 -> .0142.
+  llvmpipe forward 20.057266 -> 20.244183; reverse 20.003043 -> 20.068478.
+These small costs are not a speedup. All per-case wall/CPU samples and idle-guard
+checks are retained. Initial driver-cache state is uncontrolled: candidate's
+first NVIDIA pipeline has a 210.42 ms observation versus parent's maximum
+3.7031 ms. The existing comparator retains initial-PSO observations but does not
+gate them as matched cold-driver timings. That observation is neither erased nor
+reported as a passing cold-start comparison. Generic preparation must remain
+before gameplay, and controlled cold-driver/first-correct-frame coverage is open.
+
+Full first-parent CI is pending. This document does not claim lower GPU execution
+cost, frame time, latency or compilation stutter. Specialized denormal agreement
+and the earlier failed main-promotion gates remain unresolved.

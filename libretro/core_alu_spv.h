@@ -16,6 +16,7 @@
 #define XE_ALU_RESUME_ABI 1
 #define XE_ALU_RESUME_RELATIVE_TEMP_WRITE 1
 #define XE_ALU_RESUME_RELATIVE_CONSTANTS 1
+#define XE_ALU_RESUME_SATURATION 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -114,6 +115,12 @@ int xe_alu_control_spv_build(xe_spv_binary *out);
  * Adjusted indices outside the checked 64-register window remain unsupported
  * (status3); wrapping/clamping semantics are not claimed. Original entry points
  * retain their prior addressing restrictions and generated modules.
+ * Vector/scalar saturation clamps only the destination view to [0,1], maps
+ * negatives/NaNs to positive zero, and retains positive subnormal bits. Scalar
+ * history stays unclamped, including across continuation boundaries. This is
+ * the CPU-reference policy, not physical Xenos proof: specialized Vulkan NClamp
+ * may flush those subnormals on devices without explicit denormal control.
+ * Native specialized/fallback agreement for that edge remains unresolved.
  * This is not wired into rendering; missing fetch/stages/ROP remain unresolved.
  */
 enum { XE_ALU_RESUME_DESCRIPTOR_WORDS=16, XE_ALU_RESUME_STATE_WORDS=320 };

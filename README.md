@@ -28,6 +28,13 @@ twelve equal-output CPU workloads as well as shader/PSO costs. See
 [selection precision, throughput and limits](tools/tests/shader_selection_results.txt).
 These component results do not establish stall-free cold gameplay.
 
+The unlinked continuation kernel also supports destination saturation without
+clamping scalar history. Its integer result view follows the CPU reference and
+preserves positive subnormal bits. Specialized Vulkan NClamp can flush those
+bits on devices without explicit denormal controls; agreement for that edge is
+unresolved. CI records this limit separately from the kernel's CPU/literal tests.
+See [saturation coverage and limits](tools/tests/shader_saturation_results.txt).
+
 The continuation prototype also reads loop-relative constants directly from its
 borrowed constant-bank binding. Address flags follow operand order, including
 scalar constant/temp operations; unused operands do not load an address or reject

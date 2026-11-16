@@ -631,6 +631,21 @@ static uint32_t vector_alu(alu_builder *b,uint32_t opcode,uint32_t a,uint32_t c,
 static uint32_t lane_splat(alu_builder *b,uint32_t value,uint32_t component) {
  uint32_t word=id(b);emit(b,SpvOpVectorExtractDynamic,T_UINT,word,2,value,component,0,0);return splat(b,word);
 }
+/* Saturate the destination view only; scalar history remains the raw result.
+ * Unsigned binary32 order handles positive lanes; negatives and NaNs exceed
+ * +infinity and become positive zero. No host/device float-mode dependency. */
+static uint32_t saturated_result(alu_builder *b,uint32_t flag,uint32_t value) {
+ uint32_t unchanged=b->block,clamp=id(b),joined=id(b),clamped,result=id(b),ops[4],condition=yes(b,flag);
+ emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
+ emit(b,SpvOpBranchConditional,0,0,3,condition,clamp,joined,0);
+ emit(b,SpvOpLabel,0,clamp,0,0,0,0,0);
+ clamped=choose(b,operation(b,SpvOpULessThan,T_B4,value,vector(b,UINT32_C(0x3f800000))),
+  value,vector(b,UINT32_C(0x3f800000)));
+ clamped=choose(b,operation(b,SpvOpULessThanEqual,T_B4,value,vector(b,UINT32_C(0x7f800000))),clamped,vector(b,0));
+ emit(b,SpvOpBranch,0,0,1,joined,0,0,0);emit(b,SpvOpLabel,0,joined,0,0,0,0,0);
+ ops[0]=value;ops[1]=unchanged;ops[2]=clamped;ops[3]=clamp;
+ xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,4);return result;
+}
 static uint32_t scalar_alu(alu_builder *b,uint32_t opcode,uint32_t vector_opcode,
  uint32_t d,uint32_t previous,uint32_t registers,uint32_t constants[4],
  uint32_t word0,uint32_t word1,uint32_t word2,uint32_t predicate_state,uint32_t loop_address,uint32_t output) {
@@ -1131,8 +1146,12 @@ static void program_entry(alu_builder *b,int control) {
   a=either(b,is_export,equal(b,field(b,word0,14,1),scalar(b,0)));d=both(b,a,d);
   a=equal(b,field(b,word0,6,1),scalar(b,0));d=both(b,a,d);
  }
- a=equal(b,field(b,word0,24,3),scalar(b,0));d=both(b,a,d);valid=both(b,valid,d);
- valid=both(b,valid,either(b,equal(b,field(b,word0,15,1),scalar(b,0)),equal(b,field(b,word0,0,63),scalar(b,62))));
+ if(!b->resume){a=equal(b,field(b,word0,24,3),scalar(b,0));d=both(b,a,d);}
+ valid=both(b,valid,d);
+ /* Keep the historical operand order explicit when adding resume-only work. */
+ a=equal(b,field(b,word0,0,63),scalar(b,62));
+ c=equal(b,field(b,word0,15,1),scalar(b,0));d=either(b,c,a);
+ valid=both(b,valid,d);
  if(!control)for(i=0;i<3;++i)valid=both(b,valid,equal(b,
   operation(b,SpvOpBitwiseAnd,T_UINT,field(b,word2,31-i,1),field(b,word2,22-i*8,1)),scalar(b,0)));
  guard(b,valid,output,3);
@@ -1145,6 +1164,10 @@ static void program_entry(alu_builder *b,int control) {
   value=vector_alu(b,opcode,a,c,d,0);
  }
  scalar_value=scalar_alu(b,scalar_opcode,opcode,d,previous,registers,constants,word0,word1,word2,control?flow[12]:0,control?flow[11]:0,output);
+ if(b->resume){
+  value=saturated_result(b,field(b,word0,24,1),value);
+  scalar_value=saturated_result(b,field(b,word0,25,1),scalar_value);
+ }
  store_export=id(b);store_temp=id(b);stored=id(b);
  emit(b,SpvOpSelectionMerge,0,0,2,stored,0,0,0);emit(b,SpvOpBranchConditional,0,0,3,is_export,store_export,store_temp,0);
  emit(b,SpvOpLabel,0,store_export,0,0,0,0,0);
