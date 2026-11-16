@@ -103,6 +103,30 @@ class ComparisonTests(unittest.TestCase):
                 self.assertTrue(ci.compare_resume_coverage(dict(base=good,candidate=dict(good,**{field:value})),True)["failures"])
         self.assertFalse(ci.compare_resume_coverage(dict(base=absent,candidate=dict(good,vulkan_gpu=False)),False)["failures"])
 
+    def test_relative_write_execution_requires_all_native_and_literal_work(self):
+        device="vendor=1 device=2 driver=3 name=test"
+        text="RELATIVE_WRITE_DEVICE "+device+" validation=1\nPASS: relative writes cases=48 endian_modes=2 budgets=2 native=180 literals=180 pipelines=1 between_pass_readbacks=0\n"
+        self.assertTrue(ci.validate_relative_write_log(text,device,True)["relative_write_gpu"])
+        for before,after in (("native=180","native=0"),("cases=48","cases=47"),("budgets=2","budgets=1"),
+                             ("literals=180","literals=179"),("readbacks=0","readbacks=1"),("validation=1","validation=0")):
+            with self.assertRaises(ValueError):ci.validate_relative_write_log(text.replace(before,after),device,True)
+        for changed in (text+text,text+"VUID-test\n",text.replace(device,"other")):
+            with self.assertRaises(ValueError):ci.validate_relative_write_log(changed,device,True)
+
+    def test_relative_write_coverage_cannot_be_removed(self):
+        old=dict(available=True,unit=True,vulkan_gpu=True,cold_allocations=1,local_register_arrays=0,
+                 cases=770,native_comparisons=324,long_cf_steps=9362,fault_cases=25,
+                 between_pass_cpu_readbacks=0,spirv_validated=True)
+        new=dict(old,relative_write_available=True,relative_write_gpu=True,relative_write_cases=48,
+                 relative_write_native=180,relative_write_literals=180,relative_write_endian_modes=2,
+                 relative_write_budgets=2,relative_write_between_pass_readbacks=0)
+        self.assertFalse(ci.compare_resume_coverage(dict(base=old,candidate=new),True)["failures"])
+        self.assertTrue(ci.compare_resume_coverage(dict(base=new,candidate=old),True)["failures"])
+        for field in ("relative_write_gpu","relative_write_cases","relative_write_native","relative_write_literals",
+                      "relative_write_endian_modes","relative_write_budgets"):
+            changed=dict(new);changed[field]=0
+            self.assertTrue(ci.compare_resume_coverage(dict(base=old,candidate=changed),True)["failures"])
+
     def test_resume_historical_absence_is_distinct_from_missing_runner(self):
         with tempfile.TemporaryDirectory() as folder:
             source=Path(folder);out=source/"out";results=source/"results"

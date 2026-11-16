@@ -283,13 +283,55 @@ def validate_resume_log(text, gpu):
                 between_pass_cpu_readbacks=0,test_only_pending_copy_bytes=64,device=devices[0])
 
 
+def validate_relative_write_log(text,device,validation):
+    expected="PASS: relative writes cases=48 endian_modes=2 budgets=2 native=180 literals=180 pipelines=1 between_pass_readbacks=0"
+    if text.splitlines().count(expected)!=1 or re.search(r"VUID-|Validation Error|ERROR:",text):
+        raise ValueError("relative-write execution missing, substituted or invalid")
+    identities=re.findall(r"^RELATIVE_WRITE_DEVICE (.+) validation=([01])$",text,re.MULTILINE)
+    if len(identities)!=1 or identities[0][0]!=device or (validation and identities[0][1]!="1"):
+        raise ValueError("relative-write device/validation coverage missing")
+    return dict(relative_write_gpu=True,relative_write_cases=48,relative_write_native=180,
+                relative_write_literals=180,relative_write_endian_modes=2,relative_write_budgets=2,
+                relative_write_between_pass_readbacks=0,relative_write_validation=identities[0][1]=="1")
+
+
+def validate_resume_relative_write(source,build,directory,results,env,device):
+    target=directory/"relative-write";target.mkdir()
+    log=results/(source.name+"-relative-write.log");fixture=env.copy()
+    fixture.update(XE_ALU_PROGRAM_DUMP=str(target/"observed.spv"),
+                   FORWARD_FLOW_SOURCE=str(HERE/"core_alu_relative_write_vulkan_test.c"),
+                   FORWARD_FLOW_BRIDGE=str(HERE/"alu_program_bridge.cc"),FORWARD_FLOW_OUT=str(target),
+                   FORWARD_FLOW_BUILD=str(build),FORWARD_FLOW_LINK_FLAGS="/CGTHREADS:"+str(JOBS))
+    if WIN:
+        fixture["FORWARD_FLOW_FLAGS"]="/I"+str(source/"third_party/Vulkan-Headers/include")+" /I"+str(HERE)
+        fixture["FORWARD_FLOW_OBJECT"]='"'+str(directory/"emitter.obj")+'" "'+str(directory/"binary.obj")+'"'
+        command=[os.environ.get("COMSPEC","cmd.exe"),"/d","/c",source/"tools/tests/run_forward_flow_tests.cmd"]
+    else:
+        fixture["XE_RELATIVE_GPU_VALIDATION"]="1"
+        san=fixture.get("SANITIZER","-fsanitize=address,undefined")
+        run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+             *san.split(),
+             "-I"+str(source),"-I"+str(HERE),"-isystem",source/"third_party/Vulkan-Headers/include",
+             "-c",HERE/"core_alu_relative_write_vulkan_test.c","-o",target/"driver.o"],source,log,fixture,60)
+        fixture.update(CXX=env.get("CXX","c++")+" "+san+" "+str(target/"driver.o")+" "+str(directory/"emitter.o")+" -Wl,--strip-debug",
+                       TEST_SOURCE=str(HERE/"alu_program_bridge.cc"),TEST_BUILD_DIR=str(target))
+        command=["sh",source/"tools/tests/run_shader_publication_tests.sh"]
+    run(command,source,log,fixture,240)
+    observed=target/"observed.spv"
+    if not observed.is_file() or file_sha256(observed)!=file_sha256(directory/"resume.spv"):
+        raise ValueError("relative-write fixture used a substituted continuation module")
+    return validate_relative_write_log(log.read_text(),device,not WIN)
+
+
 def validate_resume(source,build,out,results,env,backend):
     header=source/"libretro/core_alu_spv.h"
     content=header.read_text() if header.is_file() else ""
     available="#define XE_ALU_RESUME_ABI 1" in content
     if "xe_alu_control_resume_spv_build(" in content and not available:
         raise ValueError("continuation declaration has no recognized ABI")
-    coverage=dict(available=available,unit=False,vulkan_gpu=False,renderer_integration=False)
+    coverage=dict(available=available,unit=False,vulkan_gpu=False,renderer_integration=False,
+                  relative_write_available="#define XE_ALU_RESUME_RELATIVE_TEMP_WRITE 1" in content,
+                  relative_write_gpu=False)
     if not available:
         coverage["reason"]="historical source has no continuation ABI"
         return coverage
@@ -319,8 +361,11 @@ def validate_resume(source,build,out,results,env,backend):
     if coverage["vulkan_gpu"]:
         software=any(name in observed["device"].lower() for name in ("llvmpipe","lavapipe","swiftshader"))
         if software!=(backend=="vulkan-software"):raise ValueError("wrong resume software/hardware device")
+        if coverage["relative_write_available"]:
+            coverage.update(validate_resume_relative_write(source,build,directory,results,fixture,observed["device"]))
     names=["arithmetic.spv","program.spv","control.spv","resume.spv"]
     if coverage["vulkan_gpu"]:names += ["reference/observed.spv","continuation/observed.spv"]
+    if coverage["relative_write_gpu"]:names += ["relative-write/observed.spv"]
     coverage["modules"]={}
     with zipfile.ZipFile(results/(source.name+"-resume-modules.zip"),"w",zipfile.ZIP_DEFLATED) as archive:
         for name in names:
@@ -354,6 +399,13 @@ def compare_resume_coverage(coverage,vulkan):
     candidate=coverage["candidate"];failures=[]
     for version,previous in coverage.items():
         if previous.get("available") and not candidate.get("available"):failures.append("resume ABI coverage removed")
+        if previous.get("relative_write_available") and not candidate.get("relative_write_available"):
+            failures.append("relative-write capability removed")
+        if vulkan and previous.get("relative_write_available"):
+            fields=dict(relative_write_gpu=True,relative_write_cases=48,relative_write_native=180,
+                        relative_write_literals=180,relative_write_endian_modes=2,relative_write_budgets=2,
+                        relative_write_between_pass_readbacks=0)
+            if any(previous.get(k)!=v for k,v in fields.items()):failures.append(version+": relative-write execution missing")
         if previous.get("available") and (not previous.get("unit") or (vulkan and not previous.get("vulkan_gpu"))):
             failures.append(version+": missing continuation execution")
         if previous.get("available"):
@@ -1263,6 +1315,7 @@ def run_comparison(args):
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
          "core_alu_spv_build_test.c","core_alu_resume_vulkan_test.c","core_alu_resume_pso_test.c","run_alu_resume_tests.cmd","run_alu_resume_tests.sh","shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_shader_vertex_dot_test.c","core_shader_vertex_dot_gpu_fixture.c","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
+         "core_alu_relative_write_vulkan_test.c",
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
          "core_shader_ucode_reuse_test.c","core_shader_ucode_reuse_threads_test.c","core_shader_ucode_reuse_stale_test.c",
          "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h","shader_compile_resources.h",

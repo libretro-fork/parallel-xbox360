@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Extend the checked GPU continuation-interpreter prototype with masked vector/scalar writes relative to the live loop address. Preserve borrowed input, partial lanes and continuation ownership; reject indices outside its supported register window. Add GPU numerical, fault and compiler-cost checks. This prototype is still separate from rendering and does not resolve gameplay shader stalls.
+
 - Reuse one retired large shader-snapshot allocation with libretro-common atomic ownership transfer. Retention is bounded to 256 KiB plus alignment/metadata, and shutdown drains it after emulator owners stop. Live snapshots remain independent; first-seen and mismatched-size allocations remain. Add contention, allocation-failure and sanitizer stale-view regression checks. This does not remove draw-path compilation or establish smoother gameplay.
 
 - Add test-only D3D12 prepared-color GPU timestamp/work-count comparisons, strict corpus validation and missing-draw rejection. Retain color-bank artifacts in CI. Small hosted WARP controls cannot qualify physical GPU throughput or gameplay stutter.

@@ -1,0 +1,103 @@
+Checked loop-relative temporary writes in the continuation prototype
+===================================================================
+
+Scope
+-----
+This extends xe_alu_control_resume_spv_build, not the live renderer. Accurate
+ready fallback coverage, fetch, complete stages/ROP and removal of existing
+draw-side translation/module/PSO creation and waits remain unfinished. No
+gameplay or cold-play improvement is claimed. Original arithmetic, program
+and non-resumable control entries remain byte-identical to the parent within
+each matched toolchain. The continuation descriptor/state ABI remains 1.
+
+Implementation
+--------------
+New emission/runtime algorithms are MSVC C89. Vector and scalar temporary
+destinations may add the innermost aL value, only after the instruction's
+predicate and destination's nonzero mask pass. Direct writes skip the aL load.
+The existing checked 64-register window rejects adjusted indices outside it
+with terminal status3; no new wrapping/clamping behavior is asserted. Export
+bit14 keeps its literal-zero meaning, and export bit6 remains unsupported.
+
+The adjusted index is used for both copy-on-write register lookup and dirty-bit
+publication. Partial writes preserve the other lanes; vector then scalar writes
+to the same register retain the scalar result where masks overlap. The same
+320-word continuation slot retains results across GPU dispatches. There is no
+new allocation, host-normalized program, register-bank snapshot, release
+timer/logging, wait or compilation worker dependency.
+Existing first-write lane preservation and output/state stores remain necessary.
+
+The continuation module grows from12911 to13094 words (+183, about1.42%). It
+still reserves16384 words once on cold construction and reuses that allocation
+for1000 exact subsequent builds; no function-local64-register array returns.
+
+Correctness completed locally
+----------------------------
+- MSVC /TC /O2 /W4 /WX module owner/failure/reuse tests; Linux GCC strictC89,
+  declaration-after-statement errors, ASan/UBSan and spirv-val Vulkan1.0.
+- Original continuation corpus remains separate and passes on the5090 with
+  MSVC ASan:745 original-limit cases/315 native comparisons, then770 resumable
+  cases/324 native comparisons,9362-step program and25 ownership/fault cases.
+- Additional48 cases cover all destination masks, vector/scalar aliasing and
+  overlapping masks, boundary destinations, negative loop increments, nested
+  counted/repeat loops, zero masks and inactive predicates with invalid unused
+  addresses, plus three checked rejection cases. Native and big-endian programs
+  run at budgets1 and7. Forty-five successful cases give180 native CPU-interpreter
+  comparisons and180 independent literal checks. Failures preserve uncommitted
+  output; inactive output/state records and borrowed program/context/temp words
+  are checked. One pipeline chains64 dispatches with barriers and one final
+  fence per replay; no per-pass CPU readback or staging copy is used.
+- Physical5090: MSVC ASan plus a separate exact-release-emitter module run both
+  pass all180 native and180 literal checks. Hardware validation was not enabled
+  in this qualification (validation=0); no claim of hardware-layer coverage.
+- Software llvmpipe: GCC C89 ASan/UBSan, explicit Khronos validation enabled,
+  no VUID/validation errors;180 independent literal checks. The local software
+  standalone deliberately reports native=0 because no native Linux core link
+  was used. CI's full Linux-core bridge must still execute180 native comparisons.
+- A deliberately linked parent12911-word emitter fails the new fixture at
+  case0/budget1/endian0 with status3 rather than expected1. The fixture therefore
+  detects absence of the new behavior instead of merely testing its own oracle.
+- The Windows CI helper path runs locally and checks exact executed-module
+  identity. The complete Linux CI bridge path remains pending remote CI.
+- Comparison-harness unit tests:80 pass. New tests reject reduced/native-free
+  work, substituted device/module/validation evidence and capability removal.
+
+Matched compiler-cost observations
+---------------------------------
+Uninstrumented current PSO probe, unchanged CI limits, seven alternating pairs
+and reverse seven pairs on each of5090 and llvmpipe. Allfour cohorts pass module
+and primed in-process warm-PSO gates.112 Windows process boundary inspections
+and56 additional Linux inspections are clear; these are known-process snapshots,
+not continuous idleness proofs. Allraw samples, CPU channels, initial-PSO
+observations, module/binary/source hashes and per-case tails remain retained.
+
+Warm-PSO medians, milliseconds (parent -> candidate):
+  5090 forward .0123 -> .0123; reverse .0117 -> .0121.
+  llvmpipe forward18.7674 ->18.9240; reverse18.9757 ->19.0018.
+These values do not establish a speedup. Initial driver disk/internal caches
+were not controlled/certified cold; initial PSOs remain observations, exactly
+as in the existing comparator. No GPU execution/rendering throughput is inferred.
+
+Evidence and retained failed attempts
+------------------------------------
+Private evidence root C:/git/accurate-shader-fallback contains
+resume-relative-module-identity-v1.json, original-msvc-asan-v1, gpu-msvc-v2,
+release-module-gpu-v3, gpu-software-v2, legacy-rejection-v1, ci-hook-windows-v1
+and pso-pairs-v1 under the resume-relative prefix. Exact release module SHA256:
+3b9b6a6f2a75fa96acf9a8f3254e16a2722a25512a1e2053e8b591727729f307.
+
+An initial WSL inline-variable expansion and a CRLF wrapper failed before full
+validation; a GCC misleading-indentation error was fixed without weakening flags.
+A cross-compiler byte comparison also failed: legacy parent modules already
+differ between compilers. Per-toolchain parent/candidate
+checks prove all three old entries unchanged; allfour modules from each toolchain
+validate. MSVC ASan/release also emit different bytes; the exact timed release
+module was subsequently run through the full numerical fixture, not inferred
+from an ASan sibling. Original attempts and timing data were not overwritten.
+
+Release status
+--------------
+Full first-parent hosted shader/PSO qualification and complete renderer/cold-play
+acceptance remain pending. This does not waive older failed DB/D10 shader gates,
+change timing thresholds or cache defaults, promote a new smooth-play reference,
+or claim that an already-bad parent is acceptable gameplay.

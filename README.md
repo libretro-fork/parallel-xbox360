@@ -703,6 +703,15 @@ This helps distinguish valid arithmetic/clause/call/jump work from deliberate
 work-budget exhaustion; it is not a pure GPU timestamp or retail shader replay.
 See `tools/tests/alu_valid_work_results.txt` for scope and measurements.
 
+The experimental raw SPIR-V continuation interpreter supports checked loop-relative
+temporary-register writes for both vector and scalar results. Zero masks and
+inactive predicates skip address work; partial writes preserve the other lanes
+in reusable continuation storage. Unsupported adjusted indices still fail explicitly.
+The original arithmetic/program/control entry points retain their previous modules.
+See `tools/tests/alu_relative_write_results.txt` for numerical and compiler-cost
+checks. Fetch, full shader stages and ROP remain missing, so this prototype is
+still separate from rendering and is not a complete ready fallback.
+
 Shared Vulkan/D3D12 shader microcode snapshots use a C89 owner instead of a
 vector. Construction fills final uninitialized storage once, preserving 32-byte
 alignment for large payloads; readers borrow immutable pointer/count views.

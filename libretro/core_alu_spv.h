@@ -13,6 +13,7 @@
 #define XE_ALU_CONTROL_DOT 1
 #define XE_ALU_CONTROL_SHARED_DOT_LOOP 1
 #define XE_ALU_RESUME_ABI 1
+#define XE_ALU_RESUME_RELATIVE_TEMP_WRITE 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -105,6 +106,12 @@ int xe_alu_control_spv_build(xe_spv_binary *out);
  * no CPU readback is required between those dispatches. Success1 and faults2..4
  * are terminal for that generation. Failures/pending work never commit position.
  * A new generation reuses the same storage, ignoring old register contents.
+ * Vector and scalar temporary destinations may add the live aL index. Address
+ * resolution runs only for nonzero masks on active instructions; coissued
+ * partial writes preserve the other lanes and persist through continuations.
+ * Adjusted indices outside the checked 64-register window remain unsupported
+ * (status3); wrapping/clamping semantics are not claimed. Original entry points
+ * retain their prior addressing restrictions and generated modules.
  * This is not wired into rendering; missing fetch/stages/ROP remain unresolved.
  */
 enum { XE_ALU_RESUME_DESCRIPTOR_WORDS=16, XE_ALU_RESUME_STATE_WORDS=320 };

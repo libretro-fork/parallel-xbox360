@@ -50,7 +50,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y gcc-14 g++-14 make ninja-build libfontconfig1-dev libvulkan1 mesa-vulkan-drivers spirv-tools vulkan-tools
+          sudo apt-get install -y gcc-14 g++-14 make ninja-build libfontconfig1-dev libvulkan1 mesa-vulkan-drivers spirv-tools vulkan-tools vulkan-validationlayers
           echo 'CC=gcc-14' >> "$GITHUB_ENV"
           echo 'CXX=g++-14' >> "$GITHUB_ENV"
       - name: Native MSVC environment

@@ -707,12 +707,27 @@ static uint32_t control_vector_value(alu_builder *b,uint32_t registers,uint32_t 
  ops[0]=value;ops[1]=last;ops[2]=vector(b,0);ops[3]=direct;
  xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,4);return result;
 }
-static void register_write(alu_builder *b,uint32_t registers,uint32_t at,uint32_t mask,uint32_t value) {
+static void register_write(alu_builder *b,uint32_t registers,uint32_t at,uint32_t mask,uint32_t value,
+ uint32_t relative,uint32_t loop_address,uint32_t output) {
  uint32_t write=id(b),joined=id(b),pointer,old,predicate=yes(b,mask);
  emit(b,SpvOpSelectionMerge,0,0,2,joined,0,0,0);
  emit(b,SpvOpBranchConditional,0,0,3,predicate,write,joined,0);
  emit(b,SpvOpLabel,0,write,0,0,0,0,0);
  if(b->resume){
+  /* Address only an actual write. Inactive masks must not touch aL, validate
+   * an unused index or dirty a borrowed register. Keep the direct path lazy. */
+  uint32_t direct=b->block,adjust=id(b),merged=id(b),address=id(b),current,adjusted,last,ops[4],condition;
+  condition=yes(b,relative);
+  emit(b,SpvOpSelectionMerge,0,0,2,merged,0,0,0);
+  emit(b,SpvOpBranchConditional,0,0,3,condition,adjust,merged,0);
+  emit(b,SpvOpLabel,0,adjust,0,0,0,0,0);current=local_load(b,T_U4,loop_address);
+  emit(b,SpvOpCompositeExtract,T_UINT,address,2,current,0,0,0);
+  adjusted=operation(b,SpvOpIAdd,T_UINT,at,address);
+  guard(b,operation(b,SpvOpULessThan,T_BOOL,adjusted,scalar(b,64)),output,3);
+  last=b->block;emit(b,SpvOpBranch,0,0,1,merged,0,0,0);
+  emit(b,SpvOpLabel,0,merged,0,0,0,0,0);address=id(b);
+  ops[0]=at;ops[1]=direct;ops[2]=adjusted;ops[3]=last;
+  xe_spv_binary_instruction(b->out,SpvOpPhi,T_UINT,address,ops,4);at=address;
   old=reg_load(b,registers,at);value=choose(b,mask_predicate(b,mask),value,old);
   state_vector_store(b,operation(b,SpvOpIAdd,T_UINT,offset(b,b->resume_base,64),
    operation(b,SpvOpIMul,T_UINT,at,scalar(b,4))),value);
@@ -1075,8 +1090,14 @@ static void program_entry(alu_builder *b,int control) {
   a=equal(b,field(b,word1,28,1),scalar(b,0));
   c=equal(b,field(b,word1,30,3),scalar(b,0));d=both(b,a,c);
  }
- a=either(b,is_export,equal(b,field(b,word0,14,1),scalar(b,0)));d=both(b,a,d);
- a=equal(b,field(b,word0,6,1),scalar(b,0));d=both(b,a,d);
+ if(b->resume){
+  /* Export bit14 retains its constant-zero meaning. Export bit6 remains
+   * unsupported; only temporary destinations gain relative addressing. */
+  a=either(b,equal(b,field(b,word0,15,1),scalar(b,0)),equal(b,field(b,word0,6,1),scalar(b,0)));d=both(b,a,d);
+ }else{
+  a=either(b,is_export,equal(b,field(b,word0,14,1),scalar(b,0)));d=both(b,a,d);
+  a=equal(b,field(b,word0,6,1),scalar(b,0));d=both(b,a,d);
+ }
  a=equal(b,field(b,word0,24,3),scalar(b,0));d=both(b,a,d);valid=both(b,valid,d);
  valid=both(b,valid,either(b,equal(b,field(b,word0,15,1),scalar(b,0)),equal(b,field(b,word0,0,63),scalar(b,62))));
  if(!control)for(i=0;i<3;++i)valid=both(b,valid,equal(b,
@@ -1107,8 +1128,10 @@ static void program_entry(alu_builder *b,int control) {
   operation(b,SpvOpBitwiseOr,T_UINT,union_mask,zero_mask)));
  emit(b,SpvOpBranch,0,0,1,stored,0,0,0);
  emit(b,SpvOpLabel,0,store_temp,0,0,0,0,0);
- register_write(b,registers,field(b,word0,0,63),mask_v,value);
- register_write(b,registers,field(b,word0,8,63),mask_s,scalar_value);
+ a=b->resume?field(b,word0,6,1):0;
+ register_write(b,registers,field(b,word0,0,63),mask_v,value,a,control?flow[11]:0,output);
+ a=b->resume?field(b,word0,14,1):0;
+ register_write(b,registers,field(b,word0,8,63),mask_s,scalar_value,a,control?flow[11]:0,output);
  emit(b,SpvOpBranch,0,0,1,stored,0,0,0);
  emit(b,SpvOpLabel,0,stored,0,0,0,0,0);emit(b,SpvOpBranch,0,0,1,advance,0,0,0);
  emit(b,SpvOpLabel,0,advance,0,0,0,0,0);local_store(b,iterator,offset(b,index,1));emit(b,SpvOpBranch,0,0,1,h,0,0,0);
