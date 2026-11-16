@@ -88,8 +88,14 @@ int main(int argc,char **argv)
       D3D12_FORMAT_SUPPORT1_SHADER_LOAD|D3D12_FORMAT_SUPPORT1_RENDER_TARGET))config.enabled_views|=1u<<f;
  }
  REQUIRE(config.enabled_views==255);
- for(scaled=0;scaled<2;++scaled){
-  config.scale_x=scaled?3:1;config.scale_y=scaled?5:1;
+ for(scaled=0;scaled<
+#ifdef XE_COLOR_D3D12_WARM_TEST
+  3
+#else
+  2
+#endif
+  ;++scaled){
+  config.scale_x=scaled==2?4:scaled?3:1;config.scale_y=scaled==2?4:scaled?5:1;
   emits=creates=releases=live=errors=0;bytes=peak=0;emit_time=create_time=0;
   start=now();REQUIRE(xe_transfer_color_d3d12_init(&bank,&config,&ops));total=now()-start;
   count=scaled?180:45;REQUIRE(emits==count && creates==count && !live && !errors && !releases);
@@ -101,7 +107,7 @@ int main(int argc,char **argv)
   }
   REQUIRE(emits==count && creates==count && !live && !errors && !releases);
 #ifdef XE_COLOR_D3D12_IMAGE_TEST
-  REQUIRE(color_images(device,&config,&bank));
+  REQUIRE(color_images(device,&config,&bank,hardware));
   REQUIRE(emits==count && creates==count && !live && !errors && !releases);
 #endif
   REQUIRE(xe_transfer_color_d3d12_close(&bank,&ops));REQUIRE(releases==count);
@@ -110,6 +116,9 @@ int main(int argc,char **argv)
  }
  printf("PASS: %u native lookup cases; no lazy emission/creation, all PSOs released\n",lookups);result=0;
 done:
+#ifdef XE_COLOR_D3D12_WARM_TEST
+ if(!color_warm_finish())result=1;
+#endif
  if(bank.device)xe_transfer_color_d3d12_close(&bank,&ops);
  xe_dxil_shader_binary_free(&vertex);
  if(root)ID3D12RootSignature_Release(root);if(device)ID3D12Device_Release(device);

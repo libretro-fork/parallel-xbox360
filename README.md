@@ -782,3 +782,10 @@ exact first parent and an explicitly configured pinned reference; hosted jobs
 build and check the ABI/analyzer without claiming hardware timing coverage.
 See [the fixture coverage and limits](tools/tests/transfer_uint_warm_results.txt).
 This does not certify cold-play fluidity or resolve other draw-path compilation.
+
+D3D12 color-bank tests also include an opt-in C89 warm GPU fixture. It checks
+prepared/legacy images before measuring paired GPU timestamps and pipeline work
+counts across 405 canonical format/native-scale cases. Hosted WARP CI runs only
+small protocol controls and a missing-draw mutation; these cannot qualify GPU
+throughput. See [the D3D12 warm protocol](tools/tests/transfer_color_warm_d3d12_results.txt).
+No release instrumentation or runtime pacing changes are introduced.

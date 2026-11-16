@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Add test-only D3D12 prepared-color GPU timestamp/work-count comparisons, strict corpus validation and missing-draw rejection. Retain color-bank artifacts in CI. Small hosted WARP controls cannot qualify physical GPU throughput or gameplay stutter.
+
 - Preserve supplementary Linux shader-test page-fault, context-switch and endpoint-CPU observations alongside PSO timings. Add fault/wait and injected-slowdown controls without changing timing gates or release builds. The previous software-Vulkan tail failure remains unresolved; these observations are diagnostic evidence, not a stutter fix.
 
 - Replace D3D12 pipeline map-node allocations and bucket growth with a fixed C89 index that borrows stable pipeline owners and preserves exact collision checks. Keep worker publication, GPU retirement and cache records intact. The table front-loads 256 KiB and adds 24 bytes per owner; owner/driver allocation and draw-path compilation remain. Add native-owner allocation/lifetime checks and retain failed CPU-screening variants rather than hiding regressions.

@@ -24,10 +24,18 @@ static void color_transition(ID3D12GraphicsCommandList *list,ID3D12Resource *res
  barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
  ID3D12GraphicsCommandList_ResourceBarrier(list,1,&barrier);
 }
+#ifdef XE_COLOR_D3D12_WARM_TEST
+#include "transfer_color_warm_d3d12.h"
+#endif
 static int color_images(ID3D12Device *device,const xe_transfer_color_d3d12_config *config,
- const xe_transfer_color_d3d12_bank *bank)
+ const xe_transfer_color_d3d12_bank *bank,int hardware)
 {
+#ifdef XE_COLOR_D3D12_WARM_TEST
+ enum{BUFFER_BYTES=67108864,VERTEX_OFFSET=67108832,REFERENCE_OFFSET=33554432};
+ color_warm_context warm={0};
+#else
  enum{BUFFER_BYTES=1048576,VERTEX_OFFSET=1048544,REFERENCE_OFFSET=524288};
+#endif
  static const unsigned formats[12]={0,1,2,3,4,5,14,15,6,7,10,12};
  static const unsigned classes[12]={0,1,2,3,4,5,6,7,4,5,2,3};
  ID3D12CommandQueue *queue=NULL;ID3D12CommandAllocator *allocator=NULL;
@@ -43,6 +51,7 @@ static int color_images(ID3D12Device *device,const xe_transfer_color_d3d12_confi
  XeDxilEdramTransferOptions options={0};XeDxilShaderBinary binary={0};
  void *mapped=NULL,*samples=NULL;unsigned a,b,s,d,scale,converted,x,y,variant,sw,sh,dw,dh,sp,dp,count=0,words[4]={0};
  uint32_t p;HRESULT status=E_FAIL;int result=0,pending=0;
+ UINT64 serial=0;unsigned base_width=160,base_height=16;float guard_color[4];
 #define COLOR_HR(x) do{status=(x);if(FAILED(status)){fprintf(stderr,"color image line%u HRESULT%08lx\n",(unsigned)__LINE__,(unsigned long)status);goto done;}}while(0)
  COLOR_HR(ID3D12Device_CreateCommandQueue(device,&queue_desc,&IID_ID3D12CommandQueue,(void**)&queue));
  COLOR_HR(ID3D12Device_CreateCommandAllocator(device,D3D12_COMMAND_LIST_TYPE_DIRECT,&IID_ID3D12CommandAllocator,(void**)&allocator));
@@ -50,6 +59,12 @@ static int color_images(ID3D12Device *device,const xe_transfer_color_d3d12_confi
  COLOR_HR(ID3D12GraphicsCommandList_Close(list));
  COLOR_HR(ID3D12Device_CreateFence(device,0,D3D12_FENCE_FLAG_NONE,&IID_ID3D12Fence,(void**)&fence));
  event=CreateEventA(NULL,FALSE,FALSE,NULL);if(!event)goto done;
+#ifdef XE_COLOR_D3D12_WARM_TEST
+ if(!color_warm_open(&warm,device,queue,hardware))goto done;
+ if(warm.enabled && !warm.control){base_width=2560;base_height=64;}
+#else
+ (void)hardware;
+#endif
  heap_desc.NumDescriptors=1;heap_desc.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;heap_desc.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
  COLOR_HR(ID3D12Device_CreateDescriptorHeap(device,&heap_desc,&IID_ID3D12DescriptorHeap,(void**)&srv_heap));
  ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(srv_heap,&srv_cpu);
@@ -73,8 +88,13 @@ static int color_images(ID3D12Device *device,const xe_transfer_color_d3d12_confi
  for(scale=0;scale<bank->scale_classes;++scale)for(a=0;a<12;++a)for(b=0;b<12;++b)for(converted=0;converted<2;++converted){
   s=classes[a];d=classes[b];
   prepared=xe_transfer_color_d3d12_get(bank,formats[a],formats[b],scale>>1,scale&1,converted);if(!prepared)continue;
-  sw=160*(scale&1?1:config->scale_x);sh=16*(scale&1?1:config->scale_y);
-  dw=160*(scale&2?1:config->scale_x);dh=16*(scale&2?1:config->scale_y);
+  sw=base_width*(scale&1?1:config->scale_x);sh=base_height*(scale&1?1:config->scale_y);
+  dw=base_width*(scale&2?1:config->scale_x);dh=base_height*(scale&2?1:config->scale_y);
+#ifdef XE_COLOR_D3D12_WARM_TEST
+  /* Guest 64-bpp layouts halve tile width. Expanded UNORM16/half host views
+   * of guest 32-bpp color retain the full logical width. */
+  if(warm.enabled && !warm.control){if(s==5 || s==7)sw>>=1;if(d==5 || d==7)dw>>=1;}
+#endif
   sp=(sw*color_pixel_bytes(s)+255)&~255u;dp=(dw*color_pixel_bytes(d)+255)&~255u;
   if(sp*sh>=REFERENCE_OFFSET || dp*dh>=REFERENCE_OFFSET)goto done;
   for(y=0;y<sh;++y)for(x=0;x<sw*color_pixel_bytes(s)/4;++x){
@@ -102,12 +122,19 @@ static int color_images(ID3D12Device *device,const xe_transfer_color_d3d12_confi
   color_transition(list,source,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
   ID3D12GraphicsCommandList_SetGraphicsRootSignature(list,config->root);ID3D12GraphicsCommandList_SetDescriptorHeaps(list,1,&srv_heap);
   ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(list,1,srv_gpu);
-  words[0]=4|(4u<<10);ID3D12GraphicsCommandList_SetGraphicsRoot32BitConstants(list,0,4,words,0);
+  words[0]=4|(4u<<10);
+#ifdef XE_COLOR_D3D12_WARM_TEST
+  if(warm.enabled && !warm.control)words[0]=32|(32u<<10);
+#endif
+  ID3D12GraphicsCommandList_SetGraphicsRoot32BitConstants(list,0,4,words,0);
   viewport.Width=(float)dw;viewport.Height=(float)dh;viewport.MaxDepth=1;scissor.right=(LONG)dw;scissor.bottom=(LONG)dh;
   ID3D12GraphicsCommandList_RSSetViewports(list,1,&viewport);ID3D12GraphicsCommandList_RSSetScissorRects(list,1,&scissor);
   ID3D12GraphicsCommandList_OMSetRenderTargets(list,1,&rtv,FALSE,NULL);
   ID3D12GraphicsCommandList_IASetVertexBuffers(list,0,1,&vertex);ID3D12GraphicsCommandList_IASetPrimitiveTopology(list,D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   for(variant=0;variant<2;++variant){
+   /* Different sentinels make two missing or partial writes distinguishable. */
+   guard_color[0]=guard_color[1]=guard_color[2]=guard_color[3]=variant?.75f:.125f;
+   ID3D12GraphicsCommandList_ClearRenderTargetView(list,rtv,guard_color,0,NULL);
 #ifdef XE_COLOR_D3D12_BAD_PACKET
    words[0]=(4|(4u<<10))|(variant?0:1u<<20);
    ID3D12GraphicsCommandList_SetGraphicsRoot32BitConstants(list,0,4,words,0);
@@ -122,18 +149,27 @@ static int color_images(ID3D12Device *device,const xe_transfer_color_d3d12_confi
   }
   COLOR_HR(ID3D12GraphicsCommandList_Close(list));submitted=(ID3D12CommandList*)list;
   ID3D12CommandQueue_ExecuteCommandLists(queue,1,&submitted);pending=1;
-  COLOR_HR(ID3D12CommandQueue_Signal(queue,fence,count+1));COLOR_HR(ID3D12Fence_SetEventOnCompletion(fence,count+1,event));
+  COLOR_HR(ID3D12CommandQueue_Signal(queue,fence,++serial));COLOR_HR(ID3D12Fence_SetEventOnCompletion(fence,serial,event));
   if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)goto done;
   pending=0;
   range.Begin=0;range.End=BUFFER_BYTES;COLOR_HR(ID3D12Resource_Map(readback,0,&range,&samples));
   for(y=0;y<dh;++y)if(memcmp((unsigned char*)samples+y*dp,(unsigned char*)samples+REFERENCE_OFFSET+y*dp,dw*color_pixel_bytes(d))){
    fprintf(stderr,"image mismatch s%u d%u scale%u converted%u row%u\n",formats[a],formats[b],scale,converted,y);goto done;}
-  ID3D12Resource_Unmap(readback,0,NULL);samples=NULL;ID3D12Resource_Release(source);source=NULL;
+  ID3D12Resource_Unmap(readback,0,NULL);samples=NULL;
+#ifdef XE_COLOR_D3D12_WARM_TEST
+  /* Aliases retain image coverage; canonical classes define the timed corpus. */
+  if(a<8 && b<8 && !color_warm_case(&warm,queue,allocator,list,fence,event,&serial,config,
+   srv_heap,srv_gpu,rtv,&vertex,&viewport,&scissor,words,dest,*prepared,legacy,sw,sh,scale,formats[a],formats[b],converted))goto done;
+#endif
+  ID3D12Resource_Release(source);source=NULL;
   ID3D12Resource_Release(dest);dest=NULL;ID3D12PipelineState_Release(legacy);legacy=NULL;++count;
  }
  printf("PASS: %u native prepared/legacy PSO image pairs, single-sample actual typed views\n",count);result=1;
 done:
  if(pending){fprintf(stderr,"Pending GPU resources retained on test failure\n");ExitProcess(3);}
+#ifdef XE_COLOR_D3D12_WARM_TEST
+ color_warm_close(&warm);
+#endif
  if(samples)ID3D12Resource_Unmap(readback,0,NULL);if(mapped)ID3D12Resource_Unmap(upload,0,NULL);
  xe_dxil_shader_binary_free(&binary);if(legacy)ID3D12PipelineState_Release(legacy);
  if(source)ID3D12Resource_Release(source);if(dest)ID3D12Resource_Release(dest);
