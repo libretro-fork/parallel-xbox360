@@ -493,7 +493,8 @@ def validate_selection_reference(source,build,out,results,env,backend):
              "-I"+str(source),"-I"+str(source/"third_party/libretro-common/include"),"-I"+str(HERE),
              "-c",HERE/"core_shader_selection_gpu_fixture.c","-o",target/"driver.o"],source,log,fixture,120)
         fixture.update(CXX=env.get("CXX","c++")+" "+san+" "+str(target/"driver.o")+" -Wl,--strip-debug",
-                       TEST_SOURCE=str(HERE/"shader_selection_bridge.cc"),TEST_BUILD_DIR=str(target))
+                       TEST_SOURCE=str(HERE/"shader_selection_bridge.cc"),TEST_BUILD_DIR=str(target),
+                       TEST_ARGUMENT=str(target))
         command=["sh",source/"tools/tests/run_shader_publication_tests.sh"]
     run(command,source,log,fixture,240);coverage=validate_selection_log(log.read_text(),fixed)
     if fixed:

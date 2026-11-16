@@ -28,6 +28,10 @@ twelve equal-output CPU workloads as well as shader/PSO costs. See
 [selection precision, throughput and limits](tools/tests/shader_selection_results.txt).
 These component results do not establish stall-free cold gameplay.
 
+The POSIX selection-fixture runner receives its output directory explicitly,
+matching the Windows runner. An earlier CI invocation omitted that argument and
+stopped before validation or timing; it supplies no passing shader-cost evidence.
+
 The continuation prototype also reads loop-relative constants directly from its
 borrowed constant-bank binding. Address flags follow operand order, including
 scalar constant/temp operations; unused operands do not load an address or reject
