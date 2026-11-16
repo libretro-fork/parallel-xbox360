@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Fix the Linux shader-regression runner's missing selection-fixture output-directory argument. The old run stopped before GPU validation and timing; retain it as failed evidence. Add a dispatch regression check, including paths with spaces. Core behavior and performance thresholds are unchanged.
+
 - Extend the unlinked continuation shader with vector/scalar destination saturation while retaining raw scalar history and borrowed inputs across dispatches. Add masked/coissued, boundary and continuation tests. This remains a CPU-reference prototype: specialized Vulkan subnormal-clamp agreement is unresolved, and it does not remove gameplay compilation stalls.
 
 - Preserve selected subnormal and signed-zero bits in CPU and generic shader MIN/MAX instead of quantizing the chosen value. Keep comparison and arithmetic flushing rules separate. Use a C89 SSE2 four-lane selection path with a scalar fallback, and add independent native-GPU checks plus per-commit CPU throughput gates. This repairs the shader reference used by draw-extent analysis; the generic kernel is still outside rendering and compilation stalls remain unfinished.

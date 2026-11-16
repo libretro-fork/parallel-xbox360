@@ -35,6 +35,10 @@ bits on devices without explicit denormal controls; agreement for that edge is
 unresolved. CI records this limit separately from the kernel's CPU/literal tests.
 See [saturation coverage and limits](tools/tests/shader_saturation_results.txt).
 
+The POSIX selection-fixture runner receives its output directory explicitly,
+matching the Windows runner. An earlier CI invocation omitted that argument and
+stopped before validation or timing; it supplies no passing shader-cost evidence.
+
 The continuation prototype also reads loop-relative constants directly from its
 borrowed constant-bank binding. Address flags follow operand order, including
 scalar constant/temp operations; unused operands do not load an address or reject

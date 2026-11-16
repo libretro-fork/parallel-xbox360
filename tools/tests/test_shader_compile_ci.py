@@ -14,6 +14,25 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_posix_selection_runner_receives_output_directory(self):
+        class DispatchObserved(Exception):pass
+        calls=[]
+        with tempfile.TemporaryDirectory(prefix="selection directory ") as temporary:
+            root=Path(temporary);source=root/"source";out=root/"output"
+            (source/"libretro").mkdir(parents=True);out.mkdir()
+            (source/"libretro/core_alu_spv.h").write_text("#define XE_ALU_CONTROL_MINMAX 1\n")
+            def observe(command,cwd,log,env,timeout):
+                calls.append(command)
+                if command[0]=="sh":
+                    self.assertEqual(command[1],source/"tools/tests/run_shader_publication_tests.sh")
+                    self.assertEqual(env.get("TEST_ARGUMENT"),str(out/"native-selection"))
+                    self.assertEqual(env["TEST_BUILD_DIR"],env["TEST_ARGUMENT"])
+                    raise DispatchObserved()
+            with patch.object(ci,"WIN",False),patch.object(ci,"run",observe):
+                with self.assertRaises(DispatchObserved):
+                    ci.validate_selection_reference(source,root/"build",out,root,{},"vulkan-software")
+            self.assertEqual(len(calls),2)
+
     def test_loop_advance_witness_distinguishes_legacy_failure_from_fixed_result(self):
         row="LOOP_ADVANCE_NATIVE exports=1 value=13 expected=42; final consumed index10, other relative reads inactive\n"
         self.assertTrue(ci.validate_loop_advance_log(row,False)["advance_legacy_known_failure"])
