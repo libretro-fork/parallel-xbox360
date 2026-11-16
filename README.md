@@ -18,6 +18,15 @@ separately. This is not connected to rendering: texture fetch, remaining stages
 and accurate raster output still prevent it from replacing the current fallback.
 State-buffer traffic and continuation execution cost remain to be profiled.
 
+The continuation prototype also reads loop-relative constants directly from its
+borrowed constant-bank binding. Address flags follow operand order, including
+scalar constant/temp operations; unused operands do not load an address or reject
+unsupported a0 addressing. Constant reads use the CPU interpreter's bounded
+operand-address policy while retaining raw loop progress. Boundary behavior
+outside that range still needs agreement with the specialized GPU renderer.
+See [relative constant checks and limits](tools/tests/shader_relative_constant_results.txt).
+This kernel remains separate from rendering and does not establish stall-free play.
+
 D3D12 integer ownership transfers prepare their final native-DXIL PSOs during initialization and use a fixed lookup during supported color transfers. Parameters are constructed directly in retained deferred-command storage. The bank preserves unsigned storage views, native/emulated 2x MSAA and scaled/native crossings; cross-format MSAA, depth and other legacy transfers remain draw-compilation debt. Procedural RTX 5090 comparisons against the existing native EDRAM emitter pass the declared warmed GPU threshold in both orders, with exact image and work-count checks. An optional dedicated Windows CI runner compares each parent producer through a checked C89 DLL boundary, including its packet layout and resource lifetime; without that runner, hosted hardware coverage remains unverified. The separate new single-sample cross-format bank has component image coverage and significant startup cost, with full qualification pending. These checks do not establish smooth cold gameplay or remove remaining guest-shader compilation.
 The default core build uses native libretro-common XMA, WMA and MP3 audio decoders and needs neither FFmpeg nor libiconv. FFmpeg sources are optional offline comparison dependencies, enabled only with `XENIA_BUILD_FFMPEG_REFERENCE=ON` in CMake or `FFMPEG_REFERENCE=1` in Make. Guest software decodes movie video; removing the host audio dependency does not remove FMV video support.
 

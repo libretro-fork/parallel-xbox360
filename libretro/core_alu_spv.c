@@ -434,6 +434,36 @@ static uint32_t bank_load(alu_builder *b,uint32_t offset_words,uint32_t count,
  ops[0]=value;ops[1]=good;ops[2]=vector(b,0);ops[3]=bad;
  xe_spv_binary_instruction(b->out,SpvOpPhi,T_U4,result,ops,4);return result;
 }
+/* Operand ordinal, not operand usage, chooses the constant address flag.
+ * Only a consumed, addressed constant may load aL or reject unsupported a0. */
+static uint32_t addressed_constant(alu_builder *b,uint32_t constants[4],uint32_t at,
+ unsigned index,uint32_t word1,uint32_t word2,uint32_t loop_address,uint32_t output) {
+ uint32_t flag,first,second,direct=b->block,relative=id(b),merged=id(b),address=id(b),current,adjusted,last,negative_limit,ops[4];
+ flag=field(b,word1,31,1);
+ if(index){
+  first=yes(b,field(b,word2,31,1));
+  if(index==2){second=yes(b,field(b,word2,30,1));first=both(b,first,second);}
+  second=field(b,word1,30,1);flag=select_word(b,first,flag,second);
+ }
+ flag=yes(b,flag);
+ emit(b,SpvOpSelectionMerge,0,0,2,merged,0,0,0);
+ emit(b,SpvOpBranchConditional,0,0,3,flag,relative,merged,0);
+ emit(b,SpvOpLabel,0,relative,0,0,0,0,0);
+ guard(b,equal(b,field(b,word1,29,1),scalar(b,0)),output,3);
+ current=local_load(b,T_U4,loop_address);emit(b,SpvOpCompositeExtract,T_UINT,address,2,current,0,0,0);
+ /* Keep raw loop progress in state. Bound its operand view as the CPU
+  * interpreter does; never saturate the saved iterator at LOOP_END. */
+ address=select_word(b,operation(b,SpvOpSGreaterThan,T_BOOL,address,scalar(b,256)),scalar(b,256),address);
+ negative_limit=operation(b,SpvOpISub,T_UINT,scalar(b,0),scalar(b,256));
+ address=select_word(b,operation(b,SpvOpSLessThan,T_BOOL,address,negative_limit),negative_limit,address);
+ adjusted=operation(b,SpvOpIAdd,T_UINT,at,address);last=b->block;
+ emit(b,SpvOpBranch,0,0,1,merged,0,0,0);emit(b,SpvOpLabel,0,merged,0,0,0,0,0);address=id(b);
+ ops[0]=at;ops[1]=direct;ops[2]=adjusted;ops[3]=last;
+ xe_spv_binary_instruction(b->out,SpvOpPhi,T_UINT,address,ops,4);
+ /* An unsigned comparison against the bounded window also rejects negative
+  * signed sums; an eight-bit base cannot wrap a positive sum into that window. */
+ return bank_load(b,constants[0],constants[1],constants[2],constants[3],address);
+}
 static uint32_t program_source(alu_builder *b,uint32_t registers,uint32_t constants[4],
  unsigned index,uint32_t word0,uint32_t word1,uint32_t word2,uint32_t loop_address,uint32_t output) {
  uint32_t at=field(b,word2,16-index*8,255),temporary,constant_value,result=id(b),ops[4];
@@ -463,7 +493,8 @@ static uint32_t program_source(alu_builder *b,uint32_t registers,uint32_t consta
  temp_end=b->block;
  emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,con,0,0,0,0,0);
- constant_value=bank_load(b,constants[0],constants[1],constants[2],constants[3],at);
+ if(b->resume)constant_value=addressed_constant(b,constants,at,index,word1,word2,loop_address,output);
+ else constant_value=bank_load(b,constants[0],constants[1],constants[2],constants[3],at);
  con_end=b->block;emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,joined,0,0,0,0,0);
  ops[0]=temporary;ops[1]=temp_end;ops[2]=constant_value;ops[3]=con_end;
@@ -603,7 +634,7 @@ static uint32_t lane_splat(alu_builder *b,uint32_t value,uint32_t component) {
 }
 static uint32_t scalar_alu(alu_builder *b,uint32_t opcode,uint32_t vector_opcode,
  uint32_t d,uint32_t previous,uint32_t registers,uint32_t constants[4],
- uint32_t word0,uint32_t word1,uint32_t word2,uint32_t predicate_state) {
+ uint32_t word0,uint32_t word1,uint32_t word2,uint32_t predicate_state,uint32_t loop_address,uint32_t output) {
  uint32_t add=id(b),con=id(b),retain=id(b),joined=id(b),av,cv,rv,result=id(b),con_end,ops[26];
  uint32_t setp=0,pv=0,cmp=0,comparison=0,mm=0,mv_select=0;
  uint32_t first,second,swizzle,absolute,negate,at;
@@ -621,13 +652,16 @@ static uint32_t scalar_alu(alu_builder *b,uint32_t opcode,uint32_t vector_opcode
  emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,con,0,0,0,0,0);
  swizzle=field(b,word1,0,255);absolute=field(b,word0,7,1);negate=field(b,word1,24,1);
- first=bank_load(b,constants[0],constants[1],constants[2],constants[3],field(b,word2,0,255));
+ if(b->resume)first=addressed_constant(b,constants,field(b,word2,0,255),2,word1,word2,loop_address,output);
+ else first=bank_load(b,constants[0],constants[1],constants[2],constants[3],field(b,word2,0,255));
  first=modify(b,first,swizzle,absolute,negate);
  at=operation(b,SpvOpBitwiseOr,T_UINT,
   operation(b,SpvOpShiftLeftLogical,T_UINT,field(b,word2,29,1),scalar(b,1)),
   operation(b,SpvOpShiftLeftLogical,T_UINT,field(b,word1,2,15),scalar(b,2)));
  second=modify(b,reg_load(b,registers,at),swizzle,absolute,negate);
- cv=call(b,F_ADD,lane_splat(b,first,scalar(b,3)),lane_splat(b,second,scalar(b,0)));
+ /* Pin established emission order across C compilers and helper inlining. */
+ second=lane_splat(b,second,scalar(b,0));
+ first=lane_splat(b,first,scalar(b,3));cv=call(b,F_ADD,first,second);
  con_end=b->block;emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
  emit(b,SpvOpLabel,0,retain,0,0,0,0,0);rv=splat(b,local_load(b,T_UINT,previous));
  emit(b,SpvOpBranch,0,0,1,joined,0,0,0);
@@ -1085,7 +1119,7 @@ static void program_entry(alu_builder *b,int control) {
  }
  /* Sequence emitter side effects explicitly; C argument evaluation order must
   * not change the established module when adding a separate entry point. */
- if(control)d=equal(b,field(b,word1,30,3),scalar(b,0));
+ if(control)d=b->resume?valid:equal(b,field(b,word1,30,3),scalar(b,0));
  else{
   a=equal(b,field(b,word1,28,1),scalar(b,0));
   c=equal(b,field(b,word1,30,3),scalar(b,0));d=both(b,a,c);
@@ -1111,7 +1145,7 @@ static void program_entry(alu_builder *b,int control) {
   d=program_source(b,registers,constants,2,word0,word1,word2,0,output);
   value=vector_alu(b,opcode,a,c,d,0);
  }
- scalar_value=scalar_alu(b,scalar_opcode,opcode,d,previous,registers,constants,word0,word1,word2,control?flow[12]:0);
+ scalar_value=scalar_alu(b,scalar_opcode,opcode,d,previous,registers,constants,word0,word1,word2,control?flow[12]:0,control?flow[11]:0,output);
  store_export=id(b);store_temp=id(b);stored=id(b);
  emit(b,SpvOpSelectionMerge,0,0,2,stored,0,0,0);emit(b,SpvOpBranchConditional,0,0,3,is_export,store_export,store_temp,0);
  emit(b,SpvOpLabel,0,store_export,0,0,0,0,0);

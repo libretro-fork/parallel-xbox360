@@ -1,0 +1,84 @@
+Continuation constant-address operands (2026-11-16)
+=================================================
+Parent:4393259391cedbe7727257d214442b0c538f9f7d.
+
+Extend only xe_alu_control_resume_spv_build. Decode each consumed constant's
+address flag by its raw operand ordinal and the preceding temporary selectors,
+not by the number of operands the opcode happens to use. This includes scalar
+ADD_CONST0. A consumed loop-relative source borrows aL and the constant-bank
+descriptor, checks the bounded view and loads directly into the final operand.
+No per-program shader generation, constant-bank copy, allocation, lock, timer,
+new state slot or continuation host readback is introduced. Existing endian,
+swizzle, negate and absolute modifiers remain after address selection.
+Unsupported a0-relative actual reads return status3; unused or masked operands
+must neither read that address nor reject the otherwise supported instruction.
+
+The current CPU interpreter supplies a bounded [-256,256] operand index while
+retaining raw loop progress; this prototype follows that policy. The initial
+uncommitted fixture incorrectly expected raw257/260 for new cases101/126.
+The preliminary R400 sequencer document, Exhibit2039v2.11page24, distinguishes
+computed loop progress from the bounded indexing output. The corrected new
+goldens use operand256, with all initial failed experiments retained externally.
+No previously accepted regression golden or threshold was changed.
+
+IMPORTANT: the existing specialized GPU translator retains unbounded loop sums
+when addressing constants. CPU/prototype agreement at the bounds does NOT prove
+console accuracy or specialization equivalence. Resolve this policy with stronger
+hardware evidence before activating this kernel as the renderer fallback.
+Do not silently clamp the specialized renderer or remove the boundary cases.
+Full fetch, remaining stages, raster output and draw-path compile/wait removal
+also remain missing. The general cold-play goal is not achieved.
+
+128 C89 packed-program cases, two endian modes and budgets1/7 cover vector
+operand ordinal selection, scalar temporary/constant combinations, modifiers,
+lazy unused/a0 reads, positive/negative loop steps, constant bank/window ends,
+zero-sized banks, out-of-range sums and continuation persistence. One initialized
+pipeline serves all cases. Each replay records64 continuation dispatches with
+GPU barriers and one final fence; no per-pass readback or whole-register-bank
+checkpoint copy. Inputs, constants, program and context remain borrowed and
+immutability/redzones are checked. The preexisting48 relative-write cases retain
+their original180 native/literal comparisons through a shared C89 test adapter.
+
+The native reference's SQ_VS_CONST base/size fields have nine bits. A base512
+descriptor is valid input to this prototype's bounded-view test but cannot be
+represented by that CPU register ABI. The bridge now rejects such metadata
+before touching output; four calls verify rejection and sentinel preservation.
+Every positive GPU case still has its independent literal check. Expected
+coverage is492 native comparisons,496 literals and4 explicit adapter rejections,
+not a falsely claimed496 native comparisons against a truncated window.
+
+Local evidence:
+- RTX5090 MSVC C89/ASan fixture:128cases,492native,496literals,4rejections PASS.
+- llvmpipe GCC strict C89/ASan/UBSan with explicit Khronos validation:
+  496literals PASS, zero native comparisons (standalone literal-only run).
+- Actual Windows CI helper executes the original770/324 continuation suite,
+  25faults,9362steps, relative-write180 comparisons and new constant suite:
+  PASS; executed module hashes match the separately validated unit module.
+- Original relative-write literal suite with the shared runner also passes
+  llvmpipe/ASan/UBSan/explicit validation. No validation error is accepted.
+- Harness84 unit tests in normal and optimized Python PASS. CI requires the
+  new counts, explicit reference-domain rejections, exact module identity,
+  selected device and software validation, and rejects capability removal.
+- Final matched Release units: all three older entry modules byte-identical
+  within both MSVC and GCC. An initial MSVC scalar-lane evaluation-order change
+  was caught by byte comparison and fixed by explicit statement sequencing;
+  the failed comparison and pre-fix modules remain in external evidence.
+  The new continuation module grows13094->13736words, same16384-word capacity,
+  one cold allocation and1000 allocation-free same-owner rebuilds.
+- Exact timed Release module bytes separately execute the496 literals on
+  llvmpipe and492native/496literal comparisons on RTX5090. They are not assumed
+  numerically equivalent merely because an instrumented build passed.
+- Seven alternating pairs plus seven reverse-order pairs on each device pass
+  unchanged module/primed-PSO compiler limits. Warm-PSO median milliseconds:
+  NVIDIA forward .0118->.0122, reverse .0120->.0121; llvmpipe forward
+  18.708773->19.235344, reverse18.597987->19.299678. These are small added costs
+  for new functionality, not speedups. Boundary process checks stayed clear;
+  all raw/CPU/initial-PSO samples are retained. Driver disk/internal caches were
+  uncontrolled, so initial compilation is observed without a cold-cache claim.
+- Actual parent-emitter negative control rejects newly supported case1 with
+  status3 instead of1. The failure is numerical/admission, not a build failure.
+
+Linux full native bridge coverage and full first-parent
+CI are not inferred from the standalone literal run. Their eventual evidence
+is recorded separately. No GPU execution throughput, cold-driver cache or game
+smoothness improvement is claimed. The prototype is not linked into rendering.

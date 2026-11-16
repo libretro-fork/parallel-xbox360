@@ -14,6 +14,7 @@
 #define XE_ALU_CONTROL_SHARED_DOT_LOOP 1
 #define XE_ALU_RESUME_ABI 1
 #define XE_ALU_RESUME_RELATIVE_TEMP_WRITE 1
+#define XE_ALU_RESUME_RELATIVE_CONSTANTS 1
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -295,11 +295,27 @@ def validate_relative_write_log(text,device,validation):
                 relative_write_between_pass_readbacks=0,relative_write_validation=identities[0][1]=="1")
 
 
-def validate_resume_relative_write(source,build,directory,results,env,device):
-    target=directory/"relative-write";target.mkdir()
-    log=results/(source.name+"-relative-write.log");fixture=env.copy()
+def validate_relative_constant_log(text,device,validation):
+    expected="PASS: relative constants cases=128 endian_modes=2 budgets=2 native=492 literals=496 pipelines=1 between_pass_readbacks=0"
+    domain="REFERENCE_DOMAIN rejections=4 expected=4 literals_only=0"
+    if text.splitlines().count(expected)!=1 or text.splitlines().count(domain)!=1 or re.search(r"VUID-|Validation Error|ERROR:",text):
+        raise ValueError("relative-constant execution or native-domain rejection missing")
+    identities=re.findall(r"^RELATIVE_CONSTANT_DEVICE (.+) validation=([01])$",text,re.MULTILINE)
+    if len(identities)!=1 or identities[0][0]!=device or (validation and identities[0][1]!="1"):
+        raise ValueError("relative-constant device/validation coverage missing")
+    return dict(relative_constant_gpu=True,relative_constant_cases=128,relative_constant_native=492,
+                relative_constant_literals=496,relative_constant_reference_rejections=4,
+                relative_constant_endian_modes=2,relative_constant_budgets=2,
+                relative_constant_between_pass_readbacks=0,relative_constant_validation=identities[0][1]=="1")
+
+
+def validate_resume_relative_write(source,build,directory,results,env,device,kind="write"):
+    if kind not in ("write","constant"):raise ValueError("unknown continuation-address fixture")
+    target=directory/("relative-"+kind);target.mkdir()
+    log=results/(source.name+"-relative-"+kind+".log");fixture=env.copy()
+    driver=HERE/("core_alu_relative_"+kind+"_vulkan_test.c")
     fixture.update(XE_ALU_PROGRAM_DUMP=str(target/"observed.spv"),
-                   FORWARD_FLOW_SOURCE=str(HERE/"core_alu_relative_write_vulkan_test.c"),
+                   FORWARD_FLOW_SOURCE=str(driver),
                    FORWARD_FLOW_BRIDGE=str(HERE/"alu_program_bridge.cc"),FORWARD_FLOW_OUT=str(target),
                    FORWARD_FLOW_BUILD=str(build),FORWARD_FLOW_LINK_FLAGS="/CGTHREADS:"+str(JOBS))
     if WIN:
@@ -312,15 +328,16 @@ def validate_resume_relative_write(source,build,directory,results,env,device):
         run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
              *san.split(),
              "-I"+str(source),"-I"+str(HERE),"-isystem",source/"third_party/Vulkan-Headers/include",
-             "-c",HERE/"core_alu_relative_write_vulkan_test.c","-o",target/"driver.o"],source,log,fixture,60)
+             "-c",driver,"-o",target/"driver.o"],source,log,fixture,60)
         fixture.update(CXX=env.get("CXX","c++")+" "+san+" "+str(target/"driver.o")+" "+str(directory/"emitter.o")+" -Wl,--strip-debug",
                        TEST_SOURCE=str(HERE/"alu_program_bridge.cc"),TEST_BUILD_DIR=str(target))
         command=["sh",source/"tools/tests/run_shader_publication_tests.sh"]
     run(command,source,log,fixture,240)
     observed=target/"observed.spv"
     if not observed.is_file() or file_sha256(observed)!=file_sha256(directory/"resume.spv"):
-        raise ValueError("relative-write fixture used a substituted continuation module")
-    return validate_relative_write_log(log.read_text(),device,not WIN)
+        raise ValueError("relative-address fixture used a substituted continuation module")
+    validator=validate_relative_write_log if kind=="write" else validate_relative_constant_log
+    return validator(log.read_text(),device,not WIN)
 
 
 def validate_resume(source,build,out,results,env,backend):
@@ -331,7 +348,9 @@ def validate_resume(source,build,out,results,env,backend):
         raise ValueError("continuation declaration has no recognized ABI")
     coverage=dict(available=available,unit=False,vulkan_gpu=False,renderer_integration=False,
                   relative_write_available="#define XE_ALU_RESUME_RELATIVE_TEMP_WRITE 1" in content,
-                  relative_write_gpu=False)
+                  relative_write_gpu=False,
+                  relative_constant_available="#define XE_ALU_RESUME_RELATIVE_CONSTANTS 1" in content,
+                  relative_constant_gpu=False)
     if not available:
         coverage["reason"]="historical source has no continuation ABI"
         return coverage
@@ -363,9 +382,12 @@ def validate_resume(source,build,out,results,env,backend):
         if software!=(backend=="vulkan-software"):raise ValueError("wrong resume software/hardware device")
         if coverage["relative_write_available"]:
             coverage.update(validate_resume_relative_write(source,build,directory,results,fixture,observed["device"]))
+        if coverage["relative_constant_available"]:
+            coverage.update(validate_resume_relative_write(source,build,directory,results,fixture,observed["device"],"constant"))
     names=["arithmetic.spv","program.spv","control.spv","resume.spv"]
     if coverage["vulkan_gpu"]:names += ["reference/observed.spv","continuation/observed.spv"]
     if coverage["relative_write_gpu"]:names += ["relative-write/observed.spv"]
+    if coverage["relative_constant_gpu"]:names += ["relative-constant/observed.spv"]
     coverage["modules"]={}
     with zipfile.ZipFile(results/(source.name+"-resume-modules.zip"),"w",zipfile.ZIP_DEFLATED) as archive:
         for name in names:
@@ -401,6 +423,14 @@ def compare_resume_coverage(coverage,vulkan):
         if previous.get("available") and not candidate.get("available"):failures.append("resume ABI coverage removed")
         if previous.get("relative_write_available") and not candidate.get("relative_write_available"):
             failures.append("relative-write capability removed")
+        if previous.get("relative_constant_available") and not candidate.get("relative_constant_available"):
+            failures.append("relative-constant capability removed")
+        if vulkan and previous.get("relative_constant_available"):
+            fields=dict(relative_constant_gpu=True,relative_constant_cases=128,relative_constant_native=492,
+                        relative_constant_literals=496,relative_constant_reference_rejections=4,
+                        relative_constant_endian_modes=2,relative_constant_budgets=2,
+                        relative_constant_between_pass_readbacks=0)
+            if any(previous.get(k)!=v for k,v in fields.items()):failures.append(version+": relative-constant execution missing")
         if vulkan and previous.get("relative_write_available"):
             fields=dict(relative_write_gpu=True,relative_write_cases=48,relative_write_native=180,
                         relative_write_literals=180,relative_write_endian_modes=2,relative_write_budgets=2,
@@ -1402,6 +1432,7 @@ def run_comparison(args):
          "core_shader_loop_advance_witness.c",
          "core_alu_spv_build_test.c","core_alu_resume_vulkan_test.c","core_alu_resume_pso_test.c","run_alu_resume_tests.cmd","run_alu_resume_tests.sh","shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_shader_vertex_dot_test.c","core_shader_vertex_dot_gpu_fixture.c","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
          "core_alu_relative_write_vulkan_test.c",
+         "core_alu_relative_constant_vulkan_test.c","alu_continuation_address_fixture.h",
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
          "core_shader_ucode_reuse_test.c","core_shader_ucode_reuse_threads_test.c","core_shader_ucode_reuse_stale_test.c",
          "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h","shader_compile_resources.h",

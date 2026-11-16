@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Extend the unlinked GPU shader continuation prototype with loop-relative float constants, using borrowed constant-bank views and lazy operand reads. Keep unsupported a0-relative reads explicit. Add native/literal boundary and continuation checks, including rejected unrepresentable reference descriptors. This is preparation for an accurate fallback; out-of-range agreement with the specialized renderer and rendering integration remain unresolved.
+
 - Preserve CPU shader-loop progress across nested repeat loops instead of saturating the stored iterator. Keep the existing operand-address clamp. Add a packed guest shader that reproduces the old CPU/GPU disagreement, with exact Vulkan output checks and CI coverage. This repairs the CPU reference used by draw-extent analysis; it does not remove renderer compilation stalls.
 
 - Extend the checked GPU continuation-interpreter prototype with masked vector/scalar writes relative to the live loop address. Preserve borrowed input, partial lanes and continuation ownership; reject indices outside its supported register window. Add GPU numerical, fault and compiler-cost checks. This prototype is still separate from rendering and does not resolve gameplay shader stalls.

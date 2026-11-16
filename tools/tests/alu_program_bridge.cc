@@ -13,6 +13,10 @@ static unsigned AluReference(const uint32_t *code,
     const uint32_t *temporary,unsigned temporary_count,const uint32_t *constants,
     unsigned constant_count,unsigned window_base,unsigned window_size,uint32_t *output,
     const uint32_t *context) {
+  // Reject descriptors that the native register ABI cannot represent rather
+  // than truncating them to another test's window. Output remains untouched.
+  if (temporary_count > 64 || constant_count > 512 ||
+      window_base > 511 || window_size > 511) return 0;
   xe::Memory memory;xe::gpu::RegisterFile registers;
   xe::gpu::ShaderInterpreter interpreter(registers,memory);
   std::memset(interpreter.temp_registers(),0,64*16);
