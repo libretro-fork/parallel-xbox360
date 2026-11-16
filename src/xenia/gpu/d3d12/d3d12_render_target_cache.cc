@@ -736,6 +736,11 @@ bool D3D12RenderTargetCache::Initialize() {
       }
     }
 
+    if (!InitializeColorTransferPipelines()) {
+      Shutdown();
+      return false;
+    }
+
     // Dumping root signatures.
     D3D12_DESCRIPTOR_RANGE dump_root_source_range;
     dump_root_source_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -1059,6 +1064,9 @@ void D3D12RenderTargetCache::Shutdown(bool from_destructor) {
     }
   }
   transfer_pipelines_.clear();
+  xe_transfer_color_d3d12_ops color_ops = {};
+  xe_transfer_color_d3d12_native_ops(&color_ops);
+  xe_transfer_color_d3d12_close(&color_transfer_pipelines_, &color_ops);
   for (size_t i = 0; i < xe::countof(transfer_root_signatures_); ++i) {
     ui::d3d12::util::ReleaseAndNull(transfer_root_signatures_[i]);
   }
@@ -1746,6 +1754,37 @@ bool D3D12RenderTargetCache::InitializeIdentityTransferPipelines() {
                                         &ops) != 0;
 }
 
+bool D3D12RenderTargetCache::InitializeColorTransferPipelines() {
+  static_assert(unsigned(EdramTransferMode::kColorToColor) == 1);
+  static const unsigned formats[8] = {0, 1, 2, 3, 4, 5, 14, 15};
+  ID3D12Device* device = command_processor_.GetD3D12Provider().GetDevice();
+  xe_transfer_color_d3d12_config config = {};
+  xe_transfer_color_d3d12_ops ops = {};
+  config.device = device;
+  config.root = transfer_root_signatures_[size_t(EdramTransferMode::kColorToColor)];
+  config.vertex = transfer_vertex_shader_.data;
+  config.vertex_bytes = transfer_vertex_shader_.size;
+  config.scale_x = draw_resolution_scale_x();
+  config.scale_y = draw_resolution_scale_y();
+  config.source_space = GetTransferRootSignatureInfo(EdramTransferMode::kColorToColor).space_source;
+  for (unsigned f = 0; f < 8; ++f) {
+    if (f == 1 && !gamma_render_target_as_unorm16_) continue;
+    bool unsigned_view = false;
+    DXGI_FORMAT view = GetColorOwnershipTransferDXGIFormat(
+        xenos::ColorRenderTargetFormat(formats[f]), &unsigned_view);
+    if (view != xe_transfer_color_d3d12_view(f) || unsigned_view != (f >= 4)) return false;
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT support = {};
+    support.Format = view;
+    if (FAILED(device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support)))) return false;
+    const D3D12_FORMAT_SUPPORT1 required = D3D12_FORMAT_SUPPORT1(
+        D3D12_FORMAT_SUPPORT1_TEXTURE2D | D3D12_FORMAT_SUPPORT1_SHADER_LOAD |
+        D3D12_FORMAT_SUPPORT1_RENDER_TARGET);
+    if ((support.Support1 & required) == required) config.enabled_views |= 1u << f;
+  }
+  xe_transfer_color_d3d12_native_ops(&ops);
+  return xe_transfer_color_d3d12_init(&color_transfer_pipelines_, &config, &ops) != 0;
+}
+
 DXGI_FORMAT D3D12RenderTargetCache::GetColorResourceDXGIFormat(
     xenos::ColorRenderTargetFormat format) const {
   // Typed should be preferred over typeless so there are more opportunities for
@@ -2178,6 +2217,15 @@ D3D12RenderTargetCache::GetTransferRootSignatureInfo(
 ID3D12PipelineState* const*
 D3D12RenderTargetCache::GetOrCreateTransferPipelines(
     EdramTransferShaderKey key) {
+  if (key.mode == EdramTransferMode::kColorToColor &&
+      key.source_msaa_samples == xenos::MsaaSamples::k1X &&
+      key.dest_msaa_samples == xenos::MsaaSamples::k1X && !key.dest_color_rt_index) {
+    ID3D12PipelineState* const* ready = xe_transfer_color_d3d12_get(
+        &color_transfer_pipelines_, key.source_resource_format,
+        key.dest_resource_format, key.dest_scale_native, key.source_scale_native,
+        key.value_convert);
+    if (ready) return ready;
+  }
   const EdramTransferModeInfo& mode = kEdramTransferModes[size_t(key.mode)];
   bool dest_is_stencil_bit = (mode.output == EdramTransferOutput::kStencilBit);
 

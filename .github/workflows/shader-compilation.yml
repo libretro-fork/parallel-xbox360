@@ -58,6 +58,9 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: Linux PSO resource-observation controls
+        if: runner.os == 'Linux'
+        run: sh tools/tests/run_shader_resource_tests.sh
       - name: Allocation-free shader reentry correctness
         shell: pwsh
         run: |

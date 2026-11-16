@@ -1,0 +1,97 @@
+D3D12 prepared single-sample color transfers: component evidence, 2026-11-14
+===========================================================================
+
+Scope
+-----
+The renderer's original native emitter and transfer root signature are retained.
+The new C89 bank owns 45 PSOs per scale class (44 cross-view pairs plus the
+existing value-converting 7e3 -> plain 8888 route). At scaled resolution four
+native/scaled classes require 180 slots. Existing integer/identity banks remain
+responsible for their own domains. Unsupported keys still take the legacy path;
+this is NOT full no-draw-compilation compliance.
+
+Only single-sample color-to-color, target zero is covered. Gamma storage policy
+is resolved by the caller; gamma UNORM16 is not substituted for UNORM8. Class
+aliases retain existing stored-layout semantics. The emitter receives the same
+source register space. Final bytecode is passed directly to PSO creation and
+freed immediately afterwards; no second shader array or pixel staging exists.
+Borrowed device/root/input code are not AddRef'd by the bank. PSOs are released
+after the owner's existing completion protocol and before root destruction.
+get() performs only checked fixed-table lookup. No normal-build timers/logs added.
+
+Executed checks
+---------------
+- MSVC /TC /O2 /W4 /WX + AddressSanitizer mock owner test: 104976 lookup cases,
+  1080 partial failures (six failure types at all 180 creation positions),
+  balanced shader/PSO owners and stable borrowed final-bytecode addresses.
+- MinGW GCC C89/pedantic + warnings-as-errors: same cases. -Wno-long-long is
+  needed for the existing libretro-common-style 64-bit constant helpers.
+- Actual native emitter/PSO creation: WARP and NVIDIA RTX 5090, 45 unscaled and
+  180 asymmetric 3x5 PSOs each. 1024 fixed lookups per device; no extra emit or
+  create callback observed during lookups; all owned handles released.
+- Actual GPU prepared/legacy image pairs: 500 per device, actual typed views,
+  all supported class pairs and format aliases, the numeric-conversion route and native/scaled
+  crossings. This is parity with the unchanged native emitter, not an independent
+  Xbox codec oracle, broad-format/MSAA coverage or a gameplay test.
+- Wrong address packet negative control rejects the first color image pair.
+- Vulkan shared classification extraction: existing 1024000 immutable-lookup,
+  view-mask, driver-failure, invalid-producer and repeated-close unit checks pass.
+- Actual D3D12 render-target-cache translation unit compiles with MSVC ASan.
+  The class now contains a new fixed owner: full fresh-core integration checks
+  must not reuse archives containing the old C++ class layout.
+- Fresh complete-core MSVC ASan build passes (767 Ninja steps, three jobs).
+  The final ownership/image/negative-control suite also passes using that fresh
+  native emitter archive, with /TC /W4 /WX and ASan on the C89 test drivers.
+  This is not a game/content-close lifecycle certification.
+- The common shader-comparison harness now records known compiler, build and
+  frontend processes before/after each revision sample, refusing acceptance on
+  competition or inspection failure without waiting/retrying. All 74 harness
+  tests pass normally and under Python -O. Boundary snapshots do not establish
+  continuous or universal host idleness; prepare/cleanup jobs must still finish
+  before timing starts. Acceptance thresholds and failed cases are unchanged.
+
+The first mock allowed the wrong mode number; native initialization rejected
+it. Mode is corrected to native color-to-color=1 and checked against the typed
+renderer enum at compile time. Initial wrong-mode runs remain failed evidence.
+The runner's initial forward-slash FINDSTR path failed after image success;
+the path is corrected, with the failed run retained.
+
+Startup observations (test-only callbacks, not an acceptance benchmark)
+-------------------------------------------------------------------
+One ASan native run, before image tests, observed:
+  WARP: 45 PSOs 0.0817s total; 180 PSOs 0.3184s total.
+  5090: 45 PSOs 1.5582s total; 180 PSOs 5.3315s total.
+  5090 driver creation accounted for 1.5278s and 5.1819s respectively.
+Final emitted bytes: 106194 / 425888; peak live shader blob: 2854 / 2866 bytes.
+Driver-internal memory allocation is not measured. These timings use an existing
+component emitter archive and ordinary driver cache state, not matched fresh
+parent/current complete-core cold-cache qualification. They are NOT FPS gains
+or evidence that all compilation stalls are fixed. Startup cost is significant.
+
+Reproduction
+------------
+From an MSVC developer shell after a fresh matching native core build:
+  set UINT_IMAGE_BUILD=<fresh build>
+  call tools\tests\run_transfer_color_d3d12_tests.cmd
+Optionally COLOR_D3D12_HARDWARE=1 requires a physical adapter, without WARP fallback.
+The regular Windows color suite invokes this test before its existing DXIL tests.
+All readbacks, comparisons, reference PSO compilation and allocations here are
+test-only and must not be copied into production draw submission.
+
+Outstanding gates
+-----------------
+Warm GPU throughput now passes the complete 405-case forward/reverse fixture
+on RTX 5090; see transfer_color_warm_d3d12_results.txt. A private ASan core with
+source-identical runtime code closes initialized Tekken Tag Tournament 2 normally
+under threaded-video D3D12 and Vulkan (180 retro_run calls, normal core-symbol
+unload, no sanitizer report). Private frontend/options/system/save/cache paths
+were used. This tests initialization and teardown, not gameplay or a menu reset.
+The first close attempt had invalid ASAN_OPTIONS; a second inherited the wrong
+backend options and does not count as D3D12 coverage. Both attempts are retained.
+
+First-parent hosted WARP/software-Vulkan shader comparisons pass, but two local
+full hardware comparisons were invalidated by competing compiler processes.
+Their incomplete data is retained and not counted as a timing pass. The targeted
+warm hardware fixture does not replace missing controlled cold-driver/gameplay
+coverage. General guest PSOs, depth/MSAA/helper paths, inline placeholders and
+queue/compilation waits remain P0. Component success does not waive those gaps.

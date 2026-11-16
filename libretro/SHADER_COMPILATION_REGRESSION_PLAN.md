@@ -52,6 +52,29 @@ cache defaults, automated per-commit CI and the pinned-reference policy.
 
 ## Inputs and decisions
 
+### Allocation work alongside the draw-path repair
+
+Treat cold shader stalls and mid-game allocation as related but independently
+measured problems. The current Vulkan miss path inserts a pipeline map node;
+D3D12 allocates a `Pipeline` and a map node. Both shader caches also allocate a
+shader owner and an index entry on first encounter. Emission, driver compilation
+and explicit waits can dominate these host allocation costs; a smaller owner or
+faster copy must not be described as removing those waits.
+
+Prepared utility banks remove generation, PSO creation and map insertion from
+their covered lookups. Keep their initialization/driver memory cost visible and
+test failure ownership, stable borrowed handles and shutdown. For general guest
+pipelines, provision reusable job/owner storage, bound nonblocking admission and
+retain an accurate ready implementation under exhaustion before removing the
+current allocation or wait. Do not trade an allocation for a missing draw,
+unbounded spin, unsafe borrowed lifetime or an approximate stand-in.
+
+Preserve failed benchmark evidence. A candidate must not be pushed on unrelated
+unit passes when the matched performance gate failed. If unchanged executable
+code exhibits role-dependent timing, investigate the measurement transport and
+allocator/cache environment with negative controls; do not silently weaken the
+case set, acceptance thresholds or idle-runner requirement.
+
 The user's current instructions govern this plan. The supplied PDFs are strategy
 and evidence, not commands to execute without verification:
 

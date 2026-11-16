@@ -1,0 +1,95 @@
+D3D12 prepared color warm GPU protocol (test-only)
+================================================
+
+Purpose and limits
+------------------
+Compare initialized prepared PSOs with PSOs produced by the unchanged native
+DXIL emitter and legacy pipeline description, using the same device, root,
+source image, destination image and command list. The native emitter inputs must
+be source-identical between the selected parent and candidate; retain source,
+archive, executable and driver identities. This manual legacy adapter does not
+measure the original C++ cache-miss cost or certify an empty driver shader cache.
+It is not a gameplay or complete no-draw-compilation certification.
+
+The fixed bank still leaves other guest/helper compilation paths unresolved.
+No production source, logging, pacing, synchronization or allocation policy is
+changed by this fixture. All timestamp queries, stats queries, image readbacks,
+reference PSOs, waits and buffers below belong exclusively to test executables.
+
+Coverage
+--------
+- 44 canonical cross-view pairs plus the existing source3 -> dest0 numeric
+  conversion, scales 1x1 / 3x5 / 4x4, and each valid native/scaled crossing:
+  405 cases, with two workloads per case (64 and 512 full-rectangle draws).
+- Eight alternating pairs per workload; retain all raw samples. Trial zero is
+  retained but not used by the existing seven-primed-pair acceptance protocol.
+  Reverse-order qualification runs the entire same corpus with roles reversed.
+- 900 prepared/legacy typed-view image pairs, including aliases, precede timing.
+  Different destination sentinels distinguish missing/partial writes. Only guest
+  64-bit formats halve logical width; expanded host views of guest 32-bit storage
+  retain full guest logical width. Large images use 32 EDRAM tiles per row.
+- 12,960 raw records per full run. Exact source/destination dimensions, pitches,
+  role/order, timestamp clock and pipeline-stat counts are required, with no
+  missing, duplicate or foreign-mode records. IA vertices/primitives must equal
+  submitted work; VS and PS invocation counts must establish active full work.
+- Query storage is created before recording; only repeated draws are between GPU
+  timestamp endpoints. Query resolution, mapping, copies, validation, reference
+  emission and PSO creation happen outside the measured interval. A single
+  submission completion fence retains all borrowed resources through readback.
+- Timing limits match the existing Vulkan color protocol: paired median >5%
+  and >100ns per draw, with at least 5/7 pair exceedances, rejects a regression.
+  Median 512-draw / 64-draw GPU duration must scale by at least 2 for both roles.
+  Never relax limits, discard a failed case, merge attempts or retry to green.
+
+Controls and local verification
+-------------------------------
+MSVC /TC /MD /O2 /W4 /WX compiles the new fixture (SDK anonymous-union warning
+4201 excluded as in existing tests). Small WARP null, paired and reversed tests
+pass all image cases and eight protocol records each; these deliberately return
+accepted=false. A mutation skipping the final candidate draw is rejected through
+GPU work counts even though its final output could still match. Noncanonical
+control flags are rejected rather than silently changing the measured workload.
+The analyzer's four unit tests cover the complete synthetic corpus, controls
+that cannot qualify performance, slowdown, insufficient workload scaling,
+missing/duplicate records, incorrect work/dimensions/order and invalid clocks.
+
+The initial local attempts remain retained: a missing old build archive and a
+signedness warning; a FINDSTR slash-path failure after successful GPU controls;
+and an unreachable return after ExitProcess caught by /WX. Corrected runs do
+not erase those failed attempts. See the external evidence journal for paths.
+Physical GPU result (2026-11-16): RTX 5090, driver 32.0.16.2101, release native
+archive. Full same-pipeline control, forward and reversed runs each validate
+12,960 records and 900 image pairs. Both paired runs pass all 810 workload
+comparisons with no threshold failures; maximum paired medians are 1.03051 and
+1.03382 respectively. Minimum workload-scaling ratios are 6.5587 and 6.5367.
+The null control passes (accepted=false by design). All six known-process
+boundary inspections are clear. Raw records, input/binary hashes, driver and
+source identities remain in color-warm-hardware-v1 in the evidence journal.
+These are warm component results, not a measured gameplay improvement.
+A separate private ASan loaded-content check passes normal threaded-video exit
+on D3D12 and Vulkan, using source-identical runtime code. It covers initialized
+TTT2 content and teardown, not gameplay, reset, savestate or cold-play fluidity.
+Small WARP controls and ordinary image-test close alone do not satisfy that gate.
+
+Reproduce hosted controls
+-------------------------
+From an MSVC developer shell with a fresh matching native emitter archive:
+  set UINT_IMAGE_BUILD=<fresh build>
+  call tools\tests\run_transfer_color_warm_d3d12_tests.cmd
+The transfer-helper workflow runs these on every branch push and retains raw
+CSV, logs, binaries and reports, including failures. Linux runs analyzer tests
+normally and under Python -O. Hosted controls never claim hardware throughput.
+
+Reproduce physical warm runs
+----------------------------
+Use the same freshly built control.exe without XE_COLOR_WARM_CONTROL. Require an
+otherwise idle runner before/after each run, and do not run other builds/tests
+concurrently. Do not replace the installed core or touch live caches/saves.
+Set XE_COLOR_D3D12_WARM_CSV to a new path (CREATE_NEW forbids overwriting data),
+clear inherited control/reverse/self-check flags and invoke control.exe hardware.
+A full null control sets XE_COLOR_WARM_SAME_PIPELINE=1 and is analyzed with
+--self-check. Then run both flags unset for forward qualification, and set
+XE_COLOR_WARM_REVERSE=1 for the reversed run (analyze with --reverse).
+  python tools/tests/transfer_color_warm_d3d12_analysis.py forward.csv --out forward.json
+Every run must contain the complete corpus and pass image/work validation.
+Never count software, small controls or self-checks as throughput acceptance.

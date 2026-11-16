@@ -3,25 +3,12 @@
 #include "core_transfer_color_vk.h"
 #include "core_draw_stats.h"
 #include <string.h>
-static int color_class(unsigned format,unsigned *out) {
- switch(format){
-  case 0:case 1:case 2:case 3:*out=format;return 1;
-  case 10:*out=2;return 1;case 12:*out=3;return 1;
-  case 4:case 6:*out=4;return 1;case 5:case 7:*out=5;return 1;
-  case 14:*out=6;return 1;case 15:*out=7;return 1;
-  default:return 0;
- }
-}
-static int color_pair(unsigned s,unsigned d,unsigned *index){
- if((s>=4 && d>=4) || s==d)return 0;
- *index=s<4?s*7+d-(d>s?1u:0u):28+(s-4)*4+d;return 1;
-}
 const VkPipeline *xe_transfer_color_vk_get(const xe_transfer_color_vk_bank *bank,
  unsigned source_format,unsigned dest_format,unsigned dest_native,unsigned source_native) {
  unsigned s,d,scale,index;
- if(!bank || !bank->ready || !color_class(source_format,&s) ||
-    !color_class(dest_format,&d) || !(bank->enabled_views&(1u<<s)) ||
-    !(bank->enabled_views&(1u<<d)) || dest_native>1 || source_native>1 || !color_pair(s,d,&index))return NULL;
+ if(!bank || !bank->ready || !xe_transfer_color_class(source_format,&s) ||
+    !xe_transfer_color_class(dest_format,&d) || !(bank->enabled_views&(1u<<s)) ||
+    !(bank->enabled_views&(1u<<d)) || dest_native>1 || source_native>1 || !xe_transfer_color_pair(s,d,&index))return NULL;
  scale=bank->scale_classes==1?0:dest_native*2+source_native;
  index+=scale*XE_TRANSFER_COLOR_VK_PAIRS;
  return bank->pipeline[index]?bank->pipeline+index:NULL;
@@ -92,7 +79,7 @@ int xe_transfer_color_vk_init(xe_transfer_color_vk_bank *bank,
  if(!config->emit_packed){
  for(scale=0;scale<bank->scale_classes;++scale)for(s=0;s<8;++s)if(config->enabled_views&(1u<<s))
  for(d=0;d<8;++d)if(config->enabled_views&(1u<<d)){
-  if(!color_pair(s,d,&index))continue;
+  if(!xe_transfer_color_pair(s,d,&index))continue;
   color_shape(config,scale,s,d,&key,&options);
   if(!xe_transfer_color_spv_shape_words(&words,&options,&config->address,&key,guest_formats[s],guest_formats[d]))goto done;
   if(words>maximum)maximum=words;
@@ -119,7 +106,7 @@ int xe_transfer_color_vk_init(xe_transfer_color_vk_bank *bank,
  if(config->dynamic_rendering)create.pNext=&rendering;
  for(scale=0;scale<bank->scale_classes;++scale)for(s=0;s<8;++s)if(config->enabled_views&(1u<<s))
  for(d=0;d<8;++d)if(config->enabled_views&(1u<<d)){
-  if(!color_pair(s,d,&index))continue;
+  if(!xe_transfer_color_pair(s,d,&index))continue;
   color_shape(config,scale,s,d,&key,&options);
   if(config->emit_packed){
    if(!config->emit_packed(config->emit_context,guest_formats[s],guest_formats[d],

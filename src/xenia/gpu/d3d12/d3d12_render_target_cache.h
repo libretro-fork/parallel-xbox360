@@ -42,6 +42,7 @@
 #include "xenia/ui/d3d12/d3d12_util.h"
 #include "libretro/core_transfer_uint_d3d12.h"
 #include "libretro/core_transfer_identity_d3d12.h"
+#include "libretro/core_transfer_color_d3d12.h"
 
 namespace xe {
 namespace gpu {
@@ -675,6 +676,8 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   xe_transfer_uint_d3d12_bank uint_transfer_pipelines_ = {};
   xe_transfer_identity_d3d12_bank identity_transfer_pipelines_ = {};
   bool InitializeIdentityTransferPipelines();
+  xe_transfer_color_d3d12_bank color_transfer_pipelines_ = {};
+  bool InitializeColorTransferPipelines();
 
   // One per transfer mode - the mode is what fixes the shader's bindings.
   ID3D12RootSignature*

@@ -9,10 +9,13 @@
 
 #ifndef XENIA_GPU_D3D12_PIPELINE_CACHE_H_
 #define XENIA_GPU_D3D12_PIPELINE_CACHE_H_
+#define XE_D3D12_INTRUSIVE_PIPELINE_INDEX 1
 
 #include "libretro/core_pipeline_publication.h"
 #include "libretro/core_ready_owned.h"
 #include "libretro/core_pipeline_retire.h"
+#include "libretro/core_pipeline_hash_index.h"
+#include <type_traits>
 #include <cstdio>
 #include <memory>
 #include <set>
@@ -464,6 +467,7 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
 
   friend struct PipelinePublicationTest;
   struct Pipeline {
+    xe_pipeline_hash_node index_node = {};
     // Concrete handles and packed control flags use C89 common atomics.
     // Draws pin the loaded handle; flags alone cannot identify its placeholder.
     xe_pipeline_publication publication{};
@@ -491,10 +495,18 @@ class PipelineCache : public GuestSpirvShaderCache::Host {
   void EnsurePipelineShadersTranslated(
       Pipeline* pipeline);
 
-  // All previously generated pipelines identified by hash and the description.
-  std::unordered_multimap<uint64_t, Pipeline*,
-                          xe::hash::IdentityHasher<uint64_t>>
-      pipelines_;
+  // Final index storage. Cache misses allocate only the stable Pipeline owner,
+  // not a second map node or a growing bucket array. Full descriptions remain
+  // authoritative on hash collisions. Bucket count is a performance candidate,
+  // not a limit on owners; qualification against the parent is still required.
+  static constexpr size_t kPipelineIndexBuckets = 32768;
+  xe_pipeline_hash_node* pipeline_index_buckets_[kPipelineIndexBuckets];
+  xe_pipeline_hash_index pipeline_index_ = {};
+  static Pipeline* PipelineFromIndex(xe_pipeline_hash_node* node) {
+    static_assert(std::is_standard_layout_v<Pipeline>);
+    static_assert(offsetof(Pipeline, index_node) == 0);
+    return reinterpret_cast<Pipeline*>(node);
+  }
 
   // Previously used pipeline. This matches our current state settings and
   // allows us to quickly(ish) reuse the pipeline if no registers have been

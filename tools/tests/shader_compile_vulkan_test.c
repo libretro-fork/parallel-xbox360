@@ -1,12 +1,18 @@
 /* Driver PSO timing of real procedural guest VS+PS translations. C89.
  * Does not execute draws; numerical execution remains a separate required test. */
 #ifndef _WIN32
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #define _POSIX_C_SOURCE 200809L
 #endif
 #define XE_VK_TEST_GRAPHICS
 #define XE_VK_TEST_NO_BUFFERS
 #define XE_VK_TEST_SHADER_MAX_BYTES 8388608
 #define XE_SHADER_COMPILE_BENCH
+#ifdef __linux__
+#include "shader_compile_resources.h"
+#endif
 #include "vulkan_test_context.h"
 int main(int argc,char **argv)
 {

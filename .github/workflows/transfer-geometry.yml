@@ -23,6 +23,8 @@ jobs:
           GPU_TESTS=1 sh tools/tests/run_transfer_uint_image_tests.sh
           sh tools/tests/run_transfer_uint_bank_tests.sh
           python3 tools/tests/test_transfer_uint_warm_analysis.py
+          python3 tools/tests/test_transfer_color_warm_d3d12_analysis.py
+          python3 -O tools/tests/test_transfer_color_warm_d3d12_analysis.py
           python3 tools/tests/test_transfer_color_warm_analysis.py
           python3 -O tools/tests/test_transfer_color_warm_analysis.py
           python3 tools/tests/test_transfer_identity_warm_analysis.py
@@ -93,6 +95,8 @@ jobs:
           call tools\tests\run_transfer_identity_tests.cmd
           if errorlevel 1 exit /b 1
           call tools\tests\run_transfer_color_tests.cmd
+          if errorlevel 1 exit /b 1
+          call tools\tests\run_transfer_color_warm_d3d12_tests.cmd
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -108,4 +112,6 @@ jobs:
             build/tests/transfer-msaa-image-msvc/
             build/tests/transfer-identity-msvc/
             build/tests/transfer-color-msvc/
+            build/tests/transfer-color-d3d12/
+            build/tests/transfer-color-warm-d3d12-msvc/
           if-no-files-found: error

@@ -746,6 +746,7 @@ class ComparisonTests(unittest.TestCase):
                                  samples=7,self_check=str(source),reuse_build=None)
             with patch.dict(ci.os.environ,{"GITHUB_STEP_SUMMARY":""}), \
                  patch.object(ci,"prepare",side_effect=prepare),patch.object(ci,"run"), \
+                 patch.object(ci,"require_idle_runner"), \
                  patch.object(ci,"git",return_value="test"), \
                  patch.object(ci.subprocess,"run",return_value=SimpleNamespace(stdout="{}",stderr="",returncode=0)), \
                  patch("builtins.print"):
@@ -875,6 +876,73 @@ class ComparisonTests(unittest.TestCase):
                 selected=ci.select_commits("push",merge,commits[0])
             self.assertEqual({x["sha"] for x in selected},set(commits[1:]+[side,merge]))
             for row in selected:self.assertEqual(row["base"],git("rev-parse",row["sha"]+"^1"))
+
+
+class ResourceObservationTests(unittest.TestCase):
+    def setUp(self):
+        self.wall={("vulkan.vs_ps_pso",13):[.03]*7}
+        self.row="vulkan.vs_ps_pso,13,123,0,1,2,0,3,4,100,101\n"
+
+    def read(self,text,wall=None):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"resource.csv";path.write_text(text)
+            return ci.read_resource_samples(path,self.wall if wall is None else wall,7)
+
+    def test_valid_observations_retain_order_and_do_not_waive_timing(self):
+        rows=self.read(self.row*7)
+        self.assertEqual([x["sample"] for x in rows],list(range(7)))
+        self.assertEqual(rows[0]["pid"],123)
+        self.assertEqual(rows[0]["minor_faults"],2)
+        self.assertEqual(rows[0]["cpu_after"],1)
+        worse={key:[.05]*7 for key in self.wall}
+        self.assertTrue(ci.compare(self.wall,worse,7)[0]["failures"])
+
+    def test_missing_duplicate_or_unmatched_samples_fail(self):
+        for text in ("",self.row*6,self.row*8,self.row*6+self.row.replace(",13,",",12,")):
+            with self.subTest(text=text),self.assertRaises(ValueError):self.read(text)
+        with self.assertRaises(ValueError):self.read(self.row*7,{})
+        with self.assertRaises(ValueError):self.read(self.row*7,{next(iter(self.wall)):[.03]*6})
+
+    def test_malformed_identity_and_counter_rows_fail(self):
+        for row in (self.row.replace(",123,",",0,"),self.row.replace(",0,1,",",-1,1,"),
+                    self.row.replace(",100,101",",101,100"),self.row.replace(",2,0,",",nan,0,"),
+                    self.row.replace(",123,",",18446744073709551616,"),self.row.rstrip()+",0\n",
+                    self.row.replace("vulkan.","translate.")):
+            with self.subTest(row=row),self.assertRaises(ValueError):self.read(row*7)
+
+
+class RunnerIdleTests(unittest.TestCase):
+    def test_windows_compiler_snapshot(self):
+        result=SimpleNamespace(stdout='[{"pid":12,"name":"CL"},{"pid":13,"name":"retroarch"}]')
+        with patch.object(ci,"WIN",True),patch.object(ci.subprocess,"run",return_value=result):
+            self.assertEqual(ci.competing_processes(),[{"pid":12,"name":"cl"},{"pid":13,"name":"retroarch"}])
+
+    def test_linux_compiler_snapshot(self):
+        result=SimpleNamespace(stdout='1 init\n12 cc1plus\n13 python3\n14 spirv-val\n')
+        with patch.object(ci,"WIN",False),patch.object(ci.subprocess,"run",return_value=result):
+            self.assertEqual(ci.competing_processes(),[{"pid":12,"name":"cc1plus"},{"pid":14,"name":"spirv-val"}])
+
+    def test_bad_snapshot_is_not_idle(self):
+        for output in ('null','false','[{"pid":0,"name":"cl"}]','[{"pid":12}]'):
+            with patch.object(ci,"WIN",True),patch.object(ci.subprocess,"run",return_value=SimpleNamespace(stdout=output)):
+                with self.assertRaises(ValueError):ci.competing_processes()
+
+    def test_idle_boundary_written(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(ci,"competing_processes",return_value=[]):
+            log=Path(directory)/'idle.jsonl';ci.require_idle_runner(log,'before')
+            record=json.loads(log.read_text());self.assertTrue(record['inspection_ok']);self.assertEqual(record['processes'],[])
+
+    def test_busy_rejected_and_retained(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(ci,"competing_processes",return_value=[dict(pid=12,name='cl')]) as check:
+            log=Path(directory)/'idle.jsonl'
+            with self.assertRaises(ValueError):ci.require_idle_runner(log,'before')
+            self.assertEqual(check.call_count,1);self.assertEqual(json.loads(log.read_text())['processes'][0]['pid'],12)
+
+    def test_inspection_failure_is_not_idle(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(ci,"competing_processes",side_effect=OSError('unavailable')):
+            log=Path(directory)/'idle.jsonl'
+            with self.assertRaises(ValueError):ci.require_idle_runner(log,'after')
+            self.assertFalse(json.loads(log.read_text())['inspection_ok'])
 
 
 if __name__=="__main__":unittest.main()
