@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Preserve supplementary Linux shader-test page-fault, context-switch and endpoint-CPU observations alongside PSO timings. Add fault/wait and injected-slowdown controls without changing timing gates or release builds. The previous software-Vulkan tail failure remains unresolved; these observations are diagnostic evidence, not a stutter fix.
+
 - Replace D3D12 pipeline map-node allocations and bucket growth with a fixed C89 index that borrows stable pipeline owners and preserves exact collision checks. Keep worker publication, GPU retirement and cache records intact. The table front-loads 256 KiB and adds 24 bytes per owner; owner/driver allocation and draw-path compilation remain. Add native-owner allocation/lifetime checks and retain failed CPU-screening variants rather than hiding regressions.
 
 - Prepare supported single-sample D3D12 cross-format color ownership transfers during initialization in a fixed C89 PSO table. Covered draws borrow final handles without generating shaders, creating PSOs or inserting map nodes. Retain existing native DXIL, typed views, gamma policy and numeric-conversion behavior. Component ownership and WARP/5090 image comparisons pass; startup compilation is measurable and complete cold-play qualification remains pending.

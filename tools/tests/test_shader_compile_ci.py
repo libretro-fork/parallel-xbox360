@@ -878,6 +878,39 @@ class ComparisonTests(unittest.TestCase):
             for row in selected:self.assertEqual(row["base"],git("rev-parse",row["sha"]+"^1"))
 
 
+class ResourceObservationTests(unittest.TestCase):
+    def setUp(self):
+        self.wall={("vulkan.vs_ps_pso",13):[.03]*7}
+        self.row="vulkan.vs_ps_pso,13,123,0,1,2,0,3,4,100,101\n"
+
+    def read(self,text,wall=None):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"resource.csv";path.write_text(text)
+            return ci.read_resource_samples(path,self.wall if wall is None else wall,7)
+
+    def test_valid_observations_retain_order_and_do_not_waive_timing(self):
+        rows=self.read(self.row*7)
+        self.assertEqual([x["sample"] for x in rows],list(range(7)))
+        self.assertEqual(rows[0]["pid"],123)
+        self.assertEqual(rows[0]["minor_faults"],2)
+        self.assertEqual(rows[0]["cpu_after"],1)
+        worse={key:[.05]*7 for key in self.wall}
+        self.assertTrue(ci.compare(self.wall,worse,7)[0]["failures"])
+
+    def test_missing_duplicate_or_unmatched_samples_fail(self):
+        for text in ("",self.row*6,self.row*8,self.row*6+self.row.replace(",13,",",12,")):
+            with self.subTest(text=text),self.assertRaises(ValueError):self.read(text)
+        with self.assertRaises(ValueError):self.read(self.row*7,{})
+        with self.assertRaises(ValueError):self.read(self.row*7,{next(iter(self.wall)):[.03]*6})
+
+    def test_malformed_identity_and_counter_rows_fail(self):
+        for row in (self.row.replace(",123,",",0,"),self.row.replace(",0,1,",",-1,1,"),
+                    self.row.replace(",100,101",",101,100"),self.row.replace(",2,0,",",nan,0,"),
+                    self.row.replace(",123,",",18446744073709551616,"),self.row.rstrip()+",0\n",
+                    self.row.replace("vulkan.","translate.")):
+            with self.subTest(row=row),self.assertRaises(ValueError):self.read(row*7)
+
+
 class RunnerIdleTests(unittest.TestCase):
     def test_windows_compiler_snapshot(self):
         result=SimpleNamespace(stdout='[{"pid":12,"name":"CL"},{"pid":13,"name":"retroarch"}]')

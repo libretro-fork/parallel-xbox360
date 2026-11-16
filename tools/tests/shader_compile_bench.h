@@ -4,6 +4,10 @@
 #ifdef XE_SHADER_COMPILE_BENCH
 #include <stdio.h>
 #include <stdlib.h>
+#ifndef XE_COMPILE_RESOURCE_BEGIN
+#define XE_COMPILE_RESOURCE_BEGIN() ((void)0)
+#define XE_COMPILE_RESOURCE_END(stage,which) ((void)0)
+#endif
 #ifdef _WIN32
 #include <windows.h>
 static double xe_compile_now(void)
@@ -42,6 +46,7 @@ static double xe_compile_started,xe_compile_cpu_started;
 static const char *xe_compile_cpu_path;
 static void xe_compile_begin(void)
 {
+   XE_COMPILE_RESOURCE_BEGIN();
    xe_compile_cpu_path=getenv("XE_SHADER_BENCH_CPU_CSV");
    if(xe_compile_cpu_path && *xe_compile_cpu_path)xe_compile_cpu_started=xe_compile_cpu_now();
    xe_compile_started=xe_compile_now();
@@ -55,6 +60,7 @@ static void xe_compile_record(const char *stage,unsigned which)
    FILE *file;
    (void)xe_compile_case;
    if(xe_compile_cpu_path && *xe_compile_cpu_path)cpu_elapsed=xe_compile_cpu_now()-xe_compile_cpu_started;
+   XE_COMPILE_RESOURCE_END(stage,which);
    if(!path || !*path || elapsed<0)exit(2);
    file=fopen(path,"ab");if(!file)exit(2);
    if(fprintf(file,"%s,%u,%.9f\n",stage,which,elapsed)<0 || fclose(file))exit(2);
