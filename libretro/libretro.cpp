@@ -18,6 +18,7 @@
 #endif
 
 #include "libretro/core_draw_stats.h"
+#include "core_shader_ucode_reuse.h"
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -1565,6 +1566,7 @@ static void xenia_stop_emulator(void) {
     lr_graphics = nullptr;
     game_loaded = false;
     xe_libretro_clear_title_stop();
+    xe_shader_ucode_reuse_clear();
 }
 
 static void xenia_shutdown(void) {

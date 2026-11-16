@@ -290,6 +290,15 @@ class ComparisonTests(unittest.TestCase):
             self.assertTrue(ci.compare_ucode_coverage(dict(base=old,candidate=candidate))["failures"])
         self.assertTrue(ci.compare_ucode_coverage(dict(base=old))["failures"])
 
+    def test_snapshot_reuse_coverage_cannot_disappear_or_skip_sanitizer_control(self):
+        old=dict(native=True,cases=96,owner_available=True,owner_unit=True)
+        new=dict(old,reuse_available=True,reuse_unit=True,reuse_threads=True,reuse_asan_stale=True)
+        self.assertFalse(ci.compare_ucode_coverage(dict(base=old,candidate=new))["failures"])
+        for field in ("reuse_unit","reuse_threads","reuse_asan_stale"):
+            missing=dict(new);missing[field]=False
+            self.assertTrue(ci.compare_ucode_coverage(dict(base=old,candidate=missing))["failures"])
+        self.assertTrue(ci.compare_ucode_coverage(dict(base=new,candidate=old))["failures"])
+
     def test_snapshot_batches_reject_missing_or_substituted_cases(self):
         data={("shader.ucode.snapshot_batch2000",i):[.001]*7 for i in range(24)}
         self.assertFalse(ci.compare_ucode_snapshot(dict(base=data,candidate=data),7)["failure"])

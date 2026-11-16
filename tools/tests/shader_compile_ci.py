@@ -414,9 +414,50 @@ def validate_loop_reference(source, build, out, log, env, backend):
     return coverage
 
 
+def validate_ucode_reuse(source, build, directory, log, env):
+    coverage=dict(reuse_available=(source/"libretro/core_shader_ucode_reuse.c").is_file(),
+                  reuse_unit=False,reuse_threads=False,reuse_asan_stale=False)
+    if not coverage["reuse_available"]:return coverage
+    directory=directory/"reuse";directory.mkdir()
+    inc=[("/I" if WIN else "-I")+str(source),("/I" if WIN else "-I")+str(source/"third_party/libretro-common/include")]
+    if WIN:
+        flags=["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/fsanitize=address","/Z7","/DHAVE_THREADS","/DRETRO_ATOMIC_FORCE_MSVC",*inc]
+    else:
+        flags=[env.get("CC","cc"),"-std=c89","-Wall","-Wextra","-Werror","-Wdeclaration-after-statement","-O2",
+               "-g","-fsanitize=address,undefined","-fno-omit-frame-pointer","-DHAVE_THREADS",*inc]
+    objects=[]
+    for name in ("unit","threads","reuse","stale"):
+        src=(source/"libretro/core_shader_ucode_reuse.c" if name=="reuse" else
+             HERE/("core_shader_ucode_reuse_"+({"unit":"test","threads":"threads_test","stale":"stale_test"}[name])+".c"))
+        obj=directory/(name+(".obj" if WIN else ".o"));objects.append(obj)
+        command=[*flags,"/c",src,"/Fo"+str(obj),"/Fd"+str(directory/(name+".pdb"))] if WIN else [*flags,"-c",src,"-o",obj]
+        run(command,source,log,env,60)
+    unit,threads,reuse,stale=objects
+    for name,objs in (("unit",[unit]),("threads",[threads,reuse]),("stale",[stale,reuse])):
+        binary=directory/(name+(".exe" if WIN else ""))
+        if WIN:
+            libs=[build/"obj/Windows/retro-common.lib","winmm.lib","ws2_32.lib","bcrypt.lib"] if name=="threads" else []
+            command=["cl","/nologo","/MD","/fsanitize=address",*objs,*libs,"/Fe"+str(binary),"/link","/CGTHREADS:"+str(JOBS)]
+        else:
+            libs=[source/"third_party/libretro-common/rthreads/rthreads.c","-pthread"] if name=="threads" else []
+            command=[*flags,*objs,*libs,"-o",binary]
+        run(command,source,log,env,60)
+        if name!="stale":
+            run([binary],source,log,env,90);coverage["reuse_"+name]=True
+        else:
+            checked=env.copy();checked["ASAN_OPTIONS"]="halt_on_error=1"
+            result=subprocess.run([str(binary)],cwd=source,env=checked,capture_output=True,text=True,timeout=30)
+            (directory/"stale-rejection.log").write_text(result.stdout+result.stderr)
+            if result.returncode==0 or "AddressSanitizer: use-after-poison" not in result.stdout+result.stderr:
+                raise ValueError("retired snapshot ASan control did not reject the stale view")
+            coverage["reuse_asan_stale"]=True
+    return coverage
+
+
 def validate_ucode_snapshot(source, build, out, log, env):
     directory=out/"ucode-snapshot";directory.mkdir(parents=True,exist_ok=True)
     coverage=dict(native=False,owner_unit=False,owner_available=(source/"libretro/core_shader_ucode.h").is_file(),cases=96)
+    coverage.update(validate_ucode_reuse(source,build,directory,log,env))
     inc=[("/I" if WIN else "-I")+str(source),("/I" if WIN else "-I")+str(source/"third_party/libretro-common/include")]
     if coverage["owner_available"]:
         unit=directory/("unit.exe" if WIN else "unit")
@@ -1170,9 +1211,14 @@ def compare_ucode_coverage(coverage):
     if candidate:
         if not candidate.get("native") or candidate.get("cases")!=96:failures.append("candidate snapshot native coverage missing")
         if candidate.get("owner_available") and not candidate.get("owner_unit"):failures.append("candidate C89 owner unit missing")
+        if candidate.get("reuse_available"):
+            for field in ("reuse_unit","reuse_threads","reuse_asan_stale"):
+                if not candidate.get(field):failures.append("candidate snapshot "+field+" missing")
         for version in ("base","anchor"):
             if coverage.get(version,{}).get("owner_available") and not candidate.get("owner_available"):
                 failures.append(version+": removed C89 owner coverage")
+            if coverage.get(version,{}).get("reuse_available") and not candidate.get("reuse_available"):
+                failures.append(version+": removed snapshot reuse coverage")
     return dict(revisions=coverage,failures=failures)
 
 
@@ -1218,6 +1264,7 @@ def run_comparison(args):
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
          "core_alu_spv_build_test.c","core_alu_resume_vulkan_test.c","core_alu_resume_pso_test.c","run_alu_resume_tests.cmd","run_alu_resume_tests.sh","shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_shader_vertex_dot_test.c","core_shader_vertex_dot_gpu_fixture.c","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
+         "core_shader_ucode_reuse_test.c","core_shader_ucode_reuse_threads_test.c","core_shader_ucode_reuse_stale_test.c",
          "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h","shader_compile_resources.h",
          "core_shader_reentry_test.c","core_shader_reentry_profile_test.c","shader_reentry_profile_bridge.cc",
          "core_pipeline_bench_profile.c","core_pipeline_bench_profile.h","core_shader_labels_test.c",

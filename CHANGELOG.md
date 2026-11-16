@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Reuse one retired large shader-snapshot allocation with libretro-common atomic ownership transfer. Retention is bounded to 256 KiB plus alignment/metadata, and shutdown drains it after emulator owners stop. Live snapshots remain independent; first-seen and mismatched-size allocations remain. Add contention, allocation-failure and sanitizer stale-view regression checks. This does not remove draw-path compilation or establish smoother gameplay.
+
 - Add test-only D3D12 prepared-color GPU timestamp/work-count comparisons, strict corpus validation and missing-draw rejection. Retain color-bank artifacts in CI. Small hosted WARP controls cannot qualify physical GPU throughput or gameplay stutter.
 
 - Preserve supplementary Linux shader-test page-fault, context-switch and endpoint-CPU observations alongside PSO timings. Add fault/wait and injected-slowdown controls without changing timing gates or release builds. The previous software-Vulkan tail failure remains unresolved; these observations are diagnostic evidence, not a stutter fix.

@@ -19,6 +19,7 @@ target_include_directories(xenia-spirv-writer PUBLIC
   "${PROJECT_SOURCE_DIR}/third_party/SPIRV-Headers/include")
 
 add_library(xenia-gpu STATIC)
+target_sources(xenia-gpu PRIVATE "${PROJECT_SOURCE_DIR}/libretro/core_shader_ucode_reuse.c")
 xe_platform_sources(xenia-gpu ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(xenia-gpu PRIVATE
   ${PROJECT_SOURCE_DIR}/third_party/Vulkan-Headers/include

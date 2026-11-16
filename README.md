@@ -707,7 +707,12 @@ Shared Vulkan/D3D12 shader microcode snapshots use a C89 owner instead of a
 vector. Construction fills final uninitialized storage once, preserving 32-byte
 alignment for large payloads; readers borrow immutable pointer/count views.
 The snapshot copy remains necessary because guest or file scratch can change
-before asynchronous consumers finish. First-seen allocation remains. See
+before asynchronous consumers finish. A single atomic reuse slot retains at
+most one retired 4 KiB to 256 KiB backing block, matching 32-byte size classes;
+live owners never share storage. Shutdown drains the slot after emulator owners
+stop. Reuse adds no payload copy, while first-seen, size-mismatch and oversized
+allocations remain. ASan builds poison returned payloads until exclusive reuse.
+See `tools/tests/shader_ucode_reuse_results.txt` for coverage and limitations and
 `tools/tests/shader_ucode_results.txt` for ownership checks, timing outliers and
 limits; this does not eliminate draw-path compilation or certify cold play.
 

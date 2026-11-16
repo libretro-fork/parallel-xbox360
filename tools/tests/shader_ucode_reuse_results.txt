@@ -1,0 +1,73 @@
+Bounded retired shader-snapshot storage
+======================================
+
+Motivation and scope
+--------------------
+Local Windows observations of the actual Shader constructor/destructor found
+large snapshot backing allocations being decommitted on free and refaulted
+on reconstruction. A same-binary 14-process diagnostic retained 336 observations;
+a separate seven-process sparse allocator trace recorded 36 sampled transitions
+from MEM_COMMIT to MEM_RESERVE. These observations do not establish the cause
+of an earlier hosted parent/candidate timing failure. That failure is retained.
+
+Runtime design
+--------------
+The typed ShaderUcode adapter keeps its pointer/count layout. Small payloads
+retain their direct allocation/free path. Larger payloads include an immutable
+capacity header and the original allocation pointer outside the aligned view.
+Only 4 KiB through 256 KiB payloads participate in reuse, rounded to 32-byte
+size classes (at most 31 extra payload bytes). The one global slot owns at most
+262144 + sizeof(size_t) + sizeof(void*) + 31 bytes: 262191 on 64-bit targets.
+Allocator bookkeeping is additional. Each large live allocation has one extra
+size_t header versus the old owner. No payload initialization or copy is added.
+
+An acquire/release retro_atomic_exchange_ptr transfers exclusive ownership of
+the slot. Taking a matching block avoids malloc/free; a mismatch frees it and
+allocates the requested class. Returning a block atomically replaces and frees
+the previous retired block. There is no linked list, CAS retry, ABA-sensitive
+traversal, mutex, spin, wait, per-event logging or clock. This does not mean
+malloc/free on misses or eviction is lock-free. Concurrent misses still allocate.
+
+Close requires all consumers of that owner to have finished, exactly as before.
+The slot does not extend a borrow's lifetime or make mutation of a live shader
+safe. ASan-only poisoning detects stale payload reads while storage is retained;
+reuse and eviction unpoison it before handing it out or freeing it. Header data
+remain accessible for ownership transfer. xenia_stop_emulator drains the slot
+after destroying the shader owners and joining their workers;
+the existing reset/unload/failed-load shutdown path is retained.
+
+Checks completed locally
+------------------------
+- MSVC /TC /O2 /W4 /WX and MSVC AddressSanitizer ownership and contention tests.
+- Linux GCC C89, declaration-after-statement errors, AddressSanitizer and UBSan.
+- Source-independent live views, two simultaneous same-size owners, exact size
+  class reuse, 32-byte alignment, uninitialized first payload, overflow/OOM,
+  rejected reopen, eviction/drain, guard bytes, bounded idle retention and
+  10000 allocation-free reopens after initial retirement.
+- Six libretro-common rthreads exercise 240000 exclusive payload lifetimes
+  through concurrent take/return/eviction, checking every live word.
+- Both platform CI helper paths run locally and require the deliberate stale
+  read to fail specifically with AddressSanitizer: use-after-poison. Coverage
+  comparison rejects removal or omission of these checks after introduction.
+- Fresh complete MSVC ASan core build plus a final incremental source check;
+  actual Shader bridge passes all 96 native/endian/alignment/source-mutation
+  cases, with sizeof(Shader) still 432. All 24 construction batches execute
+  under ASan; their instrumented timings are not performance acceptance.
+- Existing shader comparison harness: 78 unit tests pass normally and with -O.
+
+Evidence directories in the private qualification workspace include
+ucode-reuse-unit-v3, ucode-reuse-msvc-asan-v1, ucode-reuse-linux-asan-v1 and
+ucode-reuse-ci-hook-{windows,linux}-v1. Initial wrapper failures (MSVC /TC
+applied to library arguments, incorrect relaxed-atomic spelling, and a findstr
+absolute-path parsing error) remain retained; none was a timing acceptance run.
+
+Pending / explicit limits
+-------------------------
+Integrated frontend lifecycle, matched release Shader snapshot comparisons,
+first-parent shader/PSO CI and gameplay acceptance remain pending. Unit allocation
+counts do not prove a gameplay speedup. Shader objects, metadata, emitter and
+driver storage still allocate; keeping live shaders does not feed this reuse
+slot. An unseen shader still needs its first backing allocation. This change
+does not supply accurate ready fallback pipelines, eliminate draw-path
+translation/compilation/waits, or qualify cold-cache fluidity. No release timing
+threshold, cache default or existing failed verdict is changed.

@@ -12,6 +12,7 @@
 #include "shader_compile_bench.h"
 void *xe_ucode_open(const uint32_t*,size_t,unsigned);
 void xe_ucode_close(void*);
+void xe_ucode_cleanup(void);
 const uint32_t *xe_ucode_view(void*,size_t*);
 size_t xe_ucode_shader_size(void);
 unsigned xe_ucode_required_alignment(void);
@@ -50,5 +51,5 @@ int main(int argc,char **argv) {
   XE_COMPILE_END("shader.ucode.snapshot_batch2000",swap*12+case_index);
  }
 #endif
- return 0;
+ xe_ucode_cleanup();return 0;
 }
