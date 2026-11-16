@@ -1,0 +1,63 @@
+Loop progress and operand-address bounds (2026-11-16)
+===================================================
+Parent: 615dcdaece9aa44ad5b8d67cb59f97404d49ff54.
+
+The CPU helper saturated its stored aL after every iteration. An enclosing loop
+that exceeded the operand range therefore lost progress before a nested REPEAT
+could inherit it. Both native GPU translators instead retain the full sum.
+Keep the existing four fixed entries and raw progress; clamp only when the CPU
+reads the operand address. Unsigned addition and a four-byte bit transfer define
+corrupted-state overflow without signed overflow. Legal loop sums fit int32.
+There is no heap allocation, payload copy, lock, timer or GPU synchronization.
+The four-byte local memcpy is a scalar bit transfer, not a shader-buffer copy.
+
+Independent witness: outer count3/start255/step127, inner REPEAT count5/step-127.
+Only the fifteenth body iteration consumes a relative register. The final raw
+address is1, selecting initialized r10=42 through base9. The old saturated
+iterator selects r13=13. All other relative reads are inactive. The native CPU
+and actual Vulkan vertex shader must export four42s; the historical parent must
+reproduce four13s, explicitly recorded as a known failure, not a correct oracle.
+Triangle capture checks all three vertices and feedback redzones. Original seven
+repeat-loop fixtures remain separate and required; no existing case is dropped.
+
+Specification scope: upstream 8dc77b0 shader_interpreter.h cited IPR2015-00325
+for its operand clamp. Exhibit2039, R400 Sequencer Specification2.11, page24,
+describes the index as iterator*step+start with bounded indexing output. It does
+not justify destroying loop progress at each increment. The operand clamp is
+preserved here. This preliminary R400 document and PC GPU agreement do not
+establish full Xenos conformance, especially relative operand accesses outside
+the register/constant windows, empty loops or repeat inheritance at the bounds.
+https://ptacts.uspto.gov/ptacts/public-informations/petitions/1461188/download-documents?artifactId=0RAIoBGjLeu7DCvwQzs3W5I-vz8ApQiLBa0ompkofEa-IVkgYdULu60
+
+The test harness previously bound one shared-memory descriptor although the
+native shader declares four, and used point topology without PointSize. Vulkan
+validation rejected those runs. Bind four borrowed views and capture a complete
+triangle for loop tests. Earlier invalid executions are retained as failures,
+not validation evidence. Other point-based fixture modes are not certified by
+this correction. CI requires explicit Khronos validation on software Vulkan.
+
+Verification before feature publication:
+- MSVC strict C89 and actual native interpreter, ASan; GCC C89 ASan/UBSan.
+- Exhaustive256starts*256steps*255iterations checks both raw progress and bounded
+  reads, plus signed-overflow adversarial inputs and fixed stack ownership.
+- Actual native-translator witness on RTX5090 and llvmpipe; original/Xfb modules
+  validate against Vulkan1.1. CPU-only historical13 versus corrected42 is explicit.
+- Test harness82 tests in normal and optimized Python; timing limits unchanged.
+- Full MSVC ASan core build, incrementally rebuilt after the final header change:
+  PASS. Private threaded frontend initialization,180retro_run calls and normal
+  symbol unload: PASS on explicitly verified D3D12 and Vulkan, no ASan reports.
+  These are initialization/teardown checks, not sustained gameplay acceptance.
+- Final current CI helper against parent/candidate libraries: seven original
+  native/GPU fixtures and one advance witness per revision PASS on RTX5090.
+  Original and Xfb witness modules are identical across revisions. llvmpipe
+  executes all seven originals and the witness with explicit Khronos validation,
+  exact three-vertex outputs and no validation errors. Hardware validation layers
+  were not enabled; software Vulkan supplies the explicit validation evidence.
+
+Final verification and remote CI status are recorded with the feature's external
+evidence, not inferred from earlier experimental builds. A full first-parent
+performance comparison remains mandatory before promotion to libretro. There is
+no measured gameplay gain or claim of cold-play acceptance. This CPU reference
+repair is not the missing accurate GPU fallback, and draw-path compilation and
+waits remain unresolved architectural work. The separate relative-constant GPU
+prototype still has out-of-range oracle disagreements and is not qualified.

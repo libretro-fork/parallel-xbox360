@@ -10,6 +10,7 @@ static void unit(void)
 {
    struct { uint32_t before, c[4], n[4]; int32_t a[4]; uint32_t after; } s;
    uint32_t depth, d, start, it;
+   uint32_t bits;
    int step,expected;
    memset(&s,0,sizeof(s)); s.before=123; s.after=456; depth=0;
    CHECK(xe_shader_loop_address(0,s.a)==0);
@@ -48,6 +49,9 @@ static void unit(void)
       CHECK(xe_shader_loop_enter(&depth,s.c,s.n,s.a,pack(255,start,step),0));
       for(it=0;it<255;++it) {
          expected=(int)start+(int)it*step;
+#ifdef XE_SHADER_LOOP_UNBOUNDED_ADVANCE
+         CHECK(s.a[depth-1]==expected);
+#endif
          if(expected>256)expected=256;
          if(expected< -256)expected= -256;
          CHECK(xe_shader_loop_address(depth,s.a)==expected);
@@ -56,9 +60,21 @@ static void unit(void)
       CHECK(!depth);
    }
    depth=1; s.n[0]=2; s.c[0]=pack(2,0,127); s.a[0]=INT32_MAX;
-   CHECK(xe_shader_loop_advance(&depth,s.c,s.n,s.a,0) && s.a[0]==256);
+   CHECK(xe_shader_loop_advance(&depth,s.c,s.n,s.a,0));
+#ifdef XE_SHADER_LOOP_UNBOUNDED_ADVANCE
+   memcpy(&bits,&s.a[0],4);CHECK(bits==UINT32_C(0x8000007e));
+   CHECK(xe_shader_loop_address(depth,s.a)==-256);
+#else
+   CHECK(s.a[0]==256);bits=0;
+#endif
    s.n[0]=2; s.c[0]=pack(2,0,-128); s.a[0]=INT32_MIN;
-   CHECK(xe_shader_loop_advance(&depth,s.c,s.n,s.a,0) && s.a[0]==-256);
+   CHECK(xe_shader_loop_advance(&depth,s.c,s.n,s.a,0));
+#ifdef XE_SHADER_LOOP_UNBOUNDED_ADVANCE
+   memcpy(&bits,&s.a[0],4);CHECK(bits==UINT32_C(0x7fffff80));
+   CHECK(xe_shader_loop_address(depth,s.a)==256);
+#else
+   CHECK(s.a[0]==-256);(void)bits;
+#endif
    depth=5; CHECK(!xe_shader_loop_advance(&depth,s.c,s.n,s.a,0) && depth==5);
 }
 #ifdef XE_LOOP_NATIVE

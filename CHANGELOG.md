@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Preserve CPU shader-loop progress across nested repeat loops instead of saturating the stored iterator. Keep the existing operand-address clamp. Add a packed guest shader that reproduces the old CPU/GPU disagreement, with exact Vulkan output checks and CI coverage. This repairs the CPU reference used by draw-extent analysis; it does not remove renderer compilation stalls.
+
 - Extend the checked GPU continuation-interpreter prototype with masked vector/scalar writes relative to the live loop address. Preserve borrowed input, partial lanes and continuation ownership; reject indices outside its supported register window. Add GPU numerical, fault and compiler-cost checks. This prototype is still separate from rendering and does not resolve gameplay shader stalls.
 
 - Reuse one retired large shader-snapshot allocation with libretro-common atomic ownership transfer. Retention is bounded to 256 KiB plus alignment/metadata, and shutdown drains it after emulator owners stop. Live snapshots remain independent; first-seen and mismatched-size allocations remain. Add contention, allocation-failure and sanitizer stale-view regression checks. This does not remove draw-path compilation or establish smoother gameplay.

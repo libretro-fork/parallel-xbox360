@@ -14,6 +14,24 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_loop_advance_witness_distinguishes_legacy_failure_from_fixed_result(self):
+        row="LOOP_ADVANCE_NATIVE exports=1 value=13 expected=42; final consumed index10, other relative reads inactive\n"
+        self.assertTrue(ci.validate_loop_advance_log(row,False)["advance_legacy_known_failure"])
+        passed=row.replace("value=13","value=42")+"PASS: loop advance native witness42; no saturated iterator\n"
+        self.assertFalse(ci.validate_loop_advance_log(passed,True)["advance_legacy_known_failure"])
+        for text,fixed in ((row,True),(passed,False),(passed+passed,True),(row.replace("exports=1","exports=0"),False)):
+            with self.assertRaises(ValueError):ci.validate_loop_advance_log(text,fixed)
+
+    def test_loop_advance_correctness_cannot_regress_or_lose_execution(self):
+        old=dict(available=True,unit=True,native=True,cases=7,vulkan_gpu=True,advance_gpu=True,advance_vertices=3,advance_shared_views=4,
+                 advance_witness=True,advance_expected=42,advance_fixed=False,advance_native_value=13,advance_legacy_known_failure=True)
+        new=dict(old,advance_fixed=True,advance_native_value=42,advance_legacy_known_failure=False)
+        self.assertFalse(ci.compare_loop_advance_coverage(dict(base=old,candidate=new),True)["failures"])
+        self.assertTrue(ci.compare_loop_advance_coverage(dict(base=new,candidate=old),True)["failures"])
+        for field,value in (("advance_gpu",False),("advance_witness",False),("advance_native_value",13),("cases",0)):
+            row=dict(new);row[field]=value
+            self.assertTrue(ci.compare_loop_advance_coverage(dict(base=old,candidate=row),True)["failures"])
+
     def test_resume_compiler_counts_tails_and_capability_removal(self):
         raw={("raw_resume."+stage,0):[.001]*7 for stage in ("module","compute_pso","compute_pso_warm")}
         intro=ci.compare_resume_compiler(dict(candidate=raw),7)
@@ -573,12 +591,15 @@ class ComparisonTests(unittest.TestCase):
 
     def test_loop_reference_backend_and_pinned_inputs(self):
         for windows,backend,gpu in [(False,"vulkan-software",True),(True,"d3d12-warp",False),(True,"vulkan-hardware",True)]:
-            with tempfile.TemporaryDirectory() as folder,patch.object(ci,"WIN",windows),patch.object(ci,"run") as run:
+            with tempfile.TemporaryDirectory() as folder,patch.object(ci,"WIN",windows),patch.object(ci,"run") as run, \
+                    patch.object(ci,"validate_loop_advance",return_value={"synthetic_advance_fixture":True}) as advance:
                 root=Path(folder);(root/"libretro").mkdir()
                 (root/"libretro/core_shader_loop.h").write_text("xe_shader_loop_advance(")
                 result=ci.validate_loop_reference(root,root/"build",root/"out",root/"log",{},backend)
                 self.assertTrue(result["unit"]);self.assertTrue(result["native"])
                 self.assertEqual(result["vulkan_gpu"],gpu)
+                self.assertTrue(result["synthetic_advance_fixture"]);advance.assert_called_once()
+                self.assertEqual(advance.call_args.args[-1],backend)
                 fixture_calls=[call for call in run.call_args_list if len(call.args)>3 and
                                "FORWARD_FLOW_SOURCE" in call.args[3]]
                 self.assertEqual(len(fixture_calls),1)
@@ -765,6 +786,7 @@ class ComparisonTests(unittest.TestCase):
                 (compiled/"gpu-timestamp-math/coverage.json").write_text(json.dumps(dict(unit=True,version=1,synthetic_fixture=True)))
                 (results/(source.name+"-"+compiled.parent.name+"-"+compiled.name+"-raw-control.json")).write_text(
                     json.dumps(dict(available=False,unit=False,vulkan_gpu=False)))
+                (results/(source.name+"-"+compiled.parent.name+"-"+compiled.name+"-loops.json")).write_text(json.dumps(dict(available=False)))
                 for role in ["base","candidate"]:
                     wall=[];cpu=[]
                     for sample in range(7):

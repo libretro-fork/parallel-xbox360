@@ -416,6 +416,90 @@ def compare_resume_coverage(coverage,vulkan):
     return dict(revisions=coverage,failures=failures)
 
 
+def validate_loop_advance_log(text,fixed):
+    wanted="42" if fixed else "13"
+    observed=re.findall(r"^LOOP_ADVANCE_NATIVE exports=1 value=(\S+) expected=42; final consumed index10, other relative reads inactive$",text,re.MULTILINE)
+    if observed!=[wanted]:raise ValueError("missing or substituted loop-advance witness")
+    passed=text.splitlines().count("PASS: loop advance native witness42; no saturated iterator")
+    if passed!=(1 if fixed else 0):raise ValueError("loop-advance result marker disagrees with native output")
+    return dict(advance_fixed=fixed,advance_witness=True,advance_native_value=int(wanted),
+                advance_expected=42,advance_legacy_known_failure=not fixed)
+
+
+def validate_loop_advance(source,build,directory,results,env,backend):
+    fixed="#define XE_SHADER_LOOP_UNBOUNDED_ADVANCE 1" in (source/"libretro/core_shader_loop.h").read_text()
+    target=directory/"advance-witness";log=results/(source.name+"-loop-advance.log");fixture=env.copy()
+    fixture.update(FORWARD_FLOW_SOURCE=str(HERE/"core_shader_loop_advance_witness.c"),
+                   FORWARD_FLOW_BRIDGE=str(HERE/"shader_loop_accuracy_bridge.cc"),FORWARD_FLOW_OUT=str(target))
+    if WIN:
+        fixture.update(FORWARD_FLOW_BUILD=str(build),FORWARD_FLOW_LINK_FLAGS="/CGTHREADS:"+str(JOBS))
+        command=[os.environ.get("COMSPEC","cmd.exe"),"/d","/c",source/"tools/tests/run_forward_flow_tests.cmd"]
+    else:
+        fixture["CXX"]=env.get("CXX","c++")+" -Wl,--strip-debug"
+        command=["sh",source/"tools/tests/run_forward_flow_tests.sh"]
+    rejected=False
+    try:run(command,source,log,fixture,240)
+    except subprocess.CalledProcessError as error:
+        if fixed or error.returncode!=1:raise
+        rejected=True
+    if rejected==fixed:raise ValueError("historical loop witness did not reproduce its declared failure")
+    result=validate_loop_advance_log(log.read_text(),fixed);result["advance_gpu"]=False
+    paths=[target/('call0.'+suffix) for suffix in ('raw.spv','spv','ucode','input','loops','expected','native')]
+    if any(not p.is_file() for p in paths):raise ValueError("loop-advance witness artifacts incomplete")
+    actual=struct.unpack('<4f',(target/'call0.native').read_bytes())
+    if actual!=(float(result['advance_native_value']),)*4:raise ValueError("native witness payload substituted")
+    result['advance_artifacts']={p.name:dict(bytes=p.stat().st_size,sha256=file_sha256(p)) for p in paths}
+    if backend.startswith("vulkan"):
+        runtime=target/("vulkan.exe" if WIN else "vulkan")
+        if WIN:
+            command=["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/D_CRT_SECURE_NO_WARNINGS",
+                     "/DXE_LOOP_ACCURACY_GPU_TEST","/DXE_VERTEX_TEST_CASES=1","/I"+str(source/"third_party/Vulkan-Headers/include"),
+                     HERE/"core_shader_call_vulkan_test.c","/Fo"+str(target/"vulkan.obj"),"/Fe"+str(runtime)]
+        else:
+            command=[env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+                     "-DXE_LOOP_ACCURACY_GPU_TEST","-DXE_VERTEX_TEST_CASES=1","-DXE_LOOP_ADVANCE_VALIDATION","-isystem",source/"third_party/Vulkan-Headers/include",
+                     HERE/"core_shader_call_vulkan_test.c","-ldl","-o",runtime]
+        run(command,source,log,env,120);run([runtime,target],source,log,env,120)
+        if re.search(r"VUID-|Validation Error|ERROR:",log.read_text()):raise ValueError("invalid native GPU loop witness")
+        if not WIN and log.read_text().splitlines().count("LOOP_ADVANCE_VALIDATION enabled=1")!=1:
+            raise ValueError("loop witness validation layer missing")
+        if log.read_text().splitlines().count("LOOP_VERTEX_CAPTURE vertices=3 shared_views=4")!=1:
+            raise ValueError("loop witness primitive/descriptor coverage missing")
+        result.update(advance_vertices=3,advance_shared_views=4,advance_validation=not WIN)
+        if len(re.findall(r"^PASS: 1 actual guest vertex shaders, exact4-word output and feedback guards \(.+\)$",log.read_text(),re.MULTILINE))!=1:
+            raise ValueError("native GPU loop-advance execution missing")
+        identities=re.findall(r"^BENCH_DEVICE Vulkan (.+)$",log.read_text(),re.MULTILINE)
+        if len(identities)!=1:raise ValueError("loop-advance device identity missing")
+        software=any(name in identities[0].lower() for name in ("llvmpipe","lavapipe","swiftshader"))
+        if software!=(backend=="vulkan-software"):raise ValueError("wrong loop-advance software/hardware device")
+        result["advance_device"]=identities[0]
+        validator=fixture.get("SPIRV_VALIDATOR") or shutil.which("spirv-val")
+        if not validator:raise ValueError("loop-advance GPU requires spirv-val")
+        for p in (target/"call0.raw.spv",target/"call0.spv"):
+            run([validator,"--target-env","vulkan1.1",p],source,log,env,30)
+        result["advance_gpu"]=True
+    with zipfile.ZipFile(results/(source.name+"-loop-advance.zip"),"w",zipfile.ZIP_DEFLATED) as archive:
+        for p in paths:archive.write(p,p.name)
+    return result
+
+
+def compare_loop_advance_coverage(coverage,vulkan):
+    failures=[];candidate=coverage.get("candidate",{})
+    if any(v.get("available") for v in coverage.values()) and not candidate.get("available"):
+        failures.append("loop correctness coverage removed")
+    for version,row in coverage.items():
+        if not row.get("available"):continue
+        required=dict(unit=True,native=True,cases=7,advance_witness=True,advance_expected=42)
+        if vulkan:required.update(vulkan_gpu=True,advance_gpu=True,advance_vertices=3,advance_shared_views=4)
+        if row.get("advance_fixed"):
+            required.update(advance_native_value=42,advance_legacy_known_failure=False)
+            if not candidate.get("advance_fixed"):failures.append("correct loop advance removed")
+        else:required.update(advance_native_value=13,advance_legacy_known_failure=True)
+        if any(row.get(k)!=v for k,v in required.items()):failures.append(version+": incomplete loop witness execution")
+    return dict(revisions=coverage,failures=failures,
+                scope="legacy saturation is an executed known failure, never a correct-reference claim")
+
+
 def validate_loop_reference(source, build, out, log, env, backend):
     """Keep the packed-program oracle's loop semantics under literal goldens."""
     header=source / "libretro/core_shader_loop.h"
@@ -463,6 +547,7 @@ def validate_loop_reference(source, build, out, log, env, backend):
                  HERE / "core_shader_call_vulkan_test.c","-ldl","-o",runtime],source,log,env)
         run([runtime,directory],source,log,env,120)
         coverage["vulkan_gpu"]=True
+    coverage.update(validate_loop_advance(source,build,directory,log.parent,env,backend))
     return coverage
 
 
@@ -1314,6 +1399,7 @@ def run_comparison(args):
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
+         "core_shader_loop_advance_witness.c",
          "core_alu_spv_build_test.c","core_alu_resume_vulkan_test.c","core_alu_resume_pso_test.c","run_alu_resume_tests.cmd","run_alu_resume_tests.sh","shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_shader_vertex_dot_test.c","core_shader_vertex_dot_gpu_fixture.c","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
          "core_alu_relative_write_vulkan_test.c",
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
@@ -1384,6 +1470,9 @@ def run_comparison(args):
     resume_report=compare_resume_coverage({v:json.loads((results/(b["source"].name+"-resume-coverage.json")).read_text()) for v,b in builds.items()},args.backend.startswith("vulkan"))
     (results/"resume-comparison.json").write_text(json.dumps(resume_report,indent=2),encoding="utf-8")
     if resume_report["failures"]:raise ValueError("; ".join(resume_report["failures"]))
+    loop_report=compare_loop_advance_coverage({v:json.loads((results/(b["source"].name+"-"+b["out"].parent.name+"-"+b["out"].name+"-loops.json")).read_text()) for v,b in builds.items()},args.backend.startswith("vulkan"))
+    (results/"loop-advance-comparison.json").write_text(json.dumps(loop_report,indent=2),encoding="utf-8")
+    if loop_report["failures"]:raise ValueError("; ".join(loop_report["failures"]))
     allocation_profiles={version:read_reentry_allocations(results/"analysis-allocations"/b["source"].name/"allocations.csv") for version,b in builds.items()}
     allocation_report=compare_reentry_allocations(allocation_profiles["base"],allocation_profiles["candidate"])
     (results/"analysis-allocations/comparison.json").write_text(json.dumps(allocation_report,indent=2),encoding="utf-8")
@@ -1602,13 +1691,15 @@ def run_comparison(args):
                 linux_pso_resources=resources,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
-                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,raw_gpu_dispatch=gpu_reports,ucode_snapshot=snapshot_report,raw_resume_compiler=resume_compiler,
+                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,raw_gpu_dispatch=gpu_reports,ucode_snapshot=snapshot_report,raw_resume_compiler=resume_compiler,loop_advance=loop_report,
                 success=not resume_compiler["failure"] and not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not snapshot_report["failure"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(v["failure"] for v in gpu_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
                 self_check=bool(args.self_check))
     (results/"comparison.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     summary="# Shader compilation comparison\n\n%s -> %s (%s)\n\n"%(args.base,args.head,args.backend)
     summary+="**%s** across %d procedural stage/case metrics.\n\n"%("PASS" if report["success"] else "FAIL / investigate",len(rows))
     summary+="This is NOT cold-play gameplay signoff. Driver-cache status and missing anchor are recorded in environment.json.\n\n"
+    if any(x.get("advance_legacy_known_failure") for x in loop_report["revisions"].values()):
+        summary+="Loop accuracy: the historical CPU saturation failure (13 versus native GPU42) is executed and retained explicitly. It is not a correct-reference claim. Revisions advertising the fix must return42 and cannot remove the witness.\n\n"
     if resume_compiler["observed"]:
         summary+="Resumable control flow: validated GPU continuations and ownership faults before timing. Separate module/PSO samples retain the initial PSO and prime a private in-memory cache; initial driver compilation is observed without a cold-cache claim. The new component has no comparable historical parent when its ABI is absent; it is not integrated into rendering.\n\n"
     if any(v["available"] for v in gpu_reports.values()):
