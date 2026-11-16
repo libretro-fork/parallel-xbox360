@@ -9,13 +9,26 @@ static uint32_t minmax_bits(unsigned at) {
 }
 static uint32_t minmax_golden_bits(uint32_t a,uint32_t b,unsigned minimum) {
  uint32_t ma,mb;unsigned equal,less;
+#ifdef XE_ALU_CONTROL_MINMAX_RAW_SELECTION
+ uint32_t raw_a=a,raw_b=b;
+#endif
  if(!(a&0x7f800000u))a&=0x80000000u;
  if(!(b&0x7f800000u))b&=0x80000000u;
  ma=a&0x7fffffffu;mb=b&0x7fffffffu;
- if(ma>0x7f800000u || mb>0x7f800000u)return b;
+ if(ma>0x7f800000u || mb>0x7f800000u){
+#ifdef XE_ALU_CONTROL_MINMAX_RAW_SELECTION
+  return raw_b;
+#else
+  return b;
+#endif
+ }
  equal=ma==mb && (!ma || (a>>31)==(b>>31));less=0;
  if(!equal)less=(a>>31)!=(b>>31)?(a>>31):(a>>31)?ma>mb:ma<mb;
+#ifdef XE_ALU_CONTROL_MINMAX_RAW_SELECTION
+ return (minimum?less:!less)?raw_a:raw_b;
+#else
  return (minimum?less:!less)?a:b;
+#endif
 }
 static unsigned minmax_status(unsigned which) {
  unsigned q=which/2;return q==2562 || q==2563?3:1;

@@ -10,6 +10,7 @@
 #define XE_ALU_CONTROL_LAZY_SOURCE 1
 #define XE_ALU_CONTROL_BORROW_REGISTERS 1
 #define XE_ALU_CONTROL_MINMAX 1
+#define XE_ALU_CONTROL_MINMAX_RAW_SELECTION 1
 #define XE_ALU_CONTROL_DOT 1
 #define XE_ALU_CONTROL_SHARED_DOT_LOOP 1
 #define XE_ALU_RESUME_ABI 1
@@ -60,8 +61,8 @@ int xe_alu_program_spv_build(xe_spv_binary *out);
  * Vector DP4/DP3/DP2ADD preserve ordered RTZ products and scalar additions;
  * DP2ADD alone reads the third source. No fused/reassociated reduction.
  * Ordinary vector/scalar EQ/GT/GE/NE produce exact1/0 without changing P0.
- * Vector/scalar MAX/MIN use one integer selection helper after signed source
- * denormal flushing. MAX takes the first operand on a tie, MIN the second;
+ * Vector/scalar MAX/MIN use one integer selection helper. Only comparison
+ * magnitudes flush denormals. MAX takes the first operand on a tie, MIN the second;
  * unordered comparisons select the second. Selected bits are not quantized.
  * Scalar MAX/MIN update history even without a destination and preserve P0.
  * Construction reserves current bounded control-module storage up front;

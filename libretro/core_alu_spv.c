@@ -537,7 +537,7 @@ static uint32_t compare_alu(alu_builder *b,uint32_t opcode,uint32_t a,uint32_t c
   choose(b,ne,vector(b,UINT32_C(0x3f800000)),vector(b,0)),selected);
 }
 /* Ordered SM3 selection: MAX takes A on a tie, MIN takes B; unordered
- * comparisons take B. Flush input denormals with their sign before selection.
+ * comparisons take B. Flush only comparison magnitudes; retain selected words.
  * One shared integer-only function serves vector and scalar instructions. */
 static uint32_t choose_bool4(alu_builder *b,uint32_t predicate,uint32_t a,uint32_t c) {
  uint32_t result=id(b);emit(b,SpvOpSelect,T_B4,result,3,predicate,a,c,0);return result;
@@ -569,7 +569,6 @@ static void minmax_function(alu_builder *b) {
   operation(b,SpvOpULessThanEqual,T_B4,ma,vector(b,UINT32_C(0x7f800000))),
   operation(b,SpvOpULessThanEqual,T_B4,mc,vector(b,UINT32_C(0x7f800000))));
  condition=operation(b,SpvOpLogicalAnd,T_B4,condition,ordered);
- a=operation(b,SpvOpBitwiseOr,T_U4,ma,sa);c=operation(b,SpvOpBitwiseOr,T_U4,mc,sc);
  result=choose(b,condition,a,c);emit(b,SpvOpReturnValue,0,0,1,result,0,0,0);
  emit(b,SpvOpFunctionEnd,0,0,0,0,0,0,0);
 }

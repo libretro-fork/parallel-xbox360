@@ -1,0 +1,105 @@
+MIN/MAX selected bits, CPU throughput and shader compiler gates (2026-11-16)
+=========================================================================
+Parent: 8fd7ca98e7945a40de49e11bbd3ba72757780d07.
+
+The CPU source loader flushed subnormal values before MIN/MAX, and the generic
+SPIR-V helper rebuilt its selected value from flushed comparison magnitudes.
+Both lost bits that the specialized shader retains. Compare denormal magnitudes
+as zero, but return the original selected modified word. MAX chooses A on ties;
+MIN chooses B; unordered comparisons choose B. Keep ordinary arithmetic source
+flushing unchanged. Vector MAXA uses the same selected-value repair while its
+address calculation retains the existing GuestAdd/clamp path.
+
+New runtime algorithms are MSVC C89 helpers. SSE2 operates directly on existing
+four-lane operands using integer masks/comparisons and an unaligned final store.
+No temporary SIMD buffer, register-bank snapshot, heap allocation, lock, clock,
+logging or synchronization is introduced. The fallback uses the same scalar bit
+rules. MAX/MIN scalar history retains selected bits even without a destination.
+The generic integer helper drops two reconstruction operations (ten words):
+control 10525->10515, continuation 13736->13726. Both retain the 16384-word reserve,
+one cold allocation and 1000 allocation-free same-owner rebuilds. The two older
+arithmetic/program modules remain byte-identical within each tested compiler.
+
+Independent native-GPU evidence:
+- 648 packed programs:128 mixed-lane vector pair cases covering every16x16 input
+ pair for MAX/MIN,8 identical-source cases,512 scalar pair cases. Inputs include
+ signed zero, small/large signed subnormals, min-normal, finite values, infinities
+ and NaNs. Capture parameter0 before viewport math; append a finite position.
+ Each draw checks all three captured vertices and feedback redzones. Native
+ constant bindings are packed densely; no retail shader or asset is used.
+-  The parent CPU disagrees on648 lanes; corrected CPU disagrees on zero. The
+ native shader's finite/subnormal/zero words are exact; NaN payloads are not
+ specified, so native GPU comparisons require NaN class rather than payload.
+ CPU/generic integer fixtures separately retain their exact selected words.
+-  RTX 5090 driver 32.0.16.2101 and llvmpipe LLVM 20.1.2 pass with supported
+ SignedZeroInfNanPreserve32=1 and requested DenormFlushToZero=0. Both report
+ the optional explicit FTZ mode unsupported. llvmpipe uses explicit Khronos
+ validation with no VUID/error. Official spirv-val validates executed modules.
+ Native DXIL cmp/choose and identical-operand paths were inspected; no new
+ native D3D12 numerical selection execution or physical Xenos proof is claimed.
+
+Do not hide the exploratory failures. Portable Features(false) modules omitted
+signed-zero/NaN controls and disagreed on special values; they were not a valid
+production-default oracle. Requesting unsupported explicit FTZ was rejected,
+not accepted as coverage. Those logs/modules remain external evidence. Optional
+FTZ modules validate statically but are not executed on the observed devices.
+
+Existing regression coverage is retained: 5136 MIN/MAX context replays, 10272
+invocations within 19155 packed-program invocations and 18295 native comparisons.
+New raw-result goldens are conditional on the source capability; old behavior is
+still exercised on the parent, with its independent 648-lane failure explicitly
+reported. An initially missed raw-B unordered golden branch was caught and fixed;
+the failure remains recorded. No case set or timing threshold was relaxed.
+
+Local qualification:
+-  Strict MSVC C89/ASan and GCC C89/ASan/UBSan units pass source modifiers, scalar
+ anchors and vector lanes under host FTZ/DAZ on/off. The forced-scalar variant
+ also passes. Original 40960 source/modifier/FTZ cases remain unchanged and pass.
+-  The actual Windows CI helper executes 648 native shaders on each revision,
+ requires 648 historical CPU disagreements versus zero after the fix, hashes all
+ fixture files and validates ten unique raw/Xfb modules per revision. Both unit
+ variants are mandatory. Linux full native bridge execution remains remote-CI
+ coverage; standalone llvmpipe GPU execution is not relabeled as Linux CPU proof.
+-  Exact timed MSVC and GCC Release control/continuation bytes separately execute
+ the full control corpus and 770-case/324-native continuation corpus, including
+ 9362 steps and 25 faults. A test-only final-word shim injects exact GCC bytes into
+ the unchanged numerical fixture on Windows; hashes match the timed Linux blobs.
+ Do not infer Release correctness from differently instrumented emitter bytes.
+-  Fresh full MSVC ASan core build, then a four-step incremental SSE2 rebuild,
+ passes private threaded D3D12 and Vulkan initialization / 180 retro_run calls/normal
+ symbols unload without ASan reports. Earlier scalar-build DLL/PDB are retained
+ separately before rebuilding. Installed core and live saves/caches are untouched.
+
+Throughput and compiler cost:
+CPU profiling creates the typed owner once and initializes code/constants/temps
+outside each interval. A C89 loop executes one million actual interpreter programs
+per case; 12 cases cover vector/scalar MIN/MAX with constant/temp sources plus
+ADD/MUL controls. Both revisions must produce identical finite words before and
+after timing. No old incorrect subnormal result is used as a valid speed oracle.
+Two orders of seven alternating pairs pass the existing 10%/2ms median, 25%/5ms
+p95 and 50%/10ms maximum gates. Vector ratios are .9106.. .9427; scalar selection
+ratios 1.0376..1.0416. ADD/MUL controls range .9997..1.0359. These are measured CPU
+component costs, not a gameplay improvement. Initial scalar-only correction showed
+an 8..10% vector cost increase; it was retained as evidence and replaced by SSE2.
+
+The component CPU harness uses freshly compiled per-revision Release interpreter
+objects and identical frozen Release dependencies. Memory/RegisterFile/interpreter
+header ABIs are unchanged from those dependencies to the parent; setup remains
+outside measurement. The first attempted ASan/Release annotation mix failed to
+link and was not timed. Full CI instead builds each actual revision normally.
+An initial 100k-loop screen is retained; final million-loop runs keep all eight
+selection cases and add four arithmetic controls for better timing resolution.
+
+Module and primed-PSO compiler profiles use seven alternating pairs in both
+orders on 5090 and llvmpipe. All four cohorts pass unchanged limits. Warm PSO median
+milliseconds: NV .0124->.0125 / .0114->.0120; software 19.627884->20.016620 /
+19.834139->19.625220. All raw/CPU/initial-PSO samples and boundary checks remain.
+Initial driver caches are uncontrolled; no cold-driver, GPU execution throughput
+or shader-stutter acceptance claim follows. SSE2 only changes CPU code; these
+compiler profiles' exact modules, probes and comparison rules remain unchanged.
+
+CI adds strict native observation/float-control checks and a separate 12-case CPU
+throughput gate, including process-CPU diagnostics, source/binary hashes and
+missing-case/sample rejection. Existing shader/PSO metrics remain required.
+Full first-parent CI is pending at feature publication. Rendering integration,
+complete fetch/stages/ROP and removal of draw-path compilation/waits remain open.

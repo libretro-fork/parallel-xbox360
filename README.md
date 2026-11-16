@@ -18,6 +18,16 @@ separately. This is not connected to rendering: texture fetch, remaining stages
 and accurate raster output still prevent it from replacing the current fallback.
 State-buffer traffic and continuation execution cost remain to be profiled.
 
+CPU and generic MIN/MAX now flush only their comparison magnitudes while keeping
+the selected source bits, including subnormals and signed zero. The CPU vector
+path borrows its existing operands through a C89 SSE2 helper; other targets use
+the scalar implementation. Arithmetic source flushing stays separate. Independent
+native Vulkan comparisons require the device's supported signed-zero/NaN controls;
+portable modules without those controls are not an accuracy oracle. CI compares
+twelve equal-output CPU workloads as well as shader/PSO costs. See
+[selection precision, throughput and limits](tools/tests/shader_selection_results.txt).
+These component results do not establish stall-free cold gameplay.
+
 The continuation prototype also reads loop-relative constants directly from its
 borrowed constant-bank binding. Address flags follow operand order, including
 scalar constant/temp operations; unused operands do not load an address or reject

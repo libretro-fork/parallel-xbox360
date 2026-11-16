@@ -446,6 +446,127 @@ def compare_resume_coverage(coverage,vulkan):
     return dict(revisions=coverage,failures=failures)
 
 
+def build_selection_cpu(source,build,out,results,env):
+    target=out/"selection-cpu";target.mkdir();log=results/(source.name+"-selection-cpu-build.log");fixture=env.copy()
+    for key in ("XE_SHADER_BENCH_CSV","XE_SHADER_BENCH_CPU_CSV"):fixture.pop(key,None)
+    fixture.update(FORWARD_FLOW_SOURCE=str(HERE/"core_shader_selection_cpu_bench.c"),
+                   FORWARD_FLOW_BRIDGE=str(HERE/"shader_selection_cpu_bridge.cc"),FORWARD_FLOW_OUT=str(target),
+                   FORWARD_FLOW_BUILD=str(build),FORWARD_FLOW_FLAGS="/DXE_SHADER_COMPILE_BENCH /I"+str(HERE),
+                   FORWARD_FLOW_LINK_FLAGS="/CGTHREADS:"+str(JOBS))
+    if WIN:command=[os.environ.get("COMSPEC","cmd.exe"),"/d","/c",source/"tools/tests/run_forward_flow_tests.cmd"]
+    else:
+        run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+             "-D_POSIX_C_SOURCE=200809L","-DXE_SHADER_COMPILE_BENCH","-I"+str(HERE),
+             "-c",HERE/"core_shader_selection_cpu_bench.c","-o",target/"driver.o"],source,log,fixture,120)
+        fixture.update(CXX=env.get("CXX","c++")+" "+str(target/"driver.o")+" -Wl,--strip-debug",
+                       TEST_SOURCE=str(HERE/"shader_selection_cpu_bridge.cc"),TEST_BUILD_DIR=str(target))
+        command=["sh",source/"tools/tests/run_shader_publication_tests.sh"]
+    run(command,source,log,fixture,240)
+    if log.read_text().splitlines().count("PASS: CPU selection cases=12 iterations=1 timed=0; equal finite guest outputs")!=1:
+        raise ValueError("CPU selection correctness setup missing")
+    executable=target/("test.exe" if WIN else "test")
+    if not executable.is_file():raise ValueError("CPU selection executable missing")
+    return executable
+
+
+def validate_selection_log(text,fixed):
+    expected=0 if fixed else 648
+    marker=f"SELECTION_OBSERVATION cases=648 CPU_lane_disagreements={expected}; compare=FTZ selected=raw"
+    if text.splitlines().count(marker)!=1 or text.splitlines().count("SELECTION_MODULE_CONTROLS signed_zero_inf_nan_preserve=1 FTZ=0")!=1:
+        raise ValueError("missing or substituted native selection observation")
+    return dict(available=True,fixed=fixed,cases=648,cpu_lane_disagreements=expected,
+                legacy_known_failure=not fixed,gpu=False,unit=False)
+
+
+def validate_selection_reference(source,build,out,results,env,backend):
+    content=(source/"libretro/core_alu_spv.h").read_text()
+    if "#define XE_ALU_CONTROL_MINMAX 1" not in content:return dict(available=False,reason="historical source has no MIN/MAX prototype")
+    fixed="#define XE_ALU_CONTROL_MINMAX_RAW_SELECTION 1" in content
+    target=out/"native-selection";target.mkdir();log=results/(source.name+"-selection.log");fixture=env.copy()
+    fixture.update(FORWARD_FLOW_SOURCE=str(HERE/"core_shader_selection_gpu_fixture.c"),
+                   FORWARD_FLOW_BRIDGE=str(HERE/"shader_selection_bridge.cc"),FORWARD_FLOW_OUT=str(target),
+                   FORWARD_FLOW_BUILD=str(build),FORWARD_FLOW_LINK_FLAGS="/CGTHREADS:"+str(JOBS))
+    if WIN:command=[os.environ.get("COMSPEC","cmd.exe"),"/d","/c",source/"tools/tests/run_forward_flow_tests.cmd"]
+    else:
+        san=fixture.get("SANITIZER","-fsanitize=address,undefined")
+        run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",*san.split(),
+             "-I"+str(source),"-I"+str(source/"third_party/libretro-common/include"),"-I"+str(HERE),
+             "-c",HERE/"core_shader_selection_gpu_fixture.c","-o",target/"driver.o"],source,log,fixture,120)
+        fixture.update(CXX=env.get("CXX","c++")+" "+san+" "+str(target/"driver.o")+" -Wl,--strip-debug",
+                       TEST_SOURCE=str(HERE/"shader_selection_bridge.cc"),TEST_BUILD_DIR=str(target))
+        command=["sh",source/"tools/tests/run_shader_publication_tests.sh"]
+    run(command,source,log,fixture,240);coverage=validate_selection_log(log.read_text(),fixed)
+    if fixed:
+        unit=target/("unit.exe" if WIN else "unit")
+        if WIN:command=["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/I"+str(source),
+                        "/I"+str(source/"third_party/libretro-common/include"),HERE/"core_alu_selection_test.c",
+                        "/Fo"+str(target/"unit.obj"),"/Fe"+str(unit)]
+        else:command=[env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+                      "-I"+str(source),"-I"+str(source/"third_party/libretro-common/include"),HERE/"core_alu_selection_test.c","-o",unit]
+        run(command,source,log,fixture,120);run([unit],source,log,fixture,60)
+        if log.read_text().splitlines().count("PASS: raw selection anchors,8192 source/modifier checks, host FTZ/DAZ independence")!=1:
+            raise ValueError("selection modifier/host-mode unit missing")
+        scalar_unit=target/("scalar.exe" if WIN else "scalar")
+        scalar_command=[str(arg).replace(str(target/"unit.obj"),str(target/"scalar.obj")).replace(str(unit),str(scalar_unit)) for arg in command]
+        scalar_command.insert(1,"/DXE_ALU_SELECTION_FORCE_SCALAR" if WIN else "-DXE_ALU_SELECTION_FORCE_SCALAR")
+        run(scalar_command,source,log,fixture,120);run([scalar_unit],source,log,fixture,60)
+        if log.read_text().splitlines().count("PASS: raw selection anchors,8192 source/modifier checks, host FTZ/DAZ independence")!=2:
+            raise ValueError("selection scalar fallback unit missing")
+        coverage.update(unit=True,unit_scalar=True)
+    if backend.startswith("vulkan"):
+        runtime=target/("runtime.exe" if WIN else "runtime")
+        if WIN:command=["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/D_CRT_SECURE_NO_WARNINGS",
+                        "/DXE_LOOP_ACCURACY_GPU_TEST","/DXE_SATURATION_GPU_TEST","/DXE_SELECTION_FLOAT_CONTROLS","/DXE_VERTEX_TEST_CASES=648",
+                        "/I"+str(source/"third_party/Vulkan-Headers/include"),HERE/"core_shader_call_vulkan_test.c",
+                        "/Fo"+str(target/"runtime.obj"),"/Fe"+str(runtime)]
+        else:command=[env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+                      "-DXE_LOOP_ACCURACY_GPU_TEST","-DXE_SATURATION_GPU_TEST","-DXE_SELECTION_FLOAT_CONTROLS",
+                      "-DXE_LOOP_ADVANCE_VALIDATION","-DXE_VERTEX_TEST_CASES=648","-isystem",source/"third_party/Vulkan-Headers/include",
+                      HERE/"core_shader_call_vulkan_test.c","-ldl","-o",runtime]
+        run(command,source,log,fixture,120);run([runtime,target],source,log,fixture,240)
+        text=log.read_text()
+        if re.search(r"VUID-|Validation Error|ERROR:",text):raise ValueError("invalid native GPU selection execution")
+        if text.splitlines().count("LOOP_VERTEX_CAPTURE vertices=3 shared_views=4")!=1:raise ValueError("selection capture incomplete")
+        if not WIN and text.splitlines().count("LOOP_ADVANCE_VALIDATION enabled=1")!=1:raise ValueError("selection validation layer missing")
+        if len(re.findall(r"^PASS: 648 actual guest vertex shaders, exact4-word output and feedback guards \(.+\)$",text,re.MULTILINE))!=1:
+            raise ValueError("native GPU selection work missing")
+        if len(re.findall(r"^SELECTION_FLOAT_CONTROLS FTZ_requested=0 FTZ_supported=[01] signed_zero_inf_nan_preserve=1 RTZ_supported=[01] RTE_supported=[01]$",text,re.MULTILINE))!=1:
+            raise ValueError("selection float-control coverage missing")
+        devices=re.findall(r"^BENCH_DEVICE Vulkan (.+)$",text,re.MULTILINE)
+        if len(devices)!=1:raise ValueError("selection device missing")
+        software=any(n in devices[0].lower() for n in ("llvmpipe","lavapipe","swiftshader"))
+        if software!=(backend=="vulkan-software"):raise ValueError("wrong selection software/hardware device")
+        coverage.update(gpu=True,device=devices[0],validation=not WIN,vertices=3,signed_zero_inf_nan_preserve=True,FTZ_requested=False)
+    validator=fixture.get("SPIRV_VALIDATOR") or shutil.which("spirv-val")
+    if backend.startswith("vulkan") and not validator:raise ValueError("selection checks require spirv-val")
+    hashes={};validated=set()
+    with zipfile.ZipFile(results/(source.name+"-selection.zip"),"w",zipfile.ZIP_DEFLATED) as archive:
+        for case in range(648):
+            for suffix in ("raw.spv","spv","input","loops","expected"):
+                path=target/("call"+str(case)+"."+suffix)
+                if not path.is_file():raise ValueError("missing selection fixture: "+path.name)
+                digest=file_sha256(path);hashes[path.name]=digest;archive.write(path,path.name)
+                if suffix.endswith("spv") and validator and digest not in validated:
+                    run([validator,"--target-env","vulkan1.2",path],source,log,fixture,30);validated.add(digest)
+    coverage.update(artifacts=hashes,validated_modules=len(validated))
+    return coverage
+
+
+def compare_selection_coverage(coverage,vulkan):
+    failures=[];candidate=coverage["candidate"]
+    for role,row in coverage.items():
+        if not row.get("available"):continue
+        if not candidate.get("available"):failures.append("selection coverage removed")
+        expected=dict(cases=648,cpu_lane_disagreements=0 if row.get("fixed") else 648,
+                      legacy_known_failure=not row.get("fixed"))
+        if row.get("fixed"):
+            expected.update(unit=True,unit_scalar=True)
+            if not candidate.get("fixed"):failures.append("raw selected-bit correctness removed")
+        if vulkan:expected.update(gpu=True,vertices=3,signed_zero_inf_nan_preserve=True,FTZ_requested=False)
+        if any(row.get(k)!=v for k,v in expected.items()):failures.append(role+": selection execution incomplete")
+    return dict(revisions=coverage,failures=failures,scope="legacy CPU disagreements retained, no claim that the old oracle was correct")
+
+
 def validate_loop_advance_log(text,fixed):
     wanted="42" if fixed else "13"
     observed=re.findall(r"^LOOP_ADVANCE_NATIVE exports=1 value=(\S+) expected=42; final consumed index10, other relative reads inactive$",text,re.MULTILINE)
@@ -922,6 +1043,9 @@ def prepare(source, out, results, backend, reuse_build=None):
     loop_coverage=validate_loop_reference(source,build,out,log,env,backend)
     (results/(source.name+"-"+out.parent.name+"-"+out.name+"-loops.json")).write_text(
         json.dumps(loop_coverage,indent=2),encoding="utf-8")
+    selection_coverage=validate_selection_reference(source,build,out,results,env,backend)
+    (results/(source.name+"-"+out.parent.name+"-"+out.name+"-selection.json")).write_text(json.dumps(selection_coverage,indent=2),encoding="utf-8")
+    selection_cpu=build_selection_cpu(source,build,out,results,env) if selection_coverage["available"] else None
     program_coverage=validate_raw_program(source,build,out,log,env,backend)
     (results/(source.name+"-"+out.parent.name+"-"+out.name+"-raw-program.json")).write_text(
         json.dumps(program_coverage,indent=2),encoding="utf-8")
@@ -1003,6 +1127,7 @@ def prepare(source, out, results, backend, reuse_build=None):
             dot_zero=validate_renderer_dot_zero(source,build,out,log,env)
             (results/(source.name+"-renderer-dot-zero.json")).write_text(json.dumps(dot_zero,indent=2),encoding="utf-8")
         result={"cpu": cpu, "pso": exe, "source": source, "out": out}
+        if selection_cpu:result["selection_cpu"]=selection_cpu
         if resume_coverage["vulkan_gpu"]:
             result["raw_resume"]=out/"raw-resume"/("pso.exe" if WIN else "pso")
             result["raw_resume_module"]=out/"raw-resume/resume.spv"
@@ -1036,7 +1161,9 @@ def prepare(source, out, results, backend, reuse_build=None):
         module = out / ("vertex%d.dxil" % case)
         run([generator, module, case], source, log, env, 60)
         run([runtime, module, case, 0, 0, 0, 0], source, log, env, 60)
-    return {"cpu": cpu, "dxil": generator, "warp": runtime, "source": source, "out": out,"ucode_snapshot":snapshot}
+    result={"cpu": cpu, "dxil": generator, "warp": runtime, "source": source, "out": out,"ucode_snapshot":snapshot}
+    if selection_cpu:result["selection_cpu"]=selection_cpu
+    return result
 
 
 def source_wait_alarms(command_processor, pipeline_cache):
@@ -1217,6 +1344,17 @@ def spirv_manifest(directory):
     if len(result)!=64:
         raise ValueError("procedural corpus must contain all64 cases")
     return result
+
+
+def compare_selection_cpu(raw,samples,expected_versions):
+    if set(raw)!=set(expected_versions):raise ValueError("CPU selection observations missing or unexpectedly added")
+    keys={("shader.cpu.selection_1m",i) for i in range(12)}
+    for role,data in raw.items():
+        if set(data)!=keys or any(len(v)!=samples for v in data.values()):raise ValueError("CPU selection cases/samples missing: "+role)
+    rows=compare(raw["base"],raw["candidate"],samples) if "base" in raw and "candidate" in raw else []
+    anchor=compare(raw["anchor"],raw["candidate"],samples) if "anchor" in raw and "candidate" in raw else []
+    return dict(available=bool(raw),cases=rows,anchor_cases=anchor,failure=any(r["failures"] for r in rows+anchor),
+                scope="equal finite guest outputs; cold setup excluded; CPU interpreter throughput, not graphics or cold-play acceptance")
 
 
 def compare_raw_program(raw, samples, prefix="raw_program."):
@@ -1430,6 +1568,8 @@ def run_comparison(args):
          "core_float_rtz_gpu_fixture.c","float_rtz_bridge.cc","shader_xfb_fixture.h","core_shader_clock_test.c",
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
          "core_shader_loop_advance_witness.c",
+         "core_alu_selection_test.c","core_shader_selection_gpu_fixture.c","shader_selection_bridge.cc",
+         "core_shader_selection_cpu_bench.c","shader_selection_cpu_bridge.cc",
          "core_alu_spv_build_test.c","core_alu_resume_vulkan_test.c","core_alu_resume_pso_test.c","run_alu_resume_tests.cmd","run_alu_resume_tests.sh","shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_shader_vertex_dot_test.c","core_shader_vertex_dot_gpu_fixture.c","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
          "core_alu_relative_write_vulkan_test.c",
          "core_alu_relative_constant_vulkan_test.c","alu_continuation_address_fixture.h",
@@ -1504,6 +1644,9 @@ def run_comparison(args):
     loop_report=compare_loop_advance_coverage({v:json.loads((results/(b["source"].name+"-"+b["out"].parent.name+"-"+b["out"].name+"-loops.json")).read_text()) for v,b in builds.items()},args.backend.startswith("vulkan"))
     (results/"loop-advance-comparison.json").write_text(json.dumps(loop_report,indent=2),encoding="utf-8")
     if loop_report["failures"]:raise ValueError("; ".join(loop_report["failures"]))
+    selection_report=compare_selection_coverage({v:json.loads((results/(b["source"].name+"-"+b["out"].parent.name+"-"+b["out"].name+"-selection.json")).read_text()) for v,b in builds.items()},args.backend.startswith("vulkan"))
+    (results/"selection-comparison.json").write_text(json.dumps(selection_report,indent=2),encoding="utf-8")
+    if selection_report["failures"]:raise ValueError("; ".join(selection_report["failures"]))
     allocation_profiles={version:read_reentry_allocations(results/"analysis-allocations"/b["source"].name/"allocations.csv") for version,b in builds.items()}
     allocation_report=compare_reentry_allocations(allocation_profiles["base"],allocation_profiles["candidate"])
     (results/"analysis-allocations/comparison.json").write_text(json.dumps(allocation_report,indent=2),encoding="utf-8")
@@ -1529,7 +1672,7 @@ def run_comparison(args):
         for component in ("raw_program","raw_control") if component in b} for v,b in builds.items()}
     manifest["clock_controls"]={version:"clock-checks/"+b["out"].parent.name+"-"+b["out"].name for version,b in builds.items()}
     manifest["prepared_binaries"]={version:{name:dict(sha256=file_sha256(b[name]),bytes=b[name].stat().st_size)
-        for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module","raw_control","raw_control_module","raw_resume","raw_resume_module","ucode_snapshot"] if name in b} for version,b in builds.items()}
+        for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module","raw_control","raw_control_module","raw_resume","raw_resume_module","ucode_snapshot","selection_cpu"] if name in b} for version,b in builds.items()}
     (results/"environment.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     ir={version:spirv_manifest(b["out"]) for version,b in builds.items()}
     for version,b in builds.items():
@@ -1590,6 +1733,13 @@ def run_comparison(args):
                 snapshot_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-ucode.csv"))
                 snapshot_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-ucode-cpu.csv"))
                 run([b["ucode_snapshot"]],b["source"],log,snapshot_env,120)
+            if "selection_cpu" in b:
+                selection_env=e.copy()
+                selection_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-selection-cpu.csv"))
+                selection_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-selection-cpu-process.csv"))
+                run([b["selection_cpu"]],b["source"],log,selection_env,120)
+                if log.read_text().splitlines().count("PASS: CPU selection cases=12 iterations=1000000 timed=1; equal finite guest outputs")!=1:
+                    raise ValueError("CPU selection timed work missing")
             if "raw_resume" in b:
                 resume_env=e.copy()
                 resume_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-resume-compiler.csv"))
@@ -1607,6 +1757,10 @@ def run_comparison(args):
     resources={version:read_resource_samples(results/(version+"-pso-resources.csv"),raw[version],args.samples)
                for version in builds} if manifest["linux_pso_resource_observations"]["enabled"] else {}
     rows,anchor_rows,cpu_rows=compare_timing_channels(raw,cpu,args.samples)
+    selection_raw={v:read_samples(results/(v+"-selection-cpu.csv")) for v,b in builds.items() if "selection_cpu" in b}
+    selection_cpu_report=compare_selection_cpu(selection_raw,args.samples,[v for v,c in selection_report["revisions"].items() if c.get("available")])
+    selection_cpu_report["process_cpu_diagnostics"]={v:cpu_diagnostics(data,read_samples(results/(v+"-selection-cpu-process.csv")),args.samples) for v,data in selection_raw.items()}
+    (results/"selection-cpu-comparison.json").write_text(json.dumps(selection_cpu_report,indent=2),encoding="utf-8")
     resume_compiler=compare_resume_compiler({v:read_samples(results/(v+"-resume-compiler.csv")) for v,b in builds.items() if "raw_resume" in b},args.samples)
     resume_compiler["process_cpu_observations"]=compare_resume_compiler({v:read_samples(results/(v+"-resume-compiler-cpu.csv")) for v,b in builds.items() if "raw_resume" in b},args.samples)["observed"]
     snapshot_raw={v:read_samples(results/(v+"-ucode.csv")) for v,b in builds.items() if "ucode_snapshot" in b}
@@ -1722,13 +1876,15 @@ def run_comparison(args):
                 linux_pso_resources=resources,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
-                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,raw_gpu_dispatch=gpu_reports,ucode_snapshot=snapshot_report,raw_resume_compiler=resume_compiler,loop_advance=loop_report,
-                success=not resume_compiler["failure"] and not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not snapshot_report["failure"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(v["failure"] for v in gpu_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
+                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,raw_gpu_dispatch=gpu_reports,ucode_snapshot=snapshot_report,raw_resume_compiler=resume_compiler,loop_advance=loop_report,selection=selection_report,selection_cpu=selection_cpu_report,
+                success=not selection_cpu_report["failure"] and not resume_compiler["failure"] and not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not snapshot_report["failure"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(v["failure"] for v in gpu_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
                 self_check=bool(args.self_check))
     (results/"comparison.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     summary="# Shader compilation comparison\n\n%s -> %s (%s)\n\n"%(args.base,args.head,args.backend)
     summary+="**%s** across %d procedural stage/case metrics.\n\n"%("PASS" if report["success"] else "FAIL / investigate",len(rows))
     summary+="This is NOT cold-play gameplay signoff. Driver-cache status and missing anchor are recorded in environment.json.\n\n"
+    if any(x.get("legacy_known_failure") for x in selection_report["revisions"].values()):
+        summary+="MIN/MAX selection: the historical CPU's648 lane disagreements with the native GPU/raw-bit oracle are executed and retained explicitly. Corrected revisions must have zero; the older CPU is not a correct-value reference. Float controls and unsupported configurations are recorded separately.\n\n"
     if any(x.get("advance_legacy_known_failure") for x in loop_report["revisions"].values()):
         summary+="Loop accuracy: the historical CPU saturation failure (13 versus native GPU42) is executed and retained explicitly. It is not a correct-reference claim. Revisions advertising the fix must return42 and cannot remove the witness.\n\n"
     if resume_compiler["observed"]:

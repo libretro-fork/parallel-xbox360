@@ -145,6 +145,39 @@ class ComparisonTests(unittest.TestCase):
             changed=dict(new);changed[field]=0
             self.assertTrue(ci.compare_resume_coverage(dict(base=old,candidate=changed),True)["failures"])
 
+    def test_selection_cpu_requires_all_equal_work_cases_and_samples(self):
+        data={("shader.cpu.selection_1m",i):[.01]*7 for i in range(12)}
+        self.assertFalse(ci.compare_selection_cpu(dict(base=data,candidate=data),7,("base","candidate"))["failure"])
+        for changed in ({},dict(list(data.items())[:-1]),{k:v[:-1] for k,v in data.items()}):
+            with self.assertRaises(ValueError):ci.compare_selection_cpu(dict(base=data,candidate=changed),7,("base","candidate"))
+        with self.assertRaises(ValueError):ci.compare_selection_cpu(dict(base=data),7,("base","candidate"))
+        self.assertFalse(ci.compare_selection_cpu({},7,())["available"])
+
+    def test_selection_cpu_uses_existing_regression_limits(self):
+        base={("shader.cpu.selection_1m",i):[.01]*7 for i in range(12)}
+        candidate=dict(base);candidate[("shader.cpu.selection_1m",3)]=[.014]*7
+        result=ci.compare_selection_cpu(dict(base=base,candidate=candidate),7,("base","candidate"))
+        self.assertTrue(result["failure"])
+        self.assertEqual([r["case"] for r in result["cases"] if r["failures"]],[3])
+
+    def test_selection_observation_keeps_legacy_failure_explicit(self):
+        for fixed,wrong in ((False,648),(True,0)):
+            text=f"SELECTION_OBSERVATION cases=648 CPU_lane_disagreements={wrong}; compare=FTZ selected=raw\nSELECTION_MODULE_CONTROLS signed_zero_inf_nan_preserve=1 FTZ=0\n"
+            self.assertEqual(ci.validate_selection_log(text,fixed)["legacy_known_failure"],not fixed)
+            for changed in (text+text,text.replace("cases=648","cases=647"),text.replace("FTZ=0","FTZ=1"),text.replace(f"disagreements={wrong}","disagreements=99")):
+                with self.assertRaises(ValueError):ci.validate_selection_log(changed,fixed)
+
+    def test_selection_coverage_cannot_remove_work_or_fix(self):
+        old=dict(available=True,fixed=False,cases=648,cpu_lane_disagreements=648,legacy_known_failure=True,
+                 gpu=True,vertices=3,signed_zero_inf_nan_preserve=True,FTZ_requested=False)
+        new=dict(old,fixed=True,unit=True,unit_scalar=True,cpu_lane_disagreements=0,legacy_known_failure=False)
+        self.assertFalse(ci.compare_selection_coverage(dict(base=old,candidate=new),True)["failures"])
+        self.assertTrue(ci.compare_selection_coverage(dict(base=new,candidate=old),True)["failures"])
+        for field,value in (("available",False),("unit",False),("unit_scalar",False),("cases",647),("cpu_lane_disagreements",648),
+                            ("gpu",False),("vertices",1),("signed_zero_inf_nan_preserve",False),("FTZ_requested",True)):
+            with self.subTest(field=field):
+                self.assertTrue(ci.compare_selection_coverage(dict(base=old,candidate=dict(new,**{field:value})),True)["failures"])
+
     def test_relative_constants_require_native_literal_and_domain_checks(self):
         device="vendor=1 device=2 driver=3 name=test"
         text="RELATIVE_CONSTANT_DEVICE "+device+" validation=1\nPASS: relative constants cases=128 endian_modes=2 budgets=2 native=492 literals=496 pipelines=1 between_pass_readbacks=0\nREFERENCE_DOMAIN rejections=4 expected=4 literals_only=0\n"
@@ -815,6 +848,7 @@ class ComparisonTests(unittest.TestCase):
                 (results/(source.name+"-"+compiled.parent.name+"-"+compiled.name+"-raw-control.json")).write_text(
                     json.dumps(dict(available=False,unit=False,vulkan_gpu=False)))
                 (results/(source.name+"-"+compiled.parent.name+"-"+compiled.name+"-loops.json")).write_text(json.dumps(dict(available=False)))
+                (results/(source.name+"-"+compiled.parent.name+"-"+compiled.name+"-selection.json")).write_text(json.dumps(dict(available=False)))
                 for role in ["base","candidate"]:
                     wall=[];cpu=[]
                     for sample in range(7):

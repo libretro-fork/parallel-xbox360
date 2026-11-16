@@ -317,8 +317,15 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
             instr.is_const_address_register_relative());
         vector_src_absolute = instr.abs_constants();
       }
-      xe_alu_source_vector(vector_operands[i], vector_src_ptr,
-          instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
+      if (vector_opcode == ucode::AluVectorOpcode::kMax ||
+          vector_opcode == ucode::AluVectorOpcode::kMin ||
+          vector_opcode == ucode::AluVectorOpcode::kMaxA) {
+        xe_alu_source_vector_preserve(vector_operands[i], vector_src_ptr,
+            instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
+      } else {
+        xe_alu_source_vector(vector_operands[i], vector_src_ptr,
+            instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
+      }
     }
 
     bool replicate_vector_result_x = false;
@@ -337,20 +344,10 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         }
       } break;
       case ucode::AluVectorOpcode::kMax: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] =
-              std::isgreaterequal(vector_operands[0][i], vector_operands[1][i])
-                  ? vector_operands[0][i]
-                  : vector_operands[1][i];
-        }
+        xe_alu_minmax_vector(vector_result,vector_operands[0],vector_operands[1],0);
       } break;
       case ucode::AluVectorOpcode::kMin: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] =
-              std::isless(vector_operands[0][i], vector_operands[1][i])
-                  ? vector_operands[0][i]
-                  : vector_operands[1][i];
-        }
+        xe_alu_minmax_vector(vector_result,vector_operands[0],vector_operands[1],1);
       } break;
       case ucode::AluVectorOpcode::kSeq: {
         for (uint32_t i = 0; i < 4; ++i) {
@@ -606,12 +603,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       case ucode::AluVectorOpcode::kMaxA: {
         state_.address_register = int32_t(std::floor(
             GuestAdd(xe::clamp_float(vector_operands[0][3], -256.0f, 255.0f), 0.5f)));
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] =
-              std::isgreaterequal(vector_operands[0][i], vector_operands[1][i])
-                  ? vector_operands[0][i]
-                  : vector_operands[1][i];
-        }
+        xe_alu_minmax_vector(vector_result,vector_operands[0],vector_operands[1],0);
       } break;
       default: {
         assert_unhandled_case(vector_opcode);
@@ -649,8 +641,14 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       const uint32_t count = scalar_opcode_info.single_operand_is_two_component ? 2 : 1;
       for (uint32_t i = 0; i < count; ++i) {
         uint32_t component = i == 0 ? 3 : (vector_opcode_info.GetOperandCount() == 3 ? 2 : 0);
-        scalar_operands[i] = xe_alu_source_value(scalar_src_ptr,
-            instr.src_swizzle(3), component, scalar_src_absolute, instr.src_negate(3));
+        if (scalar_opcode == ucode::AluScalarOpcode::kMaxs ||
+            scalar_opcode == ucode::AluScalarOpcode::kMins) {
+          scalar_operands[i] = xe_alu_source_value_preserve(scalar_src_ptr,
+              instr.src_swizzle(3), component, scalar_src_absolute, instr.src_negate(3));
+        } else {
+          scalar_operands[i] = xe_alu_source_value(scalar_src_ptr,
+              instr.src_swizzle(3), component, scalar_src_absolute, instr.src_negate(3));
+        }
       }
     } break;
     case 2: {
@@ -705,16 +703,10 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       }
     } break;
     case ucode::AluScalarOpcode::kMaxs: {
-      state_.previous_scalar =
-          std::isgreaterequal(scalar_operands[0], scalar_operands[1])
-              ? scalar_operands[0]
-              : scalar_operands[1];
+      state_.previous_scalar = xe_alu_minmax_value(scalar_operands[0],scalar_operands[1],0);
     } break;
     case ucode::AluScalarOpcode::kMins: {
-      state_.previous_scalar =
-          std::isless(scalar_operands[0], scalar_operands[1])
-              ? scalar_operands[0]
-              : scalar_operands[1];
+      state_.previous_scalar = xe_alu_minmax_value(scalar_operands[0],scalar_operands[1],1);
     } break;
     case ucode::AluScalarOpcode::kSeqs: {
       state_.previous_scalar = float(scalar_operands[0] == 0.0f);

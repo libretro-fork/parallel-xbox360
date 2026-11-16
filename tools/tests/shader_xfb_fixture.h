@@ -12,7 +12,14 @@ static size_t shader_test_xfb(const uint32_t *words,size_t count, uint32_t *out_
   if(op==72 && n==5 && words[at+2]==0 && words[at+3]==11 && words[at+4]==0)vertex_type=words[at+1];
   if(op==32 && n==4 && words[at+2]==3){id=words[at+1];CHECK(id<65536);shader_test_xfb_pointers[id]=words[at+3];}
   if(op==15){CHECK(!entry && n>=4 && words[at+1]==0);entry=words[at+2];}
+#ifdef XE_TEST_XFB_PARAMETER0
+  if(op==71 && n==4 && words[at+2]==30 && words[at+3]==0){CHECK(!variable);variable=words[at+1];}
+#endif
  }
+#ifdef XE_TEST_XFB_PARAMETER0
+ (void)vertex_type;
+ CHECK(variable && entry);
+#else
  CHECK(vertex_type && entry);
  for(at=5;at<count;at+=n) {
   n=words[at]>>16;op=words[at]&65535;
@@ -20,6 +27,7 @@ static size_t shader_test_xfb(const uint32_t *words,size_t count, uint32_t *out_
    CHECK(!variable);variable=words[at+2];
   }
  }
+#endif
  CHECK(variable);memcpy(out_words,words,20);
  out_words[out++]=(2u<<16)|17;out_words[out++]=53; /* TransformFeedback capability. */
  for(at=5;at<count;at+=n) {
@@ -30,7 +38,11 @@ static size_t shader_test_xfb(const uint32_t *words,size_t count, uint32_t *out_
   if(!decor && op>=19 && op<=39) {
    out_words[out++]=(4u<<16)|71;out_words[out++]=variable;out_words[out++]=36;out_words[out++]=0;
    out_words[out++]=(4u<<16)|71;out_words[out++]=variable;out_words[out++]=37;out_words[out++]=16;
+#ifdef XE_TEST_XFB_PARAMETER0
+   out_words[out++]=(4u<<16)|71;out_words[out++]=variable;out_words[out++]=35;out_words[out++]=0;
+#else
    out_words[out++]=(5u<<16)|72;out_words[out++]=vertex_type;out_words[out++]=0;out_words[out++]=35;out_words[out++]=0;
+#endif
    decor=1;
   }
   CHECK(out+n<=capacity);memcpy(out_words+out,words+at,n*4);out+=n;

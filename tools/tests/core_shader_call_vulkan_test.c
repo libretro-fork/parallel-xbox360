@@ -8,13 +8,16 @@
 #ifndef XE_VERTEX_TEST_CASES
 #define XE_VERTEX_TEST_CASES 16
 #endif
+#ifndef XE_VERTEX_TEST_INPUT_BYTES
+#define XE_VERTEX_TEST_INPUT_BYTES 96
+#endif
 #ifdef XE_LOOP_ACCURACY_GPU_TEST
 #define XE_TEST_CAPTURE_VERTICES 3
 #else
 #define XE_TEST_CAPTURE_VERTICES 1
 #endif
 static int vertex_matches(const void *bytes,const uint32_t *golden) {
-#ifdef XE_FLOAT_RTZ_GPU_TEST
+#if defined(XE_FLOAT_RTZ_GPU_TEST) || defined(XE_SATURATION_GPU_TEST)
  const uint32_t *actual=(const uint32_t*)bytes;unsigned i;
  for(i=0;i<4;++i)if(actual[i]!=golden[i] &&
        !((actual[i]&0x7fffffff)>0x7f800000 && (golden[i]&0x7fffffff)>0x7f800000))return 0;
@@ -55,7 +58,7 @@ int main(int argc,char **argv) {
  VkDeviceSize zero=0,feedback_size=16*XE_TEST_CAPTURE_VERTICES;
  float priority=1.0f;uint32_t count,family,i,which,j,golden[4];char path[512];FILE *file;
  int result=1;
-#ifdef XE_FLOAT_RTZ_GPU_TEST
+#if defined(XE_FLOAT_RTZ_GPU_TEST) || defined(XE_SELECTION_FLOAT_CONTROLS)
  VkPhysicalDeviceProperties2 properties2={0};VkPhysicalDeviceFloatControlsProperties controls={0};
  PFN_vkGetPhysicalDeviceProperties2 get_properties2;PFN_vkVoidFunction raw_properties2;
 #endif
@@ -86,15 +89,29 @@ int main(int argc,char **argv) {
  count=8;OK(g.vkEnumeratePhysicalDevices(g.instance,&count,physical));if(!count)goto done;
  g.vkGetPhysicalDeviceProperties(physical[0],&properties);
  fprintf(stderr,"BENCH_DEVICE Vulkan vendor=%u device=%u driver=%u name=%s\n",properties.vendorID,properties.deviceID,properties.driverVersion,properties.deviceName);
-#ifdef XE_FLOAT_RTZ_GPU_TEST
+#if defined(XE_FLOAT_RTZ_GPU_TEST) || defined(XE_SELECTION_FLOAT_CONTROLS)
  raw_properties2=g.get(g.instance,"vkGetPhysicalDeviceProperties2");if(!raw_properties2)goto done;
  memcpy(&get_properties2,&raw_properties2,sizeof(get_properties2));
  properties2.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
  controls.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES;properties2.pNext=&controls;
  get_properties2(physical[0],&properties2);
+#ifdef XE_SELECTION_FLOAT_CONTROLS
+#ifdef XE_SELECTION_FLOAT_CONTROLS_FTZ
+ if(!controls.shaderDenormFlushToZeroFloat32){fputs("Unsupported float32 FTZ selection coverage\n",stderr);goto done;}
+#define XE_SELECTION_FTZ_REQUESTED 1
+#else
+#define XE_SELECTION_FTZ_REQUESTED 0
+#endif
+ if(!controls.shaderSignedZeroInfNanPreserveFloat32){
+  fputs("Unsupported float32 signed-zero selection coverage\n",stderr);goto done;
+ }
+ printf("SELECTION_FLOAT_CONTROLS FTZ_requested=%u FTZ_supported=%u signed_zero_inf_nan_preserve=1 RTZ_supported=%u RTE_supported=%u\n",
+  (unsigned)XE_SELECTION_FTZ_REQUESTED,controls.shaderDenormFlushToZeroFloat32,controls.shaderRoundingModeRTZFloat32,controls.shaderRoundingModeRTEFloat32);
+#else
  if(!controls.shaderRoundingModeRTZFloat32 || !controls.shaderSignedZeroInfNanPreserveFloat32){
   fputs("Unsupported float32 RTZ/signed-zero coverage on this device\n",stderr);goto done;
  }
+#endif
 #endif
  g.vkGetPhysicalDeviceMemoryProperties(physical[0],&g.memory);
  tf.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
@@ -197,8 +214,8 @@ int main(int argc,char **argv) {
   ((uint32_t*)((unsigned char*)buffers[0].mapped+2048))[0]=(which>=5 && which<10)?1u:0u;
 #ifdef XE_LOOP_ACCURACY_GPU_TEST
   sprintf(path,"%s/call%u.input",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
-  i=(uint32_t)fread((unsigned char*)buffers[0].mapped+1024,1,96,file);
-  j=(uint32_t)fgetc(file);fclose(file);if(i!=96 || j!=(uint32_t)EOF)goto done;
+  i=(uint32_t)fread((unsigned char*)buffers[0].mapped+1024,1,XE_VERTEX_TEST_INPUT_BYTES,file);
+  j=(uint32_t)fgetc(file);fclose(file);if(i!=XE_VERTEX_TEST_INPUT_BYTES || j!=(uint32_t)EOF)goto done;
   sprintf(path,"%s/call%u.loops",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
   i=(uint32_t)fread((unsigned char*)buffers[0].mapped+2080,1,128,file);
   j=(uint32_t)fgetc(file);fclose(file);if(i!=128 || j!=(uint32_t)EOF)goto done;
