@@ -48,13 +48,27 @@ Checks executed
 - Fresh complete MSVC ASan core build passes with three compile jobs. Header
   changes affect actual Shader ownership; old class-layout archives are not
   used for native qualification.
-- 70 actual native vertex/pixel analysis cases: all 32 element masks per stage,
+- 80 actual native/portable vertex/pixel analysis cases: all 32 element masks per stage,
   the pending branch and final fallthrough, malformed-target terminal failure,
-  plus a separate unanalyzed-claimant publication check. 68 nonempty SPIR-V
-  modules pass spirv-val for Vulkan 1.2 (the emitted version is SPIR-V 1.5).
+  plus a separate unanalyzed-claimant publication check. Preserve the complete
+  native feature profile; add portable 0/1/31-mask, branch and fallthrough cases.
+  All 78 modules pass spirv-val for Vulkan 1.2 (68 native SPIR-V 1.5 plus ten
+  portable SPIR-V 1.3 modules). Portable fixtures use software FP, storage writes
+  and a single declared SSBO view; they test addresses within that view only.
+- Four actual guest vertex memory-export programs execute on RTX 5090 and
+  llvmpipe. Check every word of the mapped 4-KiB destination, including one/five
+  written elements and untouched guards. A shader with no memory-export store
+  is rejected at the first expected word on both devices.
+- Linux GPU checks explicitly enable Khronos validation and reject VUID/error
+  output. The test-only point-list/raster-discard pipeline requires Vulkan 1.3
+  and maintenance5's point-size exemption; this adds no core/device requirement.
+  Missing support is not a pass. No transform-feedback extension or unused
+  feedback buffer is required; GPU writes land directly in mapped final storage.
+  Pixel shader GPU output remains unverified.
 - The actual CI qualification hook runs successfully against that fresh build.
   The common harness requires these checks before timing and preserves module
-  identities. Older parents without this component report unavailable coverage;
+  identities. Linux also requires validated GPU stores and missing-store
+  rejection before timing. Older parents without this component report unavailable coverage;
   removing already-present coverage or missing records fails the gate.
 - All 78 comparison-harness unit tests pass normally and under Python -O.
 
@@ -74,9 +88,10 @@ cache defaults, and does not label an existing driver cache as cold.
 
 Outstanding work
 ----------------
-Real GPU memory-export output regression, matched CPU/driver compilation and
-throughput qualification are still required before delivery. Metadata equality,
-module validity and graph reachability alone do not establish correct GPU stores.
+Vertex GPU-store/guard checks pass on the devices above; pixel GPU output,
+matched CPU/driver compilation and throughput qualification remain required
+before delivery. These small store cases do not establish all format/address,
+geometry or pixel export semantics.
 No gameplay/cold-stutter acceptance is claimed. Accurate generic fallback,
 draw-side compilation/waits, other vectors and native-emission locks remain P0.
 

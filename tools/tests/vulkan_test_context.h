@@ -84,7 +84,10 @@ static int make_buffer(struct buffer *b, size_t bytes)
     info.usage|=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 #endif
 #ifdef XE_VK_TEST_GRAPHICS
-   info.usage|=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT;
+   info.usage|=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+#ifndef XE_VK_TEST_NO_XFB
+   info.usage|=VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT;
+#endif
 #endif
    if (g.vkCreateBuffer(g.device,&info,NULL,&b->buffer)!=VK_SUCCESS) return 0;
    g.vkGetBufferMemoryRequirements(g.device,b->buffer,&requirements);

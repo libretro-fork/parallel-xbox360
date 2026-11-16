@@ -4,7 +4,7 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
-- Correct memory-export control-flow analysis when a visited branch leaves other work pending, and bound final-instruction fallthrough. Replace its temporary traversal vector with a C89 worklist borrowing final metadata; isolate bounded stack storage from shaders without exports. Publish terminal failure for invalid analysis, with native vertex/pixel, SPIR-V and sanitizer regressions. GPU output and throughput qualification remain pending.
+- Correct memory-export control-flow analysis when a visited branch leaves other work pending, and bound final-instruction fallthrough. Replace its temporary traversal vector with a C89 worklist borrowing final metadata; isolate bounded stack storage from shaders without exports. Publish terminal failure for invalid analysis, with native vertex/pixel, SPIR-V and sanitizer regressions. Vertex GPU-store and complete-buffer guards pass on hardware/software Vulkan, with missing-store rejection; pixel output and throughput qualification remain pending.
 
 - Add test-only D3D12 prepared-color GPU timestamp/work-count comparisons, strict corpus validation and missing-draw rejection. Retain color-bank artifacts in CI. Small hosted WARP controls cannot qualify physical GPU throughput or gameplay stutter.
 

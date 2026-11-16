@@ -15,12 +15,17 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 class ComparisonTests(unittest.TestCase):
     def test_memexport_worklist_coverage_cannot_be_removed_or_substituted(self):
-        good=dict(version=1,available=True,unit=True,native=True,graphs=4003,cases=70,modules={str(i):{} for i in range(68)})
+        good=dict(version=2,available=True,unit=True,native=True,graphs=4003,cases=80,vulkan_gpu=True,modules={str(i):{} for i in range(78)})
         self.assertFalse(ci.compare_memexport_worklist(dict(base=dict(available=False),candidate=good))["failures"])
         for field in ("version","unit","native","graphs","cases","modules"):
             bad=good.copy();bad[field]={} if field=="modules" else False
             self.assertTrue(ci.compare_memexport_worklist(dict(candidate=bad))["failures"])
         self.assertTrue(ci.compare_memexport_worklist(dict(base=good,candidate=dict(available=False)))["failures"])
+        with patch.object(ci,"WIN",False):
+            self.assertFalse(ci.compare_memexport_worklist(dict(candidate=good))["failures"])
+            bad=good.copy();bad["vulkan_gpu"]=False
+            self.assertTrue(ci.compare_memexport_worklist(dict(candidate=bad))["failures"])
+
 
     def test_resume_compiler_counts_tails_and_capability_removal(self):
         raw={("raw_resume."+stage,0):[.001]*7 for stage in ("module","compute_pso","compute_pso_warm")}

@@ -12,6 +12,7 @@ class MemexportGuardTranslator final : public ShaderTranslator {
 extern "C" unsigned xe_memexport_native_check(const uint32_t* code, size_t count,
  unsigned pixel, const uint8_t* before, size_t cf_count, unsigned end,
  unsigned invalid, const char* path) {
+ CHECK(pixel<4);const bool portable=(pixel&2)!=0;pixel&=1;
  Shader shader(pixel ? xenos::ShaderType::kPixel : xenos::ShaderType::kVertex,
                0, code, count, std::endian::native);
  shader.AnalyzeUcode();
@@ -35,7 +36,10 @@ extern "C" unsigned xe_memexport_native_check(const uint32_t* code, size_t count
   for(size_t i=0;i<cf_count;++i)
    CHECK(shader.cf_memexport_info()[i].eM_potentially_written_before==before[i]);
  }
- SpirvShaderTranslator translator(SpirvShaderTranslator::Features(true),false,false,false,false,1,1);
+ SpirvShaderTranslator::Features features(!portable);
+ if(portable){features.spirv_version=spv::Spv_1_3;features.vertex_pipeline_stores_and_atomics=true;
+  features.fragment_stores_and_atomics=true;features.max_storage_buffer_range=512u*1024u*1024u;}
+ SpirvShaderTranslator translator(features,false,false,false,false,1,1);
  uint64_t modification=pixel?translator.GetDefaultPixelShaderModification(8):translator.GetDefaultVertexShaderModification(8);
  auto* translation=shader.GetOrCreateTranslation(modification);
  CHECK(translation && translator.TranslateAnalyzedShader(*translation));

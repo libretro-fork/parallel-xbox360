@@ -29,7 +29,7 @@ static void graph(void)
 }
 int main(int argc,char **argv)
 {
- unsigned pixel,mask,result=0,cases=0;size_t count;char path[2048];
+ unsigned pixel,mask,extra,result=0,cases=0;size_t count;char path[2048];
  CHECK(argc==2);result=xe_memexport_unanalyzed_rejection();CHECK(!result);
  for(pixel=0;pixel<2;++pixel){
   for(mask=0;mask<32;++mask){
@@ -45,6 +45,18 @@ int main(int argc,char **argv)
   result=xe_memexport_native_check(code,count,pixel,before,2,1,0,path);CHECK(!result);++cases;
   graph();code[3]=20; /* CF2 branch target beyond the analyzed CF span. */
   result=xe_memexport_native_check(code,21,pixel,before,8,0,1,NULL);CHECK(!result);++cases;
+  /* Keep all native-profile cases; add portable software-FP modules for GPU
+   * devices without the optional all-features native float-control profile. */
+  for(extra=0;extra<3;++extra){
+   mask=extra==2?31:extra;count=xe_spv_memexport_test_program(code,mask);memset(before,0,sizeof(before));
+   sprintf(path,"%s/portable-linear-s%u-m%u.spv",argv[1],pixel,mask);
+   result=xe_memexport_native_check(code,count,pixel|2u,before,mask?2:0,mask,0,path);CHECK(!result);++cases;
+  }
+  graph();sprintf(path,"%s/portable-pending-branch-s%u.spv",argv[1],pixel);
+  result=xe_memexport_native_check(code,21,pixel|2u,before,8,3,0,path);CHECK(!result);++cases;
+  count=xe_spv_memexport_test_program(code,1);code[2]=(code[2]&0x0fffffff)|0x10000000;memset(before,0,sizeof(before));
+  sprintf(path,"%s/portable-fallthrough-s%u.spv",argv[1],pixel);
+  result=xe_memexport_native_check(code,count,pixel|2u,before,2,1,0,path);CHECK(!result);++cases;
  }
  printf("PASS: %u actual vertex/pixel memexport analyses/translations; malformed and unanalyzed claimant failure published\n",cases);return 0;
 }

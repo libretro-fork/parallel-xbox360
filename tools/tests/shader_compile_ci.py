@@ -682,7 +682,7 @@ def compare_variant_owner(coverage):
 
 
 def validate_memexport_worklist(source,build,out,log,env):
-    coverage=dict(version=1,available=(source/"libretro/core_shader_memexport.h").is_file(),unit=False,native=False)
+    coverage=dict(version=2,available=(source/"libretro/core_shader_memexport.h").is_file(),unit=False,native=False)
     if not coverage["available"]:return coverage
     directory=out/"memexport-worklist";directory.mkdir(parents=True,exist_ok=True)
     unit=directory/("unit.exe" if WIN else "unit")
@@ -707,26 +707,43 @@ def validate_memexport_worklist(source,build,out,log,env):
     text=log.read_text()
     if len(re.findall(r"^PASS: 4003 memexport graphs, complete address boundary, borrowed guards and malformed input rejection; dataflow component$",text,re.MULTILINE))!=1:
         raise ValueError("memexport unit execution missing/substituted")
-    if len(re.findall(r"^PASS: 70 actual vertex/pixel memexport analyses/translations; malformed and unanalyzed claimant failure published$",text,re.MULTILINE))!=1:
+    if len(re.findall(r"^PASS: 80 actual vertex/pixel memexport analyses/translations; malformed and unanalyzed claimant failure published$",text,re.MULTILINE))!=1:
         raise ValueError("memexport native execution missing/substituted")
     modules=sorted(directory.glob("*.spv"))
     expected={"linear-s%d-m%d.spv"%(stage,mask) for stage in range(2) for mask in range(32)}
     expected.update("%s-s%d.spv"%(kind,stage) for kind in ("fallthrough","pending-branch") for stage in range(2))
+    expected.update("portable-linear-s%d-m%d.spv"%(stage,mask) for stage in range(2) for mask in (0,1,31))
+    expected.update("portable-%s-s%d.spv"%(kind,stage) for kind in ("fallthrough","pending-branch") for stage in range(2))
     if {p.name for p in modules}!=expected:raise ValueError("memexport native modules missing/extra/substituted")
     identities={p.name:dict(sha256=file_sha256(p),bytes=p.stat().st_size) for p in modules}
     if not WIN:
         validator=shutil.which("spirv-val")
         if not validator:raise ValueError("spirv-val missing for memexport modules")
         for module in modules:run([validator,"--target-env","vulkan1.2",module],source,log,env,30)
-    coverage.update(unit=True,native=True,graphs=4003,cases=70,modules=identities,validated=not WIN,
-                    scope="actual Shader metadata/SPIR-V and failure publication; no GPU image or gameplay signoff")
+        gpu=directory/"gpu"
+        run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+             "-isystem",source/"third_party/Vulkan-Headers/include",HERE/"core_shader_memexport_vulkan_test.c","-ldl","-o",gpu],source,log,env,60)
+        gpu_env=env.copy();gpu_env["XE_MEMEXPORT_GPU_VALIDATION"]="1"
+        gpu_log=directory/"gpu-validation.log"
+        run([gpu,directory],source,gpu_log,gpu_env,90)
+        try:run([gpu,directory,"--missing-store"],source,gpu_log,gpu_env,90)
+        except subprocess.CalledProcessError as error:
+            if error.returncode!=1:raise
+        else:raise ValueError("memexport missing-store negative control accepted")
+        gpu_text=gpu_log.read_text()
+        if (len(re.findall(r"^PASS: 4 actual guest vertex memexport programs, exact stores and complete SSBO guards .+ validation1$",gpu_text,re.MULTILINE))!=1 or
+            "memexport GPU case0 word1 actuala5a5a5a5 expected00000000" not in gpu_text or "VUID-" in gpu_text or "Validation Error" in gpu_text):
+            raise ValueError("memexport GPU execution/validation or negative control missing")
+    coverage.update(unit=True,native=True,graphs=4003,cases=80,modules=identities,validated=not WIN,vulkan_gpu=not WIN,
+                    scope="actual Shader metadata/SPIR-V and failure publication; Vulkan vertex-store guards where supported; no pixel GPU/gameplay signoff")
     return coverage
 
 
 def compare_memexport_worklist(coverage):
     candidate=coverage.get("candidate",{});failures=[]
-    if candidate.get("available") and (candidate.get("version")!=1 or not candidate.get("unit") or not candidate.get("native") or
-        candidate.get("graphs")!=4003 or candidate.get("cases")!=70 or len(candidate.get("modules",{}))!=68):
+    if candidate.get("available") and (candidate.get("version")!=2 or not candidate.get("unit") or not candidate.get("native") or
+        candidate.get("graphs")!=4003 or candidate.get("cases")!=80 or len(candidate.get("modules",{}))!=78 or
+        (not WIN and not candidate.get("vulkan_gpu"))):
         failures.append("candidate memexport worklist correctness missing")
     if any(v.get("available") for k,v in coverage.items() if k!="candidate") and not candidate.get("available"):
         failures.append("candidate memexport worklist coverage removed")
@@ -1278,7 +1295,7 @@ def run_comparison(args):
          "core_shader_analysis_text_test.c","shader_analysis_text_bridge.cc","shader_analysis_allocation_hook.h",
          "run_shader_analysis_text_tests.cmd","run_shader_analysis_text_tests.sh",
          "core_shader_variant_index_test.c","core_shader_variant_owner_test.c","shader_variant_index_bridge.cc",
-         "core_shader_memexport_test.c","core_shader_memexport_native_test.c","shader_memexport_native_bridge.cc","core_spv_memexport_program.h",
+         "core_shader_memexport_test.c","core_shader_memexport_native_test.c","shader_memexport_native_bridge.cc","core_spv_memexport_program.h","core_shader_memexport_vulkan_test.c",
          "run_shader_variant_index_tests.cmd","run_shader_variant_index_tests.sh"]}
     manifest["corpus_contract"]=dict(version=8,cases=64,hardware_rtz_cases=64 if args.backend=="vulkan-hardware" else 0,
                                     hardware_dot_cases=64 if args.backend=="vulkan-hardware" else 0,
