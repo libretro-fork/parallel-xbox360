@@ -919,6 +919,9 @@ class Shader {
   size_t ucode_dword_count() const { return ucode_data_.size(); }
 
   bool is_ucode_analyzed() const { return is_ucode_analyzed_; }
+  bool is_ucode_analysis_valid() const {
+    return is_ucode_analyzed_ && is_ucode_analysis_valid_;
+  }
   // The reference overload captures text only when shader dumping is enabled.
   // An explicit nullable sink supports analysis without formatting or copying
   // disassembly. A supplied sink borrows reusable scratch through this call.
@@ -1124,6 +1127,7 @@ class Shader {
   // translation modifications in this case), also some info needed for drawing
   // is collected during the ucode analysis.
   bool is_ucode_analyzed_ = false;
+  bool is_ucode_analysis_valid_ = true;
 
   std::string ucode_disassembly_;
   std::vector<VertexBinding> vertex_bindings_;

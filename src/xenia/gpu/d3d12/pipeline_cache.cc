@@ -664,7 +664,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativeVertexDxil(
   auto& native = static_cast<D3D12Shader::D3D12Translation&>(translation);
   SpirvShaderTranslator::Modification mod(modification);
   unsigned domain = 0, control_points = 0;
-  if (!shader.is_ucode_analyzed() ||
+  if (!shader.is_ucode_analysis_valid() ||
       (mod.vertex.host_vertex_shader_type != Shader::HostVertexShaderType::kVertex &&
        !xe_dxil_guest_domain_config(unsigned(mod.vertex.host_vertex_shader_type),&domain,&control_points)) ||
       shader.kills_pixels()) {
@@ -723,7 +723,7 @@ const XeDxilShaderBinary* PipelineCache::GetGuestNativePixelDxil(
   assert_true(dynamic_cast<D3D12Shader::D3D12Translation*>(&translation));
   auto& native = static_cast<D3D12Shader::D3D12Translation&>(translation);
   SpirvShaderTranslator::Modification mod(modification);
-  if (!shader.is_ucode_analyzed()) return nullptr;
+  if (!shader.is_ucode_analysis_valid()) return nullptr;
   bool edram_rov_used = render_target_cache_.GetPath() == RenderTargetCache::Path::kPixelShaderInterlock;
   auto cached = native.native_snapshot();
   if (cached.ready) return static_cast<const XeDxilShaderBinary*>(cached.binary);

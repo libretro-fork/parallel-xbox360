@@ -14,6 +14,14 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_memexport_worklist_coverage_cannot_be_removed_or_substituted(self):
+        good=dict(version=1,available=True,unit=True,native=True,graphs=4003,cases=70,modules={str(i):{} for i in range(68)})
+        self.assertFalse(ci.compare_memexport_worklist(dict(base=dict(available=False),candidate=good))["failures"])
+        for field in ("version","unit","native","graphs","cases","modules"):
+            bad=good.copy();bad[field]={} if field=="modules" else False
+            self.assertTrue(ci.compare_memexport_worklist(dict(candidate=bad))["failures"])
+        self.assertTrue(ci.compare_memexport_worklist(dict(base=good,candidate=dict(available=False)))["failures"])
+
     def test_resume_compiler_counts_tails_and_capability_removal(self):
         raw={("raw_resume."+stage,0):[.001]*7 for stage in ("module","compute_pso","compute_pso_warm")}
         intro=ci.compare_resume_compiler(dict(candidate=raw),7)
@@ -718,6 +726,7 @@ class ComparisonTests(unittest.TestCase):
             def prepare(source_arg,out,results,backend,reuse):
                 (results/(source.name+"-vertex-dot-unit.json")).write_text(json.dumps(dict(available=False,unit=False)))
                 (results/(source.name+"-variant-owner.json")).write_text(json.dumps(dict(available=False,unit=False,native=False)))
+                (results/(source.name+"-memexport-worklist.json")).write_text(json.dumps(dict(available=False,unit=False,native=False)))
                 (results/(source.name+"-resume-coverage.json")).write_text(json.dumps(dict(available=False,unit=False,vulkan_gpu=False)))
                 allocation_dir=results/"analysis-allocations"/source.name
                 allocation_dir.mkdir(parents=True,exist_ok=True)

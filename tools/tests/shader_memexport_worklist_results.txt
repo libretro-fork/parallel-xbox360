@@ -1,0 +1,89 @@
+Memexport analysis: pending branches and borrowed final records
+==============================================================
+
+Problem and behavior
+--------------------
+The old per-writer DFS broke its entire traversal when it reached an already
+marked node, leaving other branches in successor_stack. That vector survived
+between writers, so a later writer could consume abandoned nodes under a
+completely different mask. A six-CF independent regression demonstrates:
+  expected before(end-branch)=1, final mask=3
+  legacy   before(end-branch)=2, final mask=2
+The equivalent eight-CF native guest program includes alloc/eA/eM writes and
+checks these fields through the actual Shader interface. A last-CF EXEC also
+used to push count (past the final record) instead of treating fallthrough as
+end. The new worklist bounds that edge explicitly.
+
+A combined monotonic worklist propagates writer masks into existing final
+ControlFlowMemExportInfo bytes. It borrows packed microcode and record views
+with checked strides/offsets, and never constructs a graph or copies payloads.
+Pending-node deduplication bounds occupancy by CF count. Each of eight mask bits
+can grow each record once; initial writers plus updates bound visits by 9*N.
+Calls retain the existing conservative all-written summary; alloc flush and
+return termination are unchanged. This does not claim exact subroutine summaries.
+
+Workspace is fixed caller-owned storage: 8192 uint16 IDs plus a 1024-byte pending
+bitmap (17 KiB). A non-inlined wrapper owns it on its stack only for shaders
+with memory exports. Ordinary shaders do not inherit this large stack frame.
+This removes temporary vector allocation/growth but does not remove the final
+metadata vector, shader owners, emitter allocations or driver allocations.
+No timers, logging, payload copies or locks are added to release paths.
+Failure publication uses the existing libretro-common publication primitive.
+
+Invalid spans/targets are rejected before output mutation. Shader analysis
+records failure while marking the analysis attempt complete; translation then
+publishes terminal invalid status without entering backend emission. An owner
+that successfully claimed translation must publish failure too, so another
+consumer cannot wait forever. D3D12 native vertex/pixel entry points reject the
+failed analysis before consulting native payloads. Existing native-emission
+mutexes remain an explicitly unresolved synchronization debt.
+
+Checks executed
+---------------
+- 4003 graph cases: independent per-writer reachability oracle on explicit test
+  graphs, 4000 random control-flow graphs, the abandoned-branch regression,
+  implicit end, full 8192-instruction boundary, borrowed-record guard bytes and
+  invalid span/target rejection without output mutation.
+- MSVC /TC /O2 /W4 /WX and MSVC ASan pass; strict GCC C89 and ASan/UBSan pass.
+- Fresh complete MSVC ASan core build passes with three compile jobs. Header
+  changes affect actual Shader ownership; old class-layout archives are not
+  used for native qualification.
+- 70 actual native vertex/pixel analysis cases: all 32 element masks per stage,
+  the pending branch and final fallthrough, malformed-target terminal failure,
+  plus a separate unanalyzed-claimant publication check. 68 nonempty SPIR-V
+  modules pass spirv-val for Vulkan 1.2 (the emitted version is SPIR-V 1.5).
+- The actual CI qualification hook runs successfully against that fresh build.
+  The common harness requires these checks before timing and preserves module
+  identities. Older parents without this component report unavailable coverage;
+  removing already-present coverage or missing records fails the gate.
+- All 78 comparison-harness unit tests pass normally and under Python -O.
+
+Retained initial failures: native fixture expected two CF records for the dummy
+empty mask although its EXEC address correctly reduces the bound to zero;
+Vulkan 1.1 validation rejected SPIR-V 1.5 before validation was matched to the
+actual Vulkan 1.2 target; a newly written shell runner had CRLF and is corrected
+to LF; the synthetic report mock initially lacked the new mandatory coverage
+record. Failed attempts and raw output remain in the external evidence journal.
+
+Persistent compatibility
+------------------------
+The shared .xsh stores raw guest microcode, which is reanalyzed; its byte format
+is unchanged. Pipeline recipes are retranslated and driver cache lookup includes
+actual emitted shader code. This change does not alter modification layout or
+cache defaults, and does not label an existing driver cache as cold.
+
+Outstanding work
+----------------
+Real GPU memory-export output regression, matched CPU/driver compilation and
+throughput qualification are still required before delivery. Metadata equality,
+module validity and graph reachability alone do not establish correct GPU stores.
+No gameplay/cold-stutter acceptance is claimed. Accurate generic fallback,
+draw-side compilation/waits, other vectors and native-emission locks remain P0.
+
+Reproduction
+------------
+  sh tools/tests/run_shader_memexport_tests.sh
+  call tools\tests\run_shader_memexport_tests.cmd
+Set SHADER_MEMEXPORT_BUILD to a fresh matching MSVC core build for native checks.
+The per-commit shader comparison harness also runs actual native checks against
+its freshly built current revision, before retaining any timing samples.

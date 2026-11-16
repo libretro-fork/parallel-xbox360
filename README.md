@@ -789,3 +789,12 @@ counts across 405 canonical format/native-scale cases. Hosted WARP CI runs only
 small protocol controls and a missing-draw mutation; these cannot qualify GPU
 throughput. See [the D3D12 warm protocol](tools/tests/transfer_color_warm_d3d12_results.txt).
 No release instrumentation or runtime pacing changes are introduced.
+
+Memory-export analysis now uses a bounded C89 worklist over borrowed final
+metadata. It retains pending control-flow branches and ends fallthrough at the
+CF boundary. Shaders without memory exports skip its separate stack workspace.
+Malformed export analysis publishes terminal translation failure rather than
+leaving a claimant pending. Native stage, metadata and SPIR-V checks are in
+[the memexport worklist evidence](tools/tests/shader_memexport_worklist_results.txt).
+The final metadata vector and other shader allocations remain; this does not
+remove draw-path compilation or establish gameplay stutter improvements.

@@ -9,6 +9,7 @@
 
 #include "libretro/core_draw_stats.h"
 #include "libretro/core_shader_reentry.h"
+#include "libretro/core_shader_memexport.h"
 #include "xenia/gpu/shader_translator.h"
 
 #include <cstdarg>
@@ -256,123 +257,17 @@ void Shader::AnalyzeUcode(StringBuffer* ucode_disasm_buffer) {
   }
 
   if (!cf_memexport_info_.empty()) {
-    // Gather potentially "dirty" memexport elements before each control flow
-    // instruction. `alloc` (any, not only `export`) flushes the previous memory
-    // export. On the guest GPU, yielding / serializing also terminates memory
-    // exports, but for simplicity disregarding that, as that functionally does
-    // nothing compared to flushing the previous memory export only at `alloc`
-    // or even only specifically at `alloc export`, Microsoft's validator checks
-    // if eM# aren't written after a `serialize`.
-    std::vector<uint32_t> successor_stack;
-    for (uint32_t i = 0; i < cf_pair_index_bound_; ++i) {
-      ControlFlowInstruction eM_writing_cf_ab[2];
-      UnpackControlFlowInstructions(ucode_data_.data() + i * 3,
-                                    eM_writing_cf_ab);
-      for (uint32_t j = 0; j < 2; ++j) {
-        uint32_t eM_writing_cf_index = i * 2 + j;
-        uint32_t eM_written_by_cf_instr =
-            cf_memexport_info_[eM_writing_cf_index]
-                .eM_potentially_written_by_exec;
-        if (eM_writing_cf_ab[j].opcode() == ControlFlowOpcode::kCondCall) {
-          // Until subroutine calls are handled accurately, assume that all eM#
-          // have potentially been written by the subroutine for simplicity.
-          eM_written_by_cf_instr = memexport_eM_written_;
-        }
-        if (!eM_written_by_cf_instr) {
-          continue;
-        }
-
-        // If the control flow instruction potentially results in any eM# being
-        // written, mark those eM# as potentially written before each successor.
-        bool is_successor_graph_head = true;
-        successor_stack.push_back(eM_writing_cf_index);
-        while (!successor_stack.empty()) {
-          uint32_t successor_cf_index = successor_stack.back();
-          successor_stack.pop_back();
-
-          ControlFlowMemExportInfo& successor_memexport_info =
-              cf_memexport_info_[successor_cf_index];
-          if ((successor_memexport_info.eM_potentially_written_before &
-               eM_written_by_cf_instr) == eM_written_by_cf_instr) {
-            // Already marked as written before this instruction (and thus
-            // before all its successors too). Possibly this instruction is in a
-            // loop, in this case an instruction may succeed itself.
-            break;
-          }
-          // The first instruction in the traversal is the writing instruction
-          // itself, not its successor. However, if it has been visited by the
-          // traversal twice, it's in a loop, so it succeeds itself, and thus
-          // writes from it are potentially done before it too.
-          if (!is_successor_graph_head) {
-            successor_memexport_info.eM_potentially_written_before |=
-                eM_written_by_cf_instr;
-          }
-          is_successor_graph_head = false;
-
-          ControlFlowInstruction successor_cf_ab[2];
-          UnpackControlFlowInstructions(
-              ucode_data_.data() + (successor_cf_index >> 1) * 3,
-              successor_cf_ab);
-          const ControlFlowInstruction& successor_cf =
-              successor_cf_ab[successor_cf_index & 1];
-
-          bool next_instr_is_new_successor = true;
-          switch (successor_cf.opcode()) {
-            case ControlFlowOpcode::kExecEnd:
-              // One successor: end.
-              memexport_eM_potentially_written_before_end_ |=
-                  eM_written_by_cf_instr;
-              next_instr_is_new_successor = false;
-              break;
-            case ControlFlowOpcode::kCondExecEnd:
-            case ControlFlowOpcode::kCondExecPredEnd:
-            case ControlFlowOpcode::kCondExecPredCleanEnd:
-              // Two successors: next, end.
-              memexport_eM_potentially_written_before_end_ |=
-                  eM_written_by_cf_instr;
-              break;
-            case ControlFlowOpcode::kLoopStart:
-              // Two successors: next, skip.
-              successor_stack.push_back(successor_cf.loop_start.address());
-              break;
-            case ControlFlowOpcode::kLoopEnd:
-              // Two successors: next, repeat.
-              successor_stack.push_back(successor_cf.loop_end.address());
-              break;
-            case ControlFlowOpcode::kCondCall:
-              // Two successors: next, target.
-              successor_stack.push_back(successor_cf.cond_call.address());
-              break;
-            case ControlFlowOpcode::kReturn:
-              // Currently treating all subroutine calls as potentially writing
-              // all eM# for simplicity, so just exit the subroutine.
-              next_instr_is_new_successor = false;
-              break;
-            case ControlFlowOpcode::kCondJmp:
-              // One or two successors: next if conditional, target.
-              successor_stack.push_back(successor_cf.cond_jmp.address());
-              if (successor_cf.cond_jmp.is_unconditional()) {
-                next_instr_is_new_successor = false;
-              }
-              break;
-            case ControlFlowOpcode::kAlloc:
-              // Any `alloc` ends the previous export.
-              next_instr_is_new_successor = false;
-              break;
-            default:
-              break;
-          }
-          if (next_instr_is_new_successor) {
-            if (successor_cf_index < (cf_pair_index_bound_ << 1)) {
-              successor_stack.push_back(successor_cf_index + 1);
-            } else {
-              memexport_eM_potentially_written_before_end_ |=
-                  eM_written_by_cf_instr;
-            }
-          }
-        }
-      }
-    }
+    // Borrow final metadata directly. The C89 worklist propagates every pending
+    // branch, combines writer masks, and bounds the final-CF successor at end.
+    // Its separate frame exists only for shaders that actually export memory.
+    is_ucode_analysis_valid_ = xe_shader_memexport_run(
+        ucode_data_.data(), ucode_data_.size(),
+        reinterpret_cast<unsigned char*>(cf_memexport_info_.data()),
+        sizeof(ControlFlowMemExportInfo),
+        offsetof(ControlFlowMemExportInfo, eM_potentially_written_before),
+        offsetof(ControlFlowMemExportInfo, eM_potentially_written_by_exec),
+        cf_index_count, memexport_eM_written_,
+        &memexport_eM_potentially_written_before_end_) != 0;
   }
 
   is_ucode_analyzed_ = true;
@@ -713,9 +608,11 @@ bool ShaderTranslator::TranslateAnalyzedShader(
     Shader::Translation& translation) {
   XE_DRAW_EVENT(XE_DRAW_GUEST_PIPELINE, XE_DRAW_TRANSLATE);
   const Shader& shader = translation.shader();
-  assert_true(shader.is_ucode_analyzed());
-  if (!shader.is_ucode_analyzed()) {
-    XELOGE("AnalyzeUcode must be done on the shader before translation");
+  if (!shader.is_ucode_analysis_valid()) {
+    // A claimant must publish terminal failure as well as success, otherwise
+    // another consumer can wait forever for an invalid shader's publication.
+    translation.MakeInvalid();
+    xe_shader_publish(&translation.publication_state_);
     return false;
   }
   translation_ = &translation;
