@@ -1,0 +1,81 @@
+Pipeline index migration: pending qualification, 2026-11-14
+========================================================
+The fixed 32768-bucket, two-choice C89 index removes separate D3D12 pipeline map nodes and
+bucket growth. It retains exact full-description comparison on hash equality,
+stable actual pipeline addresses, existing worker publication and upstream join/
+GPU-retirement ordering. Pipeline owners and driver payloads still allocate.
+No complete guest-fallback, no-draw-compilation or gameplay acceptance is claimed.
+
+Correctness evidence so far
+--------------------------
+MSVC C89 ASan and Linux strict C89 ASan/UBSan: 73728 lookups across six bucket
+capacities, uniform/adversarial collisions, duplicate cross-index insertion,
+reinitialization/overflow rejection and detached same-address reuse. Strict
+MinGW C89 also passes. The final complete-core MSVC ASan build with the enlarged
+table passes. Native publication checks use its fresh archives and observe the
+actual 240-byte D3D12 owner and 40-byte Vulkan owner; 20000 publication retries
+and four independent flag writers pass. Retirement reservation/completion gates,
+concurrent publish/collect, reuse and shutdown tests also pass. This is component
+lifetime evidence, not a full frontend/game content-close certification.
+
+A separate pair of DLLs uses the real parent/candidate private pipeline types
+and their existing full 64-byte key equality. A C89 driver checks nine profiles,
+every descriptor byte, stable owner identity, misses and same-address reinsertion.
+ASan runs and final zero live-allocation counters pass. Ignoring full keys and
+loading the parent twice are rejected by distinct negative controls. All allocator
+counter algorithms are C89; C++ only adapts the actual typed owners and reference
+STL container. No counter or custom operator new enters the core.
+
+Measured bookkeeping allocation counts (owner/context setup excluded)
+-------------------------------------------------------------------
+  Owners    Parent allocations    Candidate allocations
+      64          65                       0
+    1024        1027                       0
+    8192        8198                       0
+   32768       32776                       0
+Native pipeline owners grow from 216 to 240 bytes. Candidate bucket storage is
+fixed at 262144 bytes; the parent's observed bucket arrays grow from 512 to
+262144 bytes across these sizes. This is a front-loaded memory tradeoff, NOT
+proof of lower process RSS, nor a zero-allocation claim for whole pipeline misses.
+
+Retained screening history
+--------------------------
+v1 (16384 buckets, folded hash): FAIL, uniform 32768-owner hit/miss median and
+tails regressed. v2 (32768 buckets, original hash bits): FAIL, constant-low-bit
+chains regressed, despite uniform improvement. Both raw 252-row CSVs, independent
+module binaries and comparison reports remain retained; neither qualifies.
+v3 keeps the primary hash distribution and adds a second empty bucket choice.
+Equal full hashes remain together in one chain, preserving next() without extra
+cursor metadata or payload copies. Its same 18 cases/252 samples PASS the unchanged
+screening limits and both idle snapshots are empty. Some small/full-collision
+cases remain slightly slower within those declared limits; this is not an
+across-the-board speedup or a gameplay result. Final ASan native-owner/counting
+tests also pass against the public legacy-header reference, including zero live
+heap allocations after teardown and both negative controls.
+
+Predeclared CPU screening protocol (before collecting timing samples)
+-------------------------------------------------------------------
+The same C89 driver loads independent modules for the exact parent and candidate
+headers into one process. Timed modules use the normal CRT allocator, no ASan or
+allocation override. Both use identical release compiler flags. Keys borrow each
+module's real native owners; the lookup loop does not copy descriptors. Nine
+profiles cover sizes64/1024/8192/32768, uniform hashes, constant low bits (up to
+8192 owners) and full collisions (up to1024). Hits and full-key misses each use
+65536 calls, seven paired alternating-order samples. No validation I/O occurs
+inside the timed loop. Retain raw CSV and known-process boundary snapshots;
+refuse acceptance on a busy/failed inspection, without automatic retry.
+
+Reject a case if candidate median exceeds parent by both10% and0.0002seconds,
+p95 by both15% and0.0003seconds, or maximum by both25% and0.0005seconds. These
+are new host-index screening limits, not changes to shader/PSO acceptance limits.
+Keep every case/failure. A smaller allocation count alone does not pass throughput.
+This screening is not actual game frame-time or warmed GPU qualification.
+
+Required before delivery
+------------------------
+Complete final first-parent shader/PSO qualification, preserve
+all failed/noisy evidence, run actual native publication/lifetime tests and refresh
+full integration checks after any runtime/layout change. No performance claim or
+push is justified by correctness/counting alone. The external RetroArch startup
+probe caused the preceding prepared-color qualification to stop before sampling;
+its evidence remains invalid-for-acceptance, not a performance regression result.

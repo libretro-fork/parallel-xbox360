@@ -95,6 +95,10 @@ PipelineCache::PipelineCache(D3D12CommandProcessor& command_processor,
 PipelineCache::~PipelineCache() { Shutdown(); }
 
 bool PipelineCache::Initialize() {
+  if (!xe_pipeline_hash_init(&pipeline_index_, pipeline_index_buckets_,
+                            kPipelineIndexBuckets)) {
+    return false;
+  }
   if (!retirement_pool_) retirement_pool_ = xe_pipeline_retire_new(16384);
   // Shared guest feature/modification settings; native stages read raw ucode.
   if (!guest_shader_cache_.Initialize()) {
@@ -200,15 +204,17 @@ void PipelineCache::Shutdown() {
 
   // Destroy all pipelines.
   current_pipeline_ = nullptr;
-  for (auto it : pipelines_) {
+  size_t pipeline_cursor = 0;
+  while (xe_pipeline_hash_node* node =
+             xe_pipeline_hash_drain(&pipeline_index_, &pipeline_cursor)) {
+    Pipeline* pipeline = PipelineFromIndex(node);
     ID3D12PipelineState* state =
-        reinterpret_cast<ID3D12PipelineState*>(static_cast<uintptr_t>(xe_pipeline_handle_load(&it.second->publication)));
+        reinterpret_cast<ID3D12PipelineState*>(static_cast<uintptr_t>(xe_pipeline_handle_load(&pipeline->publication)));
     if (state) {
       state->Release();
     }
-    delete it.second;
+    delete pipeline;
   }
-  pipelines_.clear();
   xe_ready_owned_clear(&native_geometry_dxil_cache_, &DestroyNativeGeometryDxil);
   COUNT_profile_set("gpu/pipeline_cache/pipelines", 0);
 
@@ -297,11 +303,11 @@ void PipelineCache::InitializeShaderStorage(
       // TODO(Triang3l): On Vulkan, skip pipelines requiring unsupported device
       // features (to keep the cache files mostly shareable across devices).
       // Skip already known pipelines - those have already been enqueued.
-      auto found_range =
-          pipelines_.equal_range(pipeline_stored_description.description_hash);
       bool pipeline_found = false;
-      for (auto it = found_range.first; it != found_range.second; ++it) {
-        Pipeline* found_pipeline = it->second;
+      for (xe_pipeline_hash_node* node = xe_pipeline_hash_first(
+               &pipeline_index_, pipeline_stored_description.description_hash);
+           node; node = xe_pipeline_hash_next(node)) {
+        Pipeline* found_pipeline = PipelineFromIndex(node);
         if (!std::memcmp(&found_pipeline->description.description,
                          &pipeline_description, sizeof(pipeline_description))) {
           pipeline_found = true;
@@ -372,9 +378,12 @@ void PipelineCache::InitializeShaderStorage(
       new_pipeline->from_storage = true;
       std::memcpy(&new_pipeline->description, &native_runtime_description,
                   sizeof(native_runtime_description));
-      pipelines_.emplace(pipeline_stored_description.description_hash,
-                         new_pipeline);
-      COUNT_profile_set("gpu/pipeline_cache/pipelines", pipelines_.size());
+      if (!xe_pipeline_hash_insert(&pipeline_index_, &new_pipeline->index_node,
+                                   pipeline_stored_description.description_hash)) {
+        delete new_pipeline;
+        break;
+      }
+      COUNT_profile_set("gpu/pipeline_cache/pipelines", pipeline_index_.count);
       if (creation_queue_.has_threads()) {
         // Creation thread builds the Native DXIL off the main thread (the
         // deferred block in EnsurePipelineShadersTranslated), then the PSO.
@@ -1108,11 +1117,11 @@ bool PipelineCache::ConfigurePipeline(
   // Find an existing pipeline in the cache.
   uint64_t hash = XXH3_64bits(&description, sizeof(description));
   // A warm-up entry whose creation failed is rebuilt below instead of returned.
-  // Only this thread touches the map, so creation threads can flag but not act.
+  // Only this thread touches the index, so creation threads can flag but not act.
   Pipeline* rebuild_pipeline = nullptr;
-  auto found_range = pipelines_.equal_range(hash);
-  for (auto it = found_range.first; it != found_range.second; ++it) {
-    Pipeline* found_pipeline = it->second;
+  for (xe_pipeline_hash_node* node = xe_pipeline_hash_first(&pipeline_index_, hash);
+       node; node = xe_pipeline_hash_next(node)) {
+    Pipeline* found_pipeline = PipelineFromIndex(node);
     if (found_pipeline->description.description == description) {
       if (found_pipeline->wants_rebuild()) {
         rebuild_pipeline = found_pipeline;
@@ -1136,8 +1145,12 @@ bool PipelineCache::ConfigurePipeline(
     new_pipeline->from_storage = false;
   } else {
     new_pipeline = new Pipeline;
-    pipelines_.emplace(hash, new_pipeline);
-    COUNT_profile_set("gpu/pipeline_cache/pipelines", pipelines_.size());
+    if (!xe_pipeline_hash_insert(&pipeline_index_, &new_pipeline->index_node,
+                                 hash)) {
+      delete new_pipeline;
+      return false;
+    }
+    COUNT_profile_set("gpu/pipeline_cache/pipelines", pipeline_index_.count);
   }
   std::memcpy(&new_pipeline->description, &runtime_description,
               sizeof(runtime_description));

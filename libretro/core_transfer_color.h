@@ -5,6 +5,22 @@
 #define XE_CORE_TRANSFER_COLOR_H
 #include "core_transfer_address_packet.h"
 #include <string.h>
+static INLINE int xe_transfer_color_class(unsigned format,unsigned *out) {
+ if(!out)return 0;
+ switch(format){
+  case 0:case 1:case 2:case 3:*out=format;return 1;
+  case 10:*out=2;return 1;case 12:*out=3;return 1;
+  case 4:case 6:*out=4;return 1;case 5:case 7:*out=5;return 1;
+  case 14:*out=6;return 1;case 15:*out=7;return 1;
+  default:return 0;
+ }
+}
+static INLINE int xe_transfer_color_pair(unsigned s,unsigned d,unsigned *index){
+ if(!index || s>=8 || d>=8)return 0;
+ if((s>=4 && d>=4) || s==d)return 0;
+ *index=s<4?s*7+d-(d>s?1u:0u):28+(s-4)*4+d;return 1;
+}
+
 enum xe_transfer_color_sample_mode {
  XE_TRANSFER_COLOR_SINGLE, XE_TRANSFER_COLOR_SAMPLE_BUILTIN,
  XE_TRANSFER_COLOR_SAMPLE_CONSTANT

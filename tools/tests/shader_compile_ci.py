@@ -59,6 +59,57 @@ def run(command, source, log, env=None, timeout=3600):
                        stdout=output, stderr=subprocess.STDOUT, check=True, timeout=timeout)
 
 
+COMPETING_PROCESS_NAMES = frozenset((
+    "retroarch", "cl", "link", "clang", "clang++", "clang-cl", "lld-link",
+    "gcc", "g++", "cc1", "cc1plus", "lto1", "make", "mingw32-make",
+    "ninja", "cmake", "msbuild", "dxc", "glslangvalidator", "spirv-val"))
+
+
+def competing_processes():
+    """Known process boundary guard; not a continuous host-idleness proof."""
+    if WIN:
+        names=",".join("'"+name+"'" for name in sorted(COMPETING_PROCESS_NAMES))
+        script=("$names=@("+names+"); @(Get-Process -Name $names -ErrorAction SilentlyContinue | "
+                "Select-Object @{n='pid';e={$_.Id}},@{n='name';e={$_.ProcessName}}) | "
+                "ConvertTo-Json -Compress; exit 0")
+        result=subprocess.run(["powershell","-NoProfile","-NonInteractive","-Command",script],
+                              capture_output=True,text=True,check=True,timeout=30)
+        records=json.loads(result.stdout.strip() or "[]")
+        if isinstance(records,dict):records=[records]
+        if not isinstance(records,list):raise ValueError("invalid runner process records")
+    else:
+        result=subprocess.run(["ps","-eo","pid=,comm="],capture_output=True,
+                              text=True,check=True,timeout=30)
+        records=[]
+        for line in result.stdout.splitlines():
+            fields=line.strip().split(None,1)
+            if len(fields)!=2:raise ValueError("invalid runner process row")
+            records.append(dict(pid=int(fields[0]),name=fields[1]))
+    found=[]
+    for record in records:
+        if (not isinstance(record,dict) or type(record.get("pid")) is not int or
+            record["pid"]<=0 or not isinstance(record.get("name"),str) or not record["name"]):
+            raise ValueError("invalid runner process identity")
+        name=record["name"].lower().removesuffix(".exe")
+        if name in COMPETING_PROCESS_NAMES:found.append(dict(pid=record["pid"],name=name))
+    return sorted(found,key=lambda value:(value["name"],value["pid"]))
+
+
+def require_idle_runner(log,phase):
+    record=dict(phase=phase,scope="known process boundary snapshot; not continuous")
+    try:
+        record["processes"]=competing_processes()
+        record["inspection_ok"]=True
+    except (OSError,ValueError,subprocess.SubprocessError) as error:
+        record.update(inspection_ok=False,error=str(error))
+        with log.open("a",encoding="utf-8") as output:output.write(json.dumps(record)+"\n")
+        raise ValueError("runner inspection failed; no timing acceptance") from error
+    with log.open("a",encoding="utf-8") as output:output.write(json.dumps(record)+"\n")
+    if record["processes"]:
+        raise ValueError("active compiler/build/frontend work; retain samples, no automatic retry: "+
+                         repr(record["processes"]))
+
+
 def cpu_build(source, build, out, logs, env):
     out.mkdir(parents=True, exist_ok=True)
     driver, bridge = HERE / "core_shader_compile_fixture.c", HERE / "shader_compile_bridge.cc"
@@ -870,6 +921,33 @@ def read_samples(path):
     return samples
 
 
+def read_resource_samples(path, wall, expected_samples):
+    """Supplementary Linux observations; never waive an elapsed-time failure."""
+    expected={key for key in wall if key[0].startswith("vulkan.")}
+    counts={key:0 for key in expected}
+    records=[]
+    with Path(path).open(newline="",encoding="utf-8") as source:
+        for row in csv.reader(source):
+            if (len(row)!=11 or not re.fullmatch(r"[a-z0-9._]+",row[0]) or
+                    any(not re.fullmatch(r"[0-9]+",value) for value in row[1:])):
+                raise ValueError("invalid Linux resource row")
+            values=list(map(int,row[1:]))
+            case,pid,cpu_before,cpu_after,minor,major,voluntary,involuntary,rss_before,rss_after=values
+            key=(row[0],case)
+            if (key not in expected or pid<=0 or rss_after<rss_before or
+                    any(value>2**63-1 for value in values)):
+                raise ValueError("invalid Linux resource identity/counters")
+            counts[key]+=1
+            records.append(dict(stage=key[0],case=case,sample=counts[key]-1,pid=pid,
+                cpu_before=cpu_before,cpu_after=cpu_after,minor_faults=minor,major_faults=major,
+                voluntary_switches=voluntary,involuntary_switches=involuntary,
+                maxrss_before_kib=rss_before,maxrss_after_kib=rss_after))
+    if (not expected or any(count!=expected_samples for count in counts.values()) or
+            any(len(wall[key])!=expected_samples for key in expected)):
+        raise ValueError("missing or duplicate Linux resource samples")
+    return records
+
+
 def percentile(values, fraction):
     values = sorted(values)
     position = (len(values)-1)*fraction
@@ -1128,6 +1206,8 @@ def run_comparison(args):
               "no application cache; driver internal/disk cache NOT certified cold",
         coverage="procedural translation and PSO tests; not full gameplay cold/warm signoff",
         anchor=os.environ.get("SHADER_PERF_ANCHOR") or "UNSET: no last-known-good ratchet certified")
+    manifest["runner_idle_guard"]=dict(scope="known compiler/build/frontend processes before/after each revision sample",
+        limitation="not continuous host-idleness proof; no automatic retry or wait")
     manifest["toolchain"]={}
     manifest["harness_revision"]=git("rev-parse","HEAD")
     manifest["harness_sha256"]={name:hashlib.sha256((HERE/name).read_bytes()).hexdigest() for name in
@@ -1138,7 +1218,7 @@ def run_comparison(args):
          "core_shader_loop_test.c","core_shader_loop_gpu_fixture.c","shader_loop_accuracy_bridge.cc",
          "core_alu_spv_build_test.c","core_alu_resume_vulkan_test.c","core_alu_resume_pso_test.c","run_alu_resume_tests.cmd","run_alu_resume_tests.sh","shader_control_program_fixture.h","shader_register_borrow_fixture.h","shader_minmax_fixture.h","shader_dot_fixture.h","core_shader_vertex_dot_test.c","core_shader_vertex_dot_gpu_fixture.c","core_alu_program_vulkan_test.c","alu_program_bridge.cc",
          "core_shader_ucode_test.c","core_shader_ucode_native_test.c","shader_ucode_bridge.cc",
-         "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h",
+         "gpu_timestamp_measure.h","gpu_timestamp_measure_test.c","shader_compile_bench.h","shader_compile_resources.h",
          "core_shader_reentry_test.c","core_shader_reentry_profile_test.c","shader_reentry_profile_bridge.cc",
          "core_pipeline_bench_profile.c","core_pipeline_bench_profile.h","core_shader_labels_test.c",
          "core_shader_analysis_text_test.c","shader_analysis_text_bridge.cc","shader_analysis_allocation_hook.h",
@@ -1218,6 +1298,11 @@ def run_comparison(args):
         results="64-bit ticks plus availability, queue valid-bit width and nanosecond period",
         limits="not isolated ALU time, certified cold caches or gameplay; timestamp overhead remains; wrap ambiguity fails")
     manifest["gpu_driver_environment"]={name:env.get(name,"driver/default") for name in ("VK_ICD_FILENAMES","LP_NUM_THREADS")}
+    manifest["linux_pso_resource_observations"]=dict(
+        enabled=sys.platform.startswith("linux") and args.backend.startswith("vulkan"),
+        scope="supplementary getrusage(RUSAGE_SELF) deltas and endpoint CPUs outside the timed wall/CPU interval",
+        limitations="wider envelope includes timer reads; endpoint CPUs cannot rule out migration; faults/switches do not prove a stall cause; no gate changes",
+        runner_affinity=sorted(os.sched_getaffinity(0)) if hasattr(os,"sched_getaffinity") else "unavailable")
     manifest["gpu_timestamp_math"]={v:json.loads((b["out"]/"gpu-timestamp-math/coverage.json").read_text()) for v,b in builds.items()}
     if any(not x["unit"] for x in manifest["gpu_timestamp_math"].values()):raise ValueError("GPU timestamp math unit missing")
     manifest["gpu_timestamp_calibration"]={v:{component:read_gpu_calibration(results,b["out"],component)
@@ -1239,9 +1324,11 @@ def run_comparison(args):
         order=[x[0] for x in versions]
         if sample%2:order.reverse()
         for version in order:
+            require_idle_runner(results/"runner-idle.jsonl",version+"-sample%d-before"%sample)
             b=builds[version];e=env.copy();e["XE_SHADER_BENCH_CSV"]=str(results/(version+".csv"))
             e["XE_SHADER_BENCH_NO_DUMP"]="1"
             e["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-cpu.csv"))
+            e["XE_SHADER_BENCH_RESOURCE_CSV"]=str(results/(version+"-pso-resources.csv"))
             log=results/(version+"-sample%d.log"%sample)
             run([b["cpu"],b["out"]],b["source"],log,e,240)
             if "pso" in b:
@@ -1291,11 +1378,14 @@ def run_comparison(args):
                 text=log.read_text()
                 coverage=resume_report["revisions"][version]
                 validate_resume_compiler_log(text,coverage["device"])
+            require_idle_runner(results/"runner-idle.jsonl",version+"-sample%d-after"%sample)
     raw={version:read_samples(results/(version+".csv")) for version in builds}
     for version,measurements in raw.items():
         if set(measurements)!=expected_keys(args.backend):
             raise ValueError("missing or substituted expected stage cases: "+version)
     cpu={version:read_samples(results/(version+"-cpu.csv")) for version in builds}
+    resources={version:read_resource_samples(results/(version+"-pso-resources.csv"),raw[version],args.samples)
+               for version in builds} if manifest["linux_pso_resource_observations"]["enabled"] else {}
     rows,anchor_rows,cpu_rows=compare_timing_channels(raw,cpu,args.samples)
     resume_compiler=compare_resume_compiler({v:read_samples(results/(v+"-resume-compiler.csv")) for v,b in builds.items() if "raw_resume" in b},args.samples)
     resume_compiler["process_cpu_observations"]=compare_resume_compiler({v:read_samples(results/(v+"-resume-compiler-cpu.csv")) for v,b in builds.items() if "raw_resume" in b},args.samples)["observed"]
@@ -1409,6 +1499,7 @@ def run_comparison(args):
                 analysis_allocations=allocation_report,
                 driver_workload_identity=driver_identity,
                 process_cpu_diagnostics=cpu_rows,
+                linux_pso_resources=resources,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
                 raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,raw_gpu_dispatch=gpu_reports,ucode_snapshot=snapshot_report,raw_resume_compiler=resume_compiler,

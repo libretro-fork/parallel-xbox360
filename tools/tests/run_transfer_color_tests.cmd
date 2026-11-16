@@ -27,6 +27,8 @@ if errorlevel 1 exit /b 1
 cl %FLAGS% /DXE_COLOR_WARM_BENCH tools/tests/transfer_color_image_vulkan_test.c libretro/core_transfer_color_vk.c libretro/core_transfer_color_spv.c libretro/core_transfer_geometry.c libretro/core_spv_binary.c /Fo"%OUT%/" /Fe"%OUT%/warm.exe"
 if errorlevel 1 exit /b 1
 if not defined UINT_IMAGE_BUILD set UINT_IMAGE_BUILD=build\windows-native
+call tools\tests\run_transfer_color_d3d12_tests.cmd
+if errorlevel 1 exit /b 1
 cl %FLAGS% /wd4201 /DXE_DXIL_EDRAM_TEST /Itools/tests /Isrc/xenia/gpu/dxil /Isrc/xenia/gpu/dxil/bytecode tools/tests/dxil_writer_test.c tools/tests/transfer_format_dxil_fixture.c tools/tests/dxil_alu_test.c src/xenia/gpu/dxil/transfer_format.c /Fo"%OUT%/" /Fe"%OUT%/format-dxil.exe" /link "%UINT_IMAGE_BUILD%/obj/Windows/xenia-native-dxil.lib"
 if errorlevel 1 exit /b 1
 "%OUT%/format-dxil.exe" "%OUT%/format.dxil" edram

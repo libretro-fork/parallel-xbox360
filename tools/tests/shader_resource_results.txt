@@ -1,0 +1,46 @@
+Linux PSO resource observations -- diagnostic infrastructure, not a renderer fix
+
+Problem retained:
+  Test-branch commit ed657efbf2233180df49c35cf8e99214dead32fb against
+  524f73b9bf3f8654b4af26be282958292b6b9429 failed hosted software-Vulkan
+  case vulkan.vs_ps_pso/13 in run 43633015227, attempt 1.
+  Median: 32.422 -> 32.241 ms; maximum: 33.196 -> 50.418 ms.
+  Candidate sample 0 consumed about 50.421 ms of process CPU time.
+  The artifact records byte-identical driver-test executables and module
+  manifests. This establishes input identity, not the cause of the outlier.
+  WARP passed 80 metrics; local physical Vulkan passed 768 metrics. Those
+  passes do not waive the failed software-Vulkan gate or certify gameplay.
+  The failed artifacts and all samples are retained. No unchanged CI rerun,
+  threshold change, case deletion, affinity change or first-sample exclusion.
+
+Added observations:
+  Linux Vulkan module/PSO test intervals optionally capture process minor and
+  major faults, voluntary/involuntary context switches, endpoint CPUs, process
+  ID and before/after maximum RSS. Resource snapshots precede the existing
+  start clocks and follow the existing end clocks. CSV formatting follows the
+  snapshots. Normal release code and release build files are unchanged.
+  The resource envelope is wider than the measured interval. An endpoint CPU
+  match cannot exclude intermediate migration; switches or faults do not prove
+  causality. Process CPU/rusage counters include worker threads. Maximum RSS
+  is a process high-water mark, not live allocation or leak accounting.
+  Each resource record is matched to its exact stage/case/sample; missing,
+  excess or malformed records fail. These observations never suppress an
+  elapsed-time failure. Timing cases and acceptance limits remain unchanged.
+
+Local correctness evidence (2026-11-16):
+  python -m unittest discover -s tools/tests -p test_shader_compile_ci.py
+    PASS: 77 tests, including strict resource parsing and preserved failures.
+  sh tools/tests/run_shader_resource_tests.sh
+    PASS: strict GCC C89, 42 records, 256-page fault controls, voluntary-wait
+    controls, opt-out and 50 ms process-CPU slowdown rejected by existing gates.
+  Actual shader_compile_vulkan_test.c, strict GCC C89, Lavapipe:
+    PASS: 16 module + 16 graphics-PSO records, correctly matched to wall cases.
+    Numerical execution is a separate fixture, not demonstrated by this probe.
+  Actual shader_compile_vulkan_test.c, MSVC /TC /O2 /W4 /WX:
+    PASS: Windows fixture compiles without the Linux diagnostic header.
+  Resource C89 control, GCC ASan + UBSan + leak detection:
+    PASS: fault and wait operations, no sanitizer findings.
+
+This infrastructure does not fix or requalify the earlier renderer batch.
+Hosted first-parent runs retain their own raw samples and results. Full cold
+gameplay, first-correct-frame latency and draw-path compliance remain unfinished.
