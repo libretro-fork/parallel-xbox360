@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Preserve selected subnormal payloads in the CPU shader reference's conditional selections and apply the existing condition input-FTZ policy explicitly in native DXIL vertex shaders. Use C89 integer/SSE2 selection with borrowed lane views. Add native/literal regression checks, test-only driver timing phases and process-boundary checks that reject contaminated timing samples. This production-only correction does not import experimental interpreter features or establish a shader-stutter improvement.
+
 - Add a resumable raw shader-control prototype with reusable generation-owned GPU state, borrowed unwritten registers and no host readback between continuations. Add real GPU long-program, ownership/fault and module-identity tests plus separate compiler-cost CI samples. Rendering integration remains unfinished; this does not yet fix gameplay shader stalls.
 
 - Share the raw control interpreter's dot-product reduction across DP4, DP3 and DP2ADD instead of emitting three copies. Preserve ordered arithmetic and lazy guest operands. This addresses prototype compiler work; the kernel remains outside rendering and does not remove gameplay compilation stalls.

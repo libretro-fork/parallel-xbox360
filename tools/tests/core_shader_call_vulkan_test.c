@@ -8,11 +8,37 @@
 #ifndef XE_VERTEX_TEST_CASES
 #define XE_VERTEX_TEST_CASES 16
 #endif
+#ifndef XE_VERTEX_TEST_INPUT_BYTES
+#define XE_VERTEX_TEST_INPUT_BYTES 96
+#endif
+#ifdef XE_LOOP_ACCURACY_GPU_TEST
+#define XE_TEST_CAPTURE_VERTICES 3
+#else
+#define XE_TEST_CAPTURE_VERTICES 1
+#endif
+#ifdef XE_ROUNDING_LEGACY_OBSERVATION
+static unsigned rounding_legacy_case,rounding_legacy_lanes,rounding_legacy_mask;
+static int rounding_legacy_word(uint32_t actual,uint32_t expected) {
+ unsigned bit;
+ if(actual!=0xbf800000u || expected!=0x80000000u)return 0;
+ switch(rounding_legacy_case){
+ case 22:bit=0;break;case 23:bit=1;break;case 34:bit=2;break;
+ case 35:bit=3;break;case 299:bit=4;break;case 305:bit=5;break;
+ default:return 0;
+ }
+ ++rounding_legacy_lanes;rounding_legacy_mask|=1u<<bit;return 1;
+}
+#endif
 static int vertex_matches(const void *bytes,const uint32_t *golden) {
-#ifdef XE_FLOAT_RTZ_GPU_TEST
+#if defined(XE_FLOAT_RTZ_GPU_TEST) || defined(XE_SATURATION_GPU_TEST)
  const uint32_t *actual=(const uint32_t*)bytes;unsigned i;
  for(i=0;i<4;++i)if(actual[i]!=golden[i] &&
-       !((actual[i]&0x7fffffff)>0x7f800000 && (golden[i]&0x7fffffff)>0x7f800000))return 0;
+       !((actual[i]&0x7fffffff)>0x7f800000 && (golden[i]&0x7fffffff)>0x7f800000)){
+#ifdef XE_ROUNDING_LEGACY_OBSERVATION
+  if(rounding_legacy_word(actual[i],golden[i]))continue;
+#endif
+  return 0;
+ }
  return 1;
 #else
  return !memcmp(bytes,golden,16);
@@ -41,16 +67,16 @@ int main(int argc,char **argv) {
  VkFramebufferCreateInfo framebuffer_info={0};VkFramebuffer framebuffer=VK_NULL_HANDLE;
  VkDescriptorPoolSize pool_sizes[2];VkDescriptorPoolCreateInfo pool_info={0};
  VkDescriptorPool pool=VK_NULL_HANDLE;VkDescriptorSet sets[2];VkDescriptorSetAllocateInfo allocate_sets={0};
- VkDescriptorBufferInfo infos[5];VkWriteDescriptorSet writes[5];
+ VkDescriptorBufferInfo infos[5],shared_infos[4];VkWriteDescriptorSet writes[5];
  VkCommandPoolCreateInfo command_info={0};VkCommandPool commands=VK_NULL_HANDLE;
  VkCommandBufferAllocateInfo allocate_command={0};VkCommandBuffer command;
  VkCommandBufferBeginInfo begin={0};VkRenderPassBeginInfo render_begin={0};
  VkFenceCreateInfo fence_info={0};VkFence fence=VK_NULL_HANDLE;VkSubmitInfo submit={0};
  VkMemoryBarrier barrier={0};struct buffer buffers[3];
- VkDeviceSize zero=0,feedback_size=16;
+ VkDeviceSize zero=0,feedback_size=16*XE_TEST_CAPTURE_VERTICES;
  float priority=1.0f;uint32_t count,family,i,which,j,golden[4];char path[512];FILE *file;
  int result=1;
-#ifdef XE_FLOAT_RTZ_GPU_TEST
+#if defined(XE_FLOAT_RTZ_GPU_TEST) || defined(XE_SELECTION_FLOAT_CONTROLS)
  VkPhysicalDeviceProperties2 properties2={0};VkPhysicalDeviceFloatControlsProperties controls={0};
  PFN_vkGetPhysicalDeviceProperties2 get_properties2;PFN_vkVoidFunction raw_properties2;
 #endif
@@ -65,22 +91,45 @@ int main(int argc,char **argv) {
  LOAD(vkCreateInstance);
  app.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO;app.apiVersion=VK_MAKE_API_VERSION(0,1,2,0);
  instance_info.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;instance_info.pApplicationInfo=&app;
+#ifdef XE_LOOP_ADVANCE_VALIDATION
+ {
+  static const char *layer="VK_LAYER_KHRONOS_validation";
+  instance_info.enabledLayerCount=1;instance_info.ppEnabledLayerNames=&layer;
+ }
+#endif
  OK(g.vkCreateInstance(&instance_info,NULL,&g.instance));
+#ifdef XE_LOOP_ADVANCE_VALIDATION
+ puts("LOOP_ADVANCE_VALIDATION enabled=1");
+#endif
  LOAD(vkDestroyInstance);LOAD(vkEnumeratePhysicalDevices);LOAD(vkGetPhysicalDeviceProperties);
  LOAD(vkGetPhysicalDeviceMemoryProperties);LOAD(vkGetPhysicalDeviceQueueFamilyProperties);
  LOAD(vkGetPhysicalDeviceFeatures2);LOAD(vkCreateDevice);
  count=8;OK(g.vkEnumeratePhysicalDevices(g.instance,&count,physical));if(!count)goto done;
  g.vkGetPhysicalDeviceProperties(physical[0],&properties);
  fprintf(stderr,"BENCH_DEVICE Vulkan vendor=%u device=%u driver=%u name=%s\n",properties.vendorID,properties.deviceID,properties.driverVersion,properties.deviceName);
-#ifdef XE_FLOAT_RTZ_GPU_TEST
+#if defined(XE_FLOAT_RTZ_GPU_TEST) || defined(XE_SELECTION_FLOAT_CONTROLS)
  raw_properties2=g.get(g.instance,"vkGetPhysicalDeviceProperties2");if(!raw_properties2)goto done;
  memcpy(&get_properties2,&raw_properties2,sizeof(get_properties2));
  properties2.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
  controls.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES;properties2.pNext=&controls;
  get_properties2(physical[0],&properties2);
+#ifdef XE_SELECTION_FLOAT_CONTROLS
+#ifdef XE_SELECTION_FLOAT_CONTROLS_FTZ
+ if(!controls.shaderDenormFlushToZeroFloat32){fputs("Unsupported float32 FTZ selection coverage\n",stderr);goto done;}
+#define XE_SELECTION_FTZ_REQUESTED 1
+#else
+#define XE_SELECTION_FTZ_REQUESTED 0
+#endif
+ if(!controls.shaderSignedZeroInfNanPreserveFloat32){
+  fputs("Unsupported float32 signed-zero selection coverage\n",stderr);goto done;
+ }
+ printf("SELECTION_FLOAT_CONTROLS FTZ_requested=%u FTZ_supported=%u signed_zero_inf_nan_preserve=1 RTZ_supported=%u RTE_supported=%u\n",
+  (unsigned)XE_SELECTION_FTZ_REQUESTED,controls.shaderDenormFlushToZeroFloat32,controls.shaderRoundingModeRTZFloat32,controls.shaderRoundingModeRTEFloat32);
+#else
  if(!controls.shaderRoundingModeRTZFloat32 || !controls.shaderSignedZeroInfNanPreserveFloat32){
   fputs("Unsupported float32 RTZ/signed-zero coverage on this device\n",stderr);goto done;
  }
+#endif
 #endif
  g.vkGetPhysicalDeviceMemoryProperties(physical[0],&g.memory);
  tf.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
@@ -119,7 +168,7 @@ int main(int argc,char **argv) {
  for(i=0;i<4;++i)((float*)((unsigned char*)buffers[0].mapped+1024))[i]=1.0f; /* c0. */
  if(!cache_buffer(&buffers[0],0) || !cache_buffer(&buffers[2],0))goto done;
  memset(bindings,0,sizeof(bindings));bindings[0].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
- bindings[0].descriptorCount=1;bindings[0].stageFlags=VK_SHADER_STAGE_VERTEX_BIT;
+ bindings[0].descriptorCount=4;bindings[0].stageFlags=VK_SHADER_STAGE_VERTEX_BIT;
  set_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;set_info.bindingCount=1;set_info.pBindings=bindings;
  OK(g.vkCreateDescriptorSetLayout(g.device,&set_info,NULL,&layouts[0]));
  for(i=0;i<4;++i){bindings[i].binding=i<2?i:i+1;bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -134,7 +183,7 @@ int main(int argc,char **argv) {
  framebuffer_info.width=framebuffer_info.height=framebuffer_info.layers=1;
  OK(g.vkCreateFramebuffer(g.device,&framebuffer_info,NULL,&framebuffer));
  pool_sizes[0].type=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;pool_sizes[0].descriptorCount=4;
- pool_sizes[1].type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;pool_sizes[1].descriptorCount=1;
+ pool_sizes[1].type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;pool_sizes[1].descriptorCount=4;
  pool_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;pool_info.maxSets=2;pool_info.poolSizeCount=2;pool_info.pPoolSizes=pool_sizes;
  OK(g.vkCreateDescriptorPool(g.device,&pool_info,NULL,&pool));
  allocate_sets.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;allocate_sets.descriptorPool=pool;
@@ -147,6 +196,10 @@ int main(int argc,char **argv) {
   writes[i].dstBinding=i?(i<=2?i-1:i):0;writes[i].descriptorCount=1;
   writes[i].descriptorType=i?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;writes[i].pBufferInfo=&infos[i];
  }
+ /* Native VS modules declare four shared-memory views, including shaders
+  * which never access them. Each test view borrows the same tiny zero buffer. */
+ for(i=0;i<4;++i)shared_infos[i]=infos[0];
+ writes[0].descriptorCount=4;writes[0].pBufferInfo=shared_infos;
  g.vkUpdateDescriptorSets(g.device,5,writes,0,NULL);
  command_info.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;command_info.queueFamilyIndex=family;
  OK(g.vkCreateCommandPool(g.device,&command_info,NULL,&commands));
@@ -157,6 +210,12 @@ int main(int argc,char **argv) {
  stage.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;stage.stage=VK_SHADER_STAGE_VERTEX_BIT;stage.pName="main";
  vertex.sType=VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
  assembly.sType=VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;assembly.topology=VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+#ifdef XE_LOOP_ACCURACY_GPU_TEST
+ /* Complete triangle avoids an unwritten PointSize and an incomplete primitive
+  * without requiring maintenance5. Loop fixtures have identical vertex inputs. */
+ assembly.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+ puts("LOOP_VERTEX_CAPTURE vertices=3 shared_views=4");
+#endif
  viewport.width=viewport.height=1.0f;viewport.maxDepth=1.0f;
  viewport_state.sType=VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;viewport_state.viewportCount=1;
  viewport_state.pViewports=&viewport;viewport_state.scissorCount=1;viewport_state.pScissors=&scissor;
@@ -173,8 +232,8 @@ int main(int argc,char **argv) {
   ((uint32_t*)((unsigned char*)buffers[0].mapped+2048))[0]=(which>=5 && which<10)?1u:0u;
 #ifdef XE_LOOP_ACCURACY_GPU_TEST
   sprintf(path,"%s/call%u.input",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
-  i=(uint32_t)fread((unsigned char*)buffers[0].mapped+1024,1,96,file);
-  j=(uint32_t)fgetc(file);fclose(file);if(i!=96 || j!=(uint32_t)EOF)goto done;
+  i=(uint32_t)fread((unsigned char*)buffers[0].mapped+1024,1,XE_VERTEX_TEST_INPUT_BYTES,file);
+  j=(uint32_t)fgetc(file);fclose(file);if(i!=XE_VERTEX_TEST_INPUT_BYTES || j!=(uint32_t)EOF)goto done;
   sprintf(path,"%s/call%u.loops",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
   i=(uint32_t)fread((unsigned char*)buffers[0].mapped+2080,1,128,file);
   j=(uint32_t)fgetc(file);fclose(file);if(i!=128 || j!=(uint32_t)EOF)goto done;
@@ -190,6 +249,9 @@ int main(int argc,char **argv) {
 #endif
 #endif
   if(!cache_buffer(&buffers[0],0))goto done;
+#ifdef XE_ROUNDING_LEGACY_OBSERVATION
+  rounding_legacy_case=which;
+#endif
   XE_COMPILE_CASE(which);sprintf(path,"%s/call%u.spv",argv[1],which);if(!shader(path,&module))goto done;
   sprintf(path,"%s/call%u.expected",argv[1],which);file=fopen(path,"rb");if(!file)goto done;
   i=(uint32_t)fread(golden,1,sizeof(golden),file);j=(uint32_t)fgetc(file);fclose(file);
@@ -205,7 +267,7 @@ int main(int argc,char **argv) {
   g.vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline);
   g.vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_GRAPHICS,layout,0,2,sets,0,NULL);
   g.vkCmdBindTransformFeedbackBuffersEXT(command,0,1,&buffers[1].buffer,&zero,&feedback_size);
-  g.vkCmdBeginTransformFeedbackEXT(command,0,0,NULL,NULL);g.vkCmdDraw(command,1,1,0,0);
+  g.vkCmdBeginTransformFeedbackEXT(command,0,0,NULL,NULL);g.vkCmdDraw(command,XE_TEST_CAPTURE_VERTICES,1,0,0);
   g.vkCmdEndTransformFeedbackEXT(command,0,0,NULL,NULL);g.vkCmdEndRenderPass(command);
   barrier.srcAccessMask=VK_ACCESS_TRANSFORM_FEEDBACK_WRITE_BIT_EXT;barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
   g.vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFORM_FEEDBACK_BIT_EXT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,NULL,0,NULL);
@@ -214,10 +276,17 @@ int main(int argc,char **argv) {
   if(!cache_buffer(&buffers[1],1))goto done;
   if(!vertex_matches(buffers[1].mapped,golden)){uint32_t *actual=(uint32_t*)buffers[1].mapped;
    fprintf(stderr,"Vulkan call%u: %08x %08x %08x %08x expected %08x %08x %08x %08x\n",which,actual[0],actual[1],actual[2],actual[3],golden[0],golden[1],golden[2],golden[3]);goto done;}
-  for(i=16;i<4096;++i)if(((unsigned char*)buffers[1].mapped)[i]!=0xA5){fprintf(stderr,"Feedback guard overwritten\n");goto done;}
+  for(j=1;j<XE_TEST_CAPTURE_VERTICES;++j)if(!vertex_matches((unsigned char*)buffers[1].mapped+j*16,golden)){fprintf(stderr,"Additional captured vertex mismatch\n");goto done;}
+  for(i=16*XE_TEST_CAPTURE_VERTICES;i<4096;++i)if(((unsigned char*)buffers[1].mapped)[i]!=0xA5){fprintf(stderr,"Feedback guard overwritten\n");goto done;}
   g.vkDestroyPipeline(g.device,pipeline,NULL);pipeline=VK_NULL_HANDLE;g.vkDestroyShaderModule(g.device,module,NULL);module=VK_NULL_HANDLE;
  }
- printf("PASS: %u actual guest vertex shaders, exact4-word output and feedback guards (%s)\n",(unsigned)XE_VERTEX_TEST_CASES,properties.deviceName);result=0;
+#ifdef XE_ROUNDING_LEGACY_OBSERVATION
+ printf("ROUNDING_LEGACY_OBSERVATION allowed_cases=6 differing_case_mask=%u differing_lanes=%u; not a correct historical reference\n",rounding_legacy_mask,rounding_legacy_lanes);
+ printf("OBSERVED: %u actual guest vertex shaders and feedback guards; known denormal differences retained (%s)\n",(unsigned)XE_VERTEX_TEST_CASES,properties.deviceName);
+#else
+ printf("PASS: %u actual guest vertex shaders, exact4-word output and feedback guards (%s)\n",(unsigned)XE_VERTEX_TEST_CASES,properties.deviceName);
+#endif
+ result=0;
 done:
  if(g.device){
   if(fence)g.vkDestroyFence(g.device,fence,NULL);

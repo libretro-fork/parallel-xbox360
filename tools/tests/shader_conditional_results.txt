@@ -1,0 +1,75 @@
+Production-only conditional shader selection correction
+======================================================
+
+Base: libretro524f73b9bf3f8654b4af26be282958292b6b9429.
+Worktree: conditional-production-main-work.
+This is the prequalification source snapshot, not a passing qualification report.
+Subsequent campaign logs/artifacts must identify this exact commit and its parent;
+the requirements below do not constitute evidence that those campaigns passed.
+
+This backports only CPU conditional selected-payload preservation and native
+DXIL vertex condition FTZ from the separately tested feature candidatee55e2567c.
+MIN/MAX, Vulkan rounding and the generic continuation kernel are unchanged.
+The generic interpreter remains disconnected from rendering. No accumulated
+feature-branch performance failure is waived or promoted with this correction.
+
+The CPU reference previously flushed the selected payload along with the
+condition. C89 scalar/SSE2 integer selection now borrows the three existing lane
+views and preserves the selected bits. Existing operand snapshots still remain;
+this is not an end-to-end zero-copy or allocation-free gameplay claim.
+
+Native DXIL vertex CND uses integer binary32 ranges for the existing comparison
+input-FTZ policy. Selected payloads are not quantized. Pixel lowering is unchanged
+and unverified by this fixture. No host floating-point mode is changed.
+
+Prior feature evidence is retained separately, not relabeled as validation of
+this backport:84 literal/native programs expose88 old CPU lane mismatches and
+32 old WARP mismatches; the corrected feature candidate matches native Vulkan on
+NVIDIA and llvmpipe and3656 DXIL words on WARP and NVIDIA. Six unique Vulkan
+modules validate officially. NaN payloads are compared by class on native GPUs.
+C89 scalar/SSE2 units use131072 random vectors, an independent double oracle,
+host FTZ/DAZ modes, exact-alias layouts and fixed literals. These must be rerun
+against the actual main-based source and its own built libraries before landing.
+
+CI integration requires both revisions' conditional coverage,420 artifact
+hashes, explicit legacy exits/differences, fixed literals, scalar/SIMD units,
+device identity and Vulkan validation. Missing work is an error. Native DXIL
+requires WARP and the hardware adapter in hardware mode. The historical WARP
+diagnostic permits only the exact known FTZ alternatives and does not describe
+the historical output as matched. Negative controls reject substituted values.
+Nine test-only, nonoverlapping timing envelopes separate PSO creation, recording,
+submission/fence wait, readback checks and release. These are not GPU timestamp
+measurements, paired acceptance samples, or gameplay results. Normal core builds
+contain no diagnostic timers or logging from this harness change.
+
+Backport orchestration checks:72 guard tests pass normally and with Python
+optimization. The first full guard invocation failed because its synthetic
+prepare callback did not emit the newly mandatory conditional manifest; adding
+that synthetic unavailable-component record fixes the integration fixture.
+That earlier invocation remains a failure, not a passing run.
+
+The main runner previously lacked the feature branch's process-boundary guard.
+Backporting that same guard and its nine negative tests gives81 passing tests,
+normally and with Python optimization. Known private frontend prefixes, Windows
+and Linux compiler names, Linux truncated comm names and failed inspections are
+covered. Both sample boundaries retain their snapshots and reject competing
+work; no sample retry or threshold change is introduced. This is not continuous
+monitoring or a guarantee that every possible GPU application is recognized.
+
+Review also found that forwarding the Vulkan hardware backend name directly to
+the DXIL helper requested only WARP. The combined entry now maps that name to
+the D3D12 hardware mode, requiring both WARP and hardware execution. A routing
+test covers all four backend names, and a comparator test rejects removal of
+hardware coverage. All83 orchestration tests pass normally and with Python
+optimization. No main-based native run was described as passed before this fix.
+
+Actual main-based C89 scalar/SSE2 units pass under MSVC ASan and GCC13.3
+ASan/UBSan:84 literals and131072 random vectors per mode, double oracle,
+host-mode toggles and exact-alias controls. Vulkan capture and both strict and
+legacy DXIL diagnostic runtimes compile with MSVC /TC /O2 /W4 /WX; those
+compile-only checks do not establish main-based native GPU execution.
+
+Pending: full core compile/sanitizer checks, native CPU/Vulkan/DXIL
+execution, full fresh first-parent performance, independent normal-condition
+compile-cost coverage, hosted CI and actual gameplay. No faster-compilation,
+FPS, stall-free-rendering or complete fallback claim is made.

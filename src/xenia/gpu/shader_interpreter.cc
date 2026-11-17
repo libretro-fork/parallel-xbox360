@@ -317,8 +317,15 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
             instr.is_const_address_register_relative());
         vector_src_absolute = instr.abs_constants();
       }
-      xe_alu_source_vector(vector_operands[i], vector_src_ptr,
-          instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
+      if (i != 0 && (vector_opcode == ucode::AluVectorOpcode::kCndEq ||
+                     vector_opcode == ucode::AluVectorOpcode::kCndGe ||
+                     vector_opcode == ucode::AluVectorOpcode::kCndGt)) {
+        xe_alu_source_vector_preserve(vector_operands[i], vector_src_ptr,
+            instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
+      } else {
+        xe_alu_source_vector(vector_operands[i], vector_src_ptr,
+            instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
+      }
     }
 
     bool replicate_vector_result_x = false;
@@ -403,26 +410,13 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
                    : 0.0f, vector_operands[2][i]);
         }
       } break;
-      case ucode::AluVectorOpcode::kCndEq: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = vector_operands[0][i] == 0.0f
-                                 ? vector_operands[1][i]
-                                 : vector_operands[2][i];
-        }
-      } break;
-      case ucode::AluVectorOpcode::kCndGe: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = std::isgreaterequal(vector_operands[0][i], 0.0f)
-                                 ? vector_operands[1][i]
-                                 : vector_operands[2][i];
-        }
-      } break;
+      case ucode::AluVectorOpcode::kCndEq:
+      case ucode::AluVectorOpcode::kCndGe:
       case ucode::AluVectorOpcode::kCndGt: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = std::isgreater(vector_operands[0][i], 0.0f)
-                                 ? vector_operands[1][i]
-                                 : vector_operands[2][i];
-        }
+        xe_alu_conditional_vector(vector_result, vector_operands[0],
+            vector_operands[1], vector_operands[2],
+            static_cast<unsigned>(vector_opcode) -
+                static_cast<unsigned>(ucode::AluVectorOpcode::kCndEq));
       } break;
       case ucode::AluVectorOpcode::kDp4: {
         if (shader_type_ == xenos::ShaderType::kVertex) {

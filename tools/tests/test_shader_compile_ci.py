@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
+from test_shader_conditional_ci import ConditionalTests
 
 spec=importlib.util.spec_from_file_location("shader_compile_ci",Path(__file__).with_name("shader_compile_ci.py"))
 ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
@@ -719,6 +720,8 @@ class ComparisonTests(unittest.TestCase):
                 (results/(source.name+"-vertex-dot-unit.json")).write_text(json.dumps(dict(available=False,unit=False)))
                 (results/(source.name+"-variant-owner.json")).write_text(json.dumps(dict(available=False,unit=False,native=False)))
                 (results/(source.name+"-resume-coverage.json")).write_text(json.dumps(dict(available=False,unit=False,vulkan_gpu=False)))
+                (results/(source.name+"-"+compiled.parent.name+"-"+compiled.name+"-conditional.json")).write_text(
+                    json.dumps(dict(available=False)))
                 allocation_dir=results/"analysis-allocations"/source.name
                 allocation_dir.mkdir(parents=True,exist_ok=True)
                 allocation_rows=[]
@@ -747,6 +750,7 @@ class ComparisonTests(unittest.TestCase):
             with patch.dict(ci.os.environ,{"GITHUB_STEP_SUMMARY":""}), \
                  patch.object(ci,"prepare",side_effect=prepare),patch.object(ci,"run"), \
                  patch.object(ci,"git",return_value="test"), \
+                 patch.object(ci,"competing_processes",return_value=[]), \
                  patch.object(ci.subprocess,"run",return_value=SimpleNamespace(stdout="{}",stderr="",returncode=0)), \
                  patch("builtins.print"):
                 self.assertEqual(ci.run_comparison(args),1)
@@ -875,6 +879,66 @@ class ComparisonTests(unittest.TestCase):
                 selected=ci.select_commits("push",merge,commits[0])
             self.assertEqual({x["sha"] for x in selected},set(commits[1:]+[side,merge]))
             for row in selected:self.assertEqual(row["base"],git("rev-parse",row["sha"]+"^1"))
+
+
+class RunnerIdleTests(unittest.TestCase):
+    def test_private_frontends_and_renamed_retroarch_are_busy_on_windows(self):
+        names=["Harness-Guest-Cadence.EXE","libretro_probe","libretro-frontend",
+               "private-frontend","core-frontend","retroarch_debug","frontend"]
+        records=[dict(pid=100+i,name=name) for i,name in enumerate(names)]
+        result=SimpleNamespace(stdout=json.dumps(records))
+        with patch.object(ci,"WIN",True),patch.object(ci.subprocess,"run",return_value=result) as invoke:
+            found=ci.competing_processes()
+        self.assertEqual({row["pid"] for row in found},{row["pid"] for row in records})
+        script=invoke.call_args.args[0][-1]
+        self.assertIn("'harness-*'",script)
+        self.assertIn("'libretro_*'",script)
+
+    def test_linux_truncated_frontend_names_are_busy(self):
+        result=SimpleNamespace(stdout="1 init\n12 harness-guest-c\n13 libretro-front\n14 private-fronten\n15 python3\n")
+        with patch.object(ci,"WIN",False),patch.object(ci.subprocess,"run",return_value=result):
+            self.assertEqual([row["pid"] for row in ci.competing_processes()],[12,13,14])
+
+    def test_frontend_appearance_rejects_and_retains_the_after_boundary(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(ci,"competing_processes",side_effect=[[],[dict(pid=29040,name="harness-guest-cadence")]]):
+            log=Path(directory)/"idle.jsonl"
+            ci.require_idle_runner(log,"candidate-before")
+            with self.assertRaises(ValueError):ci.require_idle_runner(log,"candidate-after")
+            rows=[json.loads(row) for row in log.read_text().splitlines()]
+            self.assertEqual(len(rows),2)
+            self.assertEqual(rows[1]["processes"][0]["name"],"harness-guest-cadence")
+
+    def test_windows_compiler_snapshot(self):
+        result=SimpleNamespace(stdout='[{"pid":12,"name":"CL"},{"pid":13,"name":"retroarch"}]')
+        with patch.object(ci,"WIN",True),patch.object(ci.subprocess,"run",return_value=result):
+            self.assertEqual(ci.competing_processes(),[{"pid":12,"name":"cl"},{"pid":13,"name":"retroarch"}])
+
+    def test_linux_compiler_snapshot(self):
+        result=SimpleNamespace(stdout='1 init\n12 cc1plus\n13 python3\n14 spirv-val\n')
+        with patch.object(ci,"WIN",False),patch.object(ci.subprocess,"run",return_value=result):
+            self.assertEqual(ci.competing_processes(),[{"pid":12,"name":"cc1plus"},{"pid":14,"name":"spirv-val"}])
+
+    def test_bad_snapshot_is_not_idle(self):
+        for output in ('null','false','[{"pid":0,"name":"cl"}]','[{"pid":12}]'):
+            with patch.object(ci,"WIN",True),patch.object(ci.subprocess,"run",return_value=SimpleNamespace(stdout=output)):
+                with self.assertRaises(ValueError):ci.competing_processes()
+
+    def test_idle_boundary_written(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(ci,"competing_processes",return_value=[]):
+            log=Path(directory)/'idle.jsonl';ci.require_idle_runner(log,'before')
+            record=json.loads(log.read_text());self.assertTrue(record['inspection_ok']);self.assertEqual(record['processes'],[])
+
+    def test_busy_rejected_and_retained(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(ci,"competing_processes",return_value=[dict(pid=12,name='cl')]) as check:
+            log=Path(directory)/'idle.jsonl'
+            with self.assertRaises(ValueError):ci.require_idle_runner(log,'before')
+            self.assertEqual(check.call_count,1);self.assertEqual(json.loads(log.read_text())['processes'][0]['pid'],12)
+
+    def test_inspection_failure_is_not_idle(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(ci,"competing_processes",side_effect=OSError('unavailable')):
+            log=Path(directory)/'idle.jsonl'
+            with self.assertRaises(ValueError):ci.require_idle_runner(log,'after')
+            self.assertFalse(json.loads(log.read_text())['inspection_ok'])
 
 
 if __name__=="__main__":unittest.main()

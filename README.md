@@ -1,5 +1,17 @@
 # parallel_xbox360 libretro core
 
+Conditional shader selections preserve the chosen operand's bits. The CPU
+reference uses C89 integer/SSE2 predicates for its existing input-FTZ comparison
+policy, while native DXIL vertex predicates avoid driver-dependent decisions for
+literal denormal conditions. Pixel-stage equivalence remains unverified.
+The CI checks literal payloads, native Vulkan and DXIL results, SIMD/scalar
+implementations and the historical mismatches explicitly. This correction does
+not establish faster compilation or remove draw-side compilation stalls. See
+[conditional selection qualification](tools/tests/shader_conditional_results.txt).
+Timing checks reject known compiler/build/frontend processes at each revision
+sample's boundaries and retain rejected samples. These snapshots do not prove
+continuous host idleness or identify every possible GPU application.
+
 Draw-side Vulkan and D3D12 pipeline waits now observe the requested pipeline's
 publication instead of draining the whole worker queue. This reuses existing
 notifications and borrows stable publication state without adding allocation,
