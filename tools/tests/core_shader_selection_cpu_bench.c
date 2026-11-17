@@ -30,6 +30,19 @@ int main(void)
  uint32_t code[6],expected[4];const uint32_t *result;void *owner;unsigned which,i,lane,count,scalar,minimum,temp,iterations,timed;
  timed=getenv("XE_SHADER_BENCH_CSV")!=NULL;iterations=timed?1000000u:1u;
  owner=xe_selection_cpu_create();CHECK(owner);
+ /* Vector/scalar coissue borrows one final result. Both banks must observe
+  * the original sources before the combined export commits either result. */
+ for(which=0;which<4;++which){
+  minimum=which&1;temp=which>=2;
+  memset(code,0,sizeof(code));code[0]=1|(1u<<12);code[1]=0x2000;
+  code[3]=62|(1u<<15)|(5u<<16)|(10u<<20)|((minimum?2u:0u)<<26);
+  code[5]=2u|(1u<<8)|(minimum<<24)|(temp?0xe0000000u:0);
+  xe_selection_cpu_setup(owner,code,values);xe_selection_cpu_step(owner);
+  result=xe_selection_cpu_result(owner,&count);CHECK(count==1);
+  for(lane=0;lane<4;++lane)CHECK(result[lane]==((lane&1)?
+    (minimum?0x40000000u:0x40400000u):arithmetic_expected[minimum][lane]));
+ }
+ printf("PASS: CPU vector/scalar coissue cases=4; combined export and source banks\n");
  for(which=0;which<12;++which){
   scalar=(which&2)!=0;minimum=which&1;temp=(which&4)!=0;
   memset(code,0,sizeof(code));code[0]=1|(1u<<12);code[1]=0x2000;

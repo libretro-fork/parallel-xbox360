@@ -289,6 +289,336 @@ float ShaderInterpreter::ReduceFloatPrecision(float value,
   return result;
 }
 
+// Keep vector scratch and SIMD saves off scalar-only instruction execution.
+// The result borrows the caller's final storage; guest state ordering is unchanged.
+XE_NOINLINE void ShaderInterpreter::ExecuteVectorAluInstruction(
+    ucode::AluInstruction instr, const ucode::AluVectorOpcodeInfo& vector_opcode_info,
+    float* vector_result) {
+  ucode::AluVectorOpcode vector_opcode = instr.vector_opcode();
+  float vector_operands[3][4];
+  // CND applies FTZ to its comparison view in the C89 helper. Preserve all
+  // three raw operands here, avoiding a second condition normalization.
+  const bool preserve_vector_operands =
+      static_cast<uint32_t>(vector_opcode) -
+          static_cast<uint32_t>(ucode::AluVectorOpcode::kCndEq) <= 2u;
+  for (uint32_t i = 0; i < 3; ++i) {
+    if (!vector_opcode_info.operand_components_used[i]) {
+      continue;
+    }
+    const void* vector_src_ptr;
+    uint32_t vector_src_register = instr.src_reg(1 + i);
+    bool vector_src_absolute;
+    if (instr.src_is_temp(1 + i)) {
+      vector_src_ptr = GetTempRegister(
+          ucode::AluInstruction::src_temp_reg(vector_src_register),
+          ucode::AluInstruction::is_src_temp_relative(vector_src_register));
+      vector_src_absolute = ucode::AluInstruction::is_src_temp_value_absolute(
+          vector_src_register);
+    } else {
+      vector_src_ptr = GetFloatConstantBits(
+          vector_src_register, instr.src_const_is_addressed(1 + i),
+          instr.is_const_address_register_relative());
+      vector_src_absolute = instr.abs_constants();
+    }
+    if (preserve_vector_operands) {
+      xe_alu_source_vector_preserve(vector_operands[i], vector_src_ptr,
+          instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
+    } else {
+      xe_alu_source_vector(vector_operands[i], vector_src_ptr,
+          instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
+    }
+  }
+
+  bool replicate_vector_result_x = false;
+  switch (vector_opcode) {
+    case ucode::AluVectorOpcode::kAdd: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        vector_result[i] = GuestAdd(vector_operands[0][i], vector_operands[1][i]);
+      }
+    } break;
+    case ucode::AluVectorOpcode::kMul: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        // Direct3D 9 behavior (0 or denormal * anything = +0).
+        vector_result[i] = (vector_operands[0][i] && vector_operands[1][i])
+                               ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                               : 0.0f;
+      }
+    } break;
+    case ucode::AluVectorOpcode::kMax: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        vector_result[i] =
+            std::isgreaterequal(vector_operands[0][i], vector_operands[1][i])
+                ? vector_operands[0][i]
+                : vector_operands[1][i];
+      }
+    } break;
+    case ucode::AluVectorOpcode::kMin: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        vector_result[i] =
+            std::isless(vector_operands[0][i], vector_operands[1][i])
+                ? vector_operands[0][i]
+                : vector_operands[1][i];
+      }
+    } break;
+    case ucode::AluVectorOpcode::kSeq: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        vector_result[i] =
+            float(vector_operands[0][i] == vector_operands[1][i]);
+      }
+    } break;
+    case ucode::AluVectorOpcode::kSgt: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        vector_result[i] = float(
+            std::isgreater(vector_operands[0][i], vector_operands[1][i]));
+      }
+    } break;
+    case ucode::AluVectorOpcode::kSge: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        vector_result[i] = float(std::isgreaterequal(vector_operands[0][i],
+                                                     vector_operands[1][i]));
+      }
+    } break;
+    case ucode::AluVectorOpcode::kSne: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        vector_result[i] =
+            float(vector_operands[0][i] != vector_operands[1][i]);
+      }
+    } break;
+    case ucode::AluVectorOpcode::kFrc: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        vector_result[i] =
+            GuestAdd(vector_operands[0][i], -std::floor(vector_operands[0][i]));
+      }
+    } break;
+    case ucode::AluVectorOpcode::kTrunc: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        vector_result[i] = std::trunc(vector_operands[0][i]);
+      }
+    } break;
+    case ucode::AluVectorOpcode::kFloor: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        vector_result[i] = std::floor(vector_operands[0][i]);
+      }
+    } break;
+    case ucode::AluVectorOpcode::kMad: {
+      for (uint32_t i = 0; i < 4; ++i) {
+        // Direct3D 9 behavior (0 or denormal * anything = +0).
+        // Doing the addition rather than conditional assignment even for zero
+        // operands because +0 + -0 must be +0.
+        vector_result[i] =
+            GuestAdd((vector_operands[0][i] && vector_operands[1][i])
+                 ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                 : 0.0f, vector_operands[2][i]);
+      }
+    } break;
+    case ucode::AluVectorOpcode::kCndEq:
+    case ucode::AluVectorOpcode::kCndGe:
+    case ucode::AluVectorOpcode::kCndGt: {
+      xe_alu_conditional_dispatch(vector_result, vector_operands[0],
+          vector_operands[1], vector_operands[2],
+          static_cast<unsigned>(vector_opcode) -
+              static_cast<unsigned>(ucode::AluVectorOpcode::kCndEq));
+    } break;
+    case ucode::AluVectorOpcode::kDp4: {
+      if (shader_type_ == xenos::ShaderType::kVertex) {
+        vector_result[0] = xe_shader_vertex_dot_rtz(
+            vector_operands[0], vector_operands[1], 4u, nullptr);
+      } else {
+        vector_result[0] = 0.0f;
+        for (uint32_t i = 0; i < 4; ++i) {
+          // Direct3D 9 behavior (0 or denormal * anything = +0).
+          // Doing the addition even for zero operands because +0 + -0 must be
+          // +0.
+          vector_result[0] = GuestAdd(vector_result[0],
+              (vector_operands[0][i] && vector_operands[1][i])
+                  ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                  : 0.0f);
+        }
+      }
+      replicate_vector_result_x = true;
+    } break;
+    case ucode::AluVectorOpcode::kDp3: {
+      if (shader_type_ == xenos::ShaderType::kVertex) {
+        vector_result[0] = xe_shader_vertex_dot_rtz(
+            vector_operands[0], vector_operands[1], 3u, nullptr);
+      } else {
+        vector_result[0] = 0.0f;
+        for (uint32_t i = 0; i < 3; ++i) {
+          // Direct3D 9 behavior (0 or denormal * anything = +0).
+          // Doing the addition even for zero operands because +0 + -0 must be
+          // +0.
+          vector_result[0] = GuestAdd(vector_result[0],
+              (vector_operands[0][i] && vector_operands[1][i])
+                  ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                  : 0.0f);
+        }
+      }
+      replicate_vector_result_x = true;
+    } break;
+    case ucode::AluVectorOpcode::kDp2Add: {
+      if (shader_type_ == xenos::ShaderType::kVertex) {
+        vector_result[0] = xe_shader_vertex_dot_rtz(
+            vector_operands[0], vector_operands[1], 2u, &vector_operands[2][0]);
+      } else {
+        // Doing the addition even for zero operands because +0 + -0 must be +0.
+        vector_result[0] = 0.0f;
+        for (uint32_t i = 0; i < 2; ++i) {
+          // Direct3D 9 behavior (0 or denormal * anything = +0).
+          vector_result[0] = GuestAdd(vector_result[0],
+              (vector_operands[0][i] && vector_operands[1][i])
+                  ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
+                  : 0.0f);
+        }
+        vector_result[0] = GuestAdd(vector_result[0], vector_operands[2][0]);
+      }
+      replicate_vector_result_x = true;
+    } break;
+    case ucode::AluVectorOpcode::kCube: {
+      // Operand [0] is .z_xy.
+      float x = vector_operands[0][2];
+      float y = vector_operands[0][3];
+      float z = vector_operands[0][0];
+      float x_abs = std::abs(x), y_abs = std::abs(y), z_abs = std::abs(z);
+      // Result is T coordinate, S coordinate, 2 * major axis, face ID.
+      if (z_abs >= x_abs && z_abs >= y_abs) {
+        bool z_negative = std::isless(z, 0.0f);
+        vector_result[0] = -y;
+        vector_result[1] = z_negative ? -x : x;
+        vector_result[2] = z;
+        vector_result[3] = z_negative ? 5.0f : 4.0f;
+      } else if (y_abs >= x_abs) {
+        bool y_negative = std::isless(y, 0.0f);
+        vector_result[0] = y_negative ? -z : z;
+        vector_result[1] = x;
+        vector_result[2] = y;
+        vector_result[3] = y_negative ? 3.0f : 2.0f;
+      } else {
+        bool x_negative = std::isless(x, 0.0f);
+        vector_result[0] = -y;
+        vector_result[1] = x_negative ? z : -z;
+        vector_result[2] = x;
+        vector_result[3] = x_negative ? 1.0f : 0.0f;
+      }
+      vector_result[2] = GuestMultiply(vector_result[2], 2.0f);
+    } break;
+    case ucode::AluVectorOpcode::kMax4: {
+      if (std::isgreaterequal(vector_operands[0][0], vector_operands[0][1]) &&
+          std::isgreaterequal(vector_operands[0][0], vector_operands[0][2]) &&
+          std::isgreaterequal(vector_operands[0][0], vector_operands[0][3])) {
+        vector_result[0] = vector_operands[0][0];
+      } else if (std::isgreaterequal(vector_operands[0][1],
+                                     vector_operands[0][2]) &&
+                 std::isgreaterequal(vector_operands[0][1],
+                                     vector_operands[0][3])) {
+        vector_result[0] = vector_operands[0][1];
+      } else if (std::isgreaterequal(vector_operands[0][2],
+                                     vector_operands[0][3])) {
+        vector_result[0] = vector_operands[0][2];
+      } else {
+        vector_result[0] = vector_operands[0][3];
+      }
+      replicate_vector_result_x = true;
+    } break;
+    case ucode::AluVectorOpcode::kSetpEqPush: {
+      state_.predicate =
+          vector_operands[0][3] == 0.0f && vector_operands[1][3] == 0.0f;
+      vector_result[0] =
+          (vector_operands[0][0] == 0.0f && vector_operands[1][0] == 0.0f)
+              ? 0.0f
+              : GuestAdd(vector_operands[0][0], 1.0f);
+      replicate_vector_result_x = true;
+    } break;
+    case ucode::AluVectorOpcode::kSetpNePush: {
+      state_.predicate =
+          vector_operands[0][3] == 0.0f && vector_operands[1][3] != 0.0f;
+      vector_result[0] =
+          (vector_operands[0][0] == 0.0f && vector_operands[1][0] != 0.0f)
+              ? 0.0f
+              : GuestAdd(vector_operands[0][0], 1.0f);
+      replicate_vector_result_x = true;
+    } break;
+    case ucode::AluVectorOpcode::kSetpGtPush: {
+      state_.predicate = vector_operands[0][3] == 0.0f &&
+                         std::isgreater(vector_operands[1][3], 0.0f);
+      vector_result[0] = (vector_operands[0][0] == 0.0f &&
+                          std::isgreater(vector_operands[1][0], 0.0f))
+                             ? 0.0f
+                             : GuestAdd(vector_operands[0][0], 1.0f);
+      replicate_vector_result_x = true;
+    } break;
+    case ucode::AluVectorOpcode::kSetpGePush: {
+      state_.predicate = vector_operands[0][3] == 0.0f &&
+                         std::isgreaterequal(vector_operands[1][3], 0.0f);
+      vector_result[0] = (vector_operands[0][0] == 0.0f &&
+                          std::isgreaterequal(vector_operands[1][0], 0.0f))
+                             ? 0.0f
+                             : GuestAdd(vector_operands[0][0], 1.0f);
+      replicate_vector_result_x = true;
+    } break;
+    // Not implementing pixel kill currently, the interpreter is currently
+    // used only for vertex shaders.
+    case ucode::AluVectorOpcode::kKillEq: {
+      vector_result[0] =
+          float(vector_operands[0][0] == vector_operands[1][0] ||
+                vector_operands[0][1] == vector_operands[1][1] ||
+                vector_operands[0][2] == vector_operands[1][2] ||
+                vector_operands[0][3] == vector_operands[1][3]);
+      replicate_vector_result_x = true;
+    } break;
+    case ucode::AluVectorOpcode::kKillGt: {
+      vector_result[0] = float(
+          std::isgreater(vector_operands[0][0], vector_operands[1][0]) ||
+          std::isgreater(vector_operands[0][1], vector_operands[1][1]) ||
+          std::isgreater(vector_operands[0][2], vector_operands[1][2]) ||
+          std::isgreater(vector_operands[0][3], vector_operands[1][3]));
+      replicate_vector_result_x = true;
+    } break;
+    case ucode::AluVectorOpcode::kKillGe: {
+      vector_result[0] = float(
+          std::isgreaterequal(vector_operands[0][0], vector_operands[1][0]) ||
+          std::isgreaterequal(vector_operands[0][1], vector_operands[1][1]) ||
+          std::isgreaterequal(vector_operands[0][2], vector_operands[1][2]) ||
+          std::isgreaterequal(vector_operands[0][3], vector_operands[1][3]));
+      replicate_vector_result_x = true;
+    } break;
+    case ucode::AluVectorOpcode::kKillNe: {
+      vector_result[0] =
+          float(vector_operands[0][0] != vector_operands[1][0] ||
+                vector_operands[0][1] != vector_operands[1][1] ||
+                vector_operands[0][2] != vector_operands[1][2] ||
+                vector_operands[0][3] != vector_operands[1][3]);
+      replicate_vector_result_x = true;
+    } break;
+    case ucode::AluVectorOpcode::kDst: {
+      vector_result[0] = 1.0f;
+      // Direct3D 9 behavior (0 or denormal * anything = +0).
+      vector_result[1] = (vector_operands[0][1] && vector_operands[1][1])
+                             ? vector_operands[0][1] * vector_operands[1][1]
+                             : 0.0f;
+      vector_result[2] = vector_operands[0][2];
+      vector_result[3] = vector_operands[1][3];
+    } break;
+    case ucode::AluVectorOpcode::kMaxA: {
+      state_.address_register = int32_t(std::floor(
+          GuestAdd(xe::clamp_float(vector_operands[0][3], -256.0f, 255.0f), 0.5f)));
+      for (uint32_t i = 0; i < 4; ++i) {
+        vector_result[i] =
+            std::isgreaterequal(vector_operands[0][i], vector_operands[1][i])
+                ? vector_operands[0][i]
+                : vector_operands[1][i];
+      }
+    } break;
+    default: {
+      assert_unhandled_case(vector_opcode);
+    }
+  }
+  if (replicate_vector_result_x) {
+    for (uint32_t i = 1; i < 4; ++i) {
+      vector_result[i] = vector_result[0];
+    }
+  }
+}
+
 void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
   // Vector operation.
   float vector_result[4] = {};
@@ -297,328 +627,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       ucode::GetAluVectorOpcodeInfo(vector_opcode);
   uint32_t vector_result_write_mask = instr.GetVectorOpResultWriteMask();
   if (vector_result_write_mask || vector_opcode_info.changed_state) {
-    float vector_operands[3][4];
-    // CND applies FTZ to its comparison view in the C89 helper. Preserve all
-    // three raw operands here, avoiding a second condition normalization.
-    const bool preserve_vector_operands =
-        static_cast<uint32_t>(vector_opcode) -
-            static_cast<uint32_t>(ucode::AluVectorOpcode::kCndEq) <= 2u;
-    for (uint32_t i = 0; i < 3; ++i) {
-      if (!vector_opcode_info.operand_components_used[i]) {
-        continue;
-      }
-      const void* vector_src_ptr;
-      uint32_t vector_src_register = instr.src_reg(1 + i);
-      bool vector_src_absolute;
-      if (instr.src_is_temp(1 + i)) {
-        vector_src_ptr = GetTempRegister(
-            ucode::AluInstruction::src_temp_reg(vector_src_register),
-            ucode::AluInstruction::is_src_temp_relative(vector_src_register));
-        vector_src_absolute = ucode::AluInstruction::is_src_temp_value_absolute(
-            vector_src_register);
-      } else {
-        vector_src_ptr = GetFloatConstantBits(
-            vector_src_register, instr.src_const_is_addressed(1 + i),
-            instr.is_const_address_register_relative());
-        vector_src_absolute = instr.abs_constants();
-      }
-      if (preserve_vector_operands) {
-        xe_alu_source_vector_preserve(vector_operands[i], vector_src_ptr,
-            instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
-      } else {
-        xe_alu_source_vector(vector_operands[i], vector_src_ptr,
-            instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
-      }
-    }
-
-    bool replicate_vector_result_x = false;
-    switch (vector_opcode) {
-      case ucode::AluVectorOpcode::kAdd: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = GuestAdd(vector_operands[0][i], vector_operands[1][i]);
-        }
-      } break;
-      case ucode::AluVectorOpcode::kMul: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          // Direct3D 9 behavior (0 or denormal * anything = +0).
-          vector_result[i] = (vector_operands[0][i] && vector_operands[1][i])
-                                 ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
-                                 : 0.0f;
-        }
-      } break;
-      case ucode::AluVectorOpcode::kMax: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] =
-              std::isgreaterequal(vector_operands[0][i], vector_operands[1][i])
-                  ? vector_operands[0][i]
-                  : vector_operands[1][i];
-        }
-      } break;
-      case ucode::AluVectorOpcode::kMin: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] =
-              std::isless(vector_operands[0][i], vector_operands[1][i])
-                  ? vector_operands[0][i]
-                  : vector_operands[1][i];
-        }
-      } break;
-      case ucode::AluVectorOpcode::kSeq: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] =
-              float(vector_operands[0][i] == vector_operands[1][i]);
-        }
-      } break;
-      case ucode::AluVectorOpcode::kSgt: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = float(
-              std::isgreater(vector_operands[0][i], vector_operands[1][i]));
-        }
-      } break;
-      case ucode::AluVectorOpcode::kSge: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = float(std::isgreaterequal(vector_operands[0][i],
-                                                       vector_operands[1][i]));
-        }
-      } break;
-      case ucode::AluVectorOpcode::kSne: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] =
-              float(vector_operands[0][i] != vector_operands[1][i]);
-        }
-      } break;
-      case ucode::AluVectorOpcode::kFrc: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] =
-              GuestAdd(vector_operands[0][i], -std::floor(vector_operands[0][i]));
-        }
-      } break;
-      case ucode::AluVectorOpcode::kTrunc: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = std::trunc(vector_operands[0][i]);
-        }
-      } break;
-      case ucode::AluVectorOpcode::kFloor: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = std::floor(vector_operands[0][i]);
-        }
-      } break;
-      case ucode::AluVectorOpcode::kMad: {
-        for (uint32_t i = 0; i < 4; ++i) {
-          // Direct3D 9 behavior (0 or denormal * anything = +0).
-          // Doing the addition rather than conditional assignment even for zero
-          // operands because +0 + -0 must be +0.
-          vector_result[i] =
-              GuestAdd((vector_operands[0][i] && vector_operands[1][i])
-                   ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
-                   : 0.0f, vector_operands[2][i]);
-        }
-      } break;
-      case ucode::AluVectorOpcode::kCndEq:
-      case ucode::AluVectorOpcode::kCndGe:
-      case ucode::AluVectorOpcode::kCndGt: {
-        xe_alu_conditional_dispatch(vector_result, vector_operands[0],
-            vector_operands[1], vector_operands[2],
-            static_cast<unsigned>(vector_opcode) -
-                static_cast<unsigned>(ucode::AluVectorOpcode::kCndEq));
-      } break;
-      case ucode::AluVectorOpcode::kDp4: {
-        if (shader_type_ == xenos::ShaderType::kVertex) {
-          vector_result[0] = xe_shader_vertex_dot_rtz(
-              vector_operands[0], vector_operands[1], 4u, nullptr);
-        } else {
-          vector_result[0] = 0.0f;
-          for (uint32_t i = 0; i < 4; ++i) {
-            // Direct3D 9 behavior (0 or denormal * anything = +0).
-            // Doing the addition even for zero operands because +0 + -0 must be
-            // +0.
-            vector_result[0] = GuestAdd(vector_result[0],
-                (vector_operands[0][i] && vector_operands[1][i])
-                    ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
-                    : 0.0f);
-          }
-        }
-        replicate_vector_result_x = true;
-      } break;
-      case ucode::AluVectorOpcode::kDp3: {
-        if (shader_type_ == xenos::ShaderType::kVertex) {
-          vector_result[0] = xe_shader_vertex_dot_rtz(
-              vector_operands[0], vector_operands[1], 3u, nullptr);
-        } else {
-          vector_result[0] = 0.0f;
-          for (uint32_t i = 0; i < 3; ++i) {
-            // Direct3D 9 behavior (0 or denormal * anything = +0).
-            // Doing the addition even for zero operands because +0 + -0 must be
-            // +0.
-            vector_result[0] = GuestAdd(vector_result[0],
-                (vector_operands[0][i] && vector_operands[1][i])
-                    ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
-                    : 0.0f);
-          }
-        }
-        replicate_vector_result_x = true;
-      } break;
-      case ucode::AluVectorOpcode::kDp2Add: {
-        if (shader_type_ == xenos::ShaderType::kVertex) {
-          vector_result[0] = xe_shader_vertex_dot_rtz(
-              vector_operands[0], vector_operands[1], 2u, &vector_operands[2][0]);
-        } else {
-          // Doing the addition even for zero operands because +0 + -0 must be +0.
-          vector_result[0] = 0.0f;
-          for (uint32_t i = 0; i < 2; ++i) {
-            // Direct3D 9 behavior (0 or denormal * anything = +0).
-            vector_result[0] = GuestAdd(vector_result[0],
-                (vector_operands[0][i] && vector_operands[1][i])
-                    ? GuestMultiply(vector_operands[0][i], vector_operands[1][i])
-                    : 0.0f);
-          }
-          vector_result[0] = GuestAdd(vector_result[0], vector_operands[2][0]);
-        }
-        replicate_vector_result_x = true;
-      } break;
-      case ucode::AluVectorOpcode::kCube: {
-        // Operand [0] is .z_xy.
-        float x = vector_operands[0][2];
-        float y = vector_operands[0][3];
-        float z = vector_operands[0][0];
-        float x_abs = std::abs(x), y_abs = std::abs(y), z_abs = std::abs(z);
-        // Result is T coordinate, S coordinate, 2 * major axis, face ID.
-        if (z_abs >= x_abs && z_abs >= y_abs) {
-          bool z_negative = std::isless(z, 0.0f);
-          vector_result[0] = -y;
-          vector_result[1] = z_negative ? -x : x;
-          vector_result[2] = z;
-          vector_result[3] = z_negative ? 5.0f : 4.0f;
-        } else if (y_abs >= x_abs) {
-          bool y_negative = std::isless(y, 0.0f);
-          vector_result[0] = y_negative ? -z : z;
-          vector_result[1] = x;
-          vector_result[2] = y;
-          vector_result[3] = y_negative ? 3.0f : 2.0f;
-        } else {
-          bool x_negative = std::isless(x, 0.0f);
-          vector_result[0] = -y;
-          vector_result[1] = x_negative ? z : -z;
-          vector_result[2] = x;
-          vector_result[3] = x_negative ? 1.0f : 0.0f;
-        }
-        vector_result[2] = GuestMultiply(vector_result[2], 2.0f);
-      } break;
-      case ucode::AluVectorOpcode::kMax4: {
-        if (std::isgreaterequal(vector_operands[0][0], vector_operands[0][1]) &&
-            std::isgreaterequal(vector_operands[0][0], vector_operands[0][2]) &&
-            std::isgreaterequal(vector_operands[0][0], vector_operands[0][3])) {
-          vector_result[0] = vector_operands[0][0];
-        } else if (std::isgreaterequal(vector_operands[0][1],
-                                       vector_operands[0][2]) &&
-                   std::isgreaterequal(vector_operands[0][1],
-                                       vector_operands[0][3])) {
-          vector_result[0] = vector_operands[0][1];
-        } else if (std::isgreaterequal(vector_operands[0][2],
-                                       vector_operands[0][3])) {
-          vector_result[0] = vector_operands[0][2];
-        } else {
-          vector_result[0] = vector_operands[0][3];
-        }
-        replicate_vector_result_x = true;
-      } break;
-      case ucode::AluVectorOpcode::kSetpEqPush: {
-        state_.predicate =
-            vector_operands[0][3] == 0.0f && vector_operands[1][3] == 0.0f;
-        vector_result[0] =
-            (vector_operands[0][0] == 0.0f && vector_operands[1][0] == 0.0f)
-                ? 0.0f
-                : GuestAdd(vector_operands[0][0], 1.0f);
-        replicate_vector_result_x = true;
-      } break;
-      case ucode::AluVectorOpcode::kSetpNePush: {
-        state_.predicate =
-            vector_operands[0][3] == 0.0f && vector_operands[1][3] != 0.0f;
-        vector_result[0] =
-            (vector_operands[0][0] == 0.0f && vector_operands[1][0] != 0.0f)
-                ? 0.0f
-                : GuestAdd(vector_operands[0][0], 1.0f);
-        replicate_vector_result_x = true;
-      } break;
-      case ucode::AluVectorOpcode::kSetpGtPush: {
-        state_.predicate = vector_operands[0][3] == 0.0f &&
-                           std::isgreater(vector_operands[1][3], 0.0f);
-        vector_result[0] = (vector_operands[0][0] == 0.0f &&
-                            std::isgreater(vector_operands[1][0], 0.0f))
-                               ? 0.0f
-                               : GuestAdd(vector_operands[0][0], 1.0f);
-        replicate_vector_result_x = true;
-      } break;
-      case ucode::AluVectorOpcode::kSetpGePush: {
-        state_.predicate = vector_operands[0][3] == 0.0f &&
-                           std::isgreaterequal(vector_operands[1][3], 0.0f);
-        vector_result[0] = (vector_operands[0][0] == 0.0f &&
-                            std::isgreaterequal(vector_operands[1][0], 0.0f))
-                               ? 0.0f
-                               : GuestAdd(vector_operands[0][0], 1.0f);
-        replicate_vector_result_x = true;
-      } break;
-      // Not implementing pixel kill currently, the interpreter is currently
-      // used only for vertex shaders.
-      case ucode::AluVectorOpcode::kKillEq: {
-        vector_result[0] =
-            float(vector_operands[0][0] == vector_operands[1][0] ||
-                  vector_operands[0][1] == vector_operands[1][1] ||
-                  vector_operands[0][2] == vector_operands[1][2] ||
-                  vector_operands[0][3] == vector_operands[1][3]);
-        replicate_vector_result_x = true;
-      } break;
-      case ucode::AluVectorOpcode::kKillGt: {
-        vector_result[0] = float(
-            std::isgreater(vector_operands[0][0], vector_operands[1][0]) ||
-            std::isgreater(vector_operands[0][1], vector_operands[1][1]) ||
-            std::isgreater(vector_operands[0][2], vector_operands[1][2]) ||
-            std::isgreater(vector_operands[0][3], vector_operands[1][3]));
-        replicate_vector_result_x = true;
-      } break;
-      case ucode::AluVectorOpcode::kKillGe: {
-        vector_result[0] = float(
-            std::isgreaterequal(vector_operands[0][0], vector_operands[1][0]) ||
-            std::isgreaterequal(vector_operands[0][1], vector_operands[1][1]) ||
-            std::isgreaterequal(vector_operands[0][2], vector_operands[1][2]) ||
-            std::isgreaterequal(vector_operands[0][3], vector_operands[1][3]));
-        replicate_vector_result_x = true;
-      } break;
-      case ucode::AluVectorOpcode::kKillNe: {
-        vector_result[0] =
-            float(vector_operands[0][0] != vector_operands[1][0] ||
-                  vector_operands[0][1] != vector_operands[1][1] ||
-                  vector_operands[0][2] != vector_operands[1][2] ||
-                  vector_operands[0][3] != vector_operands[1][3]);
-        replicate_vector_result_x = true;
-      } break;
-      case ucode::AluVectorOpcode::kDst: {
-        vector_result[0] = 1.0f;
-        // Direct3D 9 behavior (0 or denormal * anything = +0).
-        vector_result[1] = (vector_operands[0][1] && vector_operands[1][1])
-                               ? vector_operands[0][1] * vector_operands[1][1]
-                               : 0.0f;
-        vector_result[2] = vector_operands[0][2];
-        vector_result[3] = vector_operands[1][3];
-      } break;
-      case ucode::AluVectorOpcode::kMaxA: {
-        state_.address_register = int32_t(std::floor(
-            GuestAdd(xe::clamp_float(vector_operands[0][3], -256.0f, 255.0f), 0.5f)));
-        for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] =
-              std::isgreaterequal(vector_operands[0][i], vector_operands[1][i])
-                  ? vector_operands[0][i]
-                  : vector_operands[1][i];
-        }
-      } break;
-      default: {
-        assert_unhandled_case(vector_opcode);
-      }
-    }
-    if (replicate_vector_result_x) {
-      for (uint32_t i = 1; i < 4; ++i) {
-        vector_result[i] = vector_result[0];
-      }
-    }
+    ExecuteVectorAluInstruction(instr, vector_opcode_info, vector_result);
   }
 
   // Scalar operation.

@@ -121,6 +121,9 @@ class ShaderInterpreter {
 
   static float ReduceFloatPrecision(float value, uint32_t mantissa_bits);
   void ExecuteAluInstruction(ucode::AluInstruction instr);
+  void ExecuteVectorAluInstruction(
+      ucode::AluInstruction instr, const ucode::AluVectorOpcodeInfo& vector_opcode_info,
+      float* vector_result);
   void StoreFetchResult(uint32_t dest, bool is_dest_relative, uint32_t swizzle,
                         const float* value);
   void ExecuteVertexFetchInstruction(ucode::VertexFetchInstruction instr);

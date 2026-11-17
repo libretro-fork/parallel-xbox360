@@ -8,6 +8,10 @@ CPU CND selection now has a separate C89 entry with an explicit no-inline
 boundary. Its three input views remain borrowed, and comparison FTZ is handled
 inside the helper rather than normalizing the condition twice. Existing operand
 snapshots in the interpreter remain; this is not end-to-end zero-copy.
+Vector execution also has a separate no-inline boundary so scalar-only
+instructions do not share its scratch/register frame. Vector/scalar coissue
+still writes directly into the caller's result and retains source-read ordering;
+four additional untimed coissue cases cover both temporary and constant banks.
 The CI checks literal payloads, native Vulkan and DXIL results, SIMD/scalar
 implementations and the historical mismatches explicitly. This correction does
 not establish faster compilation or remove draw-side compilation stalls. See

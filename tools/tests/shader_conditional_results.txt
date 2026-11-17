@@ -151,3 +151,38 @@ Unfinished: accepted18-case timing and exact-commit full first-parent hardware
 and hosted comparisons, additional private gameplay coverage, complete accurate
 ready rendering and zero critical-thread compilation/waits. No performance or
 cold-play improvement is claimed by the development evidence above.
+
+Final main-parent CI and scalar-frame follow-up (2026-11-17)
+----------------------------------------------------------
+Main integration c3eaa8f625fedb1708fec975a11e1adfff6a8c51 compared with actual
+libretro524f73b9bf3f8654b4af26be282958292b6b9429 in run44004460534.
+Linux/Vulkan software passes96 primary cases,18CPU cases and conditional84,
+with zero conditional disagreements and six validated modules. Windows/WARP
+passes80 primary cases, conditional correctness and all four native CND cost
+gates, but FAILS scalar CPU selection case7: median26.3127 to29.5779ms
+(+12.4%, above the existing10% and absolute-floor gate). This failure is retained;
+main was not promoted. Feature first-parent run44004272001 passes, demonstrating
+why that result cannot substitute for the actual main-parent comparison.
+
+The follow-up mechanically moves vector evaluation behind its own no-inline
+typed boundary. The vector arithmetic body and complete scalar tail are unchanged;
+the result borrows the caller's final storage. Scalar-only execution no longer
+enters the vector scratch frame. No new payload storage, allocation, lock, queue
+or runtime timer is added. Four untimed mixed vector/scalar export cases check
+both source banks; all18 existing timed cases and thresholds remain unchanged.
+
+Development Release-object override correctness passes CPU84, native Vulkan84,
+six validated modules, DXIL3656 on WARP and NVIDIA, four C89 scalar/SIMD and
+outlined unit variants, plus the four coissue cases on both original and new
+interpreters. This override links the newly compiled interpreter before retained
+Release libraries; it is not a fresh full-core qualification. All90 orchestration
+and negative-control tests pass normally and with Python optimization. The first
+unit invocation used the wrong Python import path and failed before running tests;
+its logs remain. A local timing attempt was rejected before sample0 by running
+RetroArch PID38572. No timing result is claimed or retried unchanged.
+
+The follow-up requires a new exact-commit main-parent comparison before promotion.
+Earlier local CPU/native timing passes and successful feature-parent CI do not
+waive the main-parent failure. Complete accurate fallback rendering, zero
+frame-critical compilation/waits and cross-game cold-play acceptance remain
+unfinished. Work is being checkpointed for the user's requested pause.

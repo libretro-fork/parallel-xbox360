@@ -16,6 +16,25 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_selection_cpu_requires_coissue_and_both_existing_correctness_markers(self):
+        markers=["PASS: CPU vector/scalar coissue cases=4; combined export and source banks",
+                 "PASS: CPU selection cases=12 iterations=1 timed=0; equal finite guest outputs",
+                 "PASS: CPU conditional cases=6 iterations=1 timed=0; equal finite guest outputs"]
+        observations=[("\n".join(markers),True)]
+        for marker in markers:
+            observations.extend([("\n".join(x for x in markers if x!=marker),False),
+                                 ("\n".join(markers+[marker]),False)])
+        for text,valid in observations:
+            with tempfile.TemporaryDirectory() as folder,patch.object(ci,"WIN",True):
+                root=Path(folder);out=root/"out";out.mkdir()
+                def run(command,source,log,env,timeout):
+                    log.write_text(text+"\n")
+                    (out/"selection-cpu/test.exe").write_bytes(b"fixture")
+                with patch.object(ci,"run",side_effect=run):
+                    if valid:self.assertTrue(ci.build_selection_cpu(root,root,out,root,{}).is_file())
+                    else:
+                        with self.assertRaises(ValueError):ci.build_selection_cpu(root,root,out,root,{})
+
     def test_selection_cpu_requires_all_equal_work_cases_and_samples(self):
         data={(stage,i):[.01]*7 for stage,n in (("shader.cpu.selection_1m",12),("shader.cpu.conditional_1m",6)) for i in range(n)}
         self.assertFalse(ci.compare_selection_cpu(dict(base=data,candidate=data),7,("base","candidate"))["failure"])

@@ -703,6 +703,8 @@ def build_selection_cpu(source,build,out,results,env):
                        TEST_SOURCE=str(HERE/"shader_selection_cpu_bridge.cc"),TEST_BUILD_DIR=str(target))
         command=["sh",source/"tools/tests/run_shader_publication_tests.sh"]
     run(command,source,log,fixture,240)
+    if log.read_text().splitlines().count("PASS: CPU vector/scalar coissue cases=4; combined export and source banks")!=1:
+        raise ValueError("CPU vector/scalar coissue correctness missing")
     if log.read_text().splitlines().count("PASS: CPU selection cases=12 iterations=1 timed=0; equal finite guest outputs")!=1:
         raise ValueError("CPU selection correctness setup missing")
     if log.read_text().splitlines().count("PASS: CPU conditional cases=6 iterations=1 timed=0; equal finite guest outputs")!=1:

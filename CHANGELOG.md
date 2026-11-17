@@ -4,6 +4,8 @@ What changed in the libretro core of this fork, newest first. Changes that come 
 
 ## Unreleased
 
+- Isolate vector execution from scalar-only interpreter instructions, borrowing the caller's final result storage and preserving the existing arithmetic and scalar tail. Add mandatory untimed vector/scalar coissue checks for both source banks. The prior main-parent Windows comparison caught a scalar MUL control regression; this follow-up must pass the same gates before promotion.
+
 - Separate conditional selection from the broad shader-interpreter dispatcher through a C89 entry and avoid duplicate condition normalization. Add 18 interpreter throughput controls and matching-accuracy native CND compilation checks, retaining first and primed PSOs and deferred submission work. Install the required Linux Vulkan validation layer in CI. Correctness checks pass in development; full performance qualification remains pending, and the earlier scalar regression is retained as a failure.
 
 - Preserve selected subnormal payloads in the CPU shader reference's conditional selections and apply the existing condition input-FTZ policy explicitly in native DXIL vertex shaders. Use C89 integer/SSE2 selection with borrowed lane views. Add native/literal regression checks, test-only driver timing phases and process-boundary checks that reject contaminated timing samples. This production-only correction does not import experimental interpreter features or establish a shader-stutter improvement.
