@@ -687,6 +687,42 @@ def compare_variant_owner(coverage):
     return dict(revisions=coverage,failures=failures)
 
 
+def build_selection_cpu(source,build,out,results,env):
+    target=out/"selection-cpu";target.mkdir();log=results/(source.name+"-selection-cpu-build.log");fixture=env.copy()
+    for key in ("XE_SHADER_BENCH_CSV","XE_SHADER_BENCH_CPU_CSV"):fixture.pop(key,None)
+    fixture.update(FORWARD_FLOW_SOURCE=str(HERE/"core_shader_selection_cpu_bench.c"),
+                   FORWARD_FLOW_BRIDGE=str(HERE/"shader_selection_cpu_bridge.cc"),FORWARD_FLOW_OUT=str(target),
+                   FORWARD_FLOW_BUILD=str(build),FORWARD_FLOW_FLAGS="/DXE_SHADER_COMPILE_BENCH /I"+str(HERE),
+                   FORWARD_FLOW_LINK_FLAGS="/CGTHREADS:"+str(JOBS))
+    if WIN:command=[os.environ.get("COMSPEC","cmd.exe"),"/d","/c",source/"tools/tests/run_forward_flow_tests.cmd"]
+    else:
+        run([env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2",
+             "-D_POSIX_C_SOURCE=200809L","-DXE_SHADER_COMPILE_BENCH","-I"+str(HERE),
+             "-c",HERE/"core_shader_selection_cpu_bench.c","-o",target/"driver.o"],source,log,fixture,120)
+        fixture.update(CXX=env.get("CXX","c++")+" "+str(target/"driver.o")+" -Wl,--strip-debug",
+                       TEST_SOURCE=str(HERE/"shader_selection_cpu_bridge.cc"),TEST_BUILD_DIR=str(target))
+        command=["sh",source/"tools/tests/run_shader_publication_tests.sh"]
+    run(command,source,log,fixture,240)
+    if log.read_text().splitlines().count("PASS: CPU selection cases=12 iterations=1 timed=0; equal finite guest outputs")!=1:
+        raise ValueError("CPU selection correctness setup missing")
+    if log.read_text().splitlines().count("PASS: CPU conditional cases=6 iterations=1 timed=0; equal finite guest outputs")!=1:
+        raise ValueError("CPU conditional correctness setup missing")
+    executable=target/("test.exe" if WIN else "test")
+    if not executable.is_file():raise ValueError("CPU selection executable missing")
+    return executable
+
+
+def compare_selection_cpu(raw,samples,expected_versions):
+    if set(raw)!=set(expected_versions):raise ValueError("CPU selection observations missing or unexpectedly added")
+    keys={("shader.cpu.selection_1m",i) for i in range(12)} | {("shader.cpu.conditional_1m",i) for i in range(6)}
+    for role,data in raw.items():
+        if set(data)!=keys or any(len(v)!=samples for v in data.values()):raise ValueError("CPU selection cases/samples missing: "+role)
+    rows=compare(raw["base"],raw["candidate"],samples) if "base" in raw and "candidate" in raw else []
+    anchor=compare(raw["anchor"],raw["candidate"],samples) if "anchor" in raw and "candidate" in raw else []
+    return dict(available=bool(raw),cases=rows,anchor_cases=anchor,failure=any(r["failures"] for r in rows+anchor),
+                scope="equal finite guest outputs; cold setup excluded; CPU interpreter throughput, not graphics or cold-play acceptance")
+
+
 def prepare(source, out, results, backend, reuse_build=None):
     out.mkdir(parents=True,exist_ok=True)
     env = os.environ.copy()
@@ -723,6 +759,8 @@ def prepare(source, out, results, backend, reuse_build=None):
     import shader_conditional_ci as conditional_ci
     conditional_ci.JOBS=JOBS
     conditional_coverage=conditional_ci.validate_conditional(source,build,out,results,env,backend)
+    selection_cpu=build_selection_cpu(source,build,out,results,env)
+    conditional_cost=conditional_ci.prepare_conditional_cost(source,build,out,results,env,backend)
     (results/(source.name+"-"+out.parent.name+"-"+out.name+"-conditional.json")).write_text(
         json.dumps(conditional_coverage,indent=2),encoding="utf-8")
     program_coverage=validate_raw_program(source,build,out,log,env,backend)
@@ -805,7 +843,7 @@ def prepare(source, out, results, backend, reuse_build=None):
             run([float_exe,out / "float-correctness"],source,log,env,120)
             dot_zero=validate_renderer_dot_zero(source,build,out,log,env)
             (results/(source.name+"-renderer-dot-zero.json")).write_text(json.dumps(dot_zero,indent=2),encoding="utf-8")
-        result={"cpu": cpu, "pso": exe, "source": source, "out": out}
+        result={"cpu": cpu, "pso": exe, "source": source, "out": out,"selection_cpu":selection_cpu,"conditional_cost":conditional_cost}
         if resume_coverage["vulkan_gpu"]:
             result["raw_resume"]=out/"raw-resume"/("pso.exe" if WIN else "pso")
             result["raw_resume_module"]=out/"raw-resume/resume.spv"
@@ -839,7 +877,7 @@ def prepare(source, out, results, backend, reuse_build=None):
         module = out / ("vertex%d.dxil" % case)
         run([generator, module, case], source, log, env, 60)
         run([runtime, module, case, 0, 0, 0, 0], source, log, env, 60)
-    return {"cpu": cpu, "dxil": generator, "warp": runtime, "source": source, "out": out,"ucode_snapshot":snapshot}
+    return {"cpu": cpu, "dxil": generator, "warp": runtime, "source": source, "out": out,"ucode_snapshot":snapshot,"selection_cpu":selection_cpu,"conditional_cost":conditional_cost}
 
 
 def source_wait_alarms(command_processor, pipeline_cache):
@@ -1195,7 +1233,7 @@ def run_comparison(args):
     manifest["toolchain"]={}
     manifest["harness_revision"]=git("rev-parse","HEAD")
     manifest["harness_sha256"]={name:hashlib.sha256((HERE/name).read_bytes()).hexdigest() for name in
-        ["shader_conditional_ci.py","test_shader_conditional_ci.py","core_alu_conditional_test.c","shader_conditional_fixture.h","core_shader_conditional_gpu_fixture.c","shader_rounding_bridge.cc","shader_rounding_fixture.h","forward_flow_bridge.cc","dxil_alu_test.c","dxil_writer_test.c","dxil_runtime_test.c",
+        ["dxil_conditional_cost_test.c","core_shader_selection_cpu_bench.c","shader_selection_cpu_bridge.cc","shader_conditional_ci.py","test_shader_conditional_ci.py","core_alu_conditional_test.c","shader_conditional_fixture.h","core_shader_conditional_gpu_fixture.c","shader_rounding_bridge.cc","shader_rounding_fixture.h","forward_flow_bridge.cc","dxil_alu_test.c","dxil_writer_test.c","dxil_runtime_test.c",
          "core_shader_compile_fixture.c","shader_call_fixture.h","shader_compile_bridge.cc",
          "shader_compile_vulkan_test.c","shader_compile_bench.h","shader_compile_ci.py",
          "vulkan_test_context.h","core_shader_call_gpu_fixture.c","core_shader_call_vulkan_test.c",
@@ -1293,7 +1331,8 @@ def run_comparison(args):
         for component in ("raw_program","raw_control") if component in b} for v,b in builds.items()}
     manifest["clock_controls"]={version:"clock-checks/"+b["out"].parent.name+"-"+b["out"].name for version,b in builds.items()}
     manifest["prepared_binaries"]={version:{name:dict(sha256=file_sha256(b[name]),bytes=b[name].stat().st_size)
-        for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module","raw_control","raw_control_module","raw_resume","raw_resume_module","ucode_snapshot"] if name in b} for version,b in builds.items()}
+        for name in ["cpu","pso","dxil","warp","raw_program","raw_program_module","raw_control","raw_control_module","raw_resume","raw_resume_module","ucode_snapshot","selection_cpu"] if name in b} for version,b in builds.items()}
+    manifest["conditional_cost_prepared"]={v:json.loads((b["out"]/"conditional-cost/coverage.json").read_text()) for v,b in builds.items() if b.get("conditional_cost")}
     (results/"environment.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     ir={version:spirv_manifest(b["out"]) for version,b in builds.items()}
     for version,b in builds.items():
@@ -1361,6 +1400,12 @@ def run_comparison(args):
                 text=log.read_text()
                 coverage=resume_report["revisions"][version]
                 validate_resume_compiler_log(text,coverage["device"])
+            selection_env=e.copy()
+            selection_env["XE_SHADER_BENCH_CSV"]=str(results/(version+"-selection-cpu.csv"))
+            selection_env["XE_SHADER_BENCH_CPU_CSV"]=str(results/(version+"-selection-cpu-process.csv"))
+            run([b["selection_cpu"]],b["source"],log,selection_env,120)
+            if b.get("conditional_cost"):
+                conditional_ci.run_conditional_cost(b["conditional_cost"],b["source"],results,e,version+"-sample%d"%sample)
             require_idle_runner(results/"runner-idle.jsonl",version+"-sample%d-after"%sample)
     raw={version:read_samples(results/(version+".csv")) for version in builds}
     for version,measurements in raw.items():
@@ -1368,6 +1413,13 @@ def run_comparison(args):
             raise ValueError("missing or substituted expected stage cases: "+version)
     cpu={version:read_samples(results/(version+"-cpu.csv")) for version in builds}
     rows,anchor_rows,cpu_rows=compare_timing_channels(raw,cpu,args.samples)
+    cost_records={v:[json.loads((results/(v+"-sample%d-conditional-cost.json"%i)).read_text()) for i in range(args.samples)] for v,b in builds.items() if b.get("conditional_cost")}
+    conditional_cost_report=conditional_ci.compare_conditional_cost(cost_records,args.samples,builds if WIN else [],args.backend in ("vulkan-hardware","d3d12-hardware"))
+    (results/"conditional-cost-comparison.json").write_text(json.dumps(conditional_cost_report,indent=2),encoding="utf-8")
+    selection_raw={v:read_samples(results/(v+"-selection-cpu.csv")) for v in builds}
+    selection_cpu_report=compare_selection_cpu(selection_raw,args.samples,builds)
+    selection_cpu_report["process_cpu_diagnostics"]={v:cpu_diagnostics(data,read_samples(results/(v+"-selection-cpu-process.csv")),args.samples) for v,data in selection_raw.items()}
+    (results/"selection-cpu-comparison.json").write_text(json.dumps(selection_cpu_report,indent=2),encoding="utf-8")
     resume_compiler=compare_resume_compiler({v:read_samples(results/(v+"-resume-compiler.csv")) for v,b in builds.items() if "raw_resume" in b},args.samples)
     resume_compiler["process_cpu_observations"]=compare_resume_compiler({v:read_samples(results/(v+"-resume-compiler-cpu.csv")) for v,b in builds.items() if "raw_resume" in b},args.samples)["observed"]
     snapshot_raw={v:read_samples(results/(v+"-ucode.csv")) for v,b in builds.items() if "ucode_snapshot" in b}
@@ -1482,8 +1534,8 @@ def run_comparison(args):
                 process_cpu_diagnostics=cpu_rows,
                 source_alarms=source_alarms,source_alarm_limit="textual alarm only; not dynamic critical-thread counters",
                 ir_growth_failures=ir_failures,source_alarm_failures=alarm_failures,
-                raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,raw_gpu_dispatch=gpu_reports,ucode_snapshot=snapshot_report,raw_resume_compiler=resume_compiler,
-                success=not resume_compiler["failure"] and not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not snapshot_report["failure"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(v["failure"] for v in gpu_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
+                native_conditional=conditional_report,conditional_cost=conditional_cost_report,selection_cpu=selection_cpu_report,raw_program=program_report,raw_control=control_report,raw_control_coverage=control_coverage_report,raw_valid_work=valid_reports,raw_gpu_dispatch=gpu_reports,ucode_snapshot=snapshot_report,raw_resume_compiler=resume_compiler,
+                success=not conditional_cost_report["failure"] and not selection_cpu_report["failure"] and not resume_compiler["failure"] and not ir_failures and not alarm_failures and not control_coverage_report["failures"] and not snapshot_report["failure"] and not program_report["failure"] and not control_report["failure"] and not any(v["failure"] for v in valid_reports.values()) and not any(v["failure"] for v in gpu_reports.values()) and not any(x["failures"] for x in rows+anchor_rows),
                 self_check=bool(args.self_check))
     (results/"comparison.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     summary="# Shader compilation comparison\n\n%s -> %s (%s)\n\n"%(args.base,args.head,args.backend)

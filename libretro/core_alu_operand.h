@@ -2,6 +2,7 @@
 #ifndef XE_CORE_ALU_OPERAND_H
 #define XE_CORE_ALU_OPERAND_H
 #define XE_ALU_CONDITIONAL_RAW_SELECTION 1
+#define XE_ALU_CONDITIONAL_DISPATCH_ABI 1
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
@@ -12,6 +13,16 @@
 #define XE_ALU_SELECTION_SIMD_SSE2 1
 #endif
 typedef char xe_alu_operand_binary32[(sizeof(float)==4 && FLT_MANT_DIG==24 && FLT_MAX_EXP==128 && FLT_RADIX==2)?1:-1];
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* Outlined entry keeps CND SIMD scratch registers outside the wide dispatcher.
+ * Same borrowed spans and exact-alias contract as the inline algorithm below. */
+void xe_alu_conditional_dispatch(float *output,const float *condition,
+ const float *yes,const float *no,unsigned mode);
+#ifdef __cplusplus
+}
+#endif
 /* Bank owns 512 vec4 constants and remains immutable during the borrow.
  * size_minus_one is the guest window, in vec4 units. No clamping or wrapping. */
 static INLINE const uint32_t *xe_alu_constant_view(const uint32_t *bank,

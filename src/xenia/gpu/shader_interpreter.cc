@@ -298,6 +298,11 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
   uint32_t vector_result_write_mask = instr.GetVectorOpResultWriteMask();
   if (vector_result_write_mask || vector_opcode_info.changed_state) {
     float vector_operands[3][4];
+    // CND applies FTZ to its comparison view in the C89 helper. Preserve all
+    // three raw operands here, avoiding a second condition normalization.
+    const bool preserve_vector_operands =
+        static_cast<uint32_t>(vector_opcode) -
+            static_cast<uint32_t>(ucode::AluVectorOpcode::kCndEq) <= 2u;
     for (uint32_t i = 0; i < 3; ++i) {
       if (!vector_opcode_info.operand_components_used[i]) {
         continue;
@@ -317,9 +322,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
             instr.is_const_address_register_relative());
         vector_src_absolute = instr.abs_constants();
       }
-      if (i != 0 && (vector_opcode == ucode::AluVectorOpcode::kCndEq ||
-                     vector_opcode == ucode::AluVectorOpcode::kCndGe ||
-                     vector_opcode == ucode::AluVectorOpcode::kCndGt)) {
+      if (preserve_vector_operands) {
         xe_alu_source_vector_preserve(vector_operands[i], vector_src_ptr,
             instr.src_swizzle(1 + i), vector_src_absolute, instr.src_negate(1 + i));
       } else {
@@ -413,7 +416,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       case ucode::AluVectorOpcode::kCndEq:
       case ucode::AluVectorOpcode::kCndGe:
       case ucode::AluVectorOpcode::kCndGt: {
-        xe_alu_conditional_vector(vector_result, vector_operands[0],
+        xe_alu_conditional_dispatch(vector_result, vector_operands[0],
             vector_operands[1], vector_operands[2],
             static_cast<unsigned>(vector_opcode) -
                 static_cast<unsigned>(ucode::AluVectorOpcode::kCndEq));

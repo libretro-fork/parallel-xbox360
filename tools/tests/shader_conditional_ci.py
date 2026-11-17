@@ -3,9 +3,9 @@ Production algorithms and fixture drivers are C89. No gameplay/performance claim
 Only validate_conditional is wired to CI; shared private fixture adapters retain
 rounding/selection dispatch for parity with the already validated branch runner.
 """
-import math,os,re,shutil,subprocess,time,zipfile
+import json,math,os,re,shutil,subprocess,time,zipfile
 from pathlib import Path
-from shader_compile_ci import HERE,WIN,JOBS,run,file_sha256
+from shader_compile_ci import HERE,WIN,JOBS,run,file_sha256,compare,cpu_diagnostics
 CONDITIONAL_DXIL_PHASES=("setup","device","root_upload","pso","record","submit_wait","readback_check","execute_release","teardown")
 
 def validate_selection_log(text,fixed):
@@ -65,21 +65,23 @@ def validate_conditional_dxil_log(text,hardware=False,legacy=False):
                 legacy_known_failure=legacy,legacy_observations=rows,warp=True,hardware=hardware,
                 scope="native vertex-flag ALU compute execution; raw selection payload, NaN class only; not full rendering")
 
-def read_conditional_dxil_phases(text,hardware):
+def read_conditional_dxil_phases(text,hardware,initial_pso=False):
     adapters=["warp","hardware"] if hardware else ["warp"]
-    order=list(CONDITIONAL_DXIL_PHASES)*len(adapters)
+    layout=CONDITIONAL_DXIL_PHASES[:3]+("pso_initial",)+CONDITIONAL_DXIL_PHASES[3:] if initial_pso else CONDITIONAL_DXIL_PHASES
+    order=list(layout)*len(adapters)
     raw=re.findall(r"^DXIL_PHASE (\w+)_ms=(\S+)$",text,re.MULTILINE)
     processes=re.findall(r"^DXIL_PROCESS adapter=(\w+) wall_ms=(\S+)$",text,re.MULTILINE)
     if [name for name,value in raw]!=order or [name for name,value in processes]!=adapters:
         raise ValueError("DXIL phase/process observations missing or duplicated")
-    phases=[dict(adapter=adapters[i//len(CONDITIONAL_DXIL_PHASES)],phase=name,ms=float(value)) for i,(name,value) in enumerate(raw)]
+    phases=[dict(adapter=adapters[i//len(layout)],phase=name,ms=float(value)) for i,(name,value) in enumerate(raw)]
     wall=[dict(adapter=name,wall_ms=float(value)) for name,value in processes]
     if any(not math.isfinite(x["ms"]) or x["ms"]<0 for x in phases) or any(not math.isfinite(x["wall_ms"]) or x["wall_ms"]<=0 for x in wall):
         raise ValueError("invalid DXIL phase/process duration")
     if any(sum(x["ms"] for x in phases if x["adapter"]==p["adapter"])>p["wall_ms"] for p in wall):
         raise ValueError("DXIL phase duration exceeds its process envelope")
     return dict(phase_observations=phases,process_observations=wall,
-                timing_scope="diagnostic correctness child with debug layer; nonoverlapping root/upload, resource/record, submit/fence wait, readback/check and release envelopes; file input/startup/process exit remain outside; no isolated GPU time or paired timing gate")
+                timing_scope=("native CND cost sample with retained first PSO and same-device primed creation; nonoverlapping test envelopes; paired acceptance only through compare_conditional_cost; no isolated GPU time or certified cold caches" if initial_pso else
+                    "diagnostic correctness child with debug layer; nonoverlapping root/upload, resource/record, submit/fence wait, readback/check and release envelopes; file input/startup/process exit remain outside; no isolated GPU time or paired timing gate"))
 
 def validate_rounding_dxil(source,build,out,results,env,backend,kind="rounding"):
     if kind not in ("rounding","conditional"):raise ValueError("unknown DXIL ALU fixture")
@@ -120,8 +122,8 @@ def validate_rounding_dxil(source,build,out,results,env,backend,kind="rounding")
 def validate_selection_reference(source,build,out,results,env,backend,kind="selection"):
     if kind not in ("selection","rounding","conditional"):raise ValueError("unknown native ALU fixture")
     rounding=kind=="rounding";conditional=kind=="conditional";cases=84 if conditional else 384 if rounding else 648
-    content=(source/"libretro/core_alu_spv.h").read_text()
-    if "#define XE_ALU_CONTROL_MINMAX 1" not in content:return dict(available=False,reason="historical source has no MIN/MAX prototype")
+    content="" if conditional else (source/"libretro/core_alu_spv.h").read_text()
+    if not conditional and "#define XE_ALU_CONTROL_MINMAX 1" not in content:return dict(available=False,reason="historical source has no MIN/MAX prototype")
     recipe_available="#define XE_ALU_RESUME_ROUNDING 1" in content
     fixed=("#define XE_SPIRV_VERTEX_ROUND_INPUT_FTZ 1" in (source/"libretro/core_float_rtz_emit.h").read_text()
            if rounding else "#define XE_ALU_CONTROL_MINMAX_RAW_SELECTION 1" in content)
@@ -168,14 +170,20 @@ def validate_selection_reference(source,build,out,results,env,backend,kind="sele
         coverage.update(unit=True,unit_scalar=True)
     if conditional and fixed:
         marker="PASS: conditional raw selection,84 literal programs,131072 random vectors, double oracle, host-mode and exact-alias controls"
-        for scalar in (False,True):
-            unit=target/(("scalar" if scalar else "unit")+(".exe" if WIN else ""))
-            if WIN:command=["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/I"+str(source),"/I"+str(source/"third_party/libretro-common/include"),HERE/"core_alu_conditional_test.c","/Fo"+str(unit.with_suffix(".obj")),"/Fe"+str(unit)]
-            else:command=[env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2","-I"+str(source),"-I"+str(source/"third_party/libretro-common/include"),HERE/"core_alu_conditional_test.c","-o",unit]
+        outlined="#define XE_ALU_CONDITIONAL_DISPATCH_ABI 1" in (source/"libretro/core_alu_operand.h").read_text()
+        variants=[(False,False),(True,False)]+([(False,True),(True,True)] if outlined else [])
+        for index,(scalar,dispatch) in enumerate(variants):
+            name=("outlined-" if dispatch else "")+("scalar" if scalar else "unit")
+            unit=target/(name+(".exe" if WIN else ""));objects=target/(name+"-objects");objects.mkdir()
+            sources=[HERE/"core_alu_conditional_test.c"]
+            if dispatch:sources.append(source/"libretro/core_alu_conditional.c")
+            if WIN:command=["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/I"+str(source),"/I"+str(source/"third_party/libretro-common/include"),*sources,"/Fo"+str(objects)+os.sep,"/Fe"+str(unit)]
+            else:command=[env.get("CC","cc"),"-std=c89","-pedantic","-Wno-long-long","-Wall","-Wextra","-Werror","-O2","-I"+str(source),"-I"+str(source/"third_party/libretro-common/include"),*sources,"-o",unit]
             if scalar:command.insert(1,"/DXE_ALU_SELECTION_FORCE_SCALAR" if WIN else "-DXE_ALU_SELECTION_FORCE_SCALAR")
+            if dispatch:command.insert(1,"/DXE_ALU_CONDITIONAL_TEST_DISPATCH" if WIN else "-DXE_ALU_CONDITIONAL_TEST_DISPATCH")
             run(command,source,log,fixture,120);run([unit],source,log,fixture,60)
-            if log.read_text().splitlines().count(marker)!=(2 if scalar else 1):raise ValueError("conditional scalar/SIMD unit missing")
-        coverage.update(unit=True,unit_scalar=True)
+            if log.read_text().splitlines().count(marker)!=index+1:raise ValueError("conditional scalar/SIMD/outlined unit missing")
+        coverage.update(unit=True,unit_scalar=True,outlined_available=outlined,unit_outlined=outlined,unit_outlined_scalar=outlined)
     if rounding:
         units=[("core_shader_rounding_input_test.c","PASS: rounding input dataflow and malformed/unflushed/wrong-mask/zero-sign controls")]
         if recipe_available:units.append(("core_float_round_emit_test.c","PASS: integer rounding anchors and 131072 random inputs; libm oracle and host-mode independence"))
@@ -246,6 +254,10 @@ def compare_conditional_coverage(coverage,vulkan):
         names={f"call{case}.{suffix}" for case in range(84) for suffix in ("raw.spv","spv","input","loops","expected")}
         if set(artifacts)!=names or any(not isinstance(x,str) or not re.fullmatch(r"[0-9a-f]{64}",x) for x in artifacts.values()):
             failures.append(role+": conditional artifacts incomplete")
+        if row.get("outlined_available"):
+            if not row.get("unit_outlined") or not row.get("unit_outlined_scalar"):
+                failures.append(role+": outlined conditional units missing")
+            if not candidate.get("outlined_available"):failures.append("outlined conditional coverage removed")
         if any(row.get(k)!=v for k,v in expected.items()):failures.append(role+": conditional native execution incomplete")
         dxil=row.get("dxil",{})
         if WIN and not dxil.get("available"):failures.append(role+": Windows DXIL conditional execution missing")
@@ -272,3 +284,120 @@ def validate_conditional(source,build,out,results,env,backend):
     dxil_backend="d3d12-hardware" if backend=="vulkan-hardware" else backend
     row["dxil"]=validate_rounding_dxil(source,build,out,results,env,dxil_backend,"conditional")
     return row
+
+
+CONDITIONAL_COST_PHASES=("pso_initial","pso","record","submit_wait")
+
+
+def read_conditional_cost_log(text,hardware):
+    adapters=["warp","hardware"] if hardware else ["warp"]
+    if text.splitlines().count("Native DXIL execution: 576 words matched.")!=len(adapters):
+        raise ValueError("matching-accuracy conditional work missing")
+    if text.splitlines().count("DXIL_COST_PRIME initial=1 retained=1")!=len(adapters) or "LEGACY_OBSERVATION" in text or "OBSERVED:" in text:
+        raise ValueError("conditional priming missing or legacy allowance substituted")
+    executions=re.findall(r"^D3D12 (\w+) pipeline and execution: (\S+)$",text,re.MULTILINE)
+    if executions!=[("WARP" if a=="warp" else a,"0x00000000") for a in adapters]:
+        raise ValueError("conditional native adapter execution missing")
+    report=read_conditional_dxil_phases(text,hardware,True)
+    cpu=re.findall(r"^DXIL_PHASE_CPU (\w+)_ms=(\S+)$",text,re.MULTILINE)
+    if [name for name,value in cpu]!=[row["phase"] for row in report["phase_observations"]]:
+        raise ValueError("conditional process CPU phases missing or reordered")
+    rows=[dict(adapter=wall["adapter"],phase=name,ms=float(value)) for wall,(name,value) in zip(report["phase_observations"],cpu)]
+    if any(not math.isfinite(row["ms"]) or row["ms"]<0 for row in rows):raise ValueError("invalid conditional CPU phase")
+    devices=re.findall(r"^D3D12 adapter vendor=([0-9a-fA-F]{4}) device=([0-9a-fA-F]{4})$",text,re.MULTILINE)
+    if len(devices)!=int(hardware):raise ValueError("conditional hardware identity missing")
+    report.update(cases=72,words=576,legacy_allowances=False,initial_retained=True,
+        cpu_observations=rows,hardware_device=":".join(devices[0]).lower() if hardware else None,
+        cache_scope="initial PSO API call retained; same-device identical PSO held through primed creation; driver disk/internal cache NOT certified cold",
+        cpu_scope="supplementary process CPU, wider timer envelope and Windows tick quantization; may exceed wall or be zero")
+    return report
+
+
+def run_conditional_cost(cost,source,results,env,label):
+    log=results/(label+"-conditional-cost.log")
+    if log.exists():raise ValueError("conditional cost samples must not overwrite/retry")
+    for name,digest in cost["identities"].items():
+        if file_sha256(cost[name])!=digest:raise ValueError("conditional cost input changed")
+    for adapter in (["warp","hardware"] if cost["hardware"] else ["warp"]):
+        fixture=env.copy();fixture["XE_DXIL_TEST_HARDWARE"]="1" if adapter=="hardware" else "0"
+        started=time.perf_counter_ns()
+        run([cost["runtime"],cost["module"],cost["expected"]],source,log,fixture,120)
+        with log.open("a",encoding="utf-8") as output:
+            output.write("DXIL_PROCESS adapter=%s wall_ms=%.6f\n"%(adapter,(time.perf_counter_ns()-started)/1e6))
+    report=read_conditional_cost_log(log.read_text(),cost["hardware"])
+    if report["hardware_device"]!=cost.get("hardware_device",report["hardware_device"]):
+        raise ValueError("conditional hardware device changed")
+    for name,digest in cost["identities"].items():
+        if file_sha256(cost[name])!=digest:raise ValueError("conditional cost input changed during sample")
+    report["identities"]=cost["identities"]
+    (results/(label+"-conditional-cost.json")).write_text(json.dumps(report,indent=2),encoding="utf-8")
+    return report
+
+
+def prepare_conditional_cost(source,build,out,results,env,backend):
+    if not WIN:return None
+    target=out/"conditional-cost";target.mkdir();log=results/(source.name+"-conditional-cost-build.log")
+    generator=target/"generator.exe";runtime=target/"runtime.exe";module=target/"conditional.dxil"
+    run(["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/wd4201","/D_CRT_SECURE_NO_WARNINGS","/DXE_DXIL_ALU_TEST",
+         "/I"+str(source/"src/xenia/gpu/dxil"),"/I"+str(source/"src/xenia/gpu/dxil/bytecode"),
+         HERE/"dxil_writer_test.c",HERE/"dxil_conditional_cost_test.c","/Fo"+str(target)+os.sep,"/Fe"+str(generator),
+         "/link",build/"obj/Windows/xenia-native-dxil.lib","/CGTHREADS:"+str(JOBS)],source,log,env,240)
+    run([generator,module,"alu"],source,log,env,120)
+    if log.read_text().splitlines().count("DXIL_CONDITIONAL_COST cases=72 non_denormal_conditions=1 raw_payload=1 words=576")!=1:
+        raise ValueError("conditional cost generator corpus changed")
+    expected=Path(str(module)+".expected")
+    if expected.stat().st_size!=576*4:raise ValueError("conditional cost literals missing")
+    run(["cl","/nologo","/TC","/MD","/O2","/W4","/WX","/wd4201","/D_CRT_SECURE_NO_WARNINGS",
+         "/DXE_DXIL_PHASE_TIMING","/DXE_DXIL_COST_PRIME",HERE/"dxil_runtime_test.c",
+         "/Fo"+str(target/"runtime.obj"),"/Fe"+str(runtime),"/link","d3d12.lib","dxgi.lib","dxguid.lib"],source,log,env,120)
+    cost=dict(runtime=runtime,module=module,expected=expected,hardware=backend in ("vulkan-hardware","d3d12-hardware"))
+    cost["identities"]={name:file_sha256(cost[name]) for name in ("runtime","module","expected")}
+    coverage=run_conditional_cost(cost,source,results,env,source.name+"-prepare")
+    cost["hardware_device"]=coverage["hardware_device"]
+    coverage.update(cases=72,words=576,legacy_allowances=False,
+        artifacts={name:dict(bytes=path.stat().st_size,sha256=file_sha256(path)) for name,path in (("runtime",runtime),("module",module),("expected",expected))})
+    (target/"coverage.json").write_text(json.dumps(coverage,indent=2),encoding="utf-8")
+    return cost
+
+
+def compare_conditional_cost(reports,samples,expected_roles,hardware):
+    if samples<5 or set(reports)!=set(expected_roles):raise ValueError("conditional cost roles/samples missing")
+    if not reports:return dict(available=False,failure=False,scope="native DXIL requires Windows; not a skipped hardware pass")
+    adapters=["warp","hardware"] if hardware else ["warp"]
+    layout=CONDITIONAL_DXIL_PHASES[:3]+("pso_initial",)+CONDITIONAL_DXIL_PHASES[3:]
+    expected_layout=[(a,p) for a in adapters for p in layout]
+    wall={};cpu={};devices=set();literals=set();identities={}
+    for role,records in reports.items():
+        if len(records)!=samples:raise ValueError("conditional cost paired samples missing")
+        wall[role]={};cpu[role]={};role_identities=set()
+        for record in records:
+            if any(type(record.get(k)) is not type(v) or record.get(k)!=v for k,v in dict(cases=72,words=576,legacy_allowances=False,initial_retained=True).items()):
+                raise ValueError("conditional matching accuracy/priming incomplete")
+            identity=record.get("identities",{})
+            if set(identity)!={"runtime","module","expected"} or any(not isinstance(v,str) or not re.fullmatch(r"[0-9a-f]{64}",v) for v in identity.values()):
+                raise ValueError("conditional cost artifact identity missing")
+            role_identities.add(tuple(sorted(identity.items())));literals.add(identity["expected"])
+            device=record.get("hardware_device");devices.add(device)
+            if (hardware and (not isinstance(device,str) or not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{4}",device))) or (not hardware and device is not None):
+                raise ValueError("conditional cost device identity missing")
+            processes=record.get("process_observations",[])
+            if [p.get("adapter") for p in processes]!=adapters or any(type(p.get("wall_ms")) not in (float,int) or not math.isfinite(p["wall_ms"]) or p["wall_ms"]<=0 for p in processes):
+                raise ValueError("conditional cost process envelope missing")
+            for field,destination in (("phase_observations",wall[role]),("cpu_observations",cpu[role])):
+                values=record.get(field,[])
+                if [(v.get("adapter"),v.get("phase")) for v in values]!=expected_layout or any(type(v.get("ms")) not in (float,int) or not math.isfinite(v["ms"]) or v["ms"]<0 for v in values):
+                    raise ValueError("conditional cost phase work missing or changed")
+                if field=="phase_observations" and any(sum(v["ms"] for v in values if v["adapter"]==p["adapter"])>p["wall_ms"] for p in processes):
+                    raise ValueError("conditional cost phases outside process")
+                for v in values:
+                    if v["phase"] in CONDITIONAL_COST_PHASES:
+                        key=("dxil.conditional."+v["phase"],adapters.index(v["adapter"]))
+                        destination.setdefault(key,[]).append(v["ms"]*.001)
+        if len(role_identities)!=1:raise ValueError("conditional cost artifacts changed between samples")
+        identities[role]=dict(next(iter(role_identities)))
+    if len(devices)!=1 or len(literals)!=1:raise ValueError("conditional paired device/literal corpus changed")
+    rows=compare(wall["base"],wall["candidate"],samples)
+    anchor=compare(wall["anchor"],wall["candidate"],samples) if "anchor" in wall else []
+    return dict(available=True,cases=rows,anchor_cases=anchor,failure=any(r["failures"] for r in rows+anchor),
+        process_cpu_diagnostics={r:cpu_diagnostics(wall[r],cpu[r],samples) for r in reports},artifacts=identities,
+        scope="72 historically and currently correct native CND cases; first and retained-prime PSO, recording and submit/fence gates; diagnostic sizes/startup/teardown retained; not certified cold caches or gameplay")

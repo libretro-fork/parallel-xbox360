@@ -34,6 +34,7 @@ ALL_CORE_SOURCES := $(foreach dir,$(CORE_DIRS),$(wildcard $(dir)/*.cc))
 PLATFORM_SUFFIXES := win linux posix gnulinux x11 gtk android mac amd64 x64 arm64
 SOURCES_CXX := $(filter-out $(foreach s,$(PLATFORM_SUFFIXES),%_$(s).cc),$(ALL_CORE_SOURCES))
 SOURCES_CXX += $(filter $(foreach s,$(OS_SUFFIXES) $(ARCH_SUFFIXES),%_$(s).cc),$(ALL_CORE_SOURCES))
+SOURCES_C += libretro/core_alu_conditional.c
 SOURCES_CXX := $(filter-out %_main.cc %_test.cc %_demo.cc \
  src/xenia/base/console_app_main_%.cc src/xenia/base/main_init_%.cc,$(SOURCES_CXX))
 SOURCES_CXX += libretro/libretro.cpp libretro/libretro_audio_driver.cc \

@@ -36,22 +36,36 @@ static int conditional_legacy_equal(uint32_t actual,const uint32_t *expected,
 
 #ifdef XE_DXIL_PHASE_TIMING
 /* Diagnostic fixture only; no clock reads or logging in the core. */
-static int dxil_phase_emit(const char *name,const LARGE_INTEGER *start) {
-  LARGE_INTEGER end,frequency;
+static int dxil_cpu_time(uint64_t *ticks) {
+  FILETIME created,exited,kernel,user;uint64_t a,b;
+  if(!GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user))return 0;
+  a=((uint64_t)kernel.dwHighDateTime<<32)|kernel.dwLowDateTime;
+  b=((uint64_t)user.dwHighDateTime<<32)|user.dwLowDateTime;
+  if(a>UINT64_MAX-b)return 0;
+  *ticks=a+b;return 1;
+}
+static int dxil_phase_emit(const char *name,const LARGE_INTEGER *start,uint64_t cpu_start) {
+  LARGE_INTEGER end,frequency;uint64_t cpu_end;
   if(!QueryPerformanceCounter(&end) || !QueryPerformanceFrequency(&frequency) ||
-      start->QuadPart<0 || end.QuadPart<start->QuadPart || frequency.QuadPart<=0)return 0;
-  if(printf("DXIL_PHASE %s_ms=%.6f\n",name,1000.0*(double)(end.QuadPart-start->QuadPart)/(double)frequency.QuadPart)<0 || fflush(stdout))return 0;
+      start->QuadPart<0 || end.QuadPart<start->QuadPart || frequency.QuadPart<=0 ||
+      !dxil_cpu_time(&cpu_end) || cpu_end<cpu_start)return 0;
+  if(printf("DXIL_PHASE %s_ms=%.6f\nDXIL_PHASE_CPU %s_ms=%.6f\n",name,
+      1000.0*(double)(end.QuadPart-start->QuadPart)/(double)frequency.QuadPart,
+      name,(double)(cpu_end-cpu_start)/10000.0)<0 || fflush(stdout))return 0;
   return 1;
 }
-#define DXIL_PHASE_BEGIN() do{if(!QueryPerformanceCounter(&phase_start)){status=E_FAIL;goto done;}}while(0)
-#define DXIL_PHASE_END(name) do{if(!dxil_phase_emit((name),&phase_start)){status=E_FAIL;goto done;}}while(0)
-#define DXIL_RELEASE_BEGIN() do{if(!QueryPerformanceCounter(&phase_start))phase_start.QuadPart=0;}while(0)
-#define DXIL_RELEASE_END(name) do{if(!phase_start.QuadPart || !dxil_phase_emit((name),&phase_start))status=E_FAIL;}while(0)
+#define DXIL_PHASE_BEGIN() do{if(!dxil_cpu_time(&phase_cpu_start) || !QueryPerformanceCounter(&phase_start)){status=E_FAIL;goto done;}}while(0)
+#define DXIL_PHASE_END(name) do{if(!dxil_phase_emit((name),&phase_start,phase_cpu_start)){status=E_FAIL;goto done;}}while(0)
+#define DXIL_RELEASE_BEGIN() do{phase_cpu_ok=dxil_cpu_time(&phase_cpu_start);if(!QueryPerformanceCounter(&phase_start) || !phase_cpu_ok)phase_start.QuadPart=0;}while(0)
+#define DXIL_RELEASE_END(name) do{if(!phase_start.QuadPart || !dxil_phase_emit((name),&phase_start,phase_cpu_start))status=E_FAIL;}while(0)
 #else
 #define DXIL_PHASE_BEGIN() do{}while(0)
 #define DXIL_PHASE_END(name) do{}while(0)
 #define DXIL_RELEASE_BEGIN() do{}while(0)
 #define DXIL_RELEASE_END(name) do{}while(0)
+#endif
+#if defined(XE_DXIL_COST_PRIME) && !defined(XE_DXIL_PHASE_TIMING)
+#error Cost priming requires phase observations
 #endif
 
 typedef struct TextureFixture {
@@ -199,6 +213,7 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   float actual_float, expected_float;
 #ifdef XE_DXIL_PHASE_TIMING
   LARGE_INTEGER phase_start;
+  uint64_t phase_cpu_start;int phase_cpu_ok;
 #endif
   DXIL_PHASE_BEGIN();
   status = buffer(device, D3D12_HEAP_TYPE_DEFAULT,
@@ -417,6 +432,9 @@ int main(int argc, char **argv)
   ID3D12Device *device = NULL;
   ID3D12RootSignature *root = NULL;
   ID3D12PipelineState *pipeline = NULL;
+#ifdef XE_DXIL_COST_PRIME
+  ID3D12PipelineState *initial_pipeline = NULL;
+#endif
   ID3D12Resource *input = NULL;
   ID3D12Resource *constants = NULL;
   ID3DBlob *serialized = NULL;
@@ -436,6 +454,7 @@ int main(int argc, char **argv)
   size_t expected_bytes = sizeof(default_expected);
 #ifdef XE_DXIL_PHASE_TIMING
   LARGE_INTEGER phase_start;
+  uint64_t phase_cpu_start;int phase_cpu_ok;
 #endif
   float expected_float;
   unsigned i, raw_mode, program_mode, resource_mode;
@@ -560,6 +579,14 @@ int main(int argc, char **argv)
   pipeline_desc.CS.pShaderBytecode = data;
   pipeline_desc.CS.BytecodeLength = (SIZE_T)size;
   DXIL_PHASE_END("root_upload");
+#ifdef XE_DXIL_COST_PRIME
+  DXIL_PHASE_BEGIN();
+  status = ID3D12Device_CreateComputePipelineState(device, &pipeline_desc,
+      &IID_ID3D12PipelineState, (void **)&initial_pipeline);
+  DXIL_PHASE_END("pso_initial");
+  if (FAILED(status)) goto done;
+  puts("DXIL_COST_PRIME initial=1 retained=1");
+#endif
   DXIL_PHASE_BEGIN();
   status = ID3D12Device_CreateComputePipelineState(device, &pipeline_desc,
       &IID_ID3D12PipelineState, (void **)&pipeline);
@@ -585,6 +612,9 @@ done:
   if (debug) ID3D12Debug_Release(debug);
   printf("D3D12 %s pipeline and execution: 0x%08lX\n", hardware ? "hardware" : "WARP", (unsigned long)status);
   if (pipeline) ID3D12PipelineState_Release(pipeline);
+#ifdef XE_DXIL_COST_PRIME
+  if (initial_pipeline) ID3D12PipelineState_Release(initial_pipeline);
+#endif
   if (root) ID3D12RootSignature_Release(root);
   if (constants) ID3D12Resource_Release(constants);
   if (input) ID3D12Resource_Release(input);
