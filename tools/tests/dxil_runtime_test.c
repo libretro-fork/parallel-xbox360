@@ -15,6 +15,58 @@
 #include <stdint.h>
 #include <float.h>
 #include <math.h>
+#ifdef XE_DXIL_CONDITIONAL_OBSERVATION
+#include "shader_conditional_fixture.h"
+/* Legacy-only diagnostic: retain precisely the IEEE-vs-guest-FTZ choice for
+ * the last12 literal conditions. Payload quantization/other errors still fail. */
+static int conditional_legacy_equal(uint32_t actual,const uint32_t *expected,
+    size_t word,uint32_t *case_mask,unsigned *lanes) {
+  uint32_t tag=expected[(word/8)*8+7],input[16],alternate;
+  unsigned which=tag&127u,lane=(unsigned)(word%8),take;
+  if(lane>=4 || (tag&UINT32_C(0xffffff80))!=UINT32_C(0x80000000) || which<72 || which>=84)return 0;
+  if(expected[word]!=conditional_golden(which,lane))return 0;
+  conditional_inputs(input,which);
+  take=which%3==0?0:!(input[lane]>>31);
+  alternate=input[(take?4:8)+lane];
+  if(actual!=alternate && !((actual&UINT32_C(0x7fffffff))>UINT32_C(0x7f800000) &&
+      (alternate&UINT32_C(0x7fffffff))>UINT32_C(0x7f800000)))return 0;
+  *case_mask|=1u<<(which-72);++*lanes;return 1;
+}
+#endif
+
+#ifdef XE_DXIL_PHASE_TIMING
+/* Diagnostic fixture only; no clock reads or logging in the core. */
+static int dxil_cpu_time(uint64_t *ticks) {
+  FILETIME created,exited,kernel,user;uint64_t a,b;
+  if(!GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user))return 0;
+  a=((uint64_t)kernel.dwHighDateTime<<32)|kernel.dwLowDateTime;
+  b=((uint64_t)user.dwHighDateTime<<32)|user.dwLowDateTime;
+  if(a>UINT64_MAX-b)return 0;
+  *ticks=a+b;return 1;
+}
+static int dxil_phase_emit(const char *name,const LARGE_INTEGER *start,uint64_t cpu_start) {
+  LARGE_INTEGER end,frequency;uint64_t cpu_end;
+  if(!QueryPerformanceCounter(&end) || !QueryPerformanceFrequency(&frequency) ||
+      start->QuadPart<0 || end.QuadPart<start->QuadPart || frequency.QuadPart<=0 ||
+      !dxil_cpu_time(&cpu_end) || cpu_end<cpu_start)return 0;
+  if(printf("DXIL_PHASE %s_ms=%.6f\nDXIL_PHASE_CPU %s_ms=%.6f\n",name,
+      1000.0*(double)(end.QuadPart-start->QuadPart)/(double)frequency.QuadPart,
+      name,(double)(cpu_end-cpu_start)/10000.0)<0 || fflush(stdout))return 0;
+  return 1;
+}
+#define DXIL_PHASE_BEGIN() do{if(!dxil_cpu_time(&phase_cpu_start) || !QueryPerformanceCounter(&phase_start)){status=E_FAIL;goto done;}}while(0)
+#define DXIL_PHASE_END(name) do{if(!dxil_phase_emit((name),&phase_start,phase_cpu_start)){status=E_FAIL;goto done;}}while(0)
+#define DXIL_RELEASE_BEGIN() do{phase_cpu_ok=dxil_cpu_time(&phase_cpu_start);if(!QueryPerformanceCounter(&phase_start) || !phase_cpu_ok)phase_start.QuadPart=0;}while(0)
+#define DXIL_RELEASE_END(name) do{if(!phase_start.QuadPart || !dxil_phase_emit((name),&phase_start,phase_cpu_start))status=E_FAIL;}while(0)
+#else
+#define DXIL_PHASE_BEGIN() do{}while(0)
+#define DXIL_PHASE_END(name) do{}while(0)
+#define DXIL_RELEASE_BEGIN() do{}while(0)
+#define DXIL_RELEASE_END(name) do{}while(0)
+#endif
+#if defined(XE_DXIL_COST_PRIME) && !defined(XE_DXIL_PHASE_TIMING)
+#error Cost priming requires phase observations
+#endif
 
 typedef struct TextureFixture {
   ID3D12Resource *texture, *upload;
@@ -155,7 +207,15 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   void *initial_data;
   size_t i, source_index, allocation_bytes = raw_mode > 2 ? bytes / 8 * raw_mode : bytes;
   int same;
+#ifdef XE_DXIL_CONDITIONAL_OBSERVATION
+  uint32_t conditional_mask=0,remaining;unsigned conditional_lanes=0,conditional_cases=0;
+#endif
   float actual_float, expected_float;
+#ifdef XE_DXIL_PHASE_TIMING
+  LARGE_INTEGER phase_start;
+  uint64_t phase_cpu_start;int phase_cpu_ok;
+#endif
+  DXIL_PHASE_BEGIN();
   status = buffer(device, D3D12_HEAP_TYPE_DEFAULT,
                    raw_mode == 2 ? D3D12_RESOURCE_STATE_COPY_DEST : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                    allocation_bytes, &output);
@@ -245,17 +305,28 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   event = CreateEventW(NULL, FALSE, FALSE, NULL);
   if (!event) { status = E_FAIL; goto done; }
   commands[0] = (ID3D12CommandList *)list;
+  DXIL_PHASE_END("record");DXIL_PHASE_BEGIN();
   ID3D12CommandQueue_ExecuteCommandLists(queue, 1, commands);
   status = ID3D12CommandQueue_Signal(queue, fence, 1);
   if (FAILED(status)) goto done;
   status = ID3D12Fence_SetEventOnCompletion(fence, 1, event);
   if (FAILED(status)) goto done;
   if (WaitForSingleObject(event, 50000) != WAIT_OBJECT_0) { status = E_FAIL; goto done; }
+  DXIL_PHASE_END("submit_wait");DXIL_PHASE_BEGIN();
   range.Begin = 0; range.End = allocation_bytes;
   status = ID3D12Resource_Map(readback, 0, &range, (void **)&values);
   if (FAILED(status)) goto done;
   for (i = 0; i < bytes / sizeof(uint32_t); ++i) {
     source_index = raw_mode > 2 ? (i / 8) * raw_mode + i % 8 : i;
+#ifdef XE_DXIL_CONDITIONAL_OBSERVATION
+    if(!raw_mode && golden_records && i%8<4){
+      uint32_t tag=expected[(i/8)*8+7];
+      if((tag&UINT32_C(0xffffff80))==UINT32_C(0x80000000) && (tag&127u)<84 &&
+          expected[i]!=conditional_golden(tag&127u,(unsigned)(i%8))){
+        fprintf(stderr,"Invalid legacy conditional literal at word%lu\n",(unsigned long)i);status=E_FAIL;break;
+      }
+    }
+#endif
     same = values[source_index] == expected[i];
     if (!raw_mode && (!golden_records || i % 8 < 4) &&
         (expected[i] & UINT32_C(0x7f800000)) == UINT32_C(0x7f800000) &&
@@ -266,6 +337,9 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
       memcpy(&actual_float,values+source_index,4); memcpy(&expected_float,expected+i,4);
       same = fabs((double)actual_float-expected_float) <= .000001*(fabs((double)expected_float)+1);
     }
+#ifdef XE_DXIL_CONDITIONAL_OBSERVATION
+    if(!same && !raw_mode && golden_records && conditional_legacy_equal(values[source_index],expected,i,&conditional_mask,&conditional_lanes))same=1;
+#endif
     if (!same) {
       fprintf(stderr, "word %lu: got %08lX, expected %08lX\n", (unsigned long)i,
         (unsigned long)values[source_index], (unsigned long)expected[i]);
@@ -274,9 +348,21 @@ static HRESULT execute(ID3D12Device *device, ID3D12RootSignature *root,
   }
   range.Begin = 0; range.End = 0;
   ID3D12Resource_Unmap(readback, 0, &range);
+#ifdef XE_DXIL_CONDITIONAL_OBSERVATION
+  for(remaining=conditional_mask;remaining;remaining>>=1)conditional_cases+=remaining&1u;
+  if((conditional_mask&~UINT32_C(0x75d)) || conditional_lanes!=conditional_cases*4)status=E_FAIL;
+  if(SUCCEEDED(status)){
+    printf("DXIL_CONDITIONAL_LEGACY_OBSERVATION case_mask=%lu differing_lanes=%u; not a correct historical reference\n",(unsigned long)conditional_mask,conditional_lanes);
+    printf("OBSERVED: native DXIL %lu words checked; conditional differences retained\n",(unsigned long)(bytes/sizeof(uint32_t)));
+  }
+#else
   if (SUCCEEDED(status)) printf("Native DXIL execution: %lu words matched.\n",
     (unsigned long)(bytes / sizeof(uint32_t)));
+#endif
+  DXIL_PHASE_END("readback_check");
 done:
+  /* Cleanup is a separate envelope: some drivers defer work to Release. */
+  DXIL_RELEASE_BEGIN();
   if (event) CloseHandle(event);
   if (fence) ID3D12Fence_Release(fence);
   if (list) ID3D12GraphicsCommandList_Release(list);
@@ -285,6 +371,7 @@ done:
   if (readback) ID3D12Resource_Release(readback);
   if (initial) ID3D12Resource_Release(initial);
   if (output) ID3D12Resource_Release(output);
+  DXIL_RELEASE_END("execute_release");
   return status;
 }
 
@@ -345,6 +432,9 @@ int main(int argc, char **argv)
   ID3D12Device *device = NULL;
   ID3D12RootSignature *root = NULL;
   ID3D12PipelineState *pipeline = NULL;
+#ifdef XE_DXIL_COST_PRIME
+  ID3D12PipelineState *initial_pipeline = NULL;
+#endif
   ID3D12Resource *input = NULL;
   ID3D12Resource *constants = NULL;
   ID3DBlob *serialized = NULL;
@@ -362,6 +452,10 @@ int main(int argc, char **argv)
   uint32_t default_expected[32];
   uint32_t *expected = default_expected;
   size_t expected_bytes = sizeof(default_expected);
+#ifdef XE_DXIL_PHASE_TIMING
+  LARGE_INTEGER phase_start;
+  uint64_t phase_cpu_start;int phase_cpu_ok;
+#endif
   float expected_float;
   unsigned i, raw_mode, program_mode, resource_mode;
   const char *hardware_env = getenv("XE_DXIL_TEST_HARDWARE");
@@ -398,6 +492,7 @@ int main(int argc, char **argv)
     expected = read_expected(argv[2], &expected_bytes);
     if (!expected) { free(data); return 1; }
   }
+  DXIL_PHASE_BEGIN();
   if (SUCCEEDED(D3D12GetDebugInterface(&IID_ID3D12Debug,(void **)&debug))) ID3D12Debug_EnableDebugLayer(debug);
   status = CreateDXGIFactory1(&IID_IDXGIFactory4, (void **)&factory);
   if (FAILED(status)) goto done;
@@ -406,9 +501,12 @@ int main(int argc, char **argv)
   if (FAILED(status)) goto done;
   if (hardware && SUCCEEDED(IDXGIAdapter_GetDesc(adapter,&adapter_desc)))
     printf("D3D12 adapter vendor=%04x device=%04x\n",(unsigned)adapter_desc.VendorId,(unsigned)adapter_desc.DeviceId);
+  DXIL_PHASE_END("setup");DXIL_PHASE_BEGIN();
   status = D3D12CreateDevice((IUnknown *)adapter, D3D_FEATURE_LEVEL_11_0,
                             &IID_ID3D12Device, (void **)&device);
+  DXIL_PHASE_END("device");
   if (FAILED(status)) goto done;
+  DXIL_PHASE_BEGIN();
   ID3D12Device_QueryInterface(device,&IID_ID3D12InfoQueue,(void **)&info);
   memset(&root_desc, 0, sizeof(root_desc));
   if (texture.heap_mode) root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
@@ -480,12 +578,24 @@ int main(int argc, char **argv)
   pipeline_desc.pRootSignature = root;
   pipeline_desc.CS.pShaderBytecode = data;
   pipeline_desc.CS.BytecodeLength = (SIZE_T)size;
+  DXIL_PHASE_END("root_upload");
+#ifdef XE_DXIL_COST_PRIME
+  DXIL_PHASE_BEGIN();
+  status = ID3D12Device_CreateComputePipelineState(device, &pipeline_desc,
+      &IID_ID3D12PipelineState, (void **)&initial_pipeline);
+  DXIL_PHASE_END("pso_initial");
+  if (FAILED(status)) goto done;
+  puts("DXIL_COST_PRIME initial=1 retained=1");
+#endif
+  DXIL_PHASE_BEGIN();
   status = ID3D12Device_CreateComputePipelineState(device, &pipeline_desc,
       &IID_ID3D12PipelineState, (void **)&pipeline);
+  DXIL_PHASE_END("pso");
   if (SUCCEEDED(status)) status = execute(device, root, pipeline,
       expected, expected_bytes, argc >= 3, input, constants,
       (argc == 4 && !raw_mode) || (argc == 6 && !program_mode && !resource_mode) ? &texture : NULL, raw_mode, program_mode);
 done:
+  DXIL_RELEASE_BEGIN();
   if (info && FAILED(status)) {
     UINT64 message_index;
     for (message_index = 0; message_index < ID3D12InfoQueue_GetNumStoredMessages(info); ++message_index) {
@@ -502,6 +612,9 @@ done:
   if (debug) ID3D12Debug_Release(debug);
   printf("D3D12 %s pipeline and execution: 0x%08lX\n", hardware ? "hardware" : "WARP", (unsigned long)status);
   if (pipeline) ID3D12PipelineState_Release(pipeline);
+#ifdef XE_DXIL_COST_PRIME
+  if (initial_pipeline) ID3D12PipelineState_Release(initial_pipeline);
+#endif
   if (root) ID3D12RootSignature_Release(root);
   if (constants) ID3D12Resource_Release(constants);
   if (input) ID3D12Resource_Release(input);
@@ -513,5 +626,6 @@ done:
   if (factory) IDXGIFactory4_Release(factory);
   free(data);
   if (expected != default_expected) free(expected);
+  DXIL_RELEASE_END("teardown");
   return FAILED(status) ? 1 : 0;
 }

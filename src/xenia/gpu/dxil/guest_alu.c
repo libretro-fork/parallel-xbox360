@@ -161,6 +161,20 @@ static XeDxilValue fraction(XeDxilAlu *s,XeDxilValue a) {
   return float_binary(s,DXIL_BINOP_SUB,a,unary(s,27,a));
 }
 
+/* Guest CND compares the FTZ condition, never quantizes the chosen payload.
+ * Integer predicates also make literal/driver constant folding mode-independent. */
+static XeDxilValue conditional_predicate(XeDxilAlu *s,unsigned opcode,XeDxilValue value) {
+  XeDxilValue raw=bits(s,value),magnitude,zero;
+  /* Unsigned binary32 ordering excludes negatives/NaNs in one range test. */
+  if(opcode==XE_DXIL_V_CNDGT)return bin(s,DXIL_BINOP_AND,
+      cmp(s,DXIL_ICMP_UGE,raw,ic(s,UINT32_C(0x00800000))),
+      cmp(s,DXIL_ICMP_ULE,raw,ic(s,UINT32_C(0x7f800000))));
+  magnitude=bin(s,DXIL_BINOP_AND,raw,ic(s,UINT32_C(0x7fffffff)));
+  zero=cmp(s,DXIL_ICMP_ULT,magnitude,ic(s,UINT32_C(0x00800000)));
+  if(opcode==XE_DXIL_V_CNDEQ)return zero;
+  return bin(s,DXIL_BINOP_OR,zero,cmp(s,DXIL_ICMP_ULE,raw,ic(s,UINT32_C(0x7f800000))));
+}
+
 /* Shader Model 3 multiplication returns +0 if either distinct operand is
  * zero/denormal, even if the other is NaN. The identical-operand path keeps
  * normal IEEE multiplication, matching the existing translator's shortcut. */
@@ -313,7 +327,8 @@ int xe_dxil_alu_vector(XeDxilAlu *s, unsigned opcode,
         out[i] = opcode == XE_DXIL_V_FRC ? fraction(s,a[0][i]) : unary(s, opcode == XE_DXIL_V_TRUNC ? 29 : 27, a[0][i]);
         break;
       case XE_DXIL_V_CNDEQ: case XE_DXIL_V_CNDGE: case XE_DXIL_V_CNDGT:
-        condition = cmp(s, opcode == XE_DXIL_V_CNDEQ ? DXIL_FCMP_OEQ :
+        condition = s->vertex_round_toward_zero ? conditional_predicate(s,opcode,a[0][i]) :
+          cmp(s, opcode == XE_DXIL_V_CNDEQ ? DXIL_FCMP_OEQ :
           (opcode == XE_DXIL_V_CNDGE ? DXIL_FCMP_OGE : DXIL_FCMP_OGT), a[0][i], fc(s, 0.0f));
         out[i] = choose(s, condition, a[1][i], a[2][i]);
         break;

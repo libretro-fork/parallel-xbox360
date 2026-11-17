@@ -6,6 +6,11 @@
 #include <dxil_function.h>
 #include <stdio.h>
 #include <float.h>
+#define XE_ROUNDING_LITERALS_ONLY
+#include "shader_rounding_fixture.h"
+#ifdef XE_DXIL_CONDITIONAL_TEST
+#include "shader_conditional_fixture.h"
+#endif
 
 typedef struct VectorCase {
   unsigned opcode;
@@ -499,6 +504,38 @@ int xe_dxil_alu_test(struct dxil_module *m, const char *path) {
     expected[4] = 0;expected[5] = 0;expected[6] = 0;expected[7] = UINT32_C(0x60000000) | i;
     if (!xe_dxil_test_record(m, handle, index, &alu, values, expected, golden)) goto done;
   }
+  /* The same fixed boundary literals through native DXIL ALU lowering.
+   * The runtime requires bit equality for these tags, except NaN payload. */
+  for (i = 0; i < 192; ++i, ++index) {
+    unsigned sample = i / 6, operation = (i / 2) % 3;
+    xe_dxil_alu_init(&alu, m); alu.vertex_round_toward_zero = 1;
+    a = xe_dxil_alu_float_bits(&alu, rounding_samples[sample]);
+    if (i & 1) {
+      values[0] = xe_dxil_alu_scalar(&alu, 11 + operation, a, a, 0);
+      for (k = 1; k < 4; ++k) values[k] = values[0];
+    } else {
+      for (j = 0; j < 3; ++j) for (k = 0; k < 4; ++k) operands[j][k] = a;
+      if (!xe_dxil_alu_vector(&alu, 8 + operation, operands, 0, values)) goto done;
+    }
+    for (k = 0; k < 4; ++k) expected[k] = rounding_value(operation, sample);
+    expected[4] = 0; expected[5] = 0; expected[6] = 0;
+    expected[7] = UINT32_C(0x70000000) | i;
+    if (!xe_dxil_test_record(m, handle, index, &alu, values, expected, golden)) goto done;
+  }
+  puts("DXIL_ROUNDING_CASES scalar=96 vector=96 NaN_class_only=1 FTZ_expected=1");
+#ifdef XE_DXIL_CONDITIONAL_TEST
+  for (i = 0; i < 84; ++i, ++index) {
+    uint32_t input[16];
+    conditional_inputs(input, i); xe_dxil_alu_init(&alu, m); alu.vertex_round_toward_zero = 1;
+    for (j = 0; j < 3; ++j) for (k = 0; k < 4; ++k)
+      operands[j][k] = xe_dxil_alu_float_bits(&alu, input[j * 4 + k]);
+    if (!xe_dxil_alu_vector(&alu, 12 + i % 3, operands, 0, values)) goto done;
+    for (k = 0; k < 4; ++k) expected[k] = conditional_golden(i, k);
+    expected[4] = 0; expected[5] = 0; expected[6] = 0; expected[7] = UINT32_C(0x80000000) | i;
+    if (!xe_dxil_test_record(m, handle, index, &alu, values, expected, golden)) goto done;
+  }
+  puts("DXIL_CONDITIONAL_CASES vector=84 raw_payload=1 FTZ_condition_expected=1");
+#endif
   if (!instruction_test(m, handle, &index, golden)) goto done;
   xe_dxil_alu_init(&alu, m);
   if (xe_dxil_alu_scalar(&alu, 41, NULL, NULL, 0) || !alu.failed) goto done;

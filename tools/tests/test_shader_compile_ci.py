@@ -8,12 +8,29 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
+from test_shader_conditional_ci import ConditionalTests
+import shader_conditional_ci as conditional_ci
 
 spec=importlib.util.spec_from_file_location("shader_compile_ci",Path(__file__).with_name("shader_compile_ci.py"))
 ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_selection_cpu_requires_all_equal_work_cases_and_samples(self):
+        data={(stage,i):[.01]*7 for stage,n in (("shader.cpu.selection_1m",12),("shader.cpu.conditional_1m",6)) for i in range(n)}
+        self.assertFalse(ci.compare_selection_cpu(dict(base=data,candidate=data),7,("base","candidate"))["failure"])
+        for changed in ({},dict(list(data.items())[:-1]),{k:v[:-1] for k,v in data.items()}):
+            with self.assertRaises(ValueError):ci.compare_selection_cpu(dict(base=data,candidate=changed),7,("base","candidate"))
+        with self.assertRaises(ValueError):ci.compare_selection_cpu(dict(base=data),7,("base","candidate"))
+        self.assertFalse(ci.compare_selection_cpu({},7,())["available"])
+
+    def test_selection_cpu_uses_existing_regression_limits(self):
+        base={(stage,i):[.01]*7 for stage,n in (("shader.cpu.selection_1m",12),("shader.cpu.conditional_1m",6)) for i in range(n)}
+        candidate=dict(base);candidate[("shader.cpu.selection_1m",3)]=[.014]*7
+        result=ci.compare_selection_cpu(dict(base=base,candidate=candidate),7,("base","candidate"))
+        self.assertTrue(result["failure"])
+        self.assertEqual([r["case"] for r in result["cases"] if r["failures"]],[3])
+
     def test_resume_compiler_counts_tails_and_capability_removal(self):
         raw={("raw_resume."+stage,0):[.001]*7 for stage in ("module","compute_pso","compute_pso_warm")}
         intro=ci.compare_resume_compiler(dict(candidate=raw),7)
@@ -712,13 +729,15 @@ class ComparisonTests(unittest.TestCase):
             root=Path(folder);source=root/"source";compiled=source/"compiled";compiled.mkdir(parents=True)
             gpu=source/"src/xenia/gpu/vulkan";gpu.mkdir(parents=True)
             for name in ["vulkan_command_processor.cc","vulkan_pipeline_cache.cc"]:(gpu/name).write_text("")
-            for name in ["cpu","dxil","warp"]:(compiled/(name+".bin")).write_bytes(b"identity")
+            for name in ["cpu","dxil","warp","selection_cpu"]:(compiled/(name+".bin")).write_bytes(b"identity")
             for i in range(64):
                 (compiled/("shader%03u.spv"%i)).write_bytes(ci.struct.pack("<5I",0x07230203,0x10000,0,1,0))
             def prepare(source_arg,out,results,backend,reuse):
                 (results/(source.name+"-vertex-dot-unit.json")).write_text(json.dumps(dict(available=False,unit=False)))
                 (results/(source.name+"-variant-owner.json")).write_text(json.dumps(dict(available=False,unit=False,native=False)))
                 (results/(source.name+"-resume-coverage.json")).write_text(json.dumps(dict(available=False,unit=False,vulkan_gpu=False)))
+                (results/(source.name+"-"+compiled.parent.name+"-"+compiled.name+"-conditional.json")).write_text(
+                    json.dumps(dict(available=False)))
                 allocation_dir=results/"analysis-allocations"/source.name
                 allocation_dir.mkdir(parents=True,exist_ok=True)
                 allocation_rows=[]
@@ -741,12 +760,19 @@ class ComparisonTests(unittest.TestCase):
                             cpu.append("%s,%d,0.001000000\n"%(stage,case))
                     (results/(role+".csv")).write_text("".join(wall))
                     (results/(role+"-cpu.csv")).write_text("".join(cpu))
-                return dict(source=source,out=compiled,**{name:compiled/(name+".bin") for name in ["cpu","dxil","warp"]})
+                    selection="".join("%s,%d,0.010000000\n"%(stage,i) for sample in range(7) for stage,n in (("shader.cpu.selection_1m",12),("shader.cpu.conditional_1m",6)) for i in range(n))
+                    (results/(role+"-selection-cpu.csv")).write_text(selection)
+                    (results/(role+"-selection-cpu-process.csv")).write_text(selection)
+                return dict(source=source,out=compiled,**{name:compiled/(name+".bin") for name in ["cpu","dxil","warp","selection_cpu"]})
             args=SimpleNamespace(out=str(root/"work"),base="test",head="test",backend="d3d12-warp",
                                  samples=7,self_check=str(source),reuse_build=None)
+            # Native cost gates have separate negative-control coverage. This
+            # fixture isolates primary wall failure with flat process CPU.
             with patch.dict(ci.os.environ,{"GITHUB_STEP_SUMMARY":""}), \
                  patch.object(ci,"prepare",side_effect=prepare),patch.object(ci,"run"), \
                  patch.object(ci,"git",return_value="test"), \
+                 patch.object(ci,"competing_processes",return_value=[]), \
+                 patch.object(conditional_ci,"compare_conditional_cost",return_value=dict(available=False,failure=False)), \
                  patch.object(ci.subprocess,"run",return_value=SimpleNamespace(stdout="{}",stderr="",returncode=0)), \
                  patch("builtins.print"):
                 self.assertEqual(ci.run_comparison(args),1)
@@ -875,6 +901,66 @@ class ComparisonTests(unittest.TestCase):
                 selected=ci.select_commits("push",merge,commits[0])
             self.assertEqual({x["sha"] for x in selected},set(commits[1:]+[side,merge]))
             for row in selected:self.assertEqual(row["base"],git("rev-parse",row["sha"]+"^1"))
+
+
+class RunnerIdleTests(unittest.TestCase):
+    def test_private_frontends_and_renamed_retroarch_are_busy_on_windows(self):
+        names=["Harness-Guest-Cadence.EXE","libretro_probe","libretro-frontend",
+               "private-frontend","core-frontend","retroarch_debug","frontend"]
+        records=[dict(pid=100+i,name=name) for i,name in enumerate(names)]
+        result=SimpleNamespace(stdout=json.dumps(records))
+        with patch.object(ci,"WIN",True),patch.object(ci.subprocess,"run",return_value=result) as invoke:
+            found=ci.competing_processes()
+        self.assertEqual({row["pid"] for row in found},{row["pid"] for row in records})
+        script=invoke.call_args.args[0][-1]
+        self.assertIn("'harness-*'",script)
+        self.assertIn("'libretro_*'",script)
+
+    def test_linux_truncated_frontend_names_are_busy(self):
+        result=SimpleNamespace(stdout="1 init\n12 harness-guest-c\n13 libretro-front\n14 private-fronten\n15 python3\n")
+        with patch.object(ci,"WIN",False),patch.object(ci.subprocess,"run",return_value=result):
+            self.assertEqual([row["pid"] for row in ci.competing_processes()],[12,13,14])
+
+    def test_frontend_appearance_rejects_and_retains_the_after_boundary(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(ci,"competing_processes",side_effect=[[],[dict(pid=29040,name="harness-guest-cadence")]]):
+            log=Path(directory)/"idle.jsonl"
+            ci.require_idle_runner(log,"candidate-before")
+            with self.assertRaises(ValueError):ci.require_idle_runner(log,"candidate-after")
+            rows=[json.loads(row) for row in log.read_text().splitlines()]
+            self.assertEqual(len(rows),2)
+            self.assertEqual(rows[1]["processes"][0]["name"],"harness-guest-cadence")
+
+    def test_windows_compiler_snapshot(self):
+        result=SimpleNamespace(stdout='[{"pid":12,"name":"CL"},{"pid":13,"name":"retroarch"}]')
+        with patch.object(ci,"WIN",True),patch.object(ci.subprocess,"run",return_value=result):
+            self.assertEqual(ci.competing_processes(),[{"pid":12,"name":"cl"},{"pid":13,"name":"retroarch"}])
+
+    def test_linux_compiler_snapshot(self):
+        result=SimpleNamespace(stdout='1 init\n12 cc1plus\n13 python3\n14 spirv-val\n')
+        with patch.object(ci,"WIN",False),patch.object(ci.subprocess,"run",return_value=result):
+            self.assertEqual(ci.competing_processes(),[{"pid":12,"name":"cc1plus"},{"pid":14,"name":"spirv-val"}])
+
+    def test_bad_snapshot_is_not_idle(self):
+        for output in ('null','false','[{"pid":0,"name":"cl"}]','[{"pid":12}]'):
+            with patch.object(ci,"WIN",True),patch.object(ci.subprocess,"run",return_value=SimpleNamespace(stdout=output)):
+                with self.assertRaises(ValueError):ci.competing_processes()
+
+    def test_idle_boundary_written(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(ci,"competing_processes",return_value=[]):
+            log=Path(directory)/'idle.jsonl';ci.require_idle_runner(log,'before')
+            record=json.loads(log.read_text());self.assertTrue(record['inspection_ok']);self.assertEqual(record['processes'],[])
+
+    def test_busy_rejected_and_retained(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(ci,"competing_processes",return_value=[dict(pid=12,name='cl')]) as check:
+            log=Path(directory)/'idle.jsonl'
+            with self.assertRaises(ValueError):ci.require_idle_runner(log,'before')
+            self.assertEqual(check.call_count,1);self.assertEqual(json.loads(log.read_text())['processes'][0]['pid'],12)
+
+    def test_inspection_failure_is_not_idle(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(ci,"competing_processes",side_effect=OSError('unavailable')):
+            log=Path(directory)/'idle.jsonl'
+            with self.assertRaises(ValueError):ci.require_idle_runner(log,'after')
+            self.assertFalse(json.loads(log.read_text())['inspection_ok'])
 
 
 if __name__=="__main__":unittest.main()
