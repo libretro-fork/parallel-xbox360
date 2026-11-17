@@ -1,6 +1,7 @@
 /* Xenia: Xbox 360 ALU lowering to raw DXIL. BSD license; see LICENSE. */
 #ifndef XE_GPU_DXIL_GUEST_ALU_H
 #define XE_GPU_DXIL_GUEST_ALU_H
+#define XE_DXIL_VERTEX_CONDITIONAL_FTZ 1
 
 #include <stdint.h>
 

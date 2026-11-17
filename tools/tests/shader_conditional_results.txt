@@ -1,0 +1,188 @@
+Production-only conditional shader selection correction
+======================================================
+
+Base: libretro524f73b9bf3f8654b4af26be282958292b6b9429.
+Worktree: conditional-production-main-work.
+This is the prequalification source snapshot, not a passing qualification report.
+Subsequent campaign logs/artifacts must identify this exact commit and its parent;
+the requirements below do not constitute evidence that those campaigns passed.
+
+This backports only CPU conditional selected-payload preservation and native
+DXIL vertex condition FTZ from the separately tested feature candidatee55e2567c.
+MIN/MAX, Vulkan rounding and the generic continuation kernel are unchanged.
+The generic interpreter remains disconnected from rendering. No accumulated
+feature-branch performance failure is waived or promoted with this correction.
+
+The CPU reference previously flushed the selected payload along with the
+condition. C89 scalar/SSE2 integer selection now borrows the three existing lane
+views and preserves the selected bits. Existing operand snapshots still remain;
+this is not an end-to-end zero-copy or allocation-free gameplay claim.
+
+Native DXIL vertex CND uses integer binary32 ranges for the existing comparison
+input-FTZ policy. Selected payloads are not quantized. Pixel lowering is unchanged
+and unverified by this fixture. No host floating-point mode is changed.
+
+Prior feature evidence is retained separately, not relabeled as validation of
+this backport:84 literal/native programs expose88 old CPU lane mismatches and
+32 old WARP mismatches; the corrected feature candidate matches native Vulkan on
+NVIDIA and llvmpipe and3656 DXIL words on WARP and NVIDIA. Six unique Vulkan
+modules validate officially. NaN payloads are compared by class on native GPUs.
+C89 scalar/SSE2 units use131072 random vectors, an independent double oracle,
+host FTZ/DAZ modes, exact-alias layouts and fixed literals. These must be rerun
+against the actual main-based source and its own built libraries before landing.
+
+CI integration requires both revisions' conditional coverage,420 artifact
+hashes, explicit legacy exits/differences, fixed literals, scalar/SIMD units,
+device identity and Vulkan validation. Missing work is an error. Native DXIL
+requires WARP and the hardware adapter in hardware mode. The historical WARP
+diagnostic permits only the exact known FTZ alternatives and does not describe
+the historical output as matched. Negative controls reject substituted values.
+Nine test-only, nonoverlapping timing envelopes separate PSO creation, recording,
+submission/fence wait, readback checks and release. These are not GPU timestamp
+measurements, paired acceptance samples, or gameplay results. Normal core builds
+contain no diagnostic timers or logging from this harness change.
+
+Backport orchestration checks:72 guard tests pass normally and with Python
+optimization. The first full guard invocation failed because its synthetic
+prepare callback did not emit the newly mandatory conditional manifest; adding
+that synthetic unavailable-component record fixes the integration fixture.
+That earlier invocation remains a failure, not a passing run.
+
+The main runner previously lacked the feature branch's process-boundary guard.
+Backporting that same guard and its nine negative tests gives81 passing tests,
+normally and with Python optimization. Known private frontend prefixes, Windows
+and Linux compiler names, Linux truncated comm names and failed inspections are
+covered. Both sample boundaries retain their snapshots and reject competing
+work; no sample retry or threshold change is introduced. This is not continuous
+monitoring or a guarantee that every possible GPU application is recognized.
+
+Review also found that forwarding the Vulkan hardware backend name directly to
+the DXIL helper requested only WARP. The combined entry now maps that name to
+the D3D12 hardware mode, requiring both WARP and hardware execution. A routing
+test covers all four backend names, and a comparator test rejects removal of
+hardware coverage. All83 orchestration tests pass normally and with Python
+optimization. No main-based native run was described as passed before this fix.
+
+Actual main-based C89 scalar/SSE2 units pass under MSVC ASan and GCC13.3
+ASan/UBSan:84 literals and131072 random vectors per mode, double oracle,
+host-mode toggles and exact-alias controls. Vulkan capture and both strict and
+legacy DXIL diagnostic runtimes compile with MSVC /TC /O2 /W4 /WX; those
+compile-only checks do not establish main-based native GPU execution.
+
+Pending: full core compile/sanitizer checks, native CPU/Vulkan/DXIL
+execution, full fresh first-parent performance, independent normal-condition
+compile-cost coverage, hosted CI and actual gameplay. No faster-compilation,
+FPS, stall-free-rendering or complete fallback claim is made.
+
+Follow-up development (not a qualification waiver)
+-------------------------------------------------
+The separate experimental8f2->e55 full seven-pair hardware comparison failed six
+scalar CPU cases2,3,6,7,10,11. Median times in milliseconds were13.7217->18.1047,
+13.7575->18.0815,12.6544->15.0642,12.5751->15.0594,19.7469->22.8477 and
+15.4781->21.1324. The last case also failed its p95 gate. Its768 primary shader
+metrics and PSO gates passed. All raw samples and empty process-boundary records
+are retained. Those scalar cases do not enter the new vector operand path;
+wide-function code generation, inlining or register pressure is suspected,
+but the precise cause and its correction have not been established by timing.
+
+The main-based follow-up puts the CND SIMD body behind an explicitly no-inline
+C89 ABI, linked from xenia-gpu in CMake and included in the static Make build.
+All three raw CND operands are preserved with one hoisted opcode-range test.
+Only the C89 comparison view applies FTZ; selected payloads remain untouched.
+This avoids double condition normalization. Scalar dispatch timing still needs
+measurement. No new allocation, queue, lock or intermediate vector is added;
+the interpreter's existing operand snapshots remain.
+
+Actual dirty main-based Release builds and the original524 build complete with
+three compiler and linker jobs. The new candidate passes full CPU84 and native
+Vulkan84 CND checks, six officially validated modules, inline/outlined scalar/SIMD
+units and3656 DXIL words on both WARP and NVIDIA. C89 outlined units also pass
+MSVC ASan and GCC13.3 ASan/UBSan, including literal swizzle/modifier, null/invalid
+source and host-mode checks. These development runs use their own built
+libraries; they do not replace exact-commit first-parent qualification.
+
+The original12 interpreter controls remain unchanged. Six additional CND cases
+exercise all comparisons through constant and temporary banks, with finite
+payloads and signed-zero conditions that have identical old/new results. Actual
+Release executables from both sources pass all18 correctness cases. Timings
+and process CPU are mandatory, with the existing regression limits. Removing a
+case, role, sample or timing channel is an error. A first development timing
+attempt was rejected before sample0 by a running RetroArch process. After that
+process exited, the expanded18-case attempt was rejected before sample0 by
+external gcc/make processes. Neither attempt has accepted timing samples; no
+automatic unchanged retry is a performance pass.
+
+The isolated C89 DXIL cost fixture uses the first72 literal conditions and
+576 words. It excludes the12 denormal conditions that the old WARP compiler
+gets wrong, while the full84-case correctness fixture retains them. A strict
+development run against retained historical/corrected native libraries matches
+all576 words on WARP and NVIDIA without legacy allowances. Its old/new modules
+are30284/35000 bytes; the4716-byte increase is retained as an observation, not
+a speed result. The current Release candidate also passes the actual cost helper.
+
+Cost sampling retains the first PSO object while creating an identical second
+object on the same device. It measures both creation intervals, command setup
+and submission/fence wait separately. Ten nonoverlapping wall and process-CPU
+phase observations per adapter, process envelopes, literal/module/runtime hashes
+and device identity are checked. First PSO creation does not certify an empty
+driver disk/internal cache. Process CPU is supplementary, may quantize to zero
+or exceed wall time, and uses a slightly wider timer-read envelope. Startup,
+readback and teardown observations remain available. The same existing timing
+limits gate the paired cost cases; binary sizes do not substitute for timing.
+
+The public aaff test-branch Linux CI failed during the parent correctness phase:
+VK_LAYER_KHRONOS_validation was requested but the runner had no validation-layer
+package, causing Vulkan error-6 before candidate timing. The follow-up installs
+vulkan-validationlayers; it does not disable validation or relabel that failure.
+Windows CI and final main-based comparison results must be reviewed separately.
+That original aaff Windows/WARP job subsequently passed its80 primary metrics
+and its separate conditional-comparison report: oldCPU88/newCPU0, corrected3656
+DXIL words matched on WARP, no conditional coverage failures. Hardware jobs were
+skipped. The run as a whole still fails Linux; the Windows pass does not certify
+the follow-up's new18-case CPU or72-case native-cost timing gates. The follow-up
+also includes the conditional coverage in the combined comparison JSON, retaining
+the dedicated conditional-comparison artifact used by the original run.
+All89 local orchestration/negative-control tests pass normally and with Python
+optimization. The synthetic primary-report integration test mocks native cost
+comparison only within that fixture; separate cost tests reject missing work,
+changed literals/devices/artifacts, absent CPU channels and concealed regressions.
+
+Unfinished: accepted18-case timing and exact-commit full first-parent hardware
+and hosted comparisons, additional private gameplay coverage, complete accurate
+ready rendering and zero critical-thread compilation/waits. No performance or
+cold-play improvement is claimed by the development evidence above.
+
+Final main-parent CI and scalar-frame follow-up (2026-11-17)
+----------------------------------------------------------
+Main integration c3eaa8f625fedb1708fec975a11e1adfff6a8c51 compared with actual
+libretro524f73b9bf3f8654b4af26be282958292b6b9429 in run44004460534.
+Linux/Vulkan software passes96 primary cases,18CPU cases and conditional84,
+with zero conditional disagreements and six validated modules. Windows/WARP
+passes80 primary cases, conditional correctness and all four native CND cost
+gates, but FAILS scalar CPU selection case7: median26.3127 to29.5779ms
+(+12.4%, above the existing10% and absolute-floor gate). This failure is retained;
+main was not promoted. Feature first-parent run44004272001 passes, demonstrating
+why that result cannot substitute for the actual main-parent comparison.
+
+The follow-up mechanically moves vector evaluation behind its own no-inline
+typed boundary. The vector arithmetic body and complete scalar tail are unchanged;
+the result borrows the caller's final storage. Scalar-only execution no longer
+enters the vector scratch frame. No new payload storage, allocation, lock, queue
+or runtime timer is added. Four untimed mixed vector/scalar export cases check
+both source banks; all18 existing timed cases and thresholds remain unchanged.
+
+Development Release-object override correctness passes CPU84, native Vulkan84,
+six validated modules, DXIL3656 on WARP and NVIDIA, four C89 scalar/SIMD and
+outlined unit variants, plus the four coissue cases on both original and new
+interpreters. This override links the newly compiled interpreter before retained
+Release libraries; it is not a fresh full-core qualification. All90 orchestration
+and negative-control tests pass normally and with Python optimization. The first
+unit invocation used the wrong Python import path and failed before running tests;
+its logs remain. A local timing attempt was rejected before sample0 by running
+RetroArch PID38572. No timing result is claimed or retried unchanged.
+
+The follow-up requires a new exact-commit main-parent comparison before promotion.
+Earlier local CPU/native timing passes and successful feature-parent CI do not
+waive the main-parent failure. Complete accurate fallback rendering, zero
+frame-critical compilation/waits and cross-game cold-play acceptance remain
+unfinished. Work is being checkpointed for the user's requested pause.
